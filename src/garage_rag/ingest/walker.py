@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..config import (
     DEFAULT_EXCLUDE_DIRS,
+    DEPENDENCY_PATH_FRAGMENTS,
     DIAGNOSTIC_DIR_PATTERNS,
     DIAGNOSTIC_FILE_PATTERNS,
     get_settings,
@@ -75,6 +76,16 @@ def is_diagnostic_file(name: str) -> bool:
     return _matches_any(name, DIAGNOSTIC_FILE_PATTERNS)
 
 
+def is_dependency_path(path_str: str) -> bool:
+    """Whether a path lies inside a package-manager cache.
+
+    Matched on a fragment because the distinctive directory names ("mod",
+    "registry") are far too generic to exclude by themselves.
+    """
+    lowered = path_str.replace("\\", "/").lower()
+    return any(fragment.lower() in lowered for fragment in DEPENDENCY_PATH_FRAGMENTS)
+
+
 def _is_hidden(name: str) -> bool:
     # Dotfiles are configuration or caches, not writing. The few exceptions
     # (dotfile repos) are not worth the noise of indexing every .DS_Store.
@@ -110,6 +121,12 @@ def walk(
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error, followlinks=False):
         tally.dirs += 1
         current = Path(dirpath)
+
+        # Whole dependency caches: stop descending entirely.
+        if is_dependency_path(dirpath):
+            dirnames[:] = []
+            tally.skipped_excluded_dir += 1
+            continue
 
         # Prune in place: os.walk honours mutation of dirnames, so excluded
         # subtrees are never descended into at all.

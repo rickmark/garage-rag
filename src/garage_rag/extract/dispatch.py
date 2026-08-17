@@ -24,8 +24,6 @@ MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown", ".mdown", ".mkd", ".mdx", "
 PLAINTEXT_EXTENSIONS = frozenset(
     {
         ".txt", ".text", ".rst", ".org", ".adoc", ".asciidoc", ".tex",
-        ".csv", ".tsv", ".json", ".jsonl", ".ndjson",
-        ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
         ".srt", ".vtt", ".eml", ".msg",
     }
 )
@@ -43,6 +41,11 @@ CODE_EXTENSIONS = frozenset(
         ".vue", ".svelte", ".proto", ".graphql", ".gql",
         ".tf", ".hcl", ".dockerfile", ".makefile", ".cmake", ".gradle",
         ".s", ".asm", ".v", ".sv", ".vhd",
+        # Structured configuration and data. Grouped with code because that is
+        # what it is: package manifests, CI workflows, k8s specs, lockfiles.
+        # As documents these were 63% of the corpus and pure retrieval noise.
+        ".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".toml",
+        ".ini", ".cfg", ".conf", ".properties", ".csv", ".tsv",
     }
 )
 

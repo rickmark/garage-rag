@@ -22,9 +22,30 @@ DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset(
         "build", "dist", ".build", "DerivedData",
         ".next", ".nuxt", ".cache", ".terraform",
         ".tox", ".gradle", "target",
+        # Test fixtures and golden files. Third-party corpora get checked in as
+        # test data: War and Peace, the complete Shakespeare, and Tom Sawyer all
+        # appear in this corpus as compression fixtures.
+        "testdata", "test_data", "fixtures", "__fixtures__",
+        "snapshots", "__snapshots__", "golden", "goldens",
+        "buildtools", "third_party", "thirdparty", "external",
         # macOS bundles: opaque directories, not documents.
         "Contents",
     }
+)
+
+# Dependency caches identified by a path fragment rather than a single directory
+# name, because the distinctive component ("mod", "pkg") is too generic to
+# exclude on its own.
+DEPENDENCY_PATH_FRAGMENTS: tuple[str, ...] = (
+    "go/pkg/mod",
+    ".cargo/registry",
+    ".rustup/toolchains",
+    ".pub-cache",
+    ".gem/",
+    ".nuget/",
+    ".m2/repository",
+    ".cocoapods/",
+    "Library/Caches",
 )
 
 # Dropbox subtrees holding applications and binary objects rather than writing.

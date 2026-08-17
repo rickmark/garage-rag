@@ -321,12 +321,13 @@ def ingest(
 
     for source in sources:
         with console.status(f"ingesting {source}...") as status:
-            def on_progress(counters, budget) -> None:
+            # slug bound as a default: the closure outlives this loop iteration.
+            def on_progress(counters, budget, slug=source) -> None:
                 note = ""
                 if budget.files_done or budget.deferred:
                     note = f" | downloaded {budget.files_done:,} deferred {budget.deferred:,}"
                 status.update(
-                    f"{source}: seen {counters.seen:,} indexed {counters.indexed:,} "
+                    f"{slug}: seen {counters.seen:,} indexed {counters.indexed:,} "
                     f"skipped {counters.skipped:,} failed {counters.failed:,}{note}"
                 )
 
@@ -484,6 +485,65 @@ def reconcile(
             f"{result.total_documents:,} documents in {source} are missing "
             f"({result.fraction:.1%}). Re-run with --apply to delete."
         )
+
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+@app.command()
+def search(
+    query: Annotated[str, typer.Argument(help="What to look for.")],
+    limit: Annotated[int, typer.Option("--limit", "-n")] = 10,
+    mode: Annotated[
+        str, typer.Option(help="hybrid | vector | fts")
+    ] = "hybrid",
+    model: Annotated[str | None, typer.Option("--model", "-m")] = None,
+    corpus_class: Annotated[
+        list[str] | None,
+        typer.Option("--class", help="document | code | communication (repeatable)"),
+    ] = None,
+    trust: Annotated[
+        list[str] | None,
+        typer.Option("--trust", help="authored | reference | received (repeatable)"),
+    ] = None,
+    source: Annotated[list[str] | None, typer.Option("--source", "-s")] = None,
+    author: Annotated[str | None, typer.Option("--author")] = None,
+    full: Annotated[bool, typer.Option("--full", help="Print whole snippets.")] = False,
+) -> None:
+    """Search the corpus with hybrid vector + keyword retrieval."""
+    from .search.hybrid import search as run_search
+
+    with session_scope() as session:
+        hits = run_search(
+            session,
+            query,
+            limit=limit,
+            mode=mode,  # type: ignore[arg-type]
+            model_slug=model,
+            corpus_classes=corpus_class or None,
+            trust_tiers=trust or None,
+            sources=source or None,
+            author=author,
+        )
+
+    if not hits:
+        console.print("[yellow]no results[/yellow]")
+        return
+
+    for rank, hit in enumerate(hits, start=1):
+        location = hit.uri.replace(str(Path.home()), "~")
+        console.print(
+            f"\n[bold cyan]{rank}.[/bold cyan] [bold]{hit.title or '(untitled)'}[/bold] "
+            f"[dim]({hit.corpus_class}/{hit.trust_tier}, {hit.matched_by}, "
+            f"score {hit.score:.4f})[/dim]"
+        )
+        console.print(f"   [dim]{location}[/dim]")
+        if hit.heading_path:
+            console.print(f"   [dim]section: {hit.heading_path}[/dim]")
+        if hit.authors:
+            console.print(f"   [dim]authors: {', '.join(hit.authors[:4])}[/dim]")
+        body = hit.text if full else hit.text[:300].replace("\n", " ")
+        console.print(f"   {body}")
 
 
 # ---------------------------------------------------------------------------
