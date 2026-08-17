@@ -242,8 +242,18 @@ def config_show(
     """Print the effective configuration."""
     settings = get_settings()
     origin = settings.config_path or "(defaults; no file found)"
+    # Reflect the schema that actually sits beside this file, not the generic one.
+    schema_ref = (
+        f"./{schema_path_for(settings.config_path).name}"
+        if settings.config_path
+        else f"./{CONFIG_FILENAME.replace('.json', '.schema.json')}"
+    )
     console.print(f"[dim]loaded from: {origin}[/dim]")
-    console.print(json.dumps(nest(settings, include_defaults=defaults), indent=2))
+    console.print(
+        json.dumps(
+            nest(settings, include_defaults=defaults, schema_ref=schema_ref), indent=2
+        )
+    )
 
 
 @config_app.command("path")

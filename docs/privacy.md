@@ -42,7 +42,7 @@ Error: communication sources may never enable cloud enrichment
 
 ### Level 4 — global switch
 
-`cloud.enable_ocr` gates the entire path. Default `false`, in which case OCR is
+`cloud.enable_ocr` in `~/.garage.json` gates the entire path. Default `false`, in which case OCR is
 Tesseract-only and fully offline. It additionally requires `cloud.api_key_file`
 to name a readable key file, so forgetting the key fails closed rather than
 erroring mid-run.

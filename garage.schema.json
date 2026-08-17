@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "garage-rag configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URL to this schema."
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "SQLAlchemy URL for the RAG database (psycopg3 driver).",
+          "default": "postgresql+psycopg:///rag"
+        },
+        "hnsw_ef_search": {
+          "type": "integer",
+          "description": "HNSW probe width at query time. Higher is better recall, slower.",
+          "default": 100
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the corpus owner.",
+          "default": ""
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Identities belonging to the owner as 'kind:value' strings, e.g. 'git_email:me@example.com'. Anything authored by an identity NOT listed here is treated as reference rather than authored.",
+          "default": []
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ollama_host": {
+          "type": "string",
+          "description": "Base URL of the Ollama server that produces embeddings.",
+          "default": "http://localhost:11434"
+        },
+        "default_model": {
+          "type": "string",
+          "description": "Slug of the model used when a command does not name one. Must be registered with 'garage register-model' first.",
+          "default": "bge-m3"
+        },
+        "batch_size": {
+          "type": "integer",
+          "description": "Chunks per embedding request.",
+          "default": 64
+        },
+        "max_inflight": {
+          "type": "integer",
+          "description": "Concurrent embedding requests. Ollama serializes model execution, so more than one adds contention rather than throughput.",
+          "default": 1
+        }
+      }
+    },
+    "chunking": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "integer",
+          "description": "Target characters per prose chunk.",
+          "default": 1000
+        },
+        "overlap": {
+          "type": "integer",
+          "description": "Characters repeated between adjacent prose chunks, so a sentence spanning a boundary is still retrievable.",
+          "default": 150
+        },
+        "code_size": {
+          "type": "integer",
+          "description": "Target characters per code chunk. Larger, to keep functions intact.",
+          "default": 1200
+        },
+        "code_overlap": {
+          "type": "integer",
+          "description": "Characters repeated between adjacent code chunks.",
+          "default": 100
+        },
+        "comms_window_minutes": {
+          "type": "integer",
+          "description": "Group consecutive messages within this many minutes into one chunk. Individual messages are too short to embed usefully.",
+          "default": 30
+        },
+        "comms_window_messages": {
+          "type": "integer",
+          "description": "Also close a conversation window after this many messages.",
+          "default": 20
+        }
+      }
+    },
+    "placeholders": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "materialize": {
+          "type": "boolean",
+          "description": "Download cloud placeholder files when encountered. Reading a stub asks the provider to fetch it, so a large online-only folder can mean hundreds of gigabytes. Bounded by the limits below.",
+          "default": false
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Files materialized per run; 0 means unlimited.",
+          "default": 2000
+        },
+        "max_bytes": {
+          "type": "integer",
+          "description": "Byte budget per run; 0 means unlimited.",
+          "default": 21474836480
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "description": "Give up on a single download that never arrives. A stalled provider cannot be cancelled, so this stops it blocking the run.",
+          "default": 120.0
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_chunks_per_document": {
+          "type": "integer",
+          "description": "Backstop so no single document can dominate the index.",
+          "default": 1500
+        },
+        "reject_machine_generated": {
+          "type": "boolean",
+          "description": "Reject logs, dumps, and checksum manifests by content shape.",
+          "default": true
+        }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_file_bytes": {
+          "type": "integer",
+          "description": "Skip files larger than this; usually archives or disk images.",
+          "default": 67108864
+        },
+        "pdf_min_chars_per_page": {
+          "type": "integer",
+          "description": "Below this, escalate a PDF page from pypdf to pdfplumber.",
+          "default": 32
+        },
+        "ocr_min_confidence": {
+          "type": "number",
+          "description": "Mean Tesseract word confidence below which cloud OCR is considered.",
+          "default": 60.0
+        },
+        "ocr_min_chars": {
+          "type": "integer",
+          "description": "Below this many characters an image is treated as having no text. Most images in a source tree are icons.",
+          "default": 16
+        },
+        "workers": {
+          "type": "integer",
+          "description": "Extraction worker processes. Leave headroom for Postgres and Ollama.",
+          "default": 10
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Bind address. This server has no authentication and exposes the whole corpus, so a non-loopback address needs --allow-remote.",
+          "default": "127.0.0.1"
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port for the HTTP transport.",
+          "default": 8787
+        },
+        "path": {
+          "type": "string",
+          "description": "HTTP route the MCP endpoint is served on.",
+          "default": "/mcp"
+        }
+      }
+    },
+    "cloud": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enable_ocr": {
+          "type": "boolean",
+          "description": "Allow the Claude vision fallback for unreadable images.",
+          "default": false
+        },
+        "model": {
+          "type": "string",
+          "description": "Model used for the vision OCR fallback.",
+          "default": "claude-opus-4-8"
+        },
+        "max_images": {
+          "type": "integer",
+          "description": "Cap on images escalated to the cloud per run.",
+          "default": 500
+        },
+        "api_key_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to a file containing the Anthropic API key. Kept out of this file so the config itself holds no secrets."
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Sources to index. Declared sources are re-applied on every run; sources present only in the database are left untouched.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slug",
+          "root"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Short unique name, e.g. 'dropbox'."
+          },
+          "root": {
+            "type": "string",
+            "description": "Directory or file to index. '~' is expanded."
+          },
+          "kind": {
+            "type": "string",
+            "description": "filesystem | git | sqlite | maildir | feed"
+          },
+          "class": {
+            "type": "string",
+            "description": "Default grouping: document | code | communication"
+          },
+          "trust": {
+            "type": "string",
+            "description": "Default trust: authored | reference | received"
+          },
+          "include_code": {
+            "type": "boolean",
+            "description": "Index source files as well as documents."
+          },
+          "allow_cloud_enrichment": {
+            "type": "boolean",
+            "description": "Permit the cloud OCR fallback for this source. Never honoured for communication sources."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Set false to skip this source."
+          }
+        }
+      }
+    }
+  }
+}

@@ -11,3 +11,8 @@ macapp/dist
 # Credentials referenced by cloud.api_key_file
 *.key
 anthropic.key
+
+# Per-project config override (holds absolute paths and identity)
+garage.json
+
+*.bak-*

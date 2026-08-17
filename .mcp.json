@@ -4,7 +4,7 @@
       "command": "/Users/rickmark/garage/.venv/bin/garage",
       "args": [
         "--config",
-        "/Users/rickmark/garage/garage.json",
+        "/Users/rickmark/.garage.json",
         "mcp-serve",
         "--stdio"
       ]

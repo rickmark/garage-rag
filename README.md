@@ -68,13 +68,13 @@ Optional cloud OCR fallback: `uv pip install -e '.[cloud]'`, then point
 ## Quick start
 
 ```bash
-garage config init            # writes garage.json + garage.schema.json
-# edit garage.json: set identity.name and identity.identities
+garage config init --user     # writes ~/.garage.json + ~/.garage.schema.json
+# edit ~/.garage.json: set identity.name and identity.identities
 
 garage init-db                # apply schema, install extensions
 garage register-model bge-m3  # creates emb_bge_m3 + HNSW index
 
-garage sync                   # apply sources declared in garage.json
+garage sync                   # apply sources declared in ~/.garage.json
 garage ingest --source notes  # documents only; add --include-code for source
 garage backfill               # embed anything not yet embedded
 garage search "what did I conclude about boot security"
@@ -82,11 +82,13 @@ garage search "what did I conclude about boot security"
 
 ## Configuration
 
-One file, no environment variables. Search order: `--config PATH`, then
-`./garage.json`, then `~/.config/garage/garage.json`.
+One file, no environment variables. It lives at **`~/.garage.json`** by default;
+a `./garage.json` in the working directory overrides it for that project.
+
+Search order: `--config PATH` → `./garage.json` → `~/.garage.json`.
 
 ```bash
-garage config init            # create it (--user for ~/.config/garage/)
+garage config init --user     # create ~/.garage.json (omit --user for ./garage.json)
 garage config path            # which file is in use, and the search order
 garage config show --diff     # only the values that differ from defaults
 garage config schema          # the JSON Schema
@@ -98,7 +100,7 @@ exist, and an unknown key is an **error** rather than being silently ignored:
 
 ```json
 {
-  "$schema": "./garage.schema.json",
+  "$schema": "./.garage.schema.json",
   "database": { "url": "postgresql+psycopg:///rag", "hnsw_ef_search": 100 },
   "identity": {
     "name": "Your Name",
@@ -107,7 +109,7 @@ exist, and an unknown key is an **error** rather than being silently ignored:
   "embedding": { "default_model": "bge-m3", "batch_size": 64 },
   "chunking": { "size": 1000, "overlap": 150 },
   "placeholders": { "materialize": false, "limit": 2000 },
-  "cloud": { "enable_ocr": false, "api_key_file": "~/.config/garage/anthropic.key" },
+  "cloud": { "enable_ocr": false, "api_key_file": "~/.garage-anthropic.key" },
   "sources": [
     { "slug": "notes", "root": "~/Documents", "class": "document", "trust": "authored" }
   ]
@@ -132,9 +134,8 @@ The config file holds no secrets. `cloud.api_key_file` names a file containing
 your Anthropic key, which is read and passed to the client explicitly:
 
 ```bash
-mkdir -p ~/.config/garage && chmod 700 ~/.config/garage
-printf '%s' 'sk-ant-...' > ~/.config/garage/anthropic.key
-chmod 600 ~/.config/garage/anthropic.key
+printf '%s' 'sk-ant-...' > ~/.garage-anthropic.key
+chmod 600 ~/.garage-anthropic.key
 ```
 
 Then register the MCP server with a client:
@@ -153,7 +154,7 @@ existing entry of the same name is never overwritten without `--force`.
 
 The entry passes `--config` with an absolute path, so the server finds your
 settings regardless of the working directory the client launches it from. It
-references the file rather than copying values, so editing `garage.json` takes
+references the file rather than copying values, so editing `~/.garage.json` takes
 effect without re-installing — and **no environment variables are involved**:
 
 ```json
@@ -161,7 +162,7 @@ effect without re-installing — and **no environment variables are involved**:
   "mcpServers": {
     "garage-rag": {
       "command": "/path/to/garage/.venv/bin/garage",
-      "args": ["--config", "/path/to/garage/garage.json", "mcp-serve", "--stdio"]
+      "args": ["--config", "/Users/you/.garage.json", "mcp-serve", "--stdio"]
     }
   }
 }
