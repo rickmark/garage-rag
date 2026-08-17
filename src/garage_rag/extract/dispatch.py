@@ -127,10 +127,10 @@ def _xlsx(path: Path) -> ExtractResult:
     return extract_xlsx(path)
 
 
-def _image(path: Path) -> ExtractResult:
+def _image(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
     from .image import extract_image
 
-    return extract_image(path)
+    return extract_image(path, source_allows_cloud=source_allows_cloud)
 
 
 def extractor_for(path: Path) -> Extractor:
@@ -170,8 +170,12 @@ def is_indexable(path: Path) -> bool:
     return suffix in INDEXABLE_EXTENSIONS or (not suffix and path.name.lower() in NAMED_CODE_FILES)
 
 
-def extract(path: Path) -> ExtractResult:
+def extract(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
     """Extract text from ``path``.
+
+    ``source_allows_cloud`` is threaded through to the image extractor, which is
+    the only path that can escalate off-machine. It defaults to False so a caller
+    that forgets it fails closed.
 
     Raises :class:`ExtractionError` (or :class:`UnsupportedFile`) rather than
     returning empty results, so the pipeline can record *why* a document failed.
@@ -194,7 +198,11 @@ def extract(path: Path) -> ExtractResult:
             f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}"
         )
 
-    result = extractor_for(path)(path)
+    extractor = extractor_for(path)
+    if extractor is _image:
+        result = _image(path, source_allows_cloud=source_allows_cloud)
+    else:
+        result = extractor(path)
     if result.is_empty:
         raise ExtractionError(f"extractor {result.extractor} produced no text: {path}")
     return result

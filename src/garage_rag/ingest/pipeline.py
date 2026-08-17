@@ -203,7 +203,10 @@ def ingest_one(
 
     # --- step 2: extract ----------------------------------------------------
     try:
-        result = extract(candidate.path)
+        result = extract(
+            candidate.path,
+            source_allows_cloud=bool(source.allow_cloud_enrichment),
+        )
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
         if existing is not None:
