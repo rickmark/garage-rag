@@ -86,6 +86,38 @@ are capped per run by `GARAGE_MATERIALIZE_LIMIT` and
 `GARAGE_MATERIALIZE_MAX_BYTES`. Every run reports what it fetched and what it
 deferred; nothing is silently truncated.
 
+## Serving over HTTP
+
+The MCP server has **no authentication**. Over stdio that is fine: the client
+spawns it as a child process and nothing else can reach it. Over HTTP it is the
+whole security model, so three defences apply.
+
+**Loopback by default.** `mcp_host` is `127.0.0.1`. Binding anything else requires
+`--allow-remote`, and the refusal explains why rather than just erroring:
+
+```
+$ garage mcp-serve --http --host 0.0.0.0
+refusing to bind 0.0.0.0: this server has no authentication and exposes your
+entire corpus, including anything indexed from private communications.
+```
+
+**DNS-rebinding protection, always on.** Without it, a page you visit could
+resolve its own hostname to `127.0.0.1` and POST to your loopback server from
+your browser — reading your corpus without ever touching the network perimeter.
+The `Host` allowlist blocks it:
+
+```
+$ curl -H 'Host: evil.example.com' http://127.0.0.1:8787/mcp   # 421
+$ curl -H 'Host: 127.0.0.1:8787'   http://127.0.0.1:8787/mcp   # 200
+```
+
+Browser clients additionally need their origin allowed explicitly, with
+`--allow-origin https://example.com`.
+
+**No transport-level encryption.** Plain HTTP. Fine over loopback; if you expose
+it, terminate TLS and authenticate at a reverse proxy. Do not put this on a
+network you do not control.
+
 ## What is stored, and where
 
 Everything stays in your local Postgres `rag` database: extracted text in
