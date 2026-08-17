@@ -12,9 +12,15 @@ Search order, first match wins:
 3. ``~/.garage.json`` -- the default
 
 JSON cannot carry comments, so every field's documentation lives in the generated
-schema (``garage config schema``) and is referenced from the file's ``$schema``
-key. Editors then validate and describe fields inline, which is what the comments
-would have been for.
+schema, which every config references by URL through its ``$schema`` key. Editors
+then validate and describe fields inline, which is what the comments would have
+been for -- and because the reference is a URL rather than a path, a config in
+``$HOME`` needs no local schema copy beside it.
+
+The schema is generated from this module (``garage config schema``) and committed
+at the repository root so :data:`SCHEMA_URL` resolves. Regenerate it whenever a
+setting is added, renamed, or documented; a test fails if a field is left
+undescribed.
 
 Unknown keys are an **error**, not something ignored. A silently dropped typo in a
 config file is a bug you find hours later, wondering why a setting had no effect.
@@ -33,6 +39,14 @@ CONFIG_FILENAME = "garage.json"
 SCHEMA_FILENAME = "garage.schema.json"
 # The default lives in the home directory as a dotfile.
 USER_CONFIG_FILENAME = ".garage.json"
+
+# Published schema. Written into every config's ``$schema`` key so editors can
+# resolve it without a local copy -- which matters because the config lives in
+# $HOME while the schema is a build artifact of this repository.
+SCHEMA_URL = (
+    "https://raw.githubusercontent.com/rickmark/garage-rag/"
+    "refs/heads/main/garage.schema.json"
+)
 
 # Directory names that are never worth indexing. Skipping these at the walker
 # level is what keeps ~/Developer at ~18k documents instead of ~192k.
@@ -415,15 +429,13 @@ def default_config_path() -> Path:
     return Path.home() / USER_CONFIG_FILENAME
 
 
-def schema_path_for(config_path: Path) -> Path:
-    """Where the schema belongs relative to a config file.
+def repo_schema_path() -> Path:
+    """Where the schema is generated for publishing.
 
-    A dotted config gets a dotted schema, so ``~/.garage.json`` is accompanied by
-    ``~/.garage.schema.json`` rather than dropping a visible
-    ``garage.schema.json`` into the home directory.
+    Committed at the repository root so that :data:`SCHEMA_URL` resolves. This is
+    a build artifact, not something written next to a user's config.
     """
-    prefix = "." if config_path.name.startswith(".") else ""
-    return config_path.parent / f"{prefix}{SCHEMA_FILENAME}"
+    return repo_root() / SCHEMA_FILENAME
 
 
 def candidate_paths() -> list[Path]:
@@ -472,7 +484,7 @@ def nest(
     settings: Settings,
     *,
     include_defaults: bool = True,
-    schema_ref: str = f"./{SCHEMA_FILENAME}",
+    schema_ref: str = SCHEMA_URL,
 ) -> dict[str, Any]:
     """Flat Settings -> nested file layout."""
     defaults = Settings()
@@ -532,16 +544,12 @@ def load_config(path: Path | None = None, *, required: bool = False) -> Settings
 def save_config(settings: Settings, path: Path) -> None:
     """Write ``settings`` to ``path`` atomically.
 
-    The ``$schema`` reference names the sibling schema that :func:`schema_path_for`
-    would produce, so the two stay together whichever location is used.
+    ``$schema`` points at the published URL rather than a neighbouring file, so a
+    config in ``$HOME`` still validates in an editor with nothing else installed.
     """
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    schema_ref = f"./{schema_path_for(path).name}"
-    payload = (
-        json.dumps(nest(settings, schema_ref=schema_ref), indent=2, ensure_ascii=False)
-        + "\n"
-    )
+    payload = json.dumps(nest(settings), indent=2, ensure_ascii=False) + "\n"
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(payload, encoding="utf-8")
     temp.replace(path)

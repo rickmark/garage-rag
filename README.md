@@ -68,7 +68,7 @@ Optional cloud OCR fallback: `uv pip install -e '.[cloud]'`, then point
 ## Quick start
 
 ```bash
-garage config init --user     # writes ~/.garage.json + ~/.garage.schema.json
+garage config init --user     # writes ~/.garage.json
 # edit ~/.garage.json: set identity.name and identity.identities
 
 garage init-db                # apply schema, install extensions
@@ -91,7 +91,7 @@ Search order: `--config PATH` → `./garage.json` → `~/.garage.json`.
 garage config init --user     # create ~/.garage.json (omit --user for ./garage.json)
 garage config path            # which file is in use, and the search order
 garage config show --diff     # only the values that differ from defaults
-garage config schema          # the JSON Schema
+garage config schema          # print the JSON Schema (--publish to regenerate)
 garage config import-sources  # capture existing database sources into the file
 ```
 
@@ -100,7 +100,7 @@ exist, and an unknown key is an **error** rather than being silently ignored:
 
 ```json
 {
-  "$schema": "./.garage.schema.json",
+  "$schema": "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json",
   "database": { "url": "postgresql+psycopg:///rag", "hnsw_ef_search": 100 },
   "identity": {
     "name": "Your Name",
@@ -117,8 +117,26 @@ exist, and an unknown key is an **error** rather than being silently ignored:
 ```
 
 JSON has no comments, so **every field is documented in the generated schema**,
-which the file references via `$schema`. Editors that understand JSON Schema then
-validate keys and show each field's description inline.
+which each config references by URL:
+
+```
+https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json
+```
+
+A URL rather than a relative path, because the config lives in `$HOME` while the
+schema is a build artifact of this repository — a relative reference would dangle.
+Editors that understand JSON Schema fetch it, validate keys, and show each field's
+description inline.
+
+The schema is generated from the settings model and committed at the repo root, so
+it cannot drift from the code:
+
+```bash
+garage config schema --publish   # regenerate, then commit
+```
+
+A test fails if the committed schema no longer matches the code, or if any field
+is left undocumented.
 
 ### Declared sources
 

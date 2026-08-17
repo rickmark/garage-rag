@@ -14,6 +14,7 @@ import pytest
 
 from garage_rag.config import (
     CONFIG_FILENAME,
+    SCHEMA_URL,
     SECTIONS,
     USER_CONFIG_FILENAME,
     ConfigError,
@@ -184,11 +185,19 @@ class TestSaving:
         assert loaded.chunk_size == 321
         assert loaded.self_name == "Someone"
 
-    def test_saved_file_references_the_schema(self, tmp_path: Path) -> None:
-        """JSON has no comments, so the schema is where documentation lives."""
+    def test_saved_file_references_the_published_schema_url(self, tmp_path: Path) -> None:
+        """A URL, not a sibling path: the config lives in $HOME while the schema
+        is a build artifact of this repository, so a relative reference would
+        dangle."""
         path = tmp_path / CONFIG_FILENAME
         save_config(Settings(), path)
-        assert json.loads(path.read_text())["$schema"].endswith("garage.schema.json")
+        ref = json.loads(path.read_text())["$schema"]
+        assert ref == SCHEMA_URL
+        assert ref.startswith("https://")
+
+    def test_no_schema_file_is_written_beside_the_config(self, tmp_path: Path) -> None:
+        save_config(Settings(), tmp_path / USER_CONFIG_FILENAME)
+        assert list(tmp_path.iterdir()) == [tmp_path / USER_CONFIG_FILENAME]
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         path = tmp_path / "a" / "b" / CONFIG_FILENAME
@@ -357,23 +366,24 @@ class TestSchemaCompleteness:
         assert not undocumented, f"undocumented source fields: {undocumented}"
 
 
-class TestSchemaSibling:
-    def test_dotted_config_gets_a_dotted_schema(self, tmp_path: Path) -> None:
-        """~/.garage.json must not drop a visible garage.schema.json into $HOME."""
-        from garage_rag.config import schema_path_for
+class TestSchemaReference:
+    def test_url_points_at_the_committed_schema(self) -> None:
+        assert SCHEMA_URL.startswith(
+            "https://raw.githubusercontent.com/rickmark/garage-rag/"
+        )
+        assert SCHEMA_URL.endswith("/garage.schema.json")
 
-        assert schema_path_for(tmp_path / ".garage.json") == tmp_path / ".garage.schema.json"
+    def test_nest_uses_the_url_by_default(self) -> None:
+        assert nest(Settings())["$schema"] == SCHEMA_URL
 
-    def test_plain_config_gets_a_plain_schema(self, tmp_path: Path) -> None:
-        from garage_rag.config import schema_path_for
+    def test_committed_schema_matches_the_code(self) -> None:
+        """The published URL must serve what this code actually accepts.
 
-        assert schema_path_for(tmp_path / "garage.json") == tmp_path / "garage.schema.json"
+        If this fails, a setting was added or renamed without regenerating:
+        run `garage config schema --publish` and commit the result.
+        """
+        from garage_rag.config import repo_schema_path
 
-    def test_saved_schema_ref_matches_the_sibling(self, tmp_path: Path) -> None:
-        from garage_rag.config import schema_path_for
-
-        for name in ("garage.json", ".garage.json"):
-            path = tmp_path / name
-            save_config(Settings(), path)
-            ref = json.loads(path.read_text())["$schema"]
-            assert ref == f"./{schema_path_for(path).name}"
+        path = repo_schema_path()
+        assert path.is_file(), f"{path} is missing; run 'garage config schema --publish'"
+        assert json.loads(path.read_text()) == json_schema()

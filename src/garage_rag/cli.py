@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from .config import (
     CONFIG_FILENAME,
+    SCHEMA_URL,
     USER_CONFIG_FILENAME,
     ConfigError,
     Settings,
@@ -23,8 +24,8 @@ from .config import (
     json_schema,
     load_config,
     nest,
+    repo_schema_path,
     save_config,
-    schema_path_for,
     set_settings,
 )
 from .db.emb_tables import (
@@ -122,14 +123,11 @@ def config_init(
         settings, migrated = _settings_from_env_file(from_env.expanduser())
 
     save_config(settings, target)
-    # Ship the schema next to it: JSON has no comments, so the schema is where
-    # every field's documentation lives.
-    # Dotted config -> dotted schema, so a dotfile does not get a visible sibling.
-    schema_path = schema_path_for(target)
-    schema_path.write_text(json.dumps(json_schema(), indent=2) + "\n", encoding="utf-8")
 
     console.print(f"[green]wrote[/green] {target}")
-    console.print(f"[green]wrote[/green] {schema_path} [dim](field documentation)[/dim]")
+    # No schema file is written beside the config: `$schema` names the published
+    # URL, so editors resolve field documentation without a local copy.
+    console.print(f"  [dim]$schema -> {SCHEMA_URL}[/dim]")
     if migrated:
         console.print(f"  migrated {len(migrated)} settings: {', '.join(migrated[:8])}")
         if len(migrated) > 8:
@@ -242,18 +240,8 @@ def config_show(
     """Print the effective configuration."""
     settings = get_settings()
     origin = settings.config_path or "(defaults; no file found)"
-    # Reflect the schema that actually sits beside this file, not the generic one.
-    schema_ref = (
-        f"./{schema_path_for(settings.config_path).name}"
-        if settings.config_path
-        else f"./{CONFIG_FILENAME.replace('.json', '.schema.json')}"
-    )
     console.print(f"[dim]loaded from: {origin}[/dim]")
-    console.print(
-        json.dumps(
-            nest(settings, include_defaults=defaults, schema_ref=schema_ref), indent=2
-        )
-    )
+    console.print(json.dumps(nest(settings, include_defaults=defaults), indent=2))
 
 
 @config_app.command("path")
@@ -272,15 +260,28 @@ def config_schema(
     path: Annotated[
         Path | None, typer.Option("--path", help="Write here instead of stdout.")
     ] = None,
+    publish: Annotated[
+        bool,
+        typer.Option(
+            "--publish",
+            help="Write to the repository root, where it is committed and served from.",
+        ),
+    ] = False,
 ) -> None:
-    """Emit the JSON Schema describing the config file."""
+    """Emit the JSON Schema describing the config file.
+
+    Use --publish after adding or renaming a setting, then commit the result so
+    the URL in every config's $schema stays accurate.
+    """
     payload = json.dumps(json_schema(), indent=2) + "\n"
-    if path is None:
+    target = path.expanduser() if path else (repo_schema_path() if publish else None)
+    if target is None:
         console.print_json(payload)
         return
-    target = path.expanduser()
     target.write_text(payload, encoding="utf-8")
     console.print(f"[green]wrote[/green] {target}")
+    if publish:
+        console.print(f"  [dim]commit it so {SCHEMA_URL} resolves[/dim]")
 
 
 @app.command()

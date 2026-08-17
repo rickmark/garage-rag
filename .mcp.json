@@ -1,10 +1,8 @@
 {
   "mcpServers": {
     "garage-rag": {
-      "command": "/Users/rickmark/garage/.venv/bin/garage",
+      "command": "garage",
       "args": [
-        "--config",
-        "/Users/rickmark/.garage.json",
         "mcp-serve",
         "--stdio"
       ]

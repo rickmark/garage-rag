@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server import MCPServer
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from sqlalchemy import text
 
 from ..db.emb_tables import list_models
@@ -48,6 +48,37 @@ _HOME = str(Path.home())
 
 def _tidy(uri: str) -> str:
     return uri.replace(_HOME, "~") if uri.startswith(_HOME) else uri
+
+
+def _as_list(value: object) -> object:
+    """Accept a single value where a list is expected.
+
+    ``{"trust": "reference"}`` is how a person -- and a language model -- writes a
+    single filter, but a bare ``list[...]`` annotation rejects it with
+    "Input should be a valid list". Coercing here, and advertising both shapes in
+    the schema below, makes the obvious spelling work instead of failing the whole
+    call over a pair of brackets.
+    """
+    if isinstance(value, str):
+        return [value]
+    return value
+
+
+# Filter parameters accept either one value or several. The union is what puts
+# both shapes in the published input schema; the validator normalizes them.
+ClassFilter = Annotated[
+    list[Literal["document", "code", "communication"]]
+    | Literal["document", "code", "communication"]
+    | None,
+    BeforeValidator(_as_list),
+]
+TrustFilter = Annotated[
+    list[Literal["authored", "reference", "received"]]
+    | Literal["authored", "reference", "received"]
+    | None,
+    BeforeValidator(_as_list),
+]
+SourceFilter = Annotated[list[str] | str | None, BeforeValidator(_as_list)]
 
 
 # ---------------------------------------------------------------------------
@@ -167,27 +198,29 @@ def rag_search(
         ),
     ] = "hybrid",
     corpus_class: Annotated[
-        list[Literal["document", "code", "communication"]] | None,
+        ClassFilter,
         Field(
             description=(
                 "Restrict by what the resource is. 'document' is prose, 'code' is "
-                "source and config, 'communication' is messages and mail."
+                "source and config, 'communication' is messages and mail. "
+                "Accepts one value or a list."
             )
         ),
     ] = None,
     trust: Annotated[
-        list[Literal["authored", "reference", "received"]] | None,
+        TrustFilter,
         Field(
             description=(
                 "Restrict by provenance. 'authored' is what the corpus owner "
                 "wrote, 'reference' is external QA'ed material, 'received' is "
                 "what others sent them. Use 'authored' for questions about the "
-                "owner's own conclusions."
+                "owner's own conclusions. Accepts one value or a list."
             )
         ),
     ] = None,
     source: Annotated[
-        list[str] | None, Field(description="Restrict to these source slugs.")
+        SourceFilter,
+        Field(description="Restrict to these source slugs. Accepts one value or a list."),
     ] = None,
     author: Annotated[
         str | None, Field(description="Restrict to documents by this author (substring match).")
