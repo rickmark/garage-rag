@@ -23,9 +23,11 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from pgvector import HalfVector
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 from sqlalchemy.orm import Session
-
+from pgvector.psycopg import register_vector
+from pgvector.sqlalchemy import VECTOR
+from sqlalchemy import cast
 from ..db.emb_tables import assert_safe_table, get_model
 from ..db.engine import apply_search_tuning
 from ..embed.ollama import OllamaEmbedder
@@ -173,8 +175,7 @@ def search(
         params["author"] = f"%{author}%"
 
     need_vector = mode in ("hybrid", "vector")
-    if need_vector:
-        params["qv"], _plan = _embed_query(model, query)
+
 
     # Each CTE is included only when its engine is in play, so `--mode fts`
     # never loads an embedding model and `--mode vector` never parses a tsquery.
@@ -259,6 +260,10 @@ def search(
         LIMIT :limit
         """
     )
+
+    if need_vector:
+        params['qv'], _plan = _embed_query(model, query)
+        sql = sql.bindparams(bindparam('qv', type_=VECTOR))
 
     rows = session.execute(sql, params).mappings().all()
     return [

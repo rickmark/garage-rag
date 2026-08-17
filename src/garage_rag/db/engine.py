@@ -14,7 +14,7 @@ from contextlib import contextmanager
 
 import psycopg
 from pgvector.psycopg import register_vector
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, text, Pool
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
@@ -40,6 +40,13 @@ def get_engine() -> Engine:
         max_overflow=5,
         future=True,
     )
+
+    @event.listens_for(Pool, "connect")
+    def _receive_connect(dbapi_connection, connection_record):
+        try:
+            register_vector(dbapi_connection)
+        except psycopg.ProgrammingError:
+            log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
 
     @event.listens_for(engine, "connect")
     def _register_vector(dbapi_connection, _record) -> None:  # noqa: ANN001
