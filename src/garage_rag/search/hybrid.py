@@ -99,10 +99,13 @@ def _filter_clause(
 ) -> str:
     """SQL fragment shared by both engines, so filtering precedes fusion."""
     parts = ["d.state = 'ok'"]
+    # CAST(... AS ...) rather than the `::` shorthand: SQLAlchemy's text() reads
+    # `:trust_tiers::trust_tier[]` as a bind parameter named `trust_tier`, so the
+    # real parameter is never bound and the statement fails to parse.
     if corpus_classes:
-        parts.append("d.corpus_class = ANY(:corpus_classes::corpus_class[])")
+        parts.append("d.corpus_class = ANY(CAST(:corpus_classes AS corpus_class[]))")
     if trust_tiers:
-        parts.append("d.trust_tier = ANY(:trust_tiers::trust_tier[])")
+        parts.append("d.trust_tier = ANY(CAST(:trust_tiers AS trust_tier[]))")
     if sources:
         parts.append("s.slug = ANY(:sources)")
     if author:

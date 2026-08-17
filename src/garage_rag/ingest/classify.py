@@ -69,21 +69,33 @@ def classify(
     if kind is ContentKind.CONVERSATION or source_default is CorpusClass.COMMUNICATION:
         return CorpusClass.COMMUNICATION
 
-    suffix = path.suffix.lower()
-    stem = path.stem.lower()
-
-    # Prose inside a code tree stays prose.
-    if suffix in _DOC_EXTENSIONS_IN_CODE_TREES or stem in _DOC_STEMS:
+    if _is_documentation_file(path):
         return CorpusClass.DOCUMENT
 
     return class_for_content_kind(kind)
+
+
+def _is_documentation_file(path: Path) -> bool:
+    """Whether a path is documentation rather than code.
+
+    The stem check (README, LICENSE, SECURITY...) applies only when the
+    extension is not itself a code extension. Otherwise ``security.rb`` and
+    ``license.py`` would be misread as prose purely because of their names.
+    """
+    from ..extract.dispatch import CODE_EXTENSIONS
+
+    suffix = path.suffix.lower()
+    if suffix in _DOC_EXTENSIONS_IN_CODE_TREES:
+        return True
+    if suffix in CODE_EXTENSIONS:
+        return False
+    return path.stem.lower() in _DOC_STEMS
 
 
 def is_code_path(path: Path) -> bool:
     """Whether a path would classify as code. Used by the walker's filters."""
     from ..extract.dispatch import CODE_EXTENSIONS
 
-    suffix = path.suffix.lower()
-    if suffix in _DOC_EXTENSIONS_IN_CODE_TREES or path.stem.lower() in _DOC_STEMS:
+    if _is_documentation_file(path):
         return False
-    return suffix in CODE_EXTENSIONS
+    return path.suffix.lower() in CODE_EXTENSIONS

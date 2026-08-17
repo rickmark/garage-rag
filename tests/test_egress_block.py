@@ -78,12 +78,14 @@ class TestChokepoint:
     def _imports_anthropic(path: Path) -> bool:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                if any(a.name.split(".")[0] == "anthropic" for a in node.names):
-                    return True
-            elif isinstance(node, ast.ImportFrom):
-                if (node.module or "").split(".")[0] == "anthropic":
-                    return True
+            if isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] == "anthropic" for a in node.names
+            ):
+                return True
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[
+                0
+            ] == "anthropic":
+                return True
         return False
 
     def test_only_egress_module_imports_anthropic(self) -> None:

@@ -131,6 +131,26 @@ class TestCorpusClassification:
         assert is_code_path(Path("/r/x.swift"))
         assert not is_code_path(Path("/r/x.md"))
 
+    @pytest.mark.parametrize(
+        "name", ["security.rb", "license.py", "changelog.js", "authors.go", "readme.ts"]
+    )
+    def test_doc_stem_does_not_override_code_extension(self, name: str) -> None:
+        """Regression: a source file named `security.rb` is code, not prose.
+
+        The documentation-stem list exists for SECURITY.md and LICENSE, but
+        applying it before the extension check misfiled real source files as
+        documents, which then bypassed the code filter entirely.
+        """
+        path = Path("/r/app") / name
+        assert classify(path, ContentKind.CODE) is CorpusClass.CODE
+        assert is_code_path(path)
+
+    @pytest.mark.parametrize("name", ["SECURITY.md", "README.md", "LICENSE", "CHANGELOG"])
+    def test_documentation_names_still_documents(self, name: str) -> None:
+        path = Path("/r/app") / name
+        assert classify(path, ContentKind.MARKDOWN) is CorpusClass.DOCUMENT
+        assert not is_code_path(path)
+
 
 class TestToolNameFiltering:
     @pytest.mark.parametrize(
