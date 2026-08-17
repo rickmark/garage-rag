@@ -62,21 +62,79 @@ uv venv --python 3.14
 uv pip install -e '.[dev]'
 ```
 
-Optional cloud OCR fallback: `uv pip install -e '.[cloud]'` and set
-`ANTHROPIC_API_KEY`.
+Optional cloud OCR fallback: `uv pip install -e '.[cloud]'`, then point
+`cloud.api_key_file` at a file holding your Anthropic key.
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # then edit: set GARAGE_SELF_NAME and identities
+garage config init            # writes garage.json + garage.schema.json
+# edit garage.json: set identity.name and identity.identities
 
 garage init-db                # apply schema, install extensions
 garage register-model bge-m3  # creates emb_bge_m3 + HNSW index
 
-garage add-source notes ~/Documents --class document --trust authored
+garage sync                   # apply sources declared in garage.json
 garage ingest --source notes  # documents only; add --include-code for source
 garage backfill               # embed anything not yet embedded
 garage search "what did I conclude about boot security"
+```
+
+## Configuration
+
+One file, no environment variables. Search order: `--config PATH`, then
+`./garage.json`, then `~/.config/garage/garage.json`.
+
+```bash
+garage config init            # create it (--user for ~/.config/garage/)
+garage config path            # which file is in use, and the search order
+garage config show --diff     # only the values that differ from defaults
+garage config schema          # the JSON Schema
+garage config import-sources  # capture existing database sources into the file
+```
+
+The file is nested by area; the fields it accepts are exactly the settings that
+exist, and an unknown key is an **error** rather than being silently ignored:
+
+```json
+{
+  "$schema": "./garage.schema.json",
+  "database": { "url": "postgresql+psycopg:///rag", "hnsw_ef_search": 100 },
+  "identity": {
+    "name": "Your Name",
+    "identities": ["git_email:you@example.com", "email:you@example.com"]
+  },
+  "embedding": { "default_model": "bge-m3", "batch_size": 64 },
+  "chunking": { "size": 1000, "overlap": 150 },
+  "placeholders": { "materialize": false, "limit": 2000 },
+  "cloud": { "enable_ocr": false, "api_key_file": "~/.config/garage/anthropic.key" },
+  "sources": [
+    { "slug": "notes", "root": "~/Documents", "class": "document", "trust": "authored" }
+  ]
+}
+```
+
+JSON has no comments, so **every field is documented in the generated schema**,
+which the file references via `$schema`. Editors that understand JSON Schema then
+validate keys and show each field's description inline.
+
+### Declared sources
+
+Sources can live in the config (`garage sync` applies them) or be added ad-hoc
+with `garage add-source`. Anything declared in the file is authoritative and
+re-applied on every `sync`. A source present only in the database is **reported
+but never deleted** — removing a line from a config file should not discard
+indexed documents.
+
+### Credentials
+
+The config file holds no secrets. `cloud.api_key_file` names a file containing
+your Anthropic key, which is read and passed to the client explicitly:
+
+```bash
+mkdir -p ~/.config/garage && chmod 700 ~/.config/garage
+printf '%s' 'sk-ant-...' > ~/.config/garage/anthropic.key
+chmod 600 ~/.config/garage/anthropic.key
 ```
 
 Then register the MCP server with a client:
@@ -93,16 +151,17 @@ The config is **merged**, not replaced: other servers and unrelated top-level
 keys survive, the previous file is backed up, and the write is atomic. An
 existing entry of the same name is never overwritten without `--force`.
 
-The entry points at your `.env` via `GARAGE_ENV_FILE` rather than copying its
-values, so editing `.env` takes effect without re-installing:
+The entry passes `--config` with an absolute path, so the server finds your
+settings regardless of the working directory the client launches it from. It
+references the file rather than copying values, so editing `garage.json` takes
+effect without re-installing — and **no environment variables are involved**:
 
 ```json
 {
   "mcpServers": {
     "garage-rag": {
-      "command": "/path/to/garage/.venv/bin/garage-mcp",
-      "args": [],
-      "env": { "GARAGE_ENV_FILE": "/path/to/garage/.env" }
+      "command": "/path/to/garage/.venv/bin/garage",
+      "args": ["--config", "/path/to/garage/garage.json", "mcp-serve", "--stdio"]
     }
   }
 }
@@ -192,10 +251,12 @@ Placeholders are detected (`com.dropbox.placeholder` xattr, `SF_DATALESS` flag,
 `.name.icloud` sidecars) and reported distinctly from genuinely empty files.
 Downloading them is opt-in and metered:
 
-```bash
-GARAGE_MATERIALIZE_PLACEHOLDERS=true
-GARAGE_MATERIALIZE_LIMIT=2000          # files per run
-GARAGE_MATERIALIZE_MAX_BYTES=21474836480
+```json
+"placeholders": {
+  "materialize": true,
+  "limit": 2000,
+  "max_bytes": 21474836480
+}
 ```
 
 Hitting the cap is not a failure. Because ingest is idempotent, repeated bounded
@@ -215,7 +276,7 @@ Three defences, in order of reliability:
 2. **Content heuristics** (`extract/quality.py`) — line-shape repetition,
    timestamp prefixes, hex/base64 density. Requires corroboration before
    rejecting, and is validated at zero false positives on real prose.
-3. **`max_chunks_per_document`** — no single document may dominate the index.
+3. **`quality.max_chunks_per_document`** — no single document may dominate the index.
 
 Measured effect on `~/Developer`: 39,281 documents / 707,917 chunks →
 4,577 / 60,748.

@@ -8,8 +8,8 @@ schema generation, so the three can never disagree.
 Search order, first match wins:
 
 1. ``--config PATH`` passed explicitly
-2. ``./garage.json``
-3. ``~/.config/garage/garage.json``
+2. ``./garage.json`` -- a project-local override
+3. ``~/.garage.json`` -- the default
 
 JSON cannot carry comments, so every field's documentation lives in the generated
 schema (``garage config schema``) and is referenced from the file's ``$schema``
@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 CONFIG_FILENAME = "garage.json"
 SCHEMA_FILENAME = "garage.schema.json"
+# The default lives in the home directory as a dotfile.
+USER_CONFIG_FILENAME = ".garage.json"
 
 # Directory names that are never worth indexing. Skipping these at the walker
 # level is what keeps ~/Developer at ~18k documents instead of ~192k.
@@ -164,8 +166,17 @@ class Settings(BaseModel):
     )
 
     # ---- embeddings -----------------------------------------------------
-    ollama_host: str = Field(default="http://localhost:11434")
-    default_embedding_model: str = Field(default="bge-m3")
+    ollama_host: str = Field(
+        default="http://localhost:11434",
+        description="Base URL of the Ollama server that produces embeddings.",
+    )
+    default_embedding_model: str = Field(
+        default="bge-m3",
+        description=(
+            "Slug of the model used when a command does not name one. Must be "
+            "registered with 'garage register-model' first."
+        ),
+    )
     embed_batch_size: int = Field(
         default=64, description="Chunks per embedding request."
     )
@@ -178,10 +189,23 @@ class Settings(BaseModel):
     )
 
     # ---- chunking -------------------------------------------------------
-    chunk_size: int = Field(default=1000)
-    chunk_overlap: int = Field(default=150)
-    code_chunk_size: int = Field(default=1200)
-    code_chunk_overlap: int = Field(default=100)
+    chunk_size: int = Field(
+        default=1000, description="Target characters per prose chunk."
+    )
+    chunk_overlap: int = Field(
+        default=150,
+        description=(
+            "Characters repeated between adjacent prose chunks, so a sentence "
+            "spanning a boundary is still retrievable."
+        ),
+    )
+    code_chunk_size: int = Field(
+        default=1200,
+        description="Target characters per code chunk. Larger, to keep functions intact.",
+    )
+    code_chunk_overlap: int = Field(
+        default=100, description="Characters repeated between adjacent code chunks."
+    )
     comms_window_minutes: int = Field(
         default=30,
         description=(
@@ -189,7 +213,10 @@ class Settings(BaseModel):
             "Individual messages are too short to embed usefully."
         ),
     )
-    comms_window_messages: int = Field(default=20)
+    comms_window_messages: int = Field(
+        default=20,
+        description="Also close a conversation window after this many messages.",
+    )
 
     # ---- cloud placeholders ---------------------------------------------
     materialize_placeholders: bool = Field(
@@ -206,7 +233,13 @@ class Settings(BaseModel):
     materialize_max_bytes: int = Field(
         default=20 * 1024**3, description="Byte budget per run; 0 means unlimited."
     )
-    materialize_timeout_seconds: float = Field(default=120.0)
+    materialize_timeout_seconds: float = Field(
+        default=120.0,
+        description=(
+            "Give up on a single download that never arrives. A stalled provider "
+            "cannot be cancelled, so this stops it blocking the run."
+        ),
+    )
 
     # ---- MCP server -----------------------------------------------------
     mcp_host: str = Field(
@@ -216,8 +249,10 @@ class Settings(BaseModel):
             "whole corpus, so a non-loopback address needs --allow-remote."
         ),
     )
-    mcp_port: int = Field(default=8787)
-    mcp_http_path: str = Field(default="/mcp")
+    mcp_port: int = Field(default=8787, description="Port for the HTTP transport.")
+    mcp_http_path: str = Field(
+        default="/mcp", description="HTTP route the MCP endpoint is served on."
+    )
 
     # ---- quality guards -------------------------------------------------
     max_chunks_per_document: int = Field(
@@ -230,7 +265,10 @@ class Settings(BaseModel):
     )
 
     # ---- extraction -----------------------------------------------------
-    max_file_bytes: int = Field(default=64 * 1024 * 1024)
+    max_file_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        description="Skip files larger than this; usually archives or disk images.",
+    )
     pdf_min_chars_per_page: int = Field(
         default=32,
         description="Below this, escalate a PDF page from pypdf to pdfplumber.",
@@ -239,7 +277,13 @@ class Settings(BaseModel):
         default=60.0,
         description="Mean Tesseract word confidence below which cloud OCR is considered.",
     )
-    ocr_min_chars: int = Field(default=16)
+    ocr_min_chars: int = Field(
+        default=16,
+        description=(
+            "Below this many characters an image is treated as having no text. "
+            "Most images in a source tree are icons."
+        ),
+    )
     extract_workers: int = Field(
         default=10,
         description="Extraction worker processes. Leave headroom for Postgres and Ollama.",
@@ -250,8 +294,13 @@ class Settings(BaseModel):
         default=False,
         description="Allow the Claude vision fallback for unreadable images.",
     )
-    cloud_ocr_model: str = Field(default="claude-opus-4-8")
-    cloud_ocr_max_images: int = Field(default=500)
+    cloud_ocr_model: str = Field(
+        default="claude-opus-4-8",
+        description="Model used for the vision OCR fallback.",
+    )
+    cloud_ocr_max_images: int = Field(
+        default=500, description="Cap on images escalated to the cloud per run."
+    )
     api_key_file: str | None = Field(
         default=None,
         description=(
@@ -362,8 +411,19 @@ class ConfigError(Exception):
 
 
 def default_config_path() -> Path:
-    """The user-level location, used when no project file exists."""
-    return Path.home() / ".config" / "garage" / CONFIG_FILENAME
+    """The default location: ``~/.garage.json``."""
+    return Path.home() / USER_CONFIG_FILENAME
+
+
+def schema_path_for(config_path: Path) -> Path:
+    """Where the schema belongs relative to a config file.
+
+    A dotted config gets a dotted schema, so ``~/.garage.json`` is accompanied by
+    ``~/.garage.schema.json`` rather than dropping a visible
+    ``garage.schema.json`` into the home directory.
+    """
+    prefix = "." if config_path.name.startswith(".") else ""
+    return config_path.parent / f"{prefix}{SCHEMA_FILENAME}"
 
 
 def candidate_paths() -> list[Path]:
@@ -408,10 +468,15 @@ def flatten(document: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
-def nest(settings: Settings, *, include_defaults: bool = True) -> dict[str, Any]:
+def nest(
+    settings: Settings,
+    *,
+    include_defaults: bool = True,
+    schema_ref: str = f"./{SCHEMA_FILENAME}",
+) -> dict[str, Any]:
     """Flat Settings -> nested file layout."""
     defaults = Settings()
-    document: dict[str, Any] = {"$schema": f"./{SCHEMA_FILENAME}"}
+    document: dict[str, Any] = {"$schema": schema_ref}
 
     for section, mapping in SECTIONS.items():
         body: dict[str, Any] = {}
@@ -465,10 +530,18 @@ def load_config(path: Path | None = None, *, required: bool = False) -> Settings
 
 
 def save_config(settings: Settings, path: Path) -> None:
-    """Write ``settings`` to ``path`` atomically."""
+    """Write ``settings`` to ``path`` atomically.
+
+    The ``$schema`` reference names the sibling schema that :func:`schema_path_for`
+    would produce, so the two stay together whichever location is used.
+    """
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(nest(settings), indent=2, ensure_ascii=False) + "\n"
+    schema_ref = f"./{schema_path_for(path).name}"
+    payload = (
+        json.dumps(nest(settings, schema_ref=schema_ref), indent=2, ensure_ascii=False)
+        + "\n"
+    )
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(payload, encoding="utf-8")
     temp.replace(path)
@@ -499,7 +572,7 @@ def json_schema() -> dict[str, Any]:
             info = fields[name]
             annotation = info.annotation
             entry: dict[str, Any] = {}
-            if annotation is list[str]:
+            if annotation == list[str]:
                 entry["type"] = "array"
                 entry["items"] = {"type": "string"}
             elif annotation in type_map:

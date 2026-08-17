@@ -12,7 +12,21 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import text
 
-from .config import get_settings
+from .config import (
+    CONFIG_FILENAME,
+    USER_CONFIG_FILENAME,
+    ConfigError,
+    Settings,
+    candidate_paths,
+    default_config_path,
+    get_settings,
+    json_schema,
+    load_config,
+    nest,
+    save_config,
+    schema_path_for,
+    set_settings,
+)
 from .db.emb_tables import (
     drop_model,
     get_model,
@@ -41,8 +55,324 @@ def _setup_logging(verbose: bool) -> None:
 
 
 @app.callback()
-def main(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> None:
+def main(
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help=(
+                f"Config file. Default: ./{CONFIG_FILENAME}, "
+                f"then ~/{USER_CONFIG_FILENAME}."
+            ),
+        ),
+    ] = None,
+) -> None:
     _setup_logging(verbose)
+    try:
+        set_settings(load_config(config))
+    except ConfigError as exc:
+        console.print(f"[red]config error[/red]: {exc}")
+        raise typer.Exit(code=2) from None
+
+    # A leftover .env is worse than no .env: it looks like configuration and has
+    # no effect. Say so rather than letting someone edit it for an hour.
+    legacy = Path.cwd() / ".env"
+    if legacy.is_file():
+        console.print(
+            f"[yellow]note[/yellow]: {legacy.name} is no longer read. Migrate it "
+            f"with 'garage config init --from-env {legacy.name}', then delete it."
+        )
+
+
+# ---------------------------------------------------------------------------
+# configuration
+# ---------------------------------------------------------------------------
+config_app = typer.Typer(help="Inspect and create the configuration file.", no_args_is_help=True)
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("init")
+def config_init(
+    path: Annotated[
+        Path | None, typer.Option("--path", help=f"Where to write. Default ./{CONFIG_FILENAME}.")
+    ] = None,
+    user: Annotated[
+        bool,
+        typer.Option("--user", help=f"Write to ~/{USER_CONFIG_FILENAME} instead of the project."),
+    ] = False,
+    from_env: Annotated[
+        Path | None,
+        typer.Option("--from-env", help="Migrate settings from a legacy .env file."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+) -> None:
+    """Write a configuration file with every setting at its default."""
+    target = path or (default_config_path() if user else Path.cwd() / CONFIG_FILENAME)
+    target = target.expanduser()
+
+    if target.exists() and not force:
+        console.print(f"[yellow]{target} already exists[/yellow]; pass --force to overwrite")
+        raise typer.Exit(code=1)
+
+    settings = Settings()
+    migrated: list[str] = []
+    if from_env is not None:
+        settings, migrated = _settings_from_env_file(from_env.expanduser())
+
+    save_config(settings, target)
+    # Ship the schema next to it: JSON has no comments, so the schema is where
+    # every field's documentation lives.
+    # Dotted config -> dotted schema, so a dotfile does not get a visible sibling.
+    schema_path = schema_path_for(target)
+    schema_path.write_text(json.dumps(json_schema(), indent=2) + "\n", encoding="utf-8")
+
+    console.print(f"[green]wrote[/green] {target}")
+    console.print(f"[green]wrote[/green] {schema_path} [dim](field documentation)[/dim]")
+    if migrated:
+        console.print(f"  migrated {len(migrated)} settings: {', '.join(migrated[:8])}")
+        if len(migrated) > 8:
+            console.print(f"  ...and {len(migrated) - 8} more")
+    if not settings.self_name:
+        console.print(
+            "\n[yellow]next[/yellow]: set [cyan]identity.name[/cyan] and "
+            "[cyan]identity.identities[/cyan] so your own writing can be told "
+            "apart from reference material"
+        )
+
+
+def _settings_from_env_file(path: Path) -> tuple[Settings, list[str]]:
+    """Translate a legacy GARAGE_* .env file into settings.
+
+    Kept so upgrading does not silently lose a configured identity, which is the
+    one setting that cannot be re-derived.
+    """
+    if not path.is_file():
+        raise typer.BadParameter(f"{path} does not exist", param_hint="--from-env")
+
+    # Legacy env name -> flat field. Only the names that ever existed.
+    legacy = {f"GARAGE_{name.upper()}": name for name in Settings.model_fields}
+    values: dict[str, object] = {}
+    migrated: list[str] = []
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, raw = stripped.partition("=")
+        field = legacy.get(key.strip())
+        if field is None:
+            continue
+        raw = raw.strip().strip('"').strip("'")
+        annotation = Settings.model_fields[field].annotation
+        try:
+            if annotation is bool:
+                values[field] = raw.lower() in {"1", "true", "yes", "on"}
+            elif annotation is int:
+                values[field] = int(raw)
+            elif annotation is float:
+                values[field] = float(raw)
+            elif annotation == list[str]:
+                values[field] = json.loads(raw)
+            else:
+                values[field] = raw
+        except (ValueError, json.JSONDecodeError):
+            console.print(f"  [yellow]skipped[/yellow] {key}: cannot parse {raw!r}")
+            continue
+        migrated.append(field)
+
+    return Settings(**values), migrated
+
+
+@config_app.command("import-sources")
+def config_import_sources(
+    path: Annotated[
+        Path | None, typer.Option("--path", help="Config file to update. Default: the one in use.")
+    ] = None,
+) -> None:
+    """Copy the database's sources into the config file.
+
+    Useful once, when moving from `add-source` to declared sources: it captures
+    what already exists so the file becomes the source of truth without you
+    retyping it.
+    """
+    from .config import SourceSpec
+
+    settings = get_settings()
+    target = (path or settings.config_path or (Path.cwd() / CONFIG_FILENAME)).expanduser()
+
+    with session_scope() as session:
+        rows = session.query(Source).order_by(Source.slug).all()
+        existing = {spec.slug for spec in settings.sources}
+        added: list[str] = []
+        for row in rows:
+            if row.slug in existing:
+                continue
+            settings.sources.append(
+                SourceSpec(
+                    slug=row.slug,
+                    root=str(row.root),
+                    kind=row.kind,
+                    **{"class": str(row.default_class)},
+                    trust=str(row.default_trust),
+                    include_code=bool((row.config or {}).get("include_code", False)),
+                    allow_cloud_enrichment=bool(row.allow_cloud_enrichment),
+                    enabled=bool(row.enabled),
+                )
+            )
+            added.append(row.slug)
+
+    if not added:
+        console.print("[green]config already lists every database source[/green]")
+        return
+
+    save_config(settings, target)
+    console.print(f"[green]added {len(added)} sources[/green] to {target}")
+    for slug in added:
+        console.print(f"  {slug}")
+
+
+@config_app.command("show")
+def config_show(
+    defaults: Annotated[
+        bool, typer.Option("--defaults/--diff", help="Show all values, or only overrides.")
+    ] = True,
+) -> None:
+    """Print the effective configuration."""
+    settings = get_settings()
+    origin = settings.config_path or "(defaults; no file found)"
+    console.print(f"[dim]loaded from: {origin}[/dim]")
+    console.print(json.dumps(nest(settings, include_defaults=defaults), indent=2))
+
+
+@config_app.command("path")
+def config_path_cmd() -> None:
+    """Show which config file is in use, and the search order."""
+    settings = get_settings()
+    console.print(f"in use : {settings.config_path or '[yellow](none)[/yellow]'}")
+    console.print("search order:")
+    for candidate in candidate_paths():
+        mark = "[green]found[/green]" if candidate.is_file() else "[dim]absent[/dim]"
+        console.print(f"  {mark}  {candidate}")
+
+
+@config_app.command("schema")
+def config_schema(
+    path: Annotated[
+        Path | None, typer.Option("--path", help="Write here instead of stdout.")
+    ] = None,
+) -> None:
+    """Emit the JSON Schema describing the config file."""
+    payload = json.dumps(json_schema(), indent=2) + "\n"
+    if path is None:
+        console.print_json(payload)
+        return
+    target = path.expanduser()
+    target.write_text(payload, encoding="utf-8")
+    console.print(f"[green]wrote[/green] {target}")
+
+
+@app.command()
+def sync(
+    apply: Annotated[
+        bool, typer.Option("--apply/--dry-run", help="Write changes to the database.")
+    ] = True,
+) -> None:
+    """Apply sources declared in the config file to the database.
+
+    Declared sources win: each is created or updated to match the file. Sources
+    that exist only in the database are reported but never deleted, since that
+    would discard indexed documents on the strength of an edit.
+    """
+    settings = get_settings()
+    if not settings.sources:
+        console.print(
+            "[yellow]no sources declared[/yellow] in "
+            f"{settings.config_path or 'the config file'}"
+        )
+        return
+
+    created: list[str] = []
+    updated: list[str] = []
+    with session_scope() as session:
+        declared = {spec.slug for spec in settings.sources}
+        for spec in settings.sources:
+            klass = CorpusClass(spec.corpus_class)
+            tier = TrustTier(spec.trust)
+            if klass is CorpusClass.COMMUNICATION and spec.allow_cloud_enrichment:
+                console.print(
+                    f"[red]{spec.slug}[/red]: communication sources may never "
+                    "enable cloud enrichment"
+                )
+                raise typer.Exit(code=1)
+
+            row = session.query(Source).filter_by(slug=spec.slug).one_or_none()
+            if row is None:
+                if apply:
+                    session.add(
+                        Source(
+                            slug=spec.slug,
+                            kind=spec.kind,
+                            root=str(spec.expanded_root),
+                            default_class=klass,
+                            default_trust=tier,
+                            allow_cloud_enrichment=spec.allow_cloud_enrichment,
+                            enabled=spec.enabled,
+                            config={"include_code": spec.include_code},
+                        )
+                    )
+                created.append(spec.slug)
+                continue
+
+            changes = (
+                row.kind != spec.kind
+                or row.root != str(spec.expanded_root)
+                or row.default_class != klass
+                or row.default_trust != tier
+                or row.allow_cloud_enrichment != spec.allow_cloud_enrichment
+                or row.enabled != spec.enabled
+            )
+            if changes:
+                if apply:
+                    row.kind = spec.kind
+                    row.root = str(spec.expanded_root)
+                    row.default_class = klass
+                    row.default_trust = tier
+                    row.allow_cloud_enrichment = spec.allow_cloud_enrichment
+                    row.enabled = spec.enabled
+                    row.config = {**(row.config or {}), "include_code": spec.include_code}
+                updated.append(spec.slug)
+
+        # Rows are (slug, count) tuples, so unpack them rather than treating the
+        # first element as an ORM object.
+        undeclared = [
+            (slug, int(count))
+            for slug, count in session.execute(
+                text(
+                    "SELECT s.slug, count(d.id) FROM sources s "
+                    "LEFT JOIN documents d ON d.source_id = s.id GROUP BY s.slug"
+                )
+            )
+            if slug not in declared
+        ]
+        # No rollback needed: every mutation above is already gated on `apply`.
+
+    verb = "" if apply else "would "
+    if created:
+        console.print(f"[green]{verb}create[/green]: {', '.join(created)}")
+    if updated:
+        console.print(f"[cyan]{verb}update[/cyan]: {', '.join(updated)}")
+    if not created and not updated:
+        console.print("[green]database already matches the config[/green]")
+    if undeclared:
+        console.print("\n[dim]in the database but not declared (left untouched):[/dim]")
+        for slug, count in undeclared:
+            console.print(f"  {slug} ({count:,} documents)")
+        console.print(
+            "  [dim]add them to the config, or remove with "
+            "'garage remove-source <slug>'[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +704,7 @@ def ingest(
         elif counters.placeholders:
             console.print(
                 f"[yellow]{counters.placeholders:,} placeholders skipped[/yellow] "
-                "(set GARAGE_MATERIALIZE_PLACEHOLDERS=true to download them)"
+                "(set placeholders.materialize = true in the config to download them)"
             )
 
         if counters.errors:
@@ -557,7 +887,7 @@ def mcp_install(
     console.print(f"[bold]{chosen.label}[/bold] -> {chosen.path}")
 
     url: str | None = None
-    env_file: Path | None = None
+    config_file: Path | None = None
 
     if http:
         settings = get_settings()
@@ -574,19 +904,17 @@ def mcp_install(
             "`garage mcp-serve --http` yourself to keep it up[/dim]"
         )
     else:
-        # Reference the project's .env so the server finds the database and
-        # identity settings regardless of the cwd the client launches it from.
-        env_file = Path(".env").resolve()
-        if not env_file.is_file():
+        # Point the server at this configuration explicitly: a client launches it
+        # from an arbitrary cwd, where the config search order finds nothing.
+        settings = get_settings()
+        config_file = settings.config_path
+        if config_file is None:
             console.print(
-                f"[yellow]note[/yellow]: {env_file} does not exist; the server will "
-                "fall back to defaults and environment variables"
+                "[yellow]note[/yellow]: no config file in use; the server will run "
+                "on defaults. Create one with 'garage config init'."
             )
-            env_file = None
-        command, args = server_command()
+        command, args = server_command(config_file)
         console.print(f"  command : {command} {' '.join(args)}")
-        if env_file:
-            console.print(f"  env     : GARAGE_ENV_FILE={env_file}")
 
     if chosen.note:
         console.print(f"  [dim]{chosen.note}[/dim]")
@@ -600,7 +928,7 @@ def mcp_install(
         preview = install(
             chosen,
             server_name=name,
-            env_file=env_file,
+            config_path=config_file,
             url=url,
             force=force,
             dry_run=True,
@@ -624,7 +952,9 @@ def mcp_install(
     if not yes:
         typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
 
-    result = install(chosen, server_name=name, env_file=env_file, url=url, force=force)
+    result = install(
+        chosen, server_name=name, config_path=config_file, url=url, force=force
+    )
     verb = "created" if result.created_file else "updated"
     console.print(f"[green]{verb}[/green] {result.path}")
     if result.backup:

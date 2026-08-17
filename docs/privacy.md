@@ -42,13 +42,15 @@ Error: communication sources may never enable cloud enrichment
 
 ### Level 4 — global switch
 
-`GARAGE_ENABLE_CLOUD_OCR` gates the entire path. Default `false`, in which case
-OCR is Tesseract-only and fully offline.
+`cloud.enable_ocr` gates the entire path. Default `false`, in which case OCR is
+Tesseract-only and fully offline. It additionally requires `cloud.api_key_file`
+to name a readable key file, so forgetting the key fails closed rather than
+erroring mid-run.
 
 ## What can leave, when enabled
 
 Only image bytes, only for OCR, only from sources explicitly opted in, and only
-when Tesseract's confidence falls below `GARAGE_OCR_MIN_CONFIDENCE`. Document
+when Tesseract's confidence falls below `extraction.ocr_min_confidence`. Document
 text, code, and communications are never sent.
 
 ## macOS permissions (TCC)
@@ -81,9 +83,8 @@ Narrower grant, more friction per refresh.
 `~/Dropbox` here is ~99% online-only stubs. **Reading a stub asks Dropbox to
 download it** — a naive walk would have quietly pulled ~230 GB.
 
-`GARAGE_MATERIALIZE_PLACEHOLDERS` controls this, and even when enabled, downloads
-are capped per run by `GARAGE_MATERIALIZE_LIMIT` and
-`GARAGE_MATERIALIZE_MAX_BYTES`. Every run reports what it fetched and what it
+`placeholders.materialize` controls this, and even when enabled, downloads are
+capped per run by `placeholders.limit` and `placeholders.max_bytes`. Every run reports what it fetched and what it
 deferred; nothing is silently truncated.
 
 ## Serving over HTTP
@@ -92,7 +93,7 @@ The MCP server has **no authentication**. Over stdio that is fine: the client
 spawns it as a child process and nothing else can reach it. Over HTTP it is the
 whole security model, so three defences apply.
 
-**Loopback by default.** `mcp_host` is `127.0.0.1`. Binding anything else requires
+**Loopback by default.** `mcp.host` is `127.0.0.1`. Binding anything else requires
 `--allow-remote`, and the refusal explains why rather than just erroring:
 
 ```

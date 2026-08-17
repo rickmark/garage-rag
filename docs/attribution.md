@@ -91,9 +91,15 @@ onto a single row rather than duplicating.
 
 Configure your own identities so the authored/reference split works:
 
-```bash
-GARAGE_SELF_NAME=Your Name
-GARAGE_SELF_IDENTITIES=["git_email:you@example.com","email:you@example.com","git_name:Your Name"]
+```json
+"identity": {
+  "name": "Your Name",
+  "identities": [
+    "git_email:you@example.com",
+    "email:you@example.com",
+    "git_name:Your Name"
+  ]
+}
 ```
 
 Add every address you have committed under. An identity you omit reads as

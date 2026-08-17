@@ -8,3 +8,6 @@ macapp/.build/
 macapp/Resources/postgres
 macapp/Resources/python-dist
 macapp/dist
+# Credentials referenced by cloud.api_key_file
+*.key
+anthropic.key

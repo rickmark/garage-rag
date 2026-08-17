@@ -50,30 +50,49 @@ class TestServerCommand:
         command, _ = server_command()
         assert Path(command).is_absolute()
 
-    def test_module_form_names_the_server_module(self) -> None:
+    def test_command_invokes_mcp_serve(self) -> None:
+        """Whichever entry point is chosen, it must end up serving on stdio."""
         command, args = server_command()
         if args:
-            assert args == ["-m", "garage_rag.mcp_server.server"]
+            assert "mcp-serve" in args
+            assert "--stdio" in args
         else:
             assert Path(command).name == "garage-mcp"
 
+    def test_config_path_is_passed_absolutely(self, tmp_path: Path) -> None:
+        """A client launches from an arbitrary cwd, where the config search
+        order would find nothing -- so the path must be explicit and absolute."""
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        command, args = server_command(cfg)
+        assert "--config" in args
+        supplied = Path(args[args.index("--config") + 1])
+        assert supplied.is_absolute()
+        assert supplied == cfg.resolve()
+        # The `garage` entry point is required, since garage-mcp takes no flags.
+        assert Path(command).name in {"garage", Path(sys.executable).name}
+
 
 class TestServerEntry:
-    def test_references_env_file_rather_than_copying_values(self, tmp_path: Path) -> None:
-        env = tmp_path / ".env"
-        env.write_text("GARAGE_SELF_NAME=X\n")
-        entry = server_entry(env_file=env)
-        assert entry["env"]["GARAGE_ENV_FILE"] == str(env.resolve())
-        # The point: settings are not duplicated into the client config, so
-        # editing .env takes effect without re-installing.
-        assert "GARAGE_SELF_NAME" not in entry["env"]
+    def test_references_config_by_path(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        entry = server_entry(config_path=cfg)
+        assert "--config" in entry["args"]
+        # Referenced, not copied: editing the config takes effect without
+        # re-running mcp-install.
+        assert str(cfg.resolve()) in entry["args"]
 
-    def test_no_env_key_when_nothing_to_set(self) -> None:
+    def test_no_env_needed_at_all(self, tmp_path: Path) -> None:
+        """The whole point of the config file: the server needs no environment."""
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        assert "env" not in server_entry(config_path=cfg)
         assert "env" not in server_entry()
 
-    def test_extra_env_is_merged(self, tmp_path: Path) -> None:
-        entry = server_entry(env_file=tmp_path / ".env", extra_env={"FOO": "bar"})
-        assert entry["env"]["FOO"] == "bar"
+    def test_extra_env_still_possible_if_requested(self) -> None:
+        entry = server_entry(extra_env={"FOO": "bar"})
+        assert entry["env"] == {"FOO": "bar"}
 
 
 class TestInstallMerge:
@@ -211,10 +230,13 @@ class TestHttpEntry:
         entry = server_entry(url="http://127.0.0.1:8787/mcp")
         assert entry == {"type": "http", "url": "http://127.0.0.1:8787/mcp"}
 
-    def test_url_entry_has_no_command_or_env(self) -> None:
-        """Nothing is spawned, so a command or env would be misleading."""
-        entry = server_entry(url="http://127.0.0.1:8787/mcp", env_file=Path("/tmp/.env"))
+    def test_url_entry_has_no_command_or_config(self, tmp_path: Path) -> None:
+        """Nothing is spawned, so a command or config path would be misleading."""
+        entry = server_entry(
+            url="http://127.0.0.1:8787/mcp", config_path=tmp_path / "garage.json"
+        )
         assert "command" not in entry
+        assert "args" not in entry
         assert "env" not in entry
 
     def test_transport_override(self) -> None:
@@ -276,3 +298,16 @@ class TestLoopbackDetection:
         from garage_rag.mcp_server.server import is_loopback
 
         assert not is_loopback("some-host.local")
+
+
+class TestArgumentOrder:
+    def test_config_precedes_the_subcommand(self, tmp_path: Path) -> None:
+        """Regression: `--config` is a global Typer option.
+
+        Placed after `mcp-serve` the CLI rejects it with "No such option:
+        --config", so the client would spawn a server that dies immediately.
+        """
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        _command, args = server_command(cfg)
+        assert args.index("--config") < args.index("mcp-serve")

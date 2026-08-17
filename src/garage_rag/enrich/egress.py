@@ -11,8 +11,9 @@ structurally rather than by convention, at four independent levels:
    and no way to declare it a conversation and still send it.
 3. **Source flag.** ``sources.allow_cloud_enrichment`` defaults to false and is
    never set true for Messages or Mail. Checked here in addition to the class.
-4. **Global switch.** ``GARAGE_ENABLE_CLOUD_OCR`` gates everything, so the whole
-   path can be turned off in one place.
+4. **Global switch.** ``cloud.enable_ocr`` in the config file gates everything,
+   and a missing ``cloud.api_key_file`` disables it too -- so the whole path can
+   be turned off in one place, and fails closed when half-configured.
 
 The ordering matters: the class check runs before anything else, so a coding
 mistake elsewhere in the pipeline fails closed rather than leaking.
@@ -69,8 +70,11 @@ class EgressRequest:
 
 
 def cloud_enabled() -> bool:
-    """Whether cloud enrichment is switched on and importable."""
-    if not get_settings().enable_cloud_ocr:
+    """Whether cloud enrichment is switched on, importable, and has a key."""
+    settings = get_settings()
+    if not settings.enable_cloud_ocr:
+        return False
+    if settings.read_api_key() is None:
         return False
     try:
         import anthropic  # noqa: F401
@@ -82,12 +86,24 @@ def cloud_enabled() -> bool:
 def _client():
     """Construct the one Anthropic client this project uses.
 
-    Deliberately the only such call in the codebase.
+    Deliberately the only such call in the codebase. The key is read from the
+    file named by ``cloud.api_key_file`` and passed explicitly, so the config
+    itself never contains a secret and no environment variable is involved.
     """
-    if not get_settings().enable_cloud_ocr:
+    settings = get_settings()
+    if not settings.enable_cloud_ocr:
         raise CloudUnavailable(
-            "cloud enrichment is disabled; set GARAGE_ENABLE_CLOUD_OCR=true to enable"
+            'cloud enrichment is disabled; set cloud.enable_ocr = true in '
+            f"{settings.config_path or 'garage.json'}"
         )
+
+    key = settings.read_api_key()
+    if key is None:
+        raise CloudUnavailable(
+            "no API key available; point cloud.api_key_file at a file "
+            "containing your Anthropic key"
+        )
+
     try:
         import anthropic
     except ImportError as exc:
@@ -97,8 +113,8 @@ def _client():
         ) from exc
 
     try:
-        return anthropic.Anthropic()
-    except Exception as exc:  # noqa: BLE001 - missing credentials surface here
+        return anthropic.Anthropic(api_key=key)
+    except Exception as exc:  # noqa: BLE001 - construction problems surface here
         raise CloudUnavailable(f"could not construct an Anthropic client: {exc}") from exc
 
 

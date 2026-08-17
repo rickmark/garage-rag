@@ -91,12 +91,13 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
     return {t.key: t for t in targets}
 
 
-def server_command() -> tuple[str, list[str]]:
+def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
     """The command an MCP client should run to start this server.
 
-    Prefers the installed ``garage-mcp`` console script next to the running
-    interpreter. Both forms use an absolute path: a client launches the server
-    with its own PATH, which will not include this virtualenv.
+    A client launches the server from an arbitrary working directory, where the
+    config search order would find nothing. ``--config`` is therefore passed
+    explicitly with an absolute path -- which is why the ``garage`` entry point
+    is preferred over ``garage-mcp``: it accepts the flag.
 
     ``sys.executable`` is used **unresolved** on purpose. Inside a virtualenv it
     is already the right path (``.venv/bin/python``); resolving it follows the
@@ -104,10 +105,28 @@ def server_command() -> tuple[str, list[str]]:
     packages installed and fails with ModuleNotFoundError at launch.
     """
     interpreter = Path(sys.executable)
+
+    # `--config` is a global option on the Typer callback, so it must precede the
+    # subcommand. Placed after `mcp-serve` it fails with "No such option".
+    head: list[str] = []
+    if config_path is not None:
+        head = ["--config", str(config_path.expanduser().resolve())]
+
+    garage = interpreter.parent / "garage"
+    if garage.is_file() and os.access(garage, os.X_OK):
+        return str(garage), [*head, "mcp-serve", "--stdio"]
+
     console_script = interpreter.parent / "garage-mcp"
-    if console_script.is_file() and os.access(console_script, os.X_OK):
+    if console_script.is_file() and os.access(console_script, os.X_OK) and not head:
         return str(console_script), []
-    return str(interpreter), ["-m", "garage_rag.mcp_server.server"]
+
+    return str(interpreter), [
+        "-m",
+        "garage_rag.cli",
+        *head,
+        "mcp-serve",
+        "--stdio",
+    ]
 
 
 def http_url(host: str, port: int, path: str) -> str:
@@ -120,7 +139,7 @@ def http_url(host: str, port: int, path: str) -> str:
 
 def server_entry(
     *,
-    env_file: Path | None = None,
+    config_path: Path | None = None,
     extra_env: dict[str, str] | None = None,
     url: str | None = None,
     transport: str = "http",
@@ -135,18 +154,12 @@ def server_entry(
     if url is not None:
         return {"type": transport, "url": url}
 
-    command, args = server_command()
+    command, args = server_command(config_path)
     entry: dict[str, Any] = {"command": command, "args": args}
-
-    env: dict[str, str] = {}
-    if env_file is not None:
-        # Points at the file rather than copying its values, so editing .env
-        # takes effect without re-running this command.
-        env["GARAGE_ENV_FILE"] = str(env_file.resolve())
+    # Only present if a caller explicitly asks for it; the server itself needs
+    # no environment.
     if extra_env:
-        env.update(extra_env)
-    if env:
-        entry["env"] = env
+        entry["env"] = dict(extra_env)
     return entry
 
 
@@ -214,7 +227,7 @@ def install(
     target: ClientTarget,
     *,
     server_name: str = DEFAULT_SERVER_NAME,
-    env_file: Path | None = None,
+    config_path: Path | None = None,
     extra_env: dict[str, str] | None = None,
     url: str | None = None,
     transport: str = "http",
@@ -241,7 +254,7 @@ def install(
         )
 
     entry = server_entry(
-        env_file=env_file, extra_env=extra_env, url=url, transport=transport
+        config_path=config_path, extra_env=extra_env, url=url, transport=transport
     )
     others = sorted(k for k in servers if k != server_name)
 
