@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "garage-rag": {
+      "command": "/Users/rickmark/garage/.venv/bin/garage-mcp",
+      "args": [],
+      "env": {
+        "GARAGE_ENV_FILE": "/Users/rickmark/garage/.env"
+      }
+    }
+  }
+}

@@ -3,3 +3,8 @@
 .env
 *.db
 .build
+macapp/build/
+macapp/.build/
+macapp/Resources/postgres
+macapp/Resources/python-dist
+macapp/dist

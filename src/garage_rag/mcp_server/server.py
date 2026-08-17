@@ -422,14 +422,114 @@ def rag_stats() -> CorpusStats:
     )
 
 
-def main() -> None:
-    """Run the server on stdio."""
-    log.info("garage-rag MCP server starting")
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "127.0.0.0/8"})
+
+
+def is_loopback(host: str) -> bool:
+    """Whether ``host`` can only be reached from this machine."""
+    import ipaddress
+
+    if host in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # A hostname we cannot classify; treat as remote and make the caller
+        # opt in explicitly.
+        return False
+
+
+def _log_startup() -> None:
     with session_scope() as session:
         count = session.query(Source).count()
     log.info("%d sources registered", count)
-    # No transport argument: stdio is the default, and the call blocks.
-    mcp.run()
+
+
+def serve(
+    transport: str = "stdio",
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    path: str | None = None,
+    allowed_origins: list[str] | None = None,
+    json_response: bool = False,
+    stateless: bool = False,
+) -> None:
+    """Run the server on ``stdio``, ``streamable-http``, or ``sse``.
+
+    HTTP transports get DNS-rebinding protection configured explicitly. Without
+    it a page in your browser could reach a loopback-bound server via a
+    rebound hostname, and this server answers questions about your private
+    corpus — so the ``Host`` and ``Origin`` allowlists are the only thing
+    standing between "local only" and "any website you visit".
+    """
+    from ..config import get_settings
+
+    settings = get_settings()
+    log.info("garage-rag MCP server starting (transport=%s)", transport)
+    _log_startup()
+
+    if transport == "stdio":
+        # stdio is the default and the call blocks.
+        mcp.run()
+        return
+
+    if transport not in ("streamable-http", "sse"):
+        raise ValueError(f"unsupported transport: {transport!r}")
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    bind_host = host or settings.mcp_host
+    bind_port = port or settings.mcp_port
+    http_path = path or settings.mcp_http_path
+
+    # Host header allowlist: the addresses a client may legitimately use.
+    allowed_hosts = [
+        f"{bind_host}:{bind_port}",
+        f"localhost:{bind_port}",
+        f"127.0.0.1:{bind_port}",
+    ]
+    security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=sorted(set(allowed_hosts)),
+        allowed_origins=sorted(set(allowed_origins or [])),
+    )
+
+    if not is_loopback(bind_host):
+        # Not fatal here — the CLI already required an explicit opt-in — but it
+        # belongs in the log so it is visible in whatever captured stderr.
+        log.warning(
+            "listening on %s, which is reachable from other machines; this "
+            "server has no authentication and exposes the whole corpus",
+            bind_host,
+        )
+
+    log.info("listening on http://%s:%d%s", bind_host, bind_port, http_path)
+
+    if transport == "sse":
+        mcp.run(
+            "sse",
+            host=bind_host,
+            port=bind_port,
+            sse_path=http_path,
+            transport_security=security,
+        )
+        return
+
+    mcp.run(
+        "streamable-http",
+        host=bind_host,
+        port=bind_port,
+        streamable_http_path=http_path,
+        json_response=json_response,
+        stateless_http=stateless,
+        transport_security=security,
+    )
+
+
+def main() -> None:
+    """Console-script entry point: stdio, which is what MCP clients spawn."""
+    serve("stdio")
 
 
 # Required: `mcp dev`, `mcp run`, and the tests all *import* this module.

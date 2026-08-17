@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -485,6 +486,298 @@ def reconcile(
             f"{result.total_documents:,} documents in {source} are missing "
             f"({result.fraction:.1%}). Re-run with --apply to delete."
         )
+
+
+# ---------------------------------------------------------------------------
+# MCP
+# ---------------------------------------------------------------------------
+@app.command("mcp-install")
+def mcp_install(
+    target: Annotated[
+        str,
+        typer.Option(
+            "--target",
+            "-t",
+            help="project | claude-desktop | lmstudio | cursor | vscode",
+        ),
+    ] = "project",
+    path: Annotated[
+        Path | None,
+        typer.Option("--path", help="Write to this config file instead of a known target."),
+    ] = None,
+    name: Annotated[str, typer.Option("--name", help="Server name in the config.")] = "garage-rag",
+    http: Annotated[
+        bool,
+        typer.Option(
+            "--http",
+            help="Register a URL for an already-running HTTP server instead of a spawned command.",
+        ),
+    ] = False,
+    host: Annotated[str | None, typer.Option(help="HTTP host, with --http.")] = None,
+    port: Annotated[int | None, typer.Option("--port", help="HTTP port, with --http.")] = None,
+    path_route: Annotated[
+        str | None, typer.Option("--route", help="HTTP route, with --http. Default /mcp.")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing entry of the same name.")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show what would be written, change nothing.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Do not prompt before writing.")
+    ] = False,
+) -> None:
+    """Register this MCP server in a client's config file.
+
+    Merges into any existing config: other servers and unrelated keys are kept,
+    the previous file is backed up, and the write is atomic.
+    """
+    from .mcp_server.install import (
+        ClientTarget,
+        client_targets,
+        http_url,
+        install,
+        server_command,
+    )
+
+    targets = client_targets()
+    if path is not None:
+        chosen = ClientTarget(
+            key="custom", label="custom path", path=path.expanduser().resolve()
+        )
+    else:
+        if target not in targets:
+            raise typer.BadParameter(
+                f"unknown target {target!r}; choose from {', '.join(targets)}",
+                param_hint="--target",
+            )
+        chosen = targets[target]
+
+    console.print(f"[bold]{chosen.label}[/bold] -> {chosen.path}")
+
+    url: str | None = None
+    env_file: Path | None = None
+
+    if http:
+        settings = get_settings()
+        url = http_url(
+            host or settings.mcp_host,
+            port or settings.mcp_port,
+            path_route or settings.mcp_http_path,
+        )
+        console.print(f"  url     : {url}")
+        # The client only connects; keeping the process alive is someone else's
+        # job, so say so rather than letting it look like a spawned server.
+        console.print(
+            "  [dim]the client connects to this URL; run "
+            "`garage mcp-serve --http` yourself to keep it up[/dim]"
+        )
+    else:
+        # Reference the project's .env so the server finds the database and
+        # identity settings regardless of the cwd the client launches it from.
+        env_file = Path(".env").resolve()
+        if not env_file.is_file():
+            console.print(
+                f"[yellow]note[/yellow]: {env_file} does not exist; the server will "
+                "fall back to defaults and environment variables"
+            )
+            env_file = None
+        command, args = server_command()
+        console.print(f"  command : {command} {' '.join(args)}")
+        if env_file:
+            console.print(f"  env     : GARAGE_ENV_FILE={env_file}")
+
+    if chosen.note:
+        console.print(f"  [dim]{chosen.note}[/dim]")
+    if chosen.project_scoped and not http:
+        console.print(
+            "  [yellow]note[/yellow]: project-scoped config records an absolute "
+            "path to this virtualenv, which will not resolve on another machine"
+        )
+
+    try:
+        preview = install(
+            chosen,
+            server_name=name,
+            env_file=env_file,
+            url=url,
+            force=force,
+            dry_run=True,
+        )
+    except FileExistsError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(code=1) from None
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+    if preview.other_servers:
+        console.print(f"  preserving: {', '.join(preview.other_servers)}")
+
+    if dry_run:
+        console.print("\n[cyan]would write[/cyan]:")
+        console.print(json.dumps({"mcpServers": {name: preview.entry}}, indent=2))
+        return
+
+    action = "Replace" if preview.replaced_entry else "Add"
+    if not yes:
+        typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
+
+    result = install(chosen, server_name=name, env_file=env_file, url=url, force=force)
+    verb = "created" if result.created_file else "updated"
+    console.print(f"[green]{verb}[/green] {result.path}")
+    if result.backup:
+        console.print(f"  backup: {result.backup.name}")
+    console.print(
+        "\nRestart the client, then try: "
+        "[cyan]what does my reference material say about secure boot?[/cyan]"
+    )
+
+
+@app.command("mcp-uninstall")
+def mcp_uninstall(
+    target: Annotated[str, typer.Option("--target", "-t")] = "project",
+    path: Annotated[Path | None, typer.Option("--path")] = None,
+    name: Annotated[str, typer.Option("--name")] = "garage-rag",
+) -> None:
+    """Remove this server from a client's config."""
+    from .mcp_server.install import ClientTarget, client_targets, uninstall
+
+    targets = client_targets()
+    if path is not None:
+        chosen = ClientTarget("custom", "custom path", path.expanduser().resolve())
+    elif target in targets:
+        chosen = targets[target]
+    else:
+        raise typer.BadParameter(f"unknown target {target!r}", param_hint="--target")
+
+    if uninstall(chosen, server_name=name):
+        console.print(f"[green]removed[/green] {name} from {chosen.path}")
+    else:
+        console.print(f"[yellow]{name} was not configured in {chosen.path}[/yellow]")
+
+
+@app.command("mcp-status")
+def mcp_status() -> None:
+    """Show which MCP clients this server is registered with."""
+    from .mcp_server.install import client_targets, installed_in, server_command
+
+    command, args = server_command()
+    console.print(f"[dim]server command: {command} {' '.join(args)}[/dim]\n")
+
+    table = Table()
+    for col in ("target", "client", "registered", "config"):
+        table.add_column(col)
+    for key, chosen in client_targets().items():
+        if installed_in(chosen):
+            state = "[green]yes[/green]"
+        elif chosen.path.is_file():
+            state = "no"
+        else:
+            state = "[dim]no config[/dim]"
+        table.add_row(key, chosen.label, state, str(chosen.path).replace(str(Path.home()), "~"))
+    console.print(table)
+
+
+@app.command("mcp-serve")
+def mcp_serve(
+    stdio: Annotated[
+        bool,
+        typer.Option("--stdio", help="Serve on stdin/stdout. The default."),
+    ] = False,
+    http: Annotated[
+        bool,
+        typer.Option("--http", help="Serve over HTTP (streamable-http transport)."),
+    ] = False,
+    sse: Annotated[
+        bool,
+        typer.Option("--sse", help="Serve over the legacy SSE transport."),
+    ] = False,
+    host: Annotated[
+        str | None, typer.Option(help="Bind address. Default 127.0.0.1.")
+    ] = None,
+    port: Annotated[int | None, typer.Option("--port", "-p")] = None,
+    path: Annotated[str | None, typer.Option("--path", help="HTTP route. Default /mcp.")] = None,
+    allow_origin: Annotated[
+        list[str] | None,
+        typer.Option("--allow-origin", help="Permit this Origin (repeatable, for browsers)."),
+    ] = None,
+    json_response: Annotated[
+        bool, typer.Option("--json-response", help="Reply with JSON instead of an SSE stream.")
+    ] = False,
+    stateless: Annotated[
+        bool, typer.Option("--stateless", help="No session state between requests.")
+    ] = False,
+    allow_remote: Annotated[
+        bool,
+        typer.Option(
+            "--allow-remote",
+            help="Required to bind a non-loopback address. Read the warning first.",
+        ),
+    ] = False,
+) -> None:
+    """Run the MCP server.
+
+    Defaults to stdio, which is how MCP clients spawn it. Use --http to serve
+    several clients from one long-running process, or to reach it from a
+    container or another host.
+    """
+    from .mcp_server.server import is_loopback, serve
+
+    if sum(map(bool, (stdio, http, sse))) > 1:
+        raise typer.BadParameter("choose one of --stdio, --http, or --sse")
+
+    if not (http or sse):
+        # stdio speaks JSON-RPC on stdout; nothing else may write there.
+        serve("stdio")
+        return
+
+    settings = get_settings()
+    bind_host = host or settings.mcp_host
+    bind_port = port or settings.mcp_port
+    route = path or settings.mcp_http_path
+
+    if not is_loopback(bind_host) and not allow_remote:
+        # This server answers questions about the whole corpus -- potentially
+        # including private communications -- and has no authentication
+        # whatsoever. Binding it where others can reach it must be deliberate.
+        console.print(
+            f"[red]refusing to bind {bind_host}[/red]: this server has no "
+            "authentication and exposes your entire corpus, including anything "
+            "indexed from private communications."
+        )
+        console.print(
+            "  Anyone able to reach that address could read it. If that is "
+            "genuinely what you want, re-run with [bold]--allow-remote[/bold], "
+            "and put it behind a reverse proxy that authenticates."
+        )
+        raise typer.Exit(code=1)
+
+    transport = "sse" if sse else "streamable-http"
+    scheme_note = " [dim](legacy transport)[/dim]" if sse else ""
+    console.print(
+        f"[green]serving[/green] {transport}{scheme_note} on "
+        f"http://{bind_host}:{bind_port}{route}"
+    )
+    if not is_loopback(bind_host):
+        console.print(
+            "[yellow]warning[/yellow]: reachable from other machines, unauthenticated"
+        )
+    console.print("[dim]Ctrl-C to stop[/dim]")
+
+    try:
+        serve(
+            transport,
+            host=bind_host,
+            port=bind_port,
+            path=route,
+            allowed_origins=allow_origin or None,
+            json_response=json_response,
+            stateless=stateless,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]stopped[/dim]")
 
 
 # ---------------------------------------------------------------------------

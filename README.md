@@ -11,16 +11,33 @@ private communications.
 
 ## What makes it different from a generic vector store
 
-Three distinctions the filesystem loses, preserved as first-class schema:
+Two independent axes the filesystem loses, preserved as first-class schema.
 
-| Tier | Meaning |
+**What a thing is** (`corpus_class`):
+
+| Value | Meaning |
 |---|---|
-| `authored` | You wrote it. Derived from git history, PDF metadata, or path convention. |
-| `reference` | Downloaded material you have already QA'ed. Treated as high trust. |
-| `communication` | Exchanged between people. Sender/recipient modeled; never leaves the machine. |
+| `document` | Prose: notes, papers, reports, presentations |
+| `code` | Source and structured config |
+| `communication` | Messages and mail. Never leaves the machine. |
 
-Search can be filtered by tier, so "what did *I* conclude about X" and "what does
-my *reference* material say about X" are different queries.
+**How trusted it is** (`trust_tier`):
+
+| Value | Meaning |
+|---|---|
+| `authored` | You wrote it — from git history, document metadata, or path convention |
+| `reference` | External material already QA'ed. High trust. |
+| `received` | Someone else sent it to you |
+
+Keeping these separate is what makes the corpus queryable. `(code, reference)` is
+a vendored dependency; `(code, authored)` is your own work; `(document,
+reference)` is a downloaded paper. So "what did *I* conclude about X" and "what
+does my *reference* material say about X" are genuinely different queries:
+
+```bash
+garage search "boot security" --trust authored
+garage search "boot security" --trust reference --class document
+```
 
 ## Requirements
 
@@ -55,16 +72,76 @@ cp .env.example .env          # then edit: set GARAGE_SELF_NAME and identities
 
 garage init-db                # apply schema, install extensions
 garage register-model bge-m3  # creates emb_bge_m3 + HNSW index
-garage add-source dropbox ~/Dropbox --trust authored
-garage ingest --source dropbox
+
+garage add-source notes ~/Documents --class document --trust authored
+garage ingest --source notes  # documents only; add --include-code for source
+garage backfill               # embed anything not yet embedded
 garage search "what did I conclude about boot security"
 ```
 
-Then register the MCP server with Claude Code:
+Then register the MCP server with a client:
 
 ```bash
-claude mcp add garage-rag -- garage-mcp
+garage mcp-install                      # writes ./.mcp.json (Claude Code, this project)
+garage mcp-install -t claude-desktop    # or lmstudio | cursor | vscode
+garage mcp-install --dry-run            # show the JSON without writing
+garage mcp-status                       # which clients are registered
+garage mcp-uninstall                    # remove the entry again
 ```
+
+The config is **merged**, not replaced: other servers and unrelated top-level
+keys survive, the previous file is backed up, and the write is atomic. An
+existing entry of the same name is never overwritten without `--force`.
+
+The entry points at your `.env` via `GARAGE_ENV_FILE` rather than copying its
+values, so editing `.env` takes effect without re-installing:
+
+```json
+{
+  "mcpServers": {
+    "garage-rag": {
+      "command": "/path/to/garage/.venv/bin/garage-mcp",
+      "args": [],
+      "env": { "GARAGE_ENV_FILE": "/path/to/garage/.env" }
+    }
+  }
+}
+```
+
+> Paths are absolute, because a client launches the server with its own `PATH`
+> that will not include this virtualenv. That also means a committed `.mcp.json`
+> will not resolve on someone else's machine — they should run `garage
+> mcp-install` themselves.
+
+### Transports
+
+`stdio` is the default: the client spawns the server and talks over the pipe. One
+process per client, lifetime managed for you.
+
+`--http` serves the modern `streamable-http` transport instead, which is what you
+want to share one long-running server between several clients, or to reach the
+corpus from a container or another host:
+
+```bash
+garage mcp-serve --http                       # http://127.0.0.1:8787/mcp
+garage mcp-serve --http --port 9000 --path /rag
+garage mcp-serve --sse                        # legacy SSE transport
+garage mcp-install --http                     # register the URL rather than a command
+```
+
+With `--http` the client only *connects*; keeping the process alive is your job
+(launchd, tmux, a container). The registered entry looks like:
+
+```json
+{ "mcpServers": { "garage-rag": { "type": "http", "url": "http://127.0.0.1:8787/mcp" } } }
+```
+
+> **This server has no authentication and answers questions about your entire
+> corpus.** It therefore binds `127.0.0.1` only, and refuses a non-loopback
+> address unless you pass `--allow-remote`. If you do expose it, put an
+> authenticating reverse proxy in front. DNS-rebinding protection is always on, so
+> a forged `Host` header is rejected with `421` — without it, a page in your
+> browser could reach a loopback-bound server and read your documents.
 
 ## Multiple embedding models
 
@@ -103,6 +180,45 @@ Two hashes drive this:
 Deleted files are reconciled only from scans that **completed**, tracked in
 `ingest_runs`. Without that guard, an unmounted Dropbox would look like thousands
 of deletions.
+
+## Cloud placeholders
+
+Dropbox, iCloud Drive, and OneDrive leave **zero-byte stubs** for files that live
+only in the cloud. They look like real files in a listing, and *reading* one asks
+the provider to download it — so a naive walk over an online-only folder silently
+becomes a multi-hundred-gigabyte transfer.
+
+Placeholders are detected (`com.dropbox.placeholder` xattr, `SF_DATALESS` flag,
+`.name.icloud` sidecars) and reported distinctly from genuinely empty files.
+Downloading them is opt-in and metered:
+
+```bash
+GARAGE_MATERIALIZE_PLACEHOLDERS=true
+GARAGE_MATERIALIZE_LIMIT=2000          # files per run
+GARAGE_MATERIALIZE_MAX_BYTES=21474836480
+```
+
+Hitting the cap is not a failure. Because ingest is idempotent, repeated bounded
+runs converge on the full corpus instead of one unbounded pass.
+
+## Machine-generated text
+
+A personal corpus is full of text nobody wrote. During development one macOS
+`sysdiagnose` bundle produced **~200k chunks — 76% of the entire index**. That is
+not merely wasteful: near-duplicate log lines compete with real prose at query
+time, so retrieval degrades as the corpus grows.
+
+Three defences, in order of reliability:
+
+1. **Path and filename rules** — `sysdiagnose_*`, `*.logarchive`, `ioreg`,
+   `*.hash.txt`, dependency caches (`go/pkg/mod`), test fixtures (`testdata/`).
+2. **Content heuristics** (`extract/quality.py`) — line-shape repetition,
+   timestamp prefixes, hex/base64 density. Requires corroboration before
+   rejecting, and is validated at zero false positives on real prose.
+3. **`max_chunks_per_document`** — no single document may dominate the index.
+
+Measured effect on `~/Developer`: 39,281 documents / 707,917 chunks →
+4,577 / 60,748.
 
 ## Privacy
 
