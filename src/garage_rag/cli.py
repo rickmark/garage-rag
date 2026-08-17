@@ -381,6 +381,111 @@ def ingest(
                 console.print(f"  {message}")
 
 
+@app.command()
+def backfill(
+    model: Annotated[
+        str | None, typer.Option("--model", "-m", help="Model slug. Default: all models.")
+    ] = None,
+    batch_size: Annotated[int | None, typer.Option(help="Chunks per request.")] = None,
+    limit: Annotated[int | None, typer.Option(help="Stop after this many chunks.")] = None,
+    verify: Annotated[
+        bool, typer.Option("--verify/--no-verify", help="Probe the model's width first.")
+    ] = True,
+) -> None:
+    """Embed chunks that a model has no vectors for. Pure insert; safe to re-run."""
+    from .embed.ollama import EmbeddingError, backfill_model, count_pending, verify_model_dims
+
+    with session_scope() as session:
+        targets = [get_model(session, model)] if model else list_models(session)
+        if not targets:
+            console.print("[yellow]no models registered[/yellow]")
+            raise typer.Exit(code=1)
+
+        for row in targets:
+            pending = count_pending(session, row)
+            if pending == 0:
+                console.print(f"[green]{row.slug}[/green]: already complete")
+                continue
+
+            if verify:
+                try:
+                    ok, actual = verify_model_dims(row)
+                except EmbeddingError as exc:
+                    console.print(f"[red]{row.slug}[/red]: {exc}")
+                    continue
+                if not ok:
+                    # Every insert would fail the column type check; stop now
+                    # rather than after an hour of work.
+                    console.print(
+                        f"[red]{row.slug}[/red]: registered {row.dims} dims but the "
+                        f"model emits {actual}. Re-register with --dims {actual}."
+                    )
+                    continue
+
+            console.print(f"[cyan]{row.slug}[/cyan]: embedding {pending:,} chunks")
+            with console.status(f"{row.slug}...") as status:
+
+                def on_progress(state, slug=row.slug) -> None:
+                    status.update(
+                        f"{slug}: {state.embedded:,}/{state.total:,} "
+                        f"({state.batches} batches)"
+                    )
+
+                state = backfill_model(
+                    session,
+                    row,
+                    batch_size=batch_size,
+                    limit=limit,
+                    progress=on_progress,
+                )
+
+            summary = f"embedded {state.embedded:,}"
+            if state.failed:
+                summary += f", [red]failed {state.failed:,}[/red]"
+            if state.remaining:
+                summary += f", remaining {state.remaining:,}"
+            console.print(f"  {row.slug}: {summary}")
+
+
+@app.command()
+def reconcile(
+    source: Annotated[str, typer.Option("--source", "-s", help="Source slug.")],
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Actually delete. Default is a dry run.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Override the mass-deletion guard.")
+    ] = False,
+) -> None:
+    """Delete documents whose source files no longer exist."""
+    from .ingest.reconcile import reconcile_source
+
+    with session_scope() as session:
+        result = reconcile_source(
+            session, source, dry_run=not apply, force=force
+        )
+
+    if result.refused:
+        console.print(f"[yellow]refused[/yellow]: {result.reason}")
+        raise typer.Exit(code=1)
+
+    if not result.candidates:
+        console.print(f"[green]nothing to reconcile[/green] for {source}")
+        return
+
+    if apply:
+        console.print(
+            f"[green]deleted[/green] {result.deleted:,} of "
+            f"{result.total_documents:,} documents from {source}"
+        )
+    else:
+        console.print(
+            f"[cyan]dry run[/cyan]: {result.candidates:,} of "
+            f"{result.total_documents:,} documents in {source} are missing "
+            f"({result.fraction:.1%}). Re-run with --apply to delete."
+        )
+
+
 # ---------------------------------------------------------------------------
 # extraction / chunking inspection
 # ---------------------------------------------------------------------------
