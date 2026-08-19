@@ -179,9 +179,7 @@ def extract_xlsx(path: Path) -> ExtractResult:
                 if index >= MAX_SHEET_ROWS:
                     truncated.append(sheet.title)
                     break
-                cells = [
-                    str(value)[:MAX_CELL_CHARS] for value in row if value is not None
-                ]
+                cells = [str(value)[:MAX_CELL_CHARS] for value in row if value is not None]
                 if cells:
                     rows.append(" | ".join(cells))
             if rows:

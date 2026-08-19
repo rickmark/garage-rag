@@ -147,9 +147,7 @@ def load_repo_attribution(root: Path, *, max_commits: int | None = None) -> Repo
     attribution.by_path = dict(by_path)
     attribution.commit_count = commits
     attribution.truncated = bool(max_commits and commits >= max_commits)
-    log.debug(
-        "%s: %d commits, %d tracked paths", root.name, commits, len(attribution.by_path)
-    )
+    log.debug("%s: %d commits, %d tracked paths", root.name, commits, len(attribution.by_path))
     return attribution
 
 

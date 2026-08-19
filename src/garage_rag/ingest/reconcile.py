@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.orm import Session
 
 from ..db.models import IngestRun, Source
@@ -116,9 +117,7 @@ def reconcile_source(
         return result
 
     # Cascades through chunks into every per-model embedding table.
-    session.execute(
-        text("DELETE FROM documents WHERE id = ANY(:ids)"), {"ids": ids}
-    )
+    session.execute(text("DELETE FROM documents WHERE id = ANY(:ids)"), {"ids": ids})
     result.deleted = len(ids)
     log.info("reconcile %s: deleted %d documents", slug, result.deleted)
     return result
@@ -130,21 +129,24 @@ def prune_old_runs(session: Session, *, keep: int = 10) -> int:
     ``ingest_seen`` holds one row per file per run, so unbounded history would
     grow faster than the corpus itself.
     """
-    deleted = session.execute(
-        text(
-            """
-            DELETE FROM ingest_runs
-            WHERE id IN (
-                SELECT id FROM (
-                    SELECT id, row_number() OVER (
-                        PARTITION BY source_id ORDER BY started_at DESC
-                    ) AS rn
-                    FROM ingest_runs
-                ) ranked
-                WHERE rn > :keep
-            )
-            """
+    deleted = cast(
+        CursorResult[Any],
+        session.execute(
+            text(
+                """
+                DELETE FROM ingest_runs
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, row_number() OVER (
+                            PARTITION BY source_id ORDER BY started_at DESC
+                        ) AS rn
+                        FROM ingest_runs
+                    ) ranked
+                    WHERE rn > :keep
+                )
+                """
+            ),
+            {"keep": keep},
         ),
-        {"keep": keep},
     ).rowcount
     return int(deleted or 0)

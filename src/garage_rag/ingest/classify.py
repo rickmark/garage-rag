@@ -35,9 +35,25 @@ _DOC_EXTENSIONS_IN_CODE_TREES = frozenset(
 
 # Filenames that are documentation regardless of extension.
 _DOC_STEMS = frozenset(
-    {"readme", "license", "licence", "copying", "notice", "changelog", "changes",
-     "contributing", "authors", "codeowners", "security", "history", "news",
-     "todo", "roadmap", "architecture", "design"}
+    {
+        "readme",
+        "license",
+        "licence",
+        "copying",
+        "notice",
+        "changelog",
+        "changes",
+        "contributing",
+        "authors",
+        "codeowners",
+        "security",
+        "history",
+        "news",
+        "todo",
+        "roadmap",
+        "architecture",
+        "design",
+    }
 )
 
 

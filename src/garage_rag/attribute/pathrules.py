@@ -37,9 +37,21 @@ class PathRule:
 # Vendored dependency directories: third-party code by definition, wherever found.
 VENDOR_MARKERS: frozenset[str] = frozenset(
     {
-        "node_modules", "vendor", "third_party", "3rd_party", "thirdparty",
-        "external", "externals", "deps", "dependencies", "Pods", "Carthage",
-        "site-packages", "bower_components", "submodules", "subprojects",
+        "node_modules",
+        "vendor",
+        "third_party",
+        "3rd_party",
+        "thirdparty",
+        "external",
+        "externals",
+        "deps",
+        "dependencies",
+        "Pods",
+        "Carthage",
+        "site-packages",
+        "bower_components",
+        "submodules",
+        "subprojects",
     }
 )
 

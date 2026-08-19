@@ -158,17 +158,16 @@ def ingest_one(
 ) -> None:
     """Index a single file, replacing any previous version of it."""
     existing = (
-        session.query(Document)
-        .filter_by(source_id=source.id, uri=candidate.uri)
-        .one_or_none()
+        session.query(Document).filter_by(source_id=source.id, uri=candidate.uri).one_or_none()
     )
 
     # --- step 1: skip on unchanged stat, without opening the file -----------
     if existing is not None and not force and not candidate.placeholder:
         same_size = existing.byte_size == candidate.size
-        same_mtime = existing.mtime is not None and abs(
-            (existing.mtime - candidate.mtime).total_seconds()
-        ) < 1.0
+        same_mtime = (
+            existing.mtime is not None
+            and abs((existing.mtime - candidate.mtime).total_seconds()) < 1.0
+        )
         if same_size and same_mtime and existing.state == IngestState.OK:
             counters.skipped += 1
             return
@@ -234,9 +233,7 @@ def ingest_one(
     except OSError:
         raw_hash = None
 
-    chunks = chunk_text(
-        result.text, result.kind, extension=candidate.path.suffix.lower()
-    )
+    chunks = chunk_text(result.text, result.kind, extension=candidate.path.suffix.lower())
     if not chunks:
         counters.note_error(f"{candidate.path.name}: produced no chunks")
         return

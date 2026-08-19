@@ -44,27 +44,53 @@ USER_CONFIG_FILENAME = ".garage.json"
 # resolve it without a local copy -- which matters because the config lives in
 # $HOME while the schema is a build artifact of this repository.
 SCHEMA_URL = (
-    "https://raw.githubusercontent.com/rickmark/garage-rag/"
-    "refs/heads/main/garage.schema.json"
+    "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json"
 )
 
 # Directory names that are never worth indexing. Skipping these at the walker
 # level is what keeps ~/Developer at ~18k documents instead of ~192k.
 DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset(
     {
-        ".git", ".hg", ".svn",
-        "node_modules", "vendor", "Pods", "Carthage",
-        ".venv", "venv", "site-packages", "__pycache__",
-        ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        "build", "dist", ".build", "DerivedData",
-        ".next", ".nuxt", ".cache", ".terraform",
-        ".tox", ".gradle", "target",
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "vendor",
+        "Pods",
+        "Carthage",
+        ".venv",
+        "venv",
+        "site-packages",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "build",
+        "dist",
+        ".build",
+        "DerivedData",
+        ".next",
+        ".nuxt",
+        ".cache",
+        ".terraform",
+        ".tox",
+        ".gradle",
+        "target",
         # Test fixtures and golden files. Third-party corpora get checked in as
         # test data: War and Peace, the complete Shakespeare, and Tom Sawyer all
         # appear in this corpus as compression fixtures.
-        "testdata", "test_data", "fixtures", "__fixtures__",
-        "snapshots", "__snapshots__", "golden", "goldens",
-        "buildtools", "third_party", "thirdparty", "external",
+        "testdata",
+        "test_data",
+        "fixtures",
+        "__fixtures__",
+        "snapshots",
+        "__snapshots__",
+        "golden",
+        "goldens",
+        "buildtools",
+        "third_party",
+        "thirdparty",
+        "external",
         # macOS bundles: opaque directories, not documents.
         "Contents",
     }
@@ -93,18 +119,43 @@ DEFAULT_EXCLUDE_PREFIXES: tuple[str, ...] = ("Library/", "Objects/", "Software/"
 # these are matched as glob patterns against directory names and pruned before
 # the walker ever descends into them.
 DIAGNOSTIC_DIR_PATTERNS: tuple[str, ...] = (
-    "sysdiagnose_*", "*.logarchive", "*.xcresult", "*.crash",
-    "DiagnosticReports", "CrashReporter", "ioreg", "logs", "Logs",
-    "spindump*", "*.dSYM", "CoreSimulator", "Diagnostics",
+    "sysdiagnose_*",
+    "*.logarchive",
+    "*.xcresult",
+    "*.crash",
+    "DiagnosticReports",
+    "CrashReporter",
+    "ioreg",
+    "logs",
+    "Logs",
+    "spindump*",
+    "*.dSYM",
+    "CoreSimulator",
+    "Diagnostics",
 )
 
 # Filenames that are machine output regardless of extension.
 DIAGNOSTIC_FILE_PATTERNS: tuple[str, ...] = (
-    "*.hash.txt", "*.sha.txt", "*.sha256*", "*.md5",
-    "apticket*", "*.der.txt", "*.plist.txt",
-    "spindump*.txt", "pmset*.txt", "taskinfo*.txt", "launchctl*.txt",
-    "*_status.txt", "ps.txt", "netstat*.txt", "vm_stat*.txt",
-    "system_profiler*.txt", "*.stackshot", "*.ips", "*.diag", "*.panic",
+    "*.hash.txt",
+    "*.sha.txt",
+    "*.sha256*",
+    "*.md5",
+    "apticket*",
+    "*.der.txt",
+    "*.plist.txt",
+    "spindump*.txt",
+    "pmset*.txt",
+    "taskinfo*.txt",
+    "launchctl*.txt",
+    "*_status.txt",
+    "ps.txt",
+    "netstat*.txt",
+    "vm_stat*.txt",
+    "system_profiler*.txt",
+    "*.stackshot",
+    "*.ips",
+    "*.diag",
+    "*.panic",
 )
 
 
@@ -167,9 +218,7 @@ class Settings(BaseModel):
     )
 
     # ---- identity -------------------------------------------------------
-    self_name: str = Field(
-        default="", description="Display name of the corpus owner."
-    )
+    self_name: str = Field(default="", description="Display name of the corpus owner.")
     self_identities: list[str] = Field(
         default_factory=list,
         description=(
@@ -184,6 +233,10 @@ class Settings(BaseModel):
         default="http://localhost:11434",
         description="Base URL of the Ollama server that produces embeddings.",
     )
+    lmstudio_host: str = Field(
+        default="http://localhost:1234/v1",
+        description="Base URL of the LM Studio OpenAI-compatible API (include /v1).",
+    )
     default_embedding_model: str = Field(
         default="bge-m3",
         description=(
@@ -191,9 +244,7 @@ class Settings(BaseModel):
             "registered with 'garage register-model' first."
         ),
     )
-    embed_batch_size: int = Field(
-        default=64, description="Chunks per embedding request."
-    )
+    embed_batch_size: int = Field(default=64, description="Chunks per embedding request.")
     embed_max_inflight: int = Field(
         default=1,
         description=(
@@ -203,9 +254,7 @@ class Settings(BaseModel):
     )
 
     # ---- chunking -------------------------------------------------------
-    chunk_size: int = Field(
-        default=1000, description="Target characters per prose chunk."
-    )
+    chunk_size: int = Field(default=1000, description="Target characters per prose chunk.")
     chunk_overlap: int = Field(
         default=150,
         description=(
@@ -377,6 +426,7 @@ SECTIONS: dict[str, dict[str, str]] = {
     },
     "embedding": {
         "ollama_host": "ollama_host",
+        "lmstudio_host": "lmstudio_host",
         "default_model": "default_embedding_model",
         "batch_size": "embed_batch_size",
         "max_inflight": "embed_max_inflight",

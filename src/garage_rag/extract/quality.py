@@ -148,12 +148,7 @@ def assess(text: str, *, sample_bytes: int = SAMPLE_BYTES) -> QualityVerdict:
     # Decisive on its own. Extreme repetition is included because human prose
     # never restates the same line *shape* four times in five -- an ASN.1 dump
     # sits at 0.85 while the prose in this corpus stays below 0.65.
-    decisive = (
-        timestamped > 0.6
-        or hexish > 1.0
-        or dumpish > 0.7
-        or repetition > 0.82
-    )
+    decisive = timestamped > 0.6 or hexish > 1.0 or dumpish > 0.7 or repetition > 0.82
     # Otherwise require corroboration, so prose about hex is not rejected.
     machine = decisive or len(reasons) >= 2
 

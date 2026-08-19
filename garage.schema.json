@@ -52,6 +52,11 @@
           "description": "Base URL of the Ollama server that produces embeddings.",
           "default": "http://localhost:11434"
         },
+        "lmstudio_host": {
+          "type": "string",
+          "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1).",
+          "default": "http://localhost:1234/v1"
+        },
         "default_model": {
           "type": "string",
           "description": "Slug of the model used when a command does not name one. Must be registered with 'garage register-model' first.",

@@ -75,9 +75,7 @@ def _tesseract(path: Path) -> tuple[str, float]:
     image = _open_image(path)
     width, height = image.size
     if width * height > MAX_OCR_PIXELS:
-        raise ExtractionError(
-            f"image too large to OCR ({width}x{height}): {path}"
-        )
+        raise ExtractionError(f"image too large to OCR ({width}x{height}): {path}")
     if width < MIN_OCR_WIDTH or height < MIN_OCR_HEIGHT:
         raise ExtractionError(f"image too small to hold text ({width}x{height}): {path}")
 
@@ -162,9 +160,7 @@ def extract_image(
     text, confidence = _tesseract(path)
     meta: dict = {"ocr_engine": "tesseract", "ocr_confidence": round(confidence, 2)}
 
-    good_enough = (
-        len(text) >= settings.ocr_min_chars and confidence >= settings.ocr_min_confidence
-    )
+    good_enough = len(text) >= settings.ocr_min_chars and confidence >= settings.ocr_min_confidence
 
     if not good_enough:
         from ..enrich.egress import EgressBlocked, cloud_enabled
@@ -192,8 +188,7 @@ def extract_image(
         # Reported as a failure, not indexed as an empty document: most images in
         # a code tree are icons and genuinely contain nothing.
         raise ExtractionError(
-            f"no usable text in image (confidence {confidence:.0f}, "
-            f"{len(text)} chars): {path}"
+            f"no usable text in image (confidence {confidence:.0f}, {len(text)} chars): {path}"
         )
 
     return ExtractResult(

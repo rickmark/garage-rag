@@ -101,18 +101,14 @@ class TestCorpusClassification:
 
     def test_readme_in_repo_stays_document(self) -> None:
         """A README is prose about code, not code."""
-        assert (
-            classify(Path("/r/app/README.md"), ContentKind.MARKDOWN)
-            is CorpusClass.DOCUMENT
-        )
+        assert classify(Path("/r/app/README.md"), ContentKind.MARKDOWN) is CorpusClass.DOCUMENT
 
     def test_license_without_extension_is_document(self) -> None:
         assert not is_code_path(Path("/r/LICENSE"))
 
     def test_conversation_is_communication(self) -> None:
         assert (
-            classify(Path("/x/thread.txt"), ContentKind.CONVERSATION)
-            is CorpusClass.COMMUNICATION
+            classify(Path("/x/thread.txt"), ContentKind.CONVERSATION) is CorpusClass.COMMUNICATION
         )
 
     def test_communication_source_pins_class(self) -> None:
@@ -165,7 +161,5 @@ class TestToolNameFiltering:
         assert not looks_like_tool_name(value)
 
     def test_clean_hints_dedupes_and_filters(self) -> None:
-        out = clean_author_hints(
-            ["Ada Lovelace", "openpyxl", "ada lovelace", "  ", "Grace Hopper"]
-        )
+        out = clean_author_hints(["Ada Lovelace", "openpyxl", "ada lovelace", "  ", "Grace Hopper"])
         assert out == ["Ada Lovelace", "Grace Hopper"]

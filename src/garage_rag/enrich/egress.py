@@ -58,8 +58,7 @@ class EgressRequest:
         # Level 2. First check, before any other consideration.
         if self.corpus_class is CorpusClass.COMMUNICATION:
             raise EgressBlocked(
-                "communications may never be sent to a cloud API "
-                f"(purpose={self.purpose!r})"
+                f"communications may never be sent to a cloud API (purpose={self.purpose!r})"
             )
         # Level 3.
         if not self.source_allows_cloud:
@@ -77,7 +76,7 @@ def cloud_enabled() -> bool:
     if settings.read_api_key() is None:
         return False
     try:
-        import anthropic  # noqa: F401
+        import anthropic  # type: ignore  # noqa: F401
     except ImportError:
         return False
     return True
@@ -93,23 +92,21 @@ def _client():
     settings = get_settings()
     if not settings.enable_cloud_ocr:
         raise CloudUnavailable(
-            'cloud enrichment is disabled; set cloud.enable_ocr = true in '
+            "cloud enrichment is disabled; set cloud.enable_ocr = true in "
             f"{settings.config_path or 'garage.json'}"
         )
 
     key = settings.read_api_key()
     if key is None:
         raise CloudUnavailable(
-            "no API key available; point cloud.api_key_file at a file "
-            "containing your Anthropic key"
+            "no API key available; point cloud.api_key_file at a file containing your Anthropic key"
         )
 
     try:
-        import anthropic
+        import anthropic  # type: ignore
     except ImportError as exc:
         raise CloudUnavailable(
-            "the anthropic package is not installed; "
-            "run: uv pip install -e '.[cloud]'"
+            "the anthropic package is not installed; run: uv pip install -e '.[cloud]'"
         ) from exc
 
     try:
@@ -138,11 +135,7 @@ def send(request: EgressRequest, *, system: str | None = None) -> str:
     log.debug("egress: %s (%s)", request.purpose, request.corpus_class)
     response = client.messages.create(**kwargs)
 
-    parts = [
-        block.text
-        for block in response.content
-        if getattr(block, "type", None) == "text"
-    ]
+    parts = [block.text for block in response.content if getattr(block, "type", None) == "text"]
     return "\n".join(parts).strip()
 
 

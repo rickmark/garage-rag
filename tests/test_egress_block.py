@@ -45,13 +45,9 @@ class TestTypeLevelBlock:
                 max_tokens=10,
             )
 
-    @pytest.mark.parametrize(
-        "klass", [CorpusClass.DOCUMENT, CorpusClass.CODE]
-    )
+    @pytest.mark.parametrize("klass", [CorpusClass.DOCUMENT, CorpusClass.CODE])
     def test_other_classes_allowed_when_source_permits(self, klass: CorpusClass) -> None:
-        request = EgressRequest(
-            corpus_class=klass, purpose="image-ocr", source_allows_cloud=True
-        )
+        request = EgressRequest(corpus_class=klass, purpose="image-ocr", source_allows_cloud=True)
         assert request.corpus_class is klass
 
     @pytest.mark.parametrize(
@@ -60,9 +56,7 @@ class TestTypeLevelBlock:
     def test_source_flag_is_required_for_every_class(self, klass: CorpusClass) -> None:
         """Level 3: no class egresses from a source that has not opted in."""
         with pytest.raises(EgressBlocked):
-            EgressRequest(
-                corpus_class=klass, purpose="image-ocr", source_allows_cloud=False
-            )
+            EgressRequest(corpus_class=klass, purpose="image-ocr", source_allows_cloud=False)
 
     def test_assert_helper_matches_the_type(self) -> None:
         with pytest.raises(EgressBlocked):
@@ -82,9 +76,10 @@ class TestChokepoint:
                 a.name.split(".")[0] == "anthropic" for a in node.names
             ):
                 return True
-            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[
-                0
-            ] == "anthropic":
+            if (
+                isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[0] == "anthropic"
+            ):
                 return True
         return False
 

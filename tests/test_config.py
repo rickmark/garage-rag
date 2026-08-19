@@ -161,9 +161,7 @@ class TestLoading:
         assert USER_CONFIG_FILENAME == ".garage.json"
         assert candidate_paths()[-1] == tmp_path / ".garage.json"
 
-    def test_user_default_is_found_when_no_project_file(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_user_default_is_found_when_no_project_file(self, tmp_path: Path, monkeypatch) -> None:
         home = tmp_path / "home"
         work = tmp_path / "work"
         home.mkdir()
@@ -233,7 +231,7 @@ class TestSources:
 
     def test_unknown_source_key_is_rejected(self) -> None:
         with pytest.raises(Exception, match="extra_forbidden|Extra inputs"):
-            SourceSpec(slug="a", root="/x", clas="document")
+            SourceSpec(slug="a", root="/x", **{"corpus_class": "document"})
 
     def test_sources_load_from_file(self, tmp_path: Path) -> None:
         cfg = tmp_path / CONFIG_FILENAME
@@ -249,7 +247,8 @@ class TestSources:
         )
         settings = load_config(cfg)
         assert [s.slug for s in settings.sources] == ["notes", "code"]
-        assert settings.source("code").include_code is True
+        source_code = settings.source("code")
+        assert source_code is not None and source_code.include_code is True
         assert settings.source("missing") is None
 
     def test_sources_must_be_a_list(self, tmp_path: Path) -> None:
@@ -288,9 +287,7 @@ class TestApiKeyFile:
 
 class TestIdentityParsing:
     def test_pairs(self) -> None:
-        settings = Settings(
-            self_identities=["git_email:a@b.c", "handle:@me", "malformed"]
-        )
+        settings = Settings(self_identities=["git_email:a@b.c", "handle:@me", "malformed"])
         assert settings.self_identity_pairs() == [
             ("git_email", "a@b.c"),
             ("handle", "@me"),
@@ -368,9 +365,7 @@ class TestSchemaCompleteness:
 
 class TestSchemaReference:
     def test_url_points_at_the_committed_schema(self) -> None:
-        assert SCHEMA_URL.startswith(
-            "https://raw.githubusercontent.com/rickmark/garage-rag/"
-        )
+        assert SCHEMA_URL.startswith("https://raw.githubusercontent.com/rickmark/garage-rag/")
         assert SCHEMA_URL.endswith("/garage.schema.json")
 
     def test_nest_uses_the_url_by_default(self) -> None:

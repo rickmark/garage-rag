@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import typer
 from rich.console import Console
@@ -63,10 +63,7 @@ def main(
         typer.Option(
             "--config",
             "-c",
-            help=(
-                f"Config file. Default: ./{CONFIG_FILENAME}, "
-                f"then ~/{USER_CONFIG_FILENAME}."
-            ),
+            help=(f"Config file. Default: ./{CONFIG_FILENAME}, then ~/{USER_CONFIG_FILENAME}."),
         ),
     ] = None,
 ) -> None:
@@ -151,7 +148,7 @@ def _settings_from_env_file(path: Path) -> tuple[Settings, list[str]]:
 
     # Legacy env name -> flat field. Only the names that ever existed.
     legacy = {f"GARAGE_{name.upper()}": name for name in Settings.model_fields}
-    values: dict[str, object] = {}
+    values: dict[str, Any] = {}
     migrated: list[str] = []
 
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -299,8 +296,7 @@ def sync(
     settings = get_settings()
     if not settings.sources:
         console.print(
-            "[yellow]no sources declared[/yellow] in "
-            f"{settings.config_path or 'the config file'}"
+            f"[yellow]no sources declared[/yellow] in {settings.config_path or 'the config file'}"
         )
         return
 
@@ -381,8 +377,7 @@ def sync(
         for slug, count in undeclared:
             console.print(f"  {slug} ({count:,} documents)")
         console.print(
-            "  [dim]add them to the config, or remove with "
-            "'garage remove-source <slug>'[/dim]"
+            "  [dim]add them to the config, or remove with 'garage remove-source <slug>'[/dim]"
         )
 
 
@@ -448,10 +443,13 @@ def register_model_cmd(
     model_ref: Annotated[
         str | None, typer.Option(help="Provider-side name, if it differs from the slug.")
     ] = None,
+    provider: Annotated[
+        str | None, typer.Option(help="Embedding backend: ollama | lmstudio.")
+    ] = None,
     default: Annotated[bool, typer.Option("--default", help="Make this the default.")] = False,
 ) -> None:
     """Register an embedding model and create its table + index."""
-    spec = resolve_spec(slug, dims=dims, model_ref=model_ref)
+    spec = resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider)
     with session_scope() as session:
         row = register_model(session, spec, make_default=default)
         console.print(
@@ -479,11 +477,22 @@ def list_models_cmd() -> None:
         console.print("[yellow]no models registered[/yellow]")
         return
     table = Table()
-    for col in ("slug", "ref", "dims", "stored", "storage", "index", "table", "default"):
+    for col in (
+        "slug",
+        "provider",
+        "ref",
+        "dims",
+        "stored",
+        "storage",
+        "index",
+        "table",
+        "default",
+    ):
         table.add_column(col)
     for m in models:
         table.add_row(
             m.slug,
+            m.provider,
             m.model_ref,
             str(m.dims),
             str(m.stored_dims),
@@ -580,9 +589,7 @@ def add_source(
                     allow_cloud_enrichment=allow_cloud,
                 )
             )
-            console.print(
-                f"[green]added source[/green] {slug} -> {expanded} ({klass}/{tier})"
-            )
+            console.print(f"[green]added source[/green] {slug} -> {expanded} ({klass}/{tier})")
 
 
 @app.command("remove-source")
@@ -601,9 +608,7 @@ def remove_source(
             {"sid": source.id},
         ).scalar_one()
         if not yes:
-            typer.confirm(
-                f"Remove source {slug} and delete {count:,} documents?", abort=True
-            )
+            typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
         # Cascades through chunks into every per-model embedding table.
         session.delete(source)
     console.print(f"[green]removed[/green] {slug} ({count:,} documents)")
@@ -655,7 +660,7 @@ def ingest(
     from .ingest.pipeline import ingest_source
 
     factory = get_session_factory()
-    if source == '*':
+    if source == "*":
         with factory() as session:
             sources = [s.slug for s in session.query(Source).order_by(Source.id).all()]
     else:
@@ -673,7 +678,6 @@ def ingest(
                     f"skipped {counters.skipped:,} failed {counters.failed:,}{note}"
                 )
 
-
             counters, walk_stats, budget = ingest_source(
                 factory,
                 source,
@@ -682,7 +686,6 @@ def ingest(
                 force=force,
                 progress=on_progress,
             )
-
 
         table = Table(title=f"ingest: {source}")
         table.add_column("metric")
@@ -770,8 +773,7 @@ def backfill(
 
                 def on_progress(state, slug=row.slug) -> None:
                     status.update(
-                        f"{slug}: {state.embedded:,}/{state.total:,} "
-                        f"({state.batches} batches)"
+                        f"{slug}: {state.embedded:,}/{state.total:,} ({state.batches} batches)"
                     )
 
                 state = backfill_model(
@@ -804,9 +806,7 @@ def reconcile(
     from .ingest.reconcile import reconcile_source
 
     with session_scope() as session:
-        result = reconcile_source(
-            session, source, dry_run=not apply, force=force
-        )
+        result = reconcile_source(session, source, dry_run=not apply, force=force)
 
     if result.refused:
         console.print(f"[yellow]refused[/yellow]: {result.reason}")
@@ -865,9 +865,7 @@ def mcp_install(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show what would be written, change nothing.")
     ] = False,
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Do not prompt before writing.")
-    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not prompt before writing.")] = False,
 ) -> None:
     """Register this MCP server in a client's config file.
 
@@ -884,9 +882,7 @@ def mcp_install(
 
     targets = client_targets()
     if path is not None:
-        chosen = ClientTarget(
-            key="custom", label="custom path", path=path.expanduser().resolve()
-        )
+        chosen = ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())
     else:
         if target not in targets:
             raise typer.BadParameter(
@@ -963,9 +959,7 @@ def mcp_install(
     if not yes:
         typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
 
-    result = install(
-        chosen, server_name=name, config_path=config_file, url=url, force=force
-    )
+    result = install(chosen, server_name=name, config_path=config_file, url=url, force=force)
     verb = "created" if result.created_file else "updated"
     console.print(f"[green]{verb}[/green] {result.path}")
     if result.backup:
@@ -1035,9 +1029,7 @@ def mcp_serve(
         bool,
         typer.Option("--sse", help="Serve over the legacy SSE transport."),
     ] = False,
-    host: Annotated[
-        str | None, typer.Option(help="Bind address. Default 127.0.0.1.")
-    ] = None,
+    host: Annotated[str | None, typer.Option(help="Bind address. Default 127.0.0.1.")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p")] = None,
     path: Annotated[str | None, typer.Option("--path", help="HTTP route. Default /mcp.")] = None,
     allow_origin: Annotated[
@@ -1098,13 +1090,10 @@ def mcp_serve(
     transport = "sse" if sse else "streamable-http"
     scheme_note = " [dim](legacy transport)[/dim]" if sse else ""
     console.print(
-        f"[green]serving[/green] {transport}{scheme_note} on "
-        f"http://{bind_host}:{bind_port}{route}"
+        f"[green]serving[/green] {transport}{scheme_note} on http://{bind_host}:{bind_port}{route}"
     )
     if not is_loopback(bind_host):
-        console.print(
-            "[yellow]warning[/yellow]: reachable from other machines, unauthenticated"
-        )
+        console.print("[yellow]warning[/yellow]: reachable from other machines, unauthenticated")
     console.print("[dim]Ctrl-C to stop[/dim]")
 
     try:
@@ -1128,9 +1117,7 @@ def mcp_serve(
 def search(
     query: Annotated[str, typer.Argument(help="What to look for.")],
     limit: Annotated[int, typer.Option("--limit", "-n")] = 10,
-    mode: Annotated[
-        str, typer.Option(help="hybrid | vector | fts")
-    ] = "hybrid",
+    mode: Annotated[str, typer.Option(help="hybrid | vector | fts")] = "hybrid",
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
     corpus_class: Annotated[
         list[str] | None,
@@ -1145,6 +1132,7 @@ def search(
     full: Annotated[bool, typer.Option("--full", help="Print whole snippets.")] = False,
 ) -> None:
     """Search the corpus with hybrid vector + keyword retrieval."""
+    from .search.hybrid import SearchMode
     from .search.hybrid import search as run_search
 
     with session_scope() as session:
@@ -1152,7 +1140,7 @@ def search(
             session,
             query,
             limit=limit,
-            mode=mode,  # type: ignore[arg-type]
+            mode=cast(SearchMode, mode),
             model_slug=model,
             corpus_classes=corpus_class or None,
             trust_tiers=trust or None,
@@ -1214,9 +1202,7 @@ def extract_cmd(
     )
 
     console.print(f"[bold]{target}[/bold]")
-    console.print(
-        f"  extractor : [cyan]{result.extractor}[/cyan] v{result.extractor_version}"
-    )
+    console.print(f"  extractor : [cyan]{result.extractor}[/cyan] v{result.extractor_version}")
     console.print(f"  kind      : {result.kind}")
     console.print(f"  title     : {result.title!r}")
     console.print(f"  chars     : {len(result.text):,}")

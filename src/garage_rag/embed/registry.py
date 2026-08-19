@@ -28,15 +28,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+
+from garage_rag.db.models import IndexKind, StorageKind
 
 # pgvector HNSW ceilings.
 HNSW_MAX_VECTOR_DIMS = 2000
 HNSW_MAX_HALFVEC_DIMS = 4000
-
-StorageKind = Literal["vector", "halfvec"]
-IndexKind = Literal["hnsw", "hnsw_bq", "none"]
-
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -90,25 +87,31 @@ def plan_storage(dims: int, *, supports_mrl: bool = False) -> StoragePlan:
         raise ValueError(f"dims must be positive, got {dims}")
 
     if dims <= HNSW_MAX_VECTOR_DIMS:
-        return StoragePlan(stored_dims=dims, storage_kind="vector", index_kind="hnsw")
+        return StoragePlan(
+            stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW
+        )
 
     if dims <= HNSW_MAX_HALFVEC_DIMS:
         # Too wide for an indexed `vector`, but halfvec's ceiling covers it.
         # Half precision costs little for retrieval and halves index size.
-        return StoragePlan(stored_dims=dims, storage_kind="halfvec", index_kind="hnsw")
+        return StoragePlan(
+            stored_dims=dims, storage_kind=StorageKind.HALFVEC, index_kind=IndexKind.HNSW
+        )
 
     if supports_mrl:
         # Truncate to the halfvec ceiling; MRL guarantees the prefix is valid.
         return StoragePlan(
             stored_dims=HNSW_MAX_HALFVEC_DIMS,
-            storage_kind="halfvec",
-            index_kind="hnsw",
+            storage_kind=StorageKind.HALFVEC,
+            index_kind=IndexKind.HNSW,
             truncated_from=dims,
         )
 
     # Cannot truncate safely and cannot index directly: keep full fidelity and
     # index a binary quantization, re-ranking exact cosine at query time.
-    return StoragePlan(stored_dims=dims, storage_kind="vector", index_kind="hnsw_bq")
+    return StoragePlan(
+        stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW_BQ
+    )
 
 
 def column_type_sql(plan: StoragePlan) -> str:
@@ -144,9 +147,7 @@ def truncate_vector(values: list[float], plan: StoragePlan) -> list[float]:
     if len(values) == plan.stored_dims:
         return values
     if len(values) < plan.stored_dims:
-        raise ValueError(
-            f"embedding has {len(values)} dims, expected at least {plan.stored_dims}"
-        )
+        raise ValueError(f"embedding has {len(values)} dims, expected at least {plan.stored_dims}")
 
     head = values[: plan.stored_dims]
     norm = sum(v * v for v in head) ** 0.5
@@ -158,9 +159,7 @@ def truncate_vector(values: list[float], plan: StoragePlan) -> list[float]:
 # Known models, so `garage register-model bge-m3` does not require the user to
 # look up widths. Anything absent can be registered with an explicit --dims.
 KNOWN_MODELS: dict[str, ModelSpec] = {
-    "nomic-embed-text": ModelSpec(
-        slug="nomic-embed-text", model_ref="nomic-embed-text", dims=768
-    ),
+    "nomic-embed-text": ModelSpec(slug="nomic-embed-text", model_ref="nomic-embed-text", dims=768),
     "bge-m3": ModelSpec(slug="bge-m3", model_ref="bge-m3", dims=1024),
     "mxbai-embed-large": ModelSpec(
         slug="mxbai-embed-large", model_ref="mxbai-embed-large", dims=1024

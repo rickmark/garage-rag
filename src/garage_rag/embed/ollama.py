@@ -28,6 +28,7 @@ from ..db.models import EmbeddingModel
 from .registry import StoragePlan, truncate_vector
 
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class EmbeddingError(RuntimeError):
@@ -61,15 +62,12 @@ class OllamaEmbedder:
         try:
             response = self._client.embed(model=self.model_ref, input=list(texts))
         except Exception as exc:  # noqa: BLE001 - surface backend detail to caller
-            raise EmbeddingError(
-                f"ollama embed failed for {self.model_ref}: {exc}"
-            ) from exc
+            raise EmbeddingError(f"ollama embed failed for {self.model_ref}: {exc}") from exc
 
         vectors = response.get("embeddings") if isinstance(response, dict) else response.embeddings
         if not vectors or len(vectors) != len(texts):
             raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors or [])} vectors for "
-                f"{len(texts)} inputs"
+                f"{self.model_ref} returned {len(vectors or [])} vectors for {len(texts)} inputs"
             )
         return [list(v) for v in vectors]
 
@@ -145,11 +143,13 @@ def backfill_model(
     Pure insert: existing vectors are never touched, so this is safe to run
     repeatedly and safe to interrupt.
     """
+    from .factory import get_embedder
+
     settings = get_settings()
     size = batch_size or settings.embed_batch_size
     table = assert_safe_table(model.table_name)
     plan = _plan_from_row(model)
-    embedder = OllamaEmbedder(model.model_ref)
+    embedder = get_embedder(model.provider, model.model_ref)
 
     state = BackfillProgress(total=count_pending(session, model))
     if state.total == 0:
@@ -196,5 +196,7 @@ def verify_model_dims(model: EmbeddingModel) -> tuple[bool, int]:
     A mismatch means every vector would be rejected by the column type, so it is
     worth one probe request before spending hours on a backfill.
     """
-    actual = OllamaEmbedder(model.model_ref).probe_dims()
+    from .factory import get_embedder
+
+    actual = get_embedder(model.provider, model.model_ref).probe_dims()
     return actual == model.dims, actual

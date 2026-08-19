@@ -71,9 +71,7 @@ class TestPlanStorage:
                 if plan.index_kind != "hnsw":
                     continue
                 ceiling = (
-                    HNSW_MAX_VECTOR_DIMS
-                    if plan.storage_kind == "vector"
-                    else HNSW_MAX_HALFVEC_DIMS
+                    HNSW_MAX_VECTOR_DIMS if plan.storage_kind == "vector" else HNSW_MAX_HALFVEC_DIMS
                 )
                 assert plan.stored_dims <= ceiling, (
                     f"{dims=} mrl={mrl} produced an unindexable "
@@ -87,11 +85,14 @@ class TestDDLGeneration:
         assert column_type_sql(plan_storage(2560)) == "halfvec(2560)"
 
     def test_hnsw_index_uses_matching_ops_class(self) -> None:
-        assert "vector_cosine_ops" in index_ddl("emb_a", plan_storage(1024))
-        assert "halfvec_cosine_ops" in index_ddl("emb_b", plan_storage(2560))
+        ddl_a = index_ddl("emb_a", plan_storage(1024))
+        assert ddl_a is not None and "vector_cosine_ops" in ddl_a
+        ddl_b = index_ddl("emb_b", plan_storage(2560))
+        assert ddl_b is not None and "halfvec_cosine_ops" in ddl_b
 
     def test_quantized_index_uses_hamming_ops(self) -> None:
         ddl = index_ddl("emb_c", plan_storage(4096, supports_mrl=False))
+        assert ddl is not None
         assert "binary_quantize" in ddl
         assert "bit_hamming_ops" in ddl
 

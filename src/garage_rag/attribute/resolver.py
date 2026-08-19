@@ -101,9 +101,7 @@ class SelfIdentity:
         return cls(settings.self_name, settings.self_identity_pairs())
 
 
-def _git_attribution(
-    path: Path, self_identity: SelfIdentity
-) -> Attribution | None:
+def _git_attribution(path: Path, self_identity: SelfIdentity) -> Attribution | None:
     """Attribution from git history, or None when the file is not tracked."""
     repo_root = find_repo_root(path)
     if repo_root is None:
@@ -230,11 +228,7 @@ def resolve(
         # Metadata names an author; a reference-shaped path still overrides an
         # authored guess, since "in Reference/ but has my name" is usually a
         # paper the owner collected rather than wrote.
-        trust = (
-            TrustTier.REFERENCE
-            if path_trust is TrustTier.REFERENCE
-            else from_meta.trust
-        )
+        trust = TrustTier.REFERENCE if path_trust is TrustTier.REFERENCE else from_meta.trust
         return Attribution(
             trust=trust,
             authors=from_meta.authors,
@@ -273,9 +267,7 @@ def get_or_create_author(
     later via a PDF byline collapses onto one row.
     """
     for kind, value in identities:
-        existing = (
-            session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
-        )
+        existing = session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
         if existing is not None:
             return existing.author
 
@@ -287,9 +279,7 @@ def get_or_create_author(
 
     # Attach any identities not yet recorded.
     for kind, value in identities:
-        present = (
-            session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
-        )
+        present = session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
         if present is None:
             session.add(AuthorIdentity(author_id=author.id, kind=kind, value=value))
     session.flush()
@@ -306,15 +296,9 @@ def ensure_self_author(session: Session) -> Author | None:
     pairs = settings.self_identity_pairs()
     if existing is not None:
         for kind, value in pairs:
-            present = (
-                session.query(AuthorIdentity)
-                .filter_by(kind=kind, value=value)
-                .one_or_none()
-            )
+            present = session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
             if present is None:
-                session.add(
-                    AuthorIdentity(author_id=existing.id, kind=kind, value=value)
-                )
+                session.add(AuthorIdentity(author_id=existing.id, kind=kind, value=value))
         session.flush()
         return existing
 

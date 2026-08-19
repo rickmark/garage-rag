@@ -16,3 +16,5 @@ anthropic.key
 garage.json
 
 *.bak-*
+
+__pycache__

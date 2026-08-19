@@ -16,6 +16,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.2,<2",
     # embeddings
     "ollama>=0.6.1",
+    "openai>=1.0",
     # document extraction (all permissive licenses; PyMuPDF avoided due to AGPL)
     "pypdf>=6.16",
     "pdfplumber>=0.11.10",
@@ -33,6 +34,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "rich>=13.9",
     "pyyaml>=6.0",
+    "pytest>=9.1.1",
 ]
 
 [project.optional-dependencies]
@@ -65,3 +67,8 @@ filterwarnings = ["error::DeprecationWarning"]
 [tool.mypy]
 python_version = "3.13"
 warn_unused_ignores = true
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.73",
+]

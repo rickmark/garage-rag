@@ -109,9 +109,7 @@ def materialize(path: Path, budget: MaterializationBudget) -> bool:
         try:
             size = future.result(timeout=budget.timeout_seconds)
         except FutureTimeout:
-            log.warning(
-                "materialization timed out after %.0fs: %s", budget.timeout_seconds, path
-            )
+            log.warning("materialization timed out after %.0fs: %s", budget.timeout_seconds, path)
             budget.failed += 1
             return False
         except OSError as exc:

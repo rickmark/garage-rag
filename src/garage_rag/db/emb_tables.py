@@ -64,7 +64,13 @@ def create_embedding_table(session: Session, table: str, plan: StoragePlan) -> N
         log.warning("model table %s created without a vector index", table)
 
 
-def resolve_spec(slug: str, *, dims: int | None = None, model_ref: str | None = None) -> ModelSpec:
+def resolve_spec(
+    slug: str,
+    *,
+    dims: int | None = None,
+    model_ref: str | None = None,
+    provider: str | None = None,
+) -> ModelSpec:
     """Look up a known model, or build a spec from explicit arguments."""
     known = KNOWN_MODELS.get(slug)
     if known is not None:
@@ -74,17 +80,26 @@ def resolve_spec(slug: str, *, dims: int | None = None, model_ref: str | None = 
                 slug=known.slug,
                 model_ref=model_ref or known.model_ref,
                 dims=dims,
-                provider=known.provider,
+                provider=provider or known.provider,
+                normalized=known.normalized,
+                supports_mrl=known.supports_mrl,
+            )
+        if provider is not None and provider != known.provider:
+            return ModelSpec(
+                slug=known.slug,
+                model_ref=model_ref or known.model_ref,
+                dims=known.dims,
+                provider=provider,
                 normalized=known.normalized,
                 supports_mrl=known.supports_mrl,
             )
         return known
 
     if dims is None:
-        raise ValueError(
-            f"model {slug!r} is not in the known-model table; pass --dims explicitly"
-        )
-    return ModelSpec(slug=slug, model_ref=model_ref or slug, dims=dims)
+        raise ValueError(f"model {slug!r} is not in the known-model table; pass --dims explicitly")
+    return ModelSpec(
+        slug=slug, model_ref=model_ref or slug, dims=dims, provider=provider or "ollama"
+    )
 
 
 def register_model(

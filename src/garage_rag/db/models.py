@@ -31,6 +31,17 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
+class StorageKind(enum.StrEnum):
+    VECTOR = "vector"
+    HALFVEC = "halfvec"
+
+
+class IndexKind(enum.StrEnum):
+    HNSW = "hnsw"
+    HNSW_BQ = "hnsw_bq"
+    NONE = "none"
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -72,12 +83,8 @@ class IngestState(enum.StrEnum):
 _corpus_class = Enum(
     CorpusClass, name="corpus_class", values_callable=lambda e: [m.value for m in e]
 )
-_trust_tier = Enum(
-    TrustTier, name="trust_tier", values_callable=lambda e: [m.value for m in e]
-)
-_author_role = Enum(
-    AuthorRole, name="author_role", values_callable=lambda e: [m.value for m in e]
-)
+_trust_tier = Enum(TrustTier, name="trust_tier", values_callable=lambda e: [m.value for m in e])
+_author_role = Enum(AuthorRole, name="author_role", values_callable=lambda e: [m.value for m in e])
 _ingest_state = Enum(
     IngestState, name="ingest_state", values_callable=lambda e: [m.value for m in e]
 )
@@ -90,9 +97,7 @@ class Source(Base):
     slug: Mapped[str] = mapped_column(Text, unique=True)
     kind: Mapped[str] = mapped_column(Text)
     root: Mapped[str] = mapped_column(Text)
-    default_class: Mapped[CorpusClass] = mapped_column(
-        _corpus_class, default=CorpusClass.DOCUMENT
-    )
+    default_class: Mapped[CorpusClass] = mapped_column(_corpus_class, default=CorpusClass.DOCUMENT)
     default_trust: Mapped[TrustTier] = mapped_column(_trust_tier)
     # Egress guard, level 3: false for messages/mail and never flipped by code.
     allow_cloud_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -126,9 +131,7 @@ class AuthorIdentity(Base):
     __tablename__ = "author_identities"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    author_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authors.id", ondelete="CASCADE")
-    )
+    author_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("authors.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(Text)
     value: Mapped[str] = mapped_column(Text)
 
@@ -141,9 +144,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    source_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("sources.id", ondelete="CASCADE")
-    )
+    source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sources.id", ondelete="CASCADE"))
     uri: Mapped[str] = mapped_column(Text)
     corpus_class: Mapped[CorpusClass] = mapped_column(_corpus_class)
     trust_tier: Mapped[TrustTier] = mapped_column(_trust_tier)
@@ -231,8 +232,8 @@ class EmbeddingModel(Base):
     model_ref: Mapped[str] = mapped_column(Text)
     dims: Mapped[int] = mapped_column(Integer)
     stored_dims: Mapped[int] = mapped_column(Integer)
-    storage_kind: Mapped[str] = mapped_column(String)
-    index_kind: Mapped[str] = mapped_column(String)
+    storage_kind: Mapped[StorageKind] = mapped_column(String)
+    index_kind: Mapped[IndexKind] = mapped_column(String)
     normalized: Mapped[bool] = mapped_column(Boolean, default=True)
     table_name: Mapped[str] = mapped_column(Text, unique=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -243,12 +244,8 @@ class IngestRun(Base):
     __tablename__ = "ingest_runs"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    source_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("sources.id", ondelete="CASCADE")
-    )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sources.id", ondelete="CASCADE"))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Reconciliation only trusts a run with completed=True; otherwise an
     # unmounted volume looks like a mass deletion.

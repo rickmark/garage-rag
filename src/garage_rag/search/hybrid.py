@@ -23,14 +23,13 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from pgvector import HalfVector
-from sqlalchemy import text, bindparam
-from sqlalchemy.orm import Session
-from pgvector.psycopg import register_vector
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import cast
+from sqlalchemy import bindparam, text
+from sqlalchemy.orm import Session
+
 from ..db.emb_tables import assert_safe_table, get_model
 from ..db.engine import apply_search_tuning
-from ..embed.ollama import OllamaEmbedder
+from ..embed.factory import get_embedder
 from ..embed.registry import StoragePlan, truncate_vector
 
 log = logging.getLogger(__name__)
@@ -125,7 +124,7 @@ def _embed_query(model, query: str) -> tuple[object, StoragePlan]:
         index_kind=model.index_kind,
         truncated_from=model.dims if model.stored_dims < model.dims else None,
     )
-    raw = OllamaEmbedder(model.model_ref).embed([query])[0]
+    raw = get_embedder(model.provider, model.model_ref).embed([query])[0]
     reduced = truncate_vector(raw, plan)
     value = HalfVector(reduced) if plan.storage_kind == "halfvec" else reduced
     return value, plan
@@ -175,7 +174,6 @@ def search(
         params["author"] = f"%{author}%"
 
     need_vector = mode in ("hybrid", "vector")
-
 
     # Each CTE is included only when its engine is in play, so `--mode fts`
     # never loads an embedding model and `--mode vector` never parses a tsquery.
@@ -262,8 +260,8 @@ def search(
     )
 
     if need_vector:
-        params['qv'], _plan = _embed_query(model, query)
-        sql = sql.bindparams(bindparam('qv', type_=VECTOR))
+        params["qv"], _plan = _embed_query(model, query)
+        sql = sql.bindparams(bindparam("qv", type_=VECTOR))
 
     rows = session.execute(sql, params).mappings().all()
     return [
@@ -287,9 +285,10 @@ def search(
 
 def corpus_overview(session: Session) -> list[dict]:
     """Counts by (corpus_class, trust_tier), for `stats` and the MCP server."""
-    rows = session.execute(
-        text(
-            """
+    rows = (
+        session.execute(
+            text(
+                """
             SELECT d.corpus_class::text AS corpus_class,
                    d.trust_tier::text   AS trust_tier,
                    count(DISTINCT d.id)  AS documents,
@@ -300,6 +299,9 @@ def corpus_overview(session: Session) -> list[dict]:
             GROUP BY 1, 2
             ORDER BY documents DESC
             """
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     return [dict(row) for row in rows]

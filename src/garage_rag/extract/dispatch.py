@@ -23,29 +23,109 @@ MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown", ".mdown", ".mkd", ".mdx", "
 
 PLAINTEXT_EXTENSIONS = frozenset(
     {
-        ".txt", ".text", ".rst", ".org", ".adoc", ".asciidoc", ".tex",
-        ".srt", ".vtt", ".eml", ".msg",
+        ".txt",
+        ".text",
+        ".rst",
+        ".org",
+        ".adoc",
+        ".asciidoc",
+        ".tex",
+        ".srt",
+        ".vtt",
+        ".eml",
+        ".msg",
     }
 )
 
 CODE_EXTENSIONS = frozenset(
     {
-        ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
-        ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh",
-        ".m", ".mm", ".swift", ".java", ".kt", ".kts", ".scala",
-        ".go", ".rs", ".rb", ".php", ".pl", ".pm", ".lua",
-        ".sh", ".bash", ".zsh", ".fish", ".ps1",
-        ".sql", ".r", ".jl", ".hs", ".ml", ".ex", ".exs", ".erl",
-        ".cs", ".fs", ".vb", ".dart", ".zig", ".nim",
-        ".html", ".htm", ".xml", ".svg", ".css", ".scss", ".sass", ".less",
-        ".vue", ".svelte", ".proto", ".graphql", ".gql",
-        ".tf", ".hcl", ".dockerfile", ".makefile", ".cmake", ".gradle",
-        ".s", ".asm", ".v", ".sv", ".vhd",
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".hpp",
+        ".hh",
+        ".m",
+        ".mm",
+        ".swift",
+        ".java",
+        ".kt",
+        ".kts",
+        ".scala",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".pl",
+        ".pm",
+        ".lua",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".sql",
+        ".r",
+        ".jl",
+        ".hs",
+        ".ml",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".cs",
+        ".fs",
+        ".vb",
+        ".dart",
+        ".zig",
+        ".nim",
+        ".html",
+        ".htm",
+        ".xml",
+        ".svg",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".vue",
+        ".svelte",
+        ".proto",
+        ".graphql",
+        ".gql",
+        ".tf",
+        ".hcl",
+        ".dockerfile",
+        ".makefile",
+        ".cmake",
+        ".gradle",
+        ".s",
+        ".asm",
+        ".v",
+        ".sv",
+        ".vhd",
         # Structured configuration and data. Grouped with code because that is
         # what it is: package manifests, CI workflows, k8s specs, lockfiles.
         # As documents these were 63% of the corpus and pure retrieval noise.
-        ".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".toml",
-        ".ini", ".cfg", ".conf", ".properties", ".csv", ".tsv",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
+        ".csv",
+        ".tsv",
     }
 )
 
@@ -60,15 +140,19 @@ XLSX_EXTENSIONS = frozenset({".xlsx", ".xlsm"})
 
 # Legacy binary Office formats. Recognized so they can be reported honestly
 # rather than being silently treated as unknown; reading them needs LibreOffice.
-LEGACY_OFFICE_EXTENSIONS = frozenset(
-    {".doc", ".ppt", ".xls", ".rtf", ".pages", ".key", ".numbers"}
-)
+LEGACY_OFFICE_EXTENSIONS = frozenset({".doc", ".ppt", ".xls", ".rtf", ".pages", ".key", ".numbers"})
 
 # Filenames without a useful extension that are still worth indexing.
 NAMED_CODE_FILES = frozenset(
     {
-        "makefile", "dockerfile", "rakefile", "gemfile",
-        "podfile", "brewfile", "justfile", "vagrantfile",
+        "makefile",
+        "dockerfile",
+        "rakefile",
+        "gemfile",
+        "podfile",
+        "brewfile",
+        "justfile",
+        "vagrantfile",
     }
 )
 

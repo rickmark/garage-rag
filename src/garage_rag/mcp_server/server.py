@@ -288,14 +288,18 @@ def rag_get_document(
 
     with session_scope() as session:
         if document_id is not None:
-            row = session.execute(
-                text("SELECT * FROM documents WHERE id = :i"), {"i": document_id}
-            ).mappings().one_or_none()
+            row = (
+                session.execute(text("SELECT * FROM documents WHERE id = :i"), {"i": document_id})
+                .mappings()
+                .one_or_none()
+            )
         else:
             expanded = (location or "").replace("~", _HOME)
-            row = session.execute(
-                text("SELECT * FROM documents WHERE uri = :u"), {"u": expanded}
-            ).mappings().one_or_none()
+            row = (
+                session.execute(text("SELECT * FROM documents WHERE uri = :u"), {"u": expanded})
+                .mappings()
+                .one_or_none()
+            )
 
         if row is None:
             raise ValueError(f"no such document: {document_id or location}")
@@ -338,9 +342,10 @@ def rag_get_document(
 def rag_list_sources() -> SourceList:
     """List indexed sources with their document and chunk counts."""
     with session_scope() as session:
-        rows = session.execute(
-            text(
-                """
+        rows = (
+            session.execute(
+                text(
+                    """
                 SELECT s.slug, s.kind, s.default_class::text AS cls,
                        s.default_trust::text AS trust, s.root,
                        count(DISTINCT d.id) AS documents,
@@ -351,8 +356,11 @@ def rag_list_sources() -> SourceList:
                 GROUP BY s.id, s.slug, s.kind, s.default_class, s.default_trust, s.root
                 ORDER BY documents DESC
                 """
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
     sources = [
         SourceInfo(
@@ -375,9 +383,10 @@ def rag_list_authors(
 ) -> AuthorList:
     """List authors in the corpus, most-documented first."""
     with session_scope() as session:
-        rows = session.execute(
-            text(
-                """
+        rows = (
+            session.execute(
+                text(
+                    """
                 SELECT a.display_name, a.is_self,
                        count(DISTINCT da.document_id) AS documents,
                        COALESCE(array_agg(DISTINCT i.kind || ':' || i.value)
@@ -389,9 +398,12 @@ def rag_list_authors(
                 ORDER BY documents DESC, a.display_name
                 LIMIT :limit
                 """
-            ),
-            {"limit": limit},
-        ).mappings().all()
+                ),
+                {"limit": limit},
+            )
+            .mappings()
+            .all()
+        )
 
     authors = [
         AuthorInfo(
@@ -414,9 +426,7 @@ def rag_stats() -> CorpusStats:
     """
     with session_scope() as session:
         documents = int(
-            session.execute(
-                text("SELECT count(*) FROM documents WHERE state = 'ok'")
-            ).scalar_one()
+            session.execute(text("SELECT count(*) FROM documents WHERE state = 'ok'")).scalar_one()
         )
         chunks = int(session.execute(text("SELECT count(*) FROM chunks")).scalar_one())
         authors = int(session.execute(text("SELECT count(*) FROM authors")).scalar_one())
@@ -429,9 +439,7 @@ def rag_stats() -> CorpusStats:
 
         models: list[ModelInfo] = []
         for m in list_models(session):
-            have = int(
-                session.execute(text(f"SELECT count(*) FROM {m.table_name}")).scalar_one()
-            )
+            have = int(session.execute(text(f"SELECT count(*) FROM {m.table_name}")).scalar_one())
             models.append(
                 ModelInfo(
                     slug=m.slug,

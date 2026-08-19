@@ -232,9 +232,7 @@ class TestHttpEntry:
 
     def test_url_entry_has_no_command_or_config(self, tmp_path: Path) -> None:
         """Nothing is spawned, so a command or config path would be misleading."""
-        entry = server_entry(
-            url="http://127.0.0.1:8787/mcp", config_path=tmp_path / "garage.json"
-        )
+        entry = server_entry(url="http://127.0.0.1:8787/mcp", config_path=tmp_path / "garage.json")
         assert "command" not in entry
         assert "args" not in entry
         assert "env" not in entry
@@ -284,9 +282,7 @@ class TestLoopbackDetection:
 
         assert is_loopback(host)
 
-    @pytest.mark.parametrize(
-        "host", ["0.0.0.0", "192.168.1.10", "10.0.0.5", "example.com", "::"]
-    )
+    @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "10.0.0.5", "example.com", "::"])
     def test_not_loopback(self, host: str) -> None:
         """0.0.0.0 binds every interface, so it is emphatically not loopback."""
         from garage_rag.mcp_server.server import is_loopback
