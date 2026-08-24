@@ -1,0 +1,11 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "enrich",
+    srcs = [
+        "__init__.py",
+        "egress.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+)

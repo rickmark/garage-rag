@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# After adding or upgrading a third-party dependency, run this script to
+# regenerate the language lockfiles. Also run once after `aspect init` to
+# materialize the placeholder lockfiles the template ships with.
+set -o errexit -o nounset -o pipefail
+
+cd "$(dirname "$0")/.."
+
+# Regenerate the curated bazelrc preset (bazelrc-preset.bzl). Keeps
+# bazel/preset.bazelrc in sync so //bazel:preset.update_test passes.
+bazel run //bazel:preset.update
+
+# Python: regenerate uv.lock from pyproject.toml (uv reads pyproject + lock).
+bazel run @uv -- lock
+
+# Accept any resulting MODULE.bazel.lock changes.
+bazel mod deps --lockfile_mode=update

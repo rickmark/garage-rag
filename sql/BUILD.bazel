@@ -1,0 +1,4 @@
+filegroup(
+    name = "sql_schema",
+    srcs = glob(["*.sql"]),
+)

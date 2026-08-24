@@ -18,3 +18,7 @@ garage.json
 *.bak-*
 
 __pycache__
+
+bazel-*
+
+.bazelbsp/

@@ -1,0 +1,70 @@
+"""Aspect CLI configuration for this workspace.
+
+See https://aspect.build/docs/cli for the full reference. This file customizes
+the built-in Aspect CLI tasks (build, test, lint, format, ...). It is loaded by
+`aspect` on every invocation.
+"""
+
+load("@aspect//feature/artifacts.axl", "ArtifactUpload")
+load("@aspect//format.axl", "format")
+load("@aspect//traits.axl", "BazelTrait")
+
+# Format Starlark files with buildifier. Depends only on buildifier_prebuilt, so
+# it's available in every project (independent of the lint feature).
+# `buildifier -r .` walks the tree when the format task would otherwise pass
+# zero files (e.g. `--scope=all`).
+buildifier = format.alias(
+    defaults = {
+        "formatter_target": "@buildifier_prebuilt//buildifier",
+        "formatter_args_for_tree_walk": ["-r", "."],
+        "run_in": "cwd",
+        "include_patterns": [
+            "**/BUILD.bazel",
+            "**/MODULE.bazel",
+            "**/*.bzl",
+            "**/*.star",
+            "**/*.axl",
+        ],
+    },
+    summary = "Format Starlark files using buildifier.",
+)
+
+def config(ctx: ConfigContext):
+    is_ci = bool(ctx.std.env.var("CI"))
+
+    if is_ci:
+        ctx.traits[BazelTrait].extra_flags.extend([
+            "--config=ci",
+        ])
+
+    # Enable artifact uploads for testlogs, profile, and BEP.
+    # upload_test_logs="failed" — the logs from passing tests are noise;
+    # failing/flaky tests' logs are the ones anyone would actually open.
+    ctx.features[ArtifactUpload].args.upload_test_logs = "failed"
+    ctx.features[ArtifactUpload].args.upload_profile = True
+    ctx.features[ArtifactUpload].args.upload_bep = True
+
+    # Register the buildifier alias as a real CLI command (`aspect buildifier`).
+    ctx.tasks.add(buildifier)
+    
+
+    # Wire the built-in `aspect lint` task to the rules_lint aspects for the
+    # languages enabled in this project.
+    #
+    # Only languages with a wired rules_lint linter appear here. go/scala have
+    # none; rust's clippy aspect comes from aspect_rules_lint_rust (rustfmt
+    # formatting additionally runs through the `format` task).
+    ctx.tasks["lint"].args.aspects = [
+        
+        
+        "//tools/lint:linters.bzl%ruff",
+        "//tools/lint:linters.bzl%ty",
+        
+        
+        
+        
+        
+    ]
+    
+    
+    

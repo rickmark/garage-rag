@@ -1,0 +1,6 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="MacApp Build" type="NoctuleSwiftBuildRunConfigurationType" nameIsGenerated="true">
+    <option name="packageDirectory" value="$PROJECT_DIR$/macapp" />
+    <method v="2" />
+  </configuration>
+</component>

@@ -1,0 +1,31 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+
+py_binary(
+    name = "server",
+    srcs = ["server.py"],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//mcp",
+        "@pypi//mcp_types",
+        "@pypi//pydantic",
+        "@pypi//sqlalchemy",
+    ],
+)
+
+py_library(
+    name = "mcp_server",
+    srcs = [
+        "__init__.py",
+        "install.py",
+        "server.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//mcp",
+        "@pypi//mcp_types",
+        "@pypi//pydantic",
+        "@pypi//sqlalchemy",
+    ],
+)

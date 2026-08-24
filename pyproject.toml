@@ -27,7 +27,7 @@ dependencies = [
     "pytesseract>=0.3.13",
     "pillow>=11.0",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
-    "mcp[cli]>=2,<3",
+    "mcp[cli]==2.1.0",
     # plumbing
     "typer>=0.15",
     "pydantic>=2.7.4",
@@ -67,8 +67,3 @@ filterwarnings = ["error::DeprecationWarning"]
 [tool.mypy]
 python_version = "3.13"
 warn_unused_ignores = true
-
-[dependency-groups]
-dev = [
-    "ty>=0.0.73",
-]

@@ -1,0 +1,28 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "extract",
+    srcs = [
+        "__init__.py",
+        "base.py",
+        "dispatch.py",
+        "image.py",
+        "office.py",
+        "pdf.py",
+        "placeholder.py",
+        "quality.py",
+        "text.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//openpyxl",
+        "@pypi//pdfplumber",
+        "@pypi//pillow",
+        "@pypi//pypdf",
+        "@pypi//pytesseract",
+        "@pypi//python_docx",
+        "@pypi//python_pptx",
+        "@pypi//pyyaml",
+    ],
+)

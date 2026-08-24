@@ -1,0 +1,8 @@
+git_repo = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+git_repo(
+    name = "pgvector",
+    build_file = "//ext/pgvector:pgvector.BUILD.bazel",
+    commit = "8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c",  # "v0.8.6"
+    remote = "https://github.com/pgvector/pgvector.git",
+)

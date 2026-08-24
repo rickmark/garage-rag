@@ -1,0 +1,25 @@
+# gazelle:python_root
+
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "garage_rag",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/garage_rag",
+        "//src/garage_rag/attribute",
+        "//src/garage_rag/db",
+        "//src/garage_rag/embed",
+        "//src/garage_rag/enrich",
+        "//src/garage_rag/extract",
+        "//src/garage_rag/ingest",
+        "//src/garage_rag/mcp_server",
+        "//src/garage_rag/search",
+    ],
+)
+
+alias(
+    name = "garage",
+    actual = "//src/garage_rag:cli",
+    visibility = ["//visibility:public"],
+)

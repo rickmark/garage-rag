@@ -688,8 +688,11 @@ def get_settings() -> Settings:
     """Process-wide settings singleton."""
     global _settings
     if _settings is None:
-        _settings = load_config()
-    return _settings
+        settings = load_config()
+        _settings = settings
+        return settings
+    else:
+        return _settings
 
 
 def set_settings(settings: Settings) -> None:

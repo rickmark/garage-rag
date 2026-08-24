@@ -1,0 +1,15 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "search",
+    srcs = [
+        "__init__.py",
+        "hybrid.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//pgvector",
+        "@pypi//sqlalchemy",
+    ],
+)

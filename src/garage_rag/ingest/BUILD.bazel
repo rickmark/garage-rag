@@ -1,0 +1,20 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "ingest",
+    srcs = [
+        "__init__.py",
+        "chunking.py",
+        "classify.py",
+        "materialize.py",
+        "pipeline.py",
+        "reconcile.py",
+        "walker.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//langchain_text_splitters",
+        "@pypi//sqlalchemy",
+    ],
+)

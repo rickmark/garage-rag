@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "GarageApp",
+    name: "Garage",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(

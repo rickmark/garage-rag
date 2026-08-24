@@ -1,0 +1,11 @@
+alias(
+    name = "postgres",
+    actual = "//ext/postgres:postgres",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pgvector",
+    actual = "//ext/pgvector:pgvector",
+    visibility = ["//visibility:public"],
+)
