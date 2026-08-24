@@ -20,6 +20,6 @@ py_library(
 
 alias(
     name = "garage",
-    actual = "//src/garage_rag:cli",
+    actual = "//src/garage_rag:garage",
     visibility = ["//visibility:public"],
 )

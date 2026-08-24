@@ -1,8 +1,12 @@
 load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
 
 py_binary(
-    name = "cli",
+    name = "garage",
     srcs = ["cli.py"],
+    data = [
+        "//src/data/schema:config_schema",
+        "//src/data/sql:sql_schema",
+    ],
     imports = [".."],
     visibility = ["//visibility:public"],
     deps = [

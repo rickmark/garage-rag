@@ -29,21 +29,18 @@ enum Paths {
         return resourceURL
     }
 
-    private static let devPostgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql@18")
+    private static let devPostgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
     private static let devPgvectorPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/pgvector")
     private static let devRepoRoot = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("garage"))
 
     static var isPackaged: Bool {
         guard let root = bundleResourceRoot else { return false }
-        return FileManager.default.fileExists(atPath: root.appendingPathComponent("postgres/bin/postgres").path)
+        return FileManager.default.fileExists(atPath: root.appendingPathComponent("postgres").path)
     }
 
     /// Directory containing postgres/initdb/pg_ctl/pg_isready/psql.
     static var postgresBinDir: URL {
-        if isPackaged, let root = bundleResourceRoot {
-            return root.appendingPathComponent("postgres/bin", isDirectory: true)
-        }
-        return devPostgresPrefix.appendingPathComponent("bin", isDirectory: true)
+        return devPostgresPrefix
     }
 
     /// Directory postgres should treat as its lib dir (for dynamic loading of extensions).
@@ -56,10 +53,7 @@ enum Paths {
 
     /// Directory postgres should treat as its share dir (extension SQL/control files).
     static var postgresShareDir: URL {
-        if isPackaged, let root = bundleResourceRoot {
-            return root.appendingPathComponent("postgres/share", isDirectory: true)
-        }
-        return devPostgresPrefix.appendingPathComponent("share/postgresql", isDirectory: true)
+        return devPostgresPrefix.appendingPathComponent("postgresql", isDirectory: true)
     }
 
     static func postgresTool(_ name: String) -> URL {
@@ -68,18 +62,13 @@ enum Paths {
 
     /// The frozen `garage` CLI binary (packaged) or the venv's `garage` script (dev).
     static var garageCLI: URL {
-        if isPackaged, let root = bundleResourceRoot {
-            return root.appendingPathComponent("python-dist/garage/garage", isDirectory: false)
-        }
-        return devRepoRoot.appendingPathComponent(".venv/bin/garage", isDirectory: false)
+        let root = bundleResourceRoot!
+        return root.appendingPathComponent("garage", isDirectory: false)
     }
 
     /// The frozen `garage-mcp` binary (packaged) or the venv's script (dev).
     static var garageMCP: URL {
-        if isPackaged, let root = bundleResourceRoot {
-            return root.appendingPathComponent("python-dist/garage-mcp/garage-mcp", isDirectory: false)
-        }
-        return devRepoRoot.appendingPathComponent(".venv/bin/garage-mcp", isDirectory: false)
+        return devRepoRoot.appendingPathComponent("garage-mcp", isDirectory: false)
     }
 
     /// Working directory for `garage` CLI invocations, and where its `.env`

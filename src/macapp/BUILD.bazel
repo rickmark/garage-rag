@@ -10,6 +10,7 @@ swift_library(
         "//src:garage_rag",
         "//src/data/schema:config_schema",
         "//src/data/sql:sql_schema",
+        "//src/garage_rag:garage",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:private"],
