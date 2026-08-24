@@ -1,0 +1,5 @@
+filegroup(
+    name = "config_schema",
+    srcs = ["garage.schema.json"],
+    visibility = ["//visibility:public"],
+)

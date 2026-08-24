@@ -1,6 +1,6 @@
 # Schema reference
 
-DDL lives in `sql/00*.sql`, which is the source of truth (it holds the CHECK
+DDL lives in `../src/data/sql/00*.sql`, which is the source of truth (it holds the CHECK
 constraints and the generated `tsvector`). `db/models.py` mirrors it for typed
 reads and writes, not for schema creation.
 

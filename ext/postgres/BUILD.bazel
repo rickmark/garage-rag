@@ -4,9 +4,9 @@ configure_make(
     name = "postgres",
     # Flags passed directly to the GNU ./configure script
     configure_options = [
+        "--with-icu",
         "--without-readline",
         "--without-zlib",
-        "--without-icu",
         # Keep features minimal unless your system provides headers (like OpenSSL)
     ],
     copts = [
@@ -24,8 +24,13 @@ configure_make(
         "initdb",
         "pg_config",
     ],
-
+    out_data_files = [
+        "lib/pgxs/src/makefiles/pgxs.mk",
+    ],
     # Inform Bazel which static output archive to catch
     out_static_libs = ["libpq.a"],
     visibility = ["//visibility:public"],
+    deps = [
+        "//ext/libicu",
+    ],
 )

@@ -1,0 +1,5 @@
+filegroup(
+    name = "libicu_source",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)

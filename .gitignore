@@ -3,11 +3,11 @@
 .env
 *.db
 .build
-macapp/build/
-macapp/.build/
-macapp/Resources/postgres
-macapp/Resources/python-dist
-macapp/dist
+src/macapp/build/
+src/macapp/.build/
+src/macapp/Resources/postgres
+src/macapp/Resources/python-dist
+src/macapp/dist
 # Credentials referenced by cloud.api_key_file
 *.key
 anthropic.key

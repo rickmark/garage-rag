@@ -85,3 +85,4 @@ bazel_dep(name = "rules_swift", version = "3.6.1")
 
 include("//ext/postgres:postgres.MODULE.bazel")
 include("//ext/pgvector:pgvector.MODULE.bazel")
+include("//ext/libicu:libicu.MODULE.bazel")

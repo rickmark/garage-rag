@@ -9,3 +9,9 @@ alias(
     actual = "//ext/pgvector:pgvector",
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "libicu",
+    actual = "//ext/libicu:libicu",
+    visibility = ["//visibility:public"],
+)

@@ -27,3 +27,13 @@ platform(
     ],
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "garage-rag",
+    actual = "//src/garage_rag",
+)
+
+alias(
+    name = "macapp",
+    actual = "//src/macapp",
+)

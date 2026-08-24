@@ -1,0 +1,24 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+configure_make(
+    name = "libicu",
+    configure_command = "source/configure",
+    configure_options = [
+        "--disable-samples",
+        "--disable-tests",
+        "--enable-static",
+        "--disable-shared",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@libicu//:libicu_source",
+    out_static_libs = [
+        "libicui18n.a",
+        "libicuuc.a",
+        "libicudata.a",
+        "libicuio.a",
+        "libicutu.a",
+    ],
+    visibility = ["//visibility:public"],
+)

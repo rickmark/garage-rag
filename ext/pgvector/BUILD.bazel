@@ -2,7 +2,20 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
 
 make(
     name = "pgvector",
+    args = [
+        "-e",
+    ],
+    env = {
+        "PG_CONFIG": "$$EXT_BUILD_DEPS/postgres/bin/pg_config",
+        "PG_CPPFLAGS": "-I$$EXT_BUILD_DEPS/postgres/include/server -I$$EXT_BUILD_DEPS/postgres/include/internal",
+        "pkglibdir": "$$INSTALLDIR/lib",
+        "datadir": "$$INSTALLDIR/share",
+        "pkgincludedir": "$$INSTALLDIR/include",
+    },
     lib_source = "@pgvector//:pgvector_source",
+    out_shared_libs = [
+        "vector.dylib",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//ext:postgres",

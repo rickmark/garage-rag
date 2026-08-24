@@ -8,6 +8,8 @@ swift_library(
         "//ext:pgvector",
         "//ext:postgres",
         "//src:garage_rag",
+        "//src/data/schema:config_schema",
+        "//src/data/sql:sql_schema",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:private"],
@@ -15,9 +17,10 @@ swift_library(
 
 macos_application(
     name = "GarageApp",
+    app_icons = ["GarageApp.xcassets"],
     bundle_id = "dev.rickmark.garage",
-    bundle_name = "GarageApp",
-    infoplists = ["//macapp:Info.plist"],
+    bundle_name = "Garage",
+    infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     visibility = ["//visibility:public"],
     deps = [
