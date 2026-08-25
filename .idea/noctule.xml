@@ -7,6 +7,11 @@
           <filePath>$PROJECT_DIR$/macapp/Package.swift</filePath>
         </projectSettings>
       </settings>
+      <settings filePath="$PROJECT_DIR$/src/macapp/Package.swift">
+        <projectSettings projectType="noctule.spm">
+          <filePath>$PROJECT_DIR$/src/macapp/Package.swift</filePath>
+        </projectSettings>
+      </settings>
     </fileSettings>
   </component>
   <component name="SwiftToolchain">

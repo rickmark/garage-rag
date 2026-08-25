@@ -10,7 +10,7 @@ them fails the test suite.
 ### Level 1 — single chokepoint
 
 `enrich/egress.py` is the only module that imports `anthropic` or constructs a
-client. `tests/test_egress_block.py` parses every source file's AST and asserts
+client. `../garage_python/tests/test_egress_block.py` parses every source file's AST and asserts
 this, so a second client cannot appear unnoticed — including via a function-local
 import.
 

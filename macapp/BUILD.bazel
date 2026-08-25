@@ -1,0 +1,41 @@
+load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+filegroup(
+    name = "GarageApp.xcassets",
+    srcs = glob(["GarageApp.xcassets/**"]),
+)
+
+swift_library(
+    name = "GarageApp_lib",
+    srcs = glob(["Sources/**/*.swift"]),
+    data = [
+        "//data/schema:config_schema",
+        "//data/sql:sql_schema",
+        "//ext:pgvector",
+        "//ext:postgres",
+        "//garage_python/src:garage_rag",
+        "//garage_python/src/garage_rag:garage",
+    ],
+    module_name = "GarageApp",
+    visibility = ["//visibility:private"],
+)
+
+macos_application(
+    name = "GarageApp",
+    app_icons = [":GarageApp.xcassets"],
+    bundle_id = "dev.rickmark.garage",
+    bundle_name = "Garage",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":GarageApp_lib",
+    ],
+)
+
+alias(
+    name = "macapp",
+    actual = ":GarageApp",
+    visibility = ["//visibility:public"],
+)

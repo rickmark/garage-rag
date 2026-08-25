@@ -8,6 +8,7 @@ bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2")
 
 # Prebuilt aspect gazelle binary (no Go toolchain needed) — provides
 # //tools/gazelle:gazelle, the default target for `aspect gazelle`.
+
 bazel_dep(name = "aspect_gazelle_prebuilt", version = "0.0.20")
 
 # NB: 2.7.0's sarif_parser toolchain is missing the linux_amd64 platform key
@@ -67,8 +68,8 @@ uv = use_extension("@aspect_rules_py//uv:extensions.bzl", "uv")
 uv.declare_hub(hub_name = "pypi")
 uv.project(
     hub_name = "pypi",
-    lock = "//:uv.lock",
-    pyproject = "//:pyproject.toml",
+    lock = "//garage_python:uv.lock",
+    pyproject = "//garage_python:pyproject.toml",
 )
 use_repo(uv, "pypi")
 
@@ -76,7 +77,6 @@ register_toolchains("@uv//:all")
 
 register_toolchains("//bazel/toolchains:all")
 
-bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
 bazel_dep(name = "toolchains_llvm", version = "1.8.0")
 bazel_dep(name = "apple_support", version = "2.8.1")

@@ -1,6 +1,6 @@
 # gazelle:map_kind py_binary py_binary @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_library py_library @aspect_rules_py//py:defs.bzl
-# gazelle:map_kind py_test py_test //tools/pytest:defs.bzl
+# gazelle:map_kind py_test py_test @aspect_rules_py//py:defs.bzl
 
 """Targets in the repository root"""
 
@@ -13,27 +13,17 @@ exports_files(
 # The gazelle binary + `gazelle` runner target live in //tools/gazelle (the
 # default target for `aspect gazelle`). Run `aspect gazelle` to generate BUILDs.
 
-# uv reads pyproject.toml; tools/pytest also attaches it as test data.
-exports_files(
-    ["pyproject.toml"],
-    visibility = ["//:__subpackages__"],
-)
-
 platform(
     name = "macos",
-    constraint_values = [
-        "@platforms//os:macos",
-        "@platforms//cpu:arm",
-    ],
     visibility = ["//visibility:public"],
 )
 
 alias(
-    name = "garage-rag",
-    actual = "//src/garage_rag",
+    name = "garage_rag",
+    actual = "//garage_python/src/garage_rag",
 )
 
 alias(
     name = "macapp",
-    actual = "//src/macapp",
+    actual = "//macapp",
 )

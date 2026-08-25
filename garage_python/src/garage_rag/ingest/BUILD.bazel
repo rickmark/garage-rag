@@ -1,0 +1,24 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "ingest",
+    srcs = [
+        "__init__.py",
+        "chunking.py",
+        "classify.py",
+        "materialize.py",
+        "pipeline.py",
+        "reconcile.py",
+        "walker.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag/attribute",
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/extract",
+        "@pypi//langchain_text_splitters",
+        "@pypi//sqlalchemy",
+    ],
+)

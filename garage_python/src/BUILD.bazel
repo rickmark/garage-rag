@@ -1,0 +1,38 @@
+# gazelle:python_root
+
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
+
+py_library(
+    name = "garage_rag",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/attribute",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "//garage_python/src/garage_rag/mcp_server",
+        "//garage_python/src/garage_rag/search",
+    ],
+)
+
+alias(
+    name = "garage",
+    actual = "//garage_python/src/garage_rag:garage",
+    visibility = ["//visibility:public"],
+)
+
+py_package(
+    name = "garage_rag_package",
+    packages = ["garage_rag"],  # Only includes files in this dotted Python path
+)
+
+py_wheel(
+    name = "garage_rag_wheel",
+    distribution = "garage_rag",
+    version = "1.0.0",
+    deps = [":garage"],
+)

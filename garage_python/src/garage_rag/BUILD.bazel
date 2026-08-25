@@ -1,0 +1,36 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+
+py_binary(
+    name = "garage",
+    srcs = ["cli.py"],
+    data = [
+        "//data/schema:config_schema",
+        "//data/sql:sql_schema",
+    ],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "@pypi//rich",
+        "@pypi//sqlalchemy",
+        "@pypi//typer",
+    ],
+)
+
+py_library(
+    name = "garage_rag",
+    srcs = [
+        "__init__.py",
+        "cli.py",
+    ],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "@pypi//rich",
+        "@pypi//sqlalchemy",
+        "@pypi//typer",
+    ],
+)

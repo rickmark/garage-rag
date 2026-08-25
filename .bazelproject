@@ -1,0 +1,9 @@
+directories:
+  .
+
+targets:
+  //...
+
+# Force Bazel plugin to parse Python targets
+additional_languages:
+  python

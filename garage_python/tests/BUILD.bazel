@@ -1,0 +1,79 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library", "py_test")
+
+py_test(
+    name = "test_attribution",
+    srcs = ["test_attribution.py"],
+    deps = [
+        "//garage_python/src/garage_rag/attribute",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_chunking",
+    srcs = ["test_chunking.py"],
+    deps = [
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_config",
+    srcs = ["test_config.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_egress_block",
+    srcs = ["test_egress_block.py"],
+    deps = [
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_mcp_install",
+    srcs = ["test_mcp_install.py"],
+    deps = [
+        "//garage_python/src/garage_rag/mcp_server",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_registry_dims",
+    srcs = ["test_registry_dims.py"],
+    deps = [
+        "//garage_python/src/garage_rag/db",
+        "@pypi//pytest",
+    ],
+)
+
+test_suite(
+    name = "suite",
+    tests = [
+        ":test_attribution",
+        ":test_chunking",
+        ":test_config",
+        ":test_egress_block",
+        ":test_mcp_install",
+        ":test_registry_dims",
+    ],
+)
+
+py_library(
+    name = "tests",
+    srcs = ["__init__.py"],
+    imports = [".."],
+    visibility = ["//:__subpackages__"],
+)

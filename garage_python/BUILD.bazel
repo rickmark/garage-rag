@@ -1,0 +1,12 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+exports_files(
+    ["pyproject.toml"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "garage_python",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+)

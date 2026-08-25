@@ -1,0 +1,18 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "attribute",
+    srcs = [
+        "__init__.py",
+        "git.py",
+        "pathrules.py",
+        "resolver.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "@pypi//sqlalchemy",
+    ],
+)
