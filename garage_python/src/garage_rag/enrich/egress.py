@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+
 import anthropic
 
 from garage_rag.config import get_settings
@@ -76,10 +77,6 @@ def cloud_enabled() -> bool:
         return False
     if settings.read_api_key() is None:
         return False
-    try:
-        import anthropic  # type: ignore  # noqa: F401
-    except ImportError:
-        return False
     return True
 
 
@@ -102,19 +99,7 @@ def _client():
         raise CloudUnavailable(
             "no API key available; point cloud.api_key_file at a file containing your Anthropic key"
         )
-
-    try:
-        import anthropic  # type: ignore
-    except ImportError as exc:
-        raise CloudUnavailable(
-            "the anthropic package is not installed; run: uv pip install -e '.[cloud]'"
-        ) from exc
-
-    try:
-        return anthropic.Anthropic(api_key=key)
-    except Exception as exc:  # noqa: BLE001 - construction problems surface here
-        raise CloudUnavailable(f"could not construct an Anthropic client: {exc}") from exc
-
+    return anthropic.Anthropic(api_key=key)
 
 def send(request: EgressRequest, *, system: str | None = None) -> str:
     """Execute an approved egress request and return the model's text.

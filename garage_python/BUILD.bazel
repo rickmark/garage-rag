@@ -1,12 +1,19 @@
-load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@aspect_rules_py//py:defs.bzl", "py_library", "py_pex_binary")
+load("//tools:pyoxidizer.bzl", "apple_pyoxidizer_binary")
 
 exports_files(
     ["pyproject.toml"],
     visibility = ["//visibility:public"],
 )
 
-py_library(
-    name = "garage_python",
-    srcs = ["__init__.py"],
-    visibility = ["//:__subpackages__"],
+py_pex_binary(
+    name = "garage",
+    binary = "//garage_python/src/garage_rag:garage",
+    visibility = ["//visibility:public"],
+)
+
+py_pex_binary(
+    name = "garage-mcp",
+    binary = "//garage_python/src/garage_rag/mcp_server:garage-mcp",
+    visibility = ["//visibility:public"],
 )

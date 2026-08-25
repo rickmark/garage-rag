@@ -1,7 +1,7 @@
 load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
 
 py_binary(
-    name = "server",
+    name = "garage-mcp",
     srcs = ["server.py"],
     imports = ["../.."],
     visibility = ["//visibility:public"],

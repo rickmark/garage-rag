@@ -1,4 +1,4 @@
-load("@aspect_rules_py//py:defs.bzl", "py_library", "py_test")
+load("@aspect_rules_py//py:defs.bzl", "py_test")
 
 py_test(
     name = "test_attribution",
@@ -69,11 +69,4 @@ test_suite(
         ":test_mcp_install",
         ":test_registry_dims",
     ],
-)
-
-py_library(
-    name = "tests",
-    srcs = ["__init__.py"],
-    imports = [".."],
-    visibility = ["//:__subpackages__"],
 )

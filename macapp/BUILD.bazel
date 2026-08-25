@@ -1,3 +1,5 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
@@ -6,16 +8,30 @@ filegroup(
     srcs = glob(["GarageApp.xcassets/**"]),
 )
 
+copy_to_directory(
+    name = "postgres_output",
+    srcs = [
+        "//ext:pgvector",
+        "//ext:postgres",
+    ],
+    out = "postgres",
+    replace_prefixes = {
+        "ext/postgres/postgres/bin": "postgres/bin/",
+        "ext/postgres/postgres/lib": "postgres/lib/",
+        "ext/pgvector/pgvector/bin": "postgres/bin/",
+        "ext/pgvector/pgvector/lib": "postgres/lib/",
+    },
+)
+
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/**/*.swift"]),
     data = [
+        ":postgres_output",
         "//data/schema:config_schema",
         "//data/sql:sql_schema",
-        "//ext:pgvector",
-        "//ext:postgres",
-        "//garage_python/src:garage_rag",
-        "//garage_python/src/garage_rag:garage",
+        "//garage_python:garage",
+        "//garage_python:garage-mcp",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:private"],
