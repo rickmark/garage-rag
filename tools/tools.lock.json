@@ -146,6 +146,50 @@
       }
     ]
   },
+  "pyoxidizer": {
+    "binaries": [
+      {
+        "kind": "archive",
+        "url": "https://github.com/indygreg/PyOxidizer/releases/download/pyoxidizer/0.24.0/pyoxidizer-0.24.0-aarch64-unknown-linux-musl.tar.gz",
+        "file": "pyoxidizer-0.24.0-aarch64-unknown-linux-musl/pyoxidizer",
+        "sha256": "74593cd552a0ec512350499068081ac4e78d8d96352155f1aa18111e129207dc",
+        "os": "linux",
+        "cpu": "arm64"
+      },
+      {
+        "kind": "archive",
+        "url": "https://github.com/indygreg/PyOxidizer/releases/download/pyoxidizer/0.24.0/pyoxidizer-0.24.0-x86_64-unknown-linux-musl.tar.gz",
+        "file": "pyoxidizer-0.24.0-x86_64-unknown-linux-musl/pyoxidizer",
+        "sha256": "a7847f7b8111f0d73edc3d2594c5dd4dd853006360a9e7f5e91565257fef5c3e",
+        "os": "linux",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "archive",
+        "url": "https://github.com/indygreg/PyOxidizer/releases/download/pyoxidizer/0.24.0/pyoxidizer-0.24.0-aarch64-apple-darwin.tar.gz",
+        "file": "pyoxidizer-0.24.0-aarch64-apple-darwin/pyoxidizer",
+        "sha256": "65976b0b505857f7f43ea30de35ef6305383e54ddfae90086fd641ca14d0487f",
+        "os": "macos",
+        "cpu": "arm64"
+      },
+      {
+        "kind": "archive",
+        "url": "https://github.com/indygreg/PyOxidizer/releases/download/pyoxidizer/0.24.0/pyoxidizer-0.24.0-x86_64-apple-darwin.tar.gz",
+        "file": "pyoxidizer-0.24.0-x86_64-apple-darwin/pyoxidizer",
+        "sha256": "389ffd4477136c8e473dd6287ef4e8c96d31fde9a11a1cb690a245ba65643976",
+        "os": "macos",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "archive",
+        "url": "https://github.com/indygreg/PyOxidizer/releases/download/pyoxidizer/0.24.0/pyoxidizer-0.24.0-x86_64-pc-windows-msvc.zip",
+        "file": "pyoxidizer-0.24.0-x86_64-pc-windows-msvc/pyoxidizer.exe",
+        "sha256": "c1b757bc7c64921b38bf5fd70d2a2e2f591d36fe1cae3b5722822c08f651ba7b",
+        "os": "windows",
+        "cpu": "x86_64"
+      }
+    ]
+  },
   "starpls": {
     "binaries": [
       {

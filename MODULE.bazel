@@ -17,12 +17,15 @@ bazel_dep(name = "aspect_gazelle_prebuilt", version = "0.0.20")
 bazel_dep(name = "aspect_rules_lint", version = "2.7.1")
 
 # bazel_skylib's native_binary backs //tools/lint's linter wrappers.
+bazel_dep(name = "bazel_lib", version = "3.2.2")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "llvm", version = "0.8.18")
+bazel_dep(name = "platforms", version = "1.1.0")
 
 # go preset uses rules_go directly; the lint preset needs this floor too because
 # aspect_rules_lint -> rules_buf transitively pulls an ancient rules_go (0.42.0)
 # whose cgo.bzl references the removed CcInfo symbol and fails to load.
-bazel_dep(name = "rules_go", version = "0.61.1")
+bazel_dep(name = "rules_go", version = "0.62.0")
 bazel_dep(name = "aspect_rules_py", version = "2.0.0-alpha.3")
 bazel_dep(name = "rules_python", version = "2.3.2")
 

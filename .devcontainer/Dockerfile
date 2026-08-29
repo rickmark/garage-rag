@@ -1,5 +1,5 @@
 # Start with the standard devcontainers base (Ubuntu-based)
-FROM mcr.microsoft.com/devcontainers/base:ubuntu
+FROM --platform=linux/amd64 mcr.microsoft.com/devcontainers/base:ubuntu
 
 # Install dependencies (direnv + curl for downloading bazelisk)
 RUN apt-get update \

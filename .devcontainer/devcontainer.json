@@ -4,5 +4,17 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "postCreateCommand": "direnv allow; bazel run tools:bazel_env || true"
+  "postCreateCommand": "direnv allow; bazel run tools:bazel_env || true",
+  "runArgs": [
+    "--init",
+    "--ulimit", "nofile=65536:65536"
+  ],
+  "customizations": {
+    "jetbrains": {
+      "settings": {
+        "com.intellij.database:app:DatabaseSettings.enable-local-filter-by-default": false,
+        "com.intellij:app:HttpConfigurable.use_proxy_pac": true
+      }
+    }
+  }
 }

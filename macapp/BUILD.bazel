@@ -15,6 +15,9 @@ copy_to_directory(
         "//ext:postgres",
     ],
     out = "postgres",
+    exclude_srcs_patterns = [
+        "*/include/*",
+    ],
     replace_prefixes = {
         "ext/postgres/postgres/bin": "postgres/bin/",
         "ext/postgres/postgres/lib": "postgres/lib/",

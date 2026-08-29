@@ -101,6 +101,7 @@ def _client():
         )
     return anthropic.Anthropic(api_key=key)
 
+
 def send(request: EgressRequest, *, system: str | None = None) -> str:
     """Execute an approved egress request and return the model's text.
 

@@ -531,10 +531,10 @@ def flatten(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def nest(
-        settings: Settings,
-        *,
-        include_defaults: bool = True,
-        schema_ref: str = SCHEMA_URL,
+    settings: Settings,
+    *,
+    include_defaults: bool = True,
+    schema_ref: str = SCHEMA_URL,
 ) -> dict[str, Any]:
     """Flat Settings -> nested file layout."""
     defaults = Settings()

@@ -20,8 +20,6 @@
 	<string>1</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>

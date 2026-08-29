@@ -377,6 +377,7 @@ dependencies = [
     { name = "openai" },
     { name = "openpyxl" },
     { name = "pdfplumber" },
+    { name = "pex" },
     { name = "pgvector" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary", "pool"] },
@@ -411,6 +412,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
+    { name = "pex", specifier = ">=2.101.0" },
     { name = "pgvector", specifier = ">=0.5,<0.6" },
     { name = "pillow", specifier = ">=11.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
@@ -1076,6 +1078,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/05/56/6f450312ba05a27d7713b73857c1a25100dbda04fbc1331b13fb227a607d/pdfplumber-0.11.10.tar.gz", hash = "sha256:b95b2d28c66efb0a794a83b88c6c6aea5987532a445d20a1cbcfa657022e6e57", size = 102892, upload-time = "2026-06-15T03:31:31.035Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/9a/07d658e1e7fad860f1c541ab941348125dbdab773be3a0afaf32361866c7/pdfplumber-0.11.10-py3-none-any.whl", hash = "sha256:7741ea81bf165b474b153e6789d10d18e06b6ddcf3ec84289c3ef2fed6802580", size = 60047, upload-time = "2026-06-15T03:31:29.702Z" },
+]
+
+[[package]]
+name = "pex"
+version = "2.101.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/04/a4d7ec0919d593aaa7846d0deb53616740db6623de2c54df2b9d93244ca2/pex-2.101.0.tar.gz", hash = "sha256:70aa460a07ac98bd7c221df347bee2425fcec9d7f8bfce3e35c7f2effe889f4c", size = 5449961, upload-time = "2026-08-26T01:59:41.389Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/96/64a10ba9b2b7838bbcc440108093f8fe6f3c6e1a49cd5bc21cbbca99cb10/pex-2.101.0-py2.py35.py36.py37.py38.py39.py310.py311-none-any.whl", hash = "sha256:498922101de638f291826c40c7895ad791bb4fc18a6e9276b430edbd6052dd07", size = 4127977, upload-time = "2026-08-26T01:59:38.11Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/9a/abde9ff9a6c8645fb0d0c0705418fec17269f8eb7b6731e3cb9d0e29de65/pex-2.101.0-py3.py312-none-any.whl", hash = "sha256:f64d23272eaa226064d51d248f2b75273ff7336e8cc7d41cd44b5a6f75844c58", size = 1944831, upload-time = "2026-08-26T01:59:39.864Z" },
 ]
 
 [[package]]

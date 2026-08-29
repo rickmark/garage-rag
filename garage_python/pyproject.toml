@@ -35,7 +35,8 @@ dependencies = [
     "rich>=13.9",
     "pyyaml>=6.0",
     "pytest>=9.1.1",
-    "anthropic>=1.0.0"
+    "anthropic>=1.0.0",
+    "pex>=2.101.0"
 ]
 
 [project.optional-dependencies]

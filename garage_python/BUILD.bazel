@@ -1,19 +1,51 @@
 load("@aspect_rules_py//py:defs.bzl", "py_library", "py_pex_binary")
-load("//tools:pyoxidizer.bzl", "apple_pyoxidizer_binary")
+load("@aspect_rules_py//uv:defs.bzl", "gazelle_python_manifest")
+load("//tools/pex:pex.bzl", "py_scie_binary")
+load("//tools/pyoxidizer:pyoxidizer.bzl", "apple_pyoxidizer_binary", "uv_export_requirements")
+
+gazelle_python_manifest(
+    name = "gazelle_python_manifest",
+    hub = "pypi",
+    venvs = ["garage_rag"],
+)
 
 exports_files(
-    ["pyproject.toml"],
+    [
+        "pyproject.toml",
+        "uv.lock",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+uv_export_requirements(
+    name = "requirements",
+    lock = ":uv.lock",
+    pyproject = ":pyproject.toml",
     visibility = ["//visibility:public"],
 )
 
 py_pex_binary(
-    name = "garage",
+    name = "garage-par",
     binary = "//garage_python/src/garage_rag:garage",
     visibility = ["//visibility:public"],
 )
 
+py_scie_binary(
+    name = "garage",
+    binary = ":garage-par",
+    scie = "eager",
+    visibility = ["//visibility:public"],
+)
+
 py_pex_binary(
-    name = "garage-mcp",
+    name = "garage-mcp-par",
     binary = "//garage_python/src/garage_rag/mcp_server:garage-mcp",
+    visibility = ["//visibility:public"],
+)
+
+py_scie_binary(
+    name = "garage-mcp",
+    binary = ":garage-mcp-par",
+    scie = "eager",
     visibility = ["//visibility:public"],
 )

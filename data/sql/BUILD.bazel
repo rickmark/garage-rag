@@ -1,5 +1,9 @@
-filegroup(
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
+
+copy_to_directory(
     name = "sql_schema",
     srcs = glob(["*.sql"]),
+    out = "sql",
     visibility = ["//visibility:public"],
 )
