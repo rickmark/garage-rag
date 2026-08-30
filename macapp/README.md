@@ -57,11 +57,17 @@ postgres's fork-safety check runs.
 
 ## App architecture
 
-- `PostgresService` — owns a private cluster in `~/Library/Application Support/GarageApp/pgdata`, port 5433, database `rag`. Never touches a system-wide Postgres.
+- `PostgresService` — owns a private cluster in `~/Library/Application Support/GarageApp/pgdata`, port 14824, database `garage-rag`. On first initialization it generates a random Postgres superuser password, stores it in the macOS Keychain, and creates the cluster with SCRAM authentication.
 - `GarageCLIService` — runs `garage <subcommand>` one-shot invocations against that cluster, streaming output.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres to stop on every quit path (Cmd+Q, Dock quit, menu item).
 - Views: Status, Sources & Ingest, Embedding Models, Search, Logs.
 
 Claude Desktop/Code spawn `garage-mcp` themselves over stdio once registered
-via `garage mcp-install` (wired up as a button under Status) — this app only
-needs to keep Postgres running for that process to connect to.
+via `garage mcp-install` (wired up as a button under Status). The app supplies
+the authenticated database URL as `GARAGE_DATABASE_URL` to every `garage`
+command; registration writes the same environment variable into the MCP entry
+so each spawned `garage-mcp` process connects to the app-managed database.
+
+The Status view also provides database reset, backup, and restore controls.
+Backups are PostgreSQL custom-format dumps; restore replaces the private Garage
+database, while reset recreates it empty.

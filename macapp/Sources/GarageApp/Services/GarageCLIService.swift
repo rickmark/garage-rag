@@ -57,7 +57,7 @@ final class GarageCLIService: ObservableObject {
             process = try runner.run(
                 executable: Paths.garageCLI,
                 arguments: arguments,
-                environment: environment(),
+                environment: try environment(),
                 currentDirectory: Paths.garageWorkingDirectory,
                 source: "garage \(arguments.first ?? "")"
             ) { [weak self] line in
@@ -79,9 +79,9 @@ final class GarageCLIService: ObservableObject {
         }
     }
 
-    private func environment() -> [String: String] {
+    private func environment() throws -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        env["GARAGE_DATABASE_URL"] = postgres.connectionURL
+        env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
         return env
     }
 }

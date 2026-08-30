@@ -1,4 +1,4 @@
-"""Configuration: one JSON file, no environment variables.
+"""Configuration: one JSON file with a database URL environment override.
 
 The file is **nested** because that is what is pleasant to edit; :class:`Settings`
 is **flat** because that is what is pleasant to use from code. :data:`SECTIONS`
@@ -29,6 +29,7 @@ config file is a bug you find hours later, wondering why a setting had no effect
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -570,7 +571,7 @@ def load_config(path: Path | None = None, *, required: bool = False) -> Settings
                 "create one with 'garage config init'"
             )
         # No file at all: defaults are a usable configuration.
-        return Settings()
+        return _apply_database_url_environment(Settings())
 
     try:
         raw = json.loads(resolved.read_text(encoding="utf-8"))
@@ -588,6 +589,17 @@ def load_config(path: Path | None = None, *, required: bool = False) -> Settings
         raise ConfigError(f"{resolved}: {exc}") from exc
 
     settings.config_path = resolved
+    return _apply_database_url_environment(settings)
+
+
+def _apply_database_url_environment(settings: Settings) -> Settings:
+    """Apply the app-managed database credential without persisting it in JSON."""
+    database_url = os.environ.get("GARAGE_DATABASE_URL")
+    if database_url is None:
+        return settings
+    if not database_url.strip():
+        raise ConfigError("GARAGE_DATABASE_URL must not be empty")
+    settings.database_url = database_url
     return settings
 
 

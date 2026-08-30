@@ -329,16 +329,20 @@ class TestSchema:
         assert "class" in sources["items"]["properties"]
 
 
-class TestNoEnvironmentDependence:
-    def test_settings_ignore_garage_env_vars(self, monkeypatch, tmp_path: Path) -> None:
-        """Env vars were deliberately removed; a stale one must not leak back in."""
+class TestDatabaseEnvironment:
+    def test_database_url_environment_overrides_file(self, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.setenv("GARAGE_CHUNK_SIZE", "7")
-        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql:///wrong")
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg:///app-managed")
         cfg = tmp_path / CONFIG_FILENAME
         cfg.write_text(json.dumps({"chunking": {"size": 123}}))
         settings = load_config(cfg)
         assert settings.chunk_size == 123
-        assert settings.database_url == Settings().database_url
+        assert settings.database_url == "postgresql+psycopg:///app-managed"
+
+    def test_empty_database_url_environment_is_an_error(self, monkeypatch) -> None:
+        monkeypatch.setenv("GARAGE_DATABASE_URL", " ")
+        with pytest.raises(ConfigError, match="must not be empty"):
+            load_config()
 
 
 class TestSchemaCompleteness:

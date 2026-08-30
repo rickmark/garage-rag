@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -895,6 +896,7 @@ def mcp_install(
 
     url: str | None = None
     config_file: Path | None = None
+    database_environment: dict[str, str] | None = None
 
     if http:
         settings = get_settings()
@@ -922,6 +924,8 @@ def mcp_install(
             )
         command, args = server_command(config_file)
         console.print(f"  command : {command} {' '.join(args)}")
+        if database_url := os.environ.get("GARAGE_DATABASE_URL"):
+            database_environment = {"GARAGE_DATABASE_URL": database_url}
 
     if chosen.note:
         console.print(f"  [dim]{chosen.note}[/dim]")
@@ -936,6 +940,7 @@ def mcp_install(
             chosen,
             server_name=name,
             config_path=config_file,
+            extra_env=database_environment,
             url=url,
             force=force,
             dry_run=True,
@@ -959,7 +964,14 @@ def mcp_install(
     if not yes:
         typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
 
-    result = install(chosen, server_name=name, config_path=config_file, url=url, force=force)
+    result = install(
+        chosen,
+        server_name=name,
+        config_path=config_file,
+        extra_env=database_environment,
+        url=url,
+        force=force,
+    )
     verb = "created" if result.created_file else "updated"
     console.print(f"[green]{verb}[/green] {result.path}")
     if result.backup:

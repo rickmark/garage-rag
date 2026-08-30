@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Security
 
 enum PostgresStatus: Equatable {
     case stopped
@@ -23,9 +24,12 @@ final class PostgresService: ObservableObject {
 
     private let runner = ProcessRunner()
     private let maxLogLines = 2000
+    private var cachedPassword: String?
 
-    var connectionURL: String {
-        "postgresql+psycopg://localhost:\(port)/\(databaseName)"
+    func connectionURL() throws -> String {
+        let username = try percentEncode(NSUserName())
+        let password = try percentEncode(postgresPassword())
+        return "postgresql+psycopg://\(username):\(password)@localhost:\(port)/\(databaseName)"
     }
 
     private func appendLog(_ line: LogLine) {
@@ -43,6 +47,15 @@ final class PostgresService: ObservableObject {
     func ensureInitialized() throws {
         guard !isInitialized else { return }
         try FileManager.default.createDirectory(at: Paths.pgDataDir, withIntermediateDirectories: true)
+        let password = try postgresPassword()
+        let passwordFile = Paths.appSupportDir
+            .appendingPathComponent(".initdb-password-\(UUID().uuidString)")
+        try Data((password + "\n").utf8).write(to: passwordFile, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: passwordFile.path
+        )
+        defer { try? FileManager.default.removeItem(at: passwordFile) }
 
         let (status, output) = ProcessRunner.runSync(
             executable: Paths.postgresTool("initdb"),
@@ -50,10 +63,11 @@ final class PostgresService: ObservableObject {
                 "-D", Paths.pgDataDir.path,
                 "-U", NSUserName(),
                 "-E", "UTF8",
-                "--auth=trust",
+                "--auth=scram-sha-256",
+                "--pwfile=\(passwordFile.path)",
                 "--no-instructions",
             ],
-            environment: runtimeEnvironment()
+            environment: runtimeEnvironment(password: password)
         )
         for rawLine in output.split(separator: "\n") {
             appendLog(LogLine(stream: .stdout, text: String(rawLine), source: "initdb"))
@@ -101,7 +115,7 @@ final class PostgresService: ObservableObject {
             throw PostgresError.startupTimeout
         }
 
-        try await ensureDatabaseExists()
+        try await ensureDatabaseExists(password: try postgresPassword())
         status = .running
     }
 
@@ -122,9 +136,74 @@ final class PostgresService: ObservableObject {
         status = .stopped
     }
 
+    /// Drops and recreates the app's private database, preserving the cluster
+    /// and its Keychain-managed superuser credential.
+    func resetDatabase() throws {
+        try requireRunning()
+        let password = try postgresPassword()
+        try dropDatabase(password: password)
+        try createDatabase(password: password)
+        appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
+    }
+
+    /// Writes a portable PostgreSQL custom-format dump of the app's database.
+    func backupDatabase(to destination: URL) throws {
+        try requireRunning()
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let (dumpStatus, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("pg_dump"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
+                "--format=custom", "--no-owner", "--no-privileges",
+                "--file", destination.path, databaseName,
+            ],
+            environment: runtimeEnvironment(password: try postgresPassword())
+        )
+        guard dumpStatus == 0 else {
+            try? FileManager.default.removeItem(at: destination)
+            throw PostgresError.other("pg_dump failed: \(output)")
+        }
+        appendLog(LogLine(stream: .stdout, text: "backed up database to \(destination.path)", source: "pg_dump"))
+    }
+
+    /// Replaces the app's database with a PostgreSQL custom-format dump.
+    func restoreDatabase(from source: URL) throws {
+        try requireRunning()
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            throw PostgresError.other("backup file does not exist: \(source.path)")
+        }
+
+        let password = try postgresPassword()
+        try dropDatabase(password: password)
+        try createDatabase(password: password)
+        let (restoreStatus, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("pg_restore"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
+                "--no-owner", "--no-privileges", "--exit-on-error",
+                "--dbname", databaseName, source.path,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard restoreStatus == 0 else {
+            throw PostgresError.other("pg_restore failed: \(output)")
+        }
+        appendLog(LogLine(stream: .stdout, text: "restored database from \(source.path)", source: "pg_restore"))
+    }
+
     private var isFailed: Bool {
         if case .failed = status { return true }
         return false
+    }
+
+    private func requireRunning() throws {
+        guard status == .running else {
+            throw PostgresError.other("Postgres must be running to manage the database")
+        }
     }
 
     private func waitUntilReady(timeout: TimeInterval) async -> Bool {
@@ -141,13 +220,14 @@ final class PostgresService: ObservableObject {
         return false
     }
 
-    private func ensureDatabaseExists() async throws {
+    private func ensureDatabaseExists(password: String) async throws {
         let (checkStatus, output) = ProcessRunner.runSync(
             executable: Paths.postgresTool("psql"),
             arguments: [
                 "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", "postgres",
                 "-tAc", "SELECT 1 FROM pg_database WHERE datname = '\(databaseName)'",
-            ]
+            ],
+            environment: runtimeEnvironment(password: password)
         )
         guard checkStatus == 0 else {
             throw PostgresError.other("could not query pg_database: \(output)")
@@ -155,9 +235,14 @@ final class PostgresService: ObservableObject {
         if output.trimmingCharacters(in: .whitespacesAndNewlines) == "1" {
             return
         }
+        try createDatabase(password: password)
+    }
+
+    private func createDatabase(password: String) throws {
         let (createStatus, createOutput) = ProcessRunner.runSync(
             executable: Paths.postgresTool("createdb"),
-            arguments: ["-h", "localhost", "-p", String(port), "-U", NSUserName(), databaseName]
+            arguments: ["-h", "localhost", "-p", String(port), "-U", NSUserName(), databaseName],
+            environment: runtimeEnvironment(password: password)
         )
         guard createStatus == 0 else {
             throw PostgresError.other("createdb failed: \(createOutput)")
@@ -165,9 +250,23 @@ final class PostgresService: ObservableObject {
         appendLog(LogLine(stream: .stdout, text: "created database \(databaseName)", source: "postgres"))
     }
 
+    private func dropDatabase(password: String) throws {
+        let (dropStatus, dropOutput) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("dropdb"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
+                "--force", databaseName,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard dropStatus == 0 else {
+            throw PostgresError.other("dropdb failed: \(dropOutput)")
+        }
+    }
+
     /// Environment postgres needs to find its own dylibs and pgvector's shared
     /// object when running from a relocated (vendored) bundle.
-    private func runtimeEnvironment() -> [String: String] {
+    private func runtimeEnvironment(password: String? = nil) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["DYLD_LIBRARY_PATH"] = Paths.postgresLibDir.path
         // Without this, postgres fails at startup on macOS with "FATAL:
@@ -176,7 +275,86 @@ final class PostgresService: ObservableObject {
         // fork-safety check runs. Confirmed via direct testing; the postgres
         // HINT suggesting LC_ALL is correct.
         env["LC_ALL"] = "C"
+        if let password {
+            env["PGPASSWORD"] = password
+        }
         return env
+    }
+
+    private func postgresPassword() throws -> String {
+        if let cachedPassword {
+            return cachedPassword
+        }
+        if let storedPassword = try KeychainPostgresPassword.load() {
+            cachedPassword = storedPassword
+            return storedPassword
+        }
+
+        let generatedPassword = try KeychainPostgresPassword.generate()
+        try KeychainPostgresPassword.save(generatedPassword)
+        cachedPassword = generatedPassword
+        return generatedPassword
+    }
+
+    private func percentEncode(_ value: String) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            throw PostgresError.other("could not encode Postgres credential for its connection URL")
+        }
+        return encoded
+    }
+}
+
+private enum KeychainPostgresPassword {
+    private static let service = "com.rickmark.garage.postgres"
+    private static let account = "postgres-superuser"
+    private static let passwordLength = 32
+    private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+    static func load() throws -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = result as? Data, let password = String(data: data, encoding: .utf8) else {
+            throw PostgresError.other("could not read Postgres password from Keychain (OSStatus \(status))")
+        }
+        return password
+    }
+
+    static func save(_ password: String) throws {
+        let attributes: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: Data(password.utf8),
+        ]
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(status))")
+        }
+    }
+
+    static func generate() throws -> String {
+        var password = ""
+        while password.count < passwordLength {
+            var bytes = [UInt8](repeating: 0, count: passwordLength)
+            let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+            guard status == errSecSuccess else {
+                throw PostgresError.other("could not generate Postgres password (OSStatus \(status))")
+            }
+            for byte in bytes where byte < 248 && password.count < passwordLength {
+                password.append(alphabet[Int(byte) % alphabet.count])
+            }
+        }
+        return password
     }
 }
 

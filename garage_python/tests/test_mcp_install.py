@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
     ClientTarget,
     client_targets,
@@ -31,6 +33,23 @@ def target(tmp_path: Path) -> ClientTarget:
 
 def _read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestCliInstall:
+    def test_passes_database_url_to_spawned_mcp_server(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target_path = tmp_path / "mcp.json"
+        database_url = "postgresql+psycopg://user:password@localhost:14824/garage-rag"
+        monkeypatch.setenv("GARAGE_DATABASE_URL", database_url)
+
+        result = CliRunner().invoke(
+            app, ["mcp-install", "--path", str(target_path), "--yes"]
+        )
+
+        assert result.exit_code == 0, result.output
+        entry = _read(target_path)["mcpServers"]["garage-rag"]
+        assert entry["env"]["GARAGE_DATABASE_URL"] == database_url
 
 
 class TestServerCommand:
@@ -93,6 +112,10 @@ class TestServerEntry:
     def test_extra_env_still_possible_if_requested(self) -> None:
         entry = server_entry(extra_env={"FOO": "bar"})
         assert entry["env"] == {"FOO": "bar"}
+
+    def test_database_url_can_be_passed_to_the_spawned_server(self) -> None:
+        entry = server_entry(extra_env={"GARAGE_DATABASE_URL": "postgresql+psycopg://user:password@localhost/db"})
+        assert entry["env"]["GARAGE_DATABASE_URL"].endswith("@localhost/db")
 
 
 class TestInstallMerge:

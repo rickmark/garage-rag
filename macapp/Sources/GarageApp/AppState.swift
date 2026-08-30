@@ -33,6 +33,18 @@ final class AppState: ObservableObject {
         await postgres.stop()
     }
 
+    func resetDatabase() {
+        performDatabaseOperation { try postgres.resetDatabase() }
+    }
+
+    func backupDatabase(to destination: URL) {
+        performDatabaseOperation { try postgres.backupDatabase(to: destination) }
+    }
+
+    func restoreDatabase(from source: URL) {
+        performDatabaseOperation { try postgres.restoreDatabase(from: source) }
+    }
+
     /// Runs a garage subcommand and captures its combined output for display.
     @discardableResult
     func runGarage(_ arguments: [String]) async -> Bool {
@@ -40,6 +52,17 @@ final class AppState: ObservableObject {
         lastCommandOutput = result.lines.map(\.text).joined(separator: "\n")
         lastCommandSucceeded = result.succeeded
         return result.succeeded
+    }
+
+    private func performDatabaseOperation(_ operation: () throws -> Void) {
+        do {
+            try operation()
+            lastCommandSucceeded = true
+            lastCommandOutput = "Completed successfully."
+        } catch {
+            lastCommandSucceeded = false
+            lastCommandOutput = error.localizedDescription
+        }
     }
 
     var statusSummary: String {
