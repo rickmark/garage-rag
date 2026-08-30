@@ -24,13 +24,24 @@ copy_to_directory(
     },
 )
 
+copy_to_directory(
+    name = "schema_output",
+    srcs = [
+        "//data/sql:sql_schema",
+    ],
+    out = "schema",
+    replace_prefixes = {
+        "data/sql/sql": "schema/",
+    },
+)
+
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/**/*.swift"]),
     data = [
         ":postgres_output",
+        ":schema_output",
         "//data/schema:config_schema",
-        "//data/sql:sql_schema",
         "//garage_python:garage",
         "//garage_python:garage-mcp",
     ],

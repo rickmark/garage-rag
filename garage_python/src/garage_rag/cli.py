@@ -386,10 +386,15 @@ def sync(
 # schema
 # ---------------------------------------------------------------------------
 @app.command("init-db")
-def init_db() -> None:
+def init_db(
+    schema_dir: Annotated[
+        Path | None,
+        typer.Option("--schema-dir", help="Directory containing numbered SQL schema files."),
+    ] = None,
+) -> None:
     """Apply the schema: extensions, enums, core tables, model registry."""
     with session_scope() as session:
-        applied = apply_migrations(session)
+        applied = apply_migrations(session, schema_dir)
     # Connections opened before the `vector` extension existed have no vector
     # types registered. Discard the pool so later work gets fresh connections.
     reset_engine()

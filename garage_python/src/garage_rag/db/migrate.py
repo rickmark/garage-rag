@@ -24,18 +24,18 @@ def sql_dir() -> Path:
     return repo_root() / "sql"
 
 
-def migration_files() -> list[Path]:
+def migration_files(schema_dir: Path | None = None) -> list[Path]:
     """Numbered SQL files, in lexical (therefore numeric) order."""
-    directory = sql_dir()
+    directory = schema_dir if schema_dir is not None else sql_dir()
     if not directory.is_dir():
         raise FileNotFoundError(f"SQL directory not found: {directory}")
     return sorted(directory.glob("[0-9][0-9][0-9]_*.sql"))
 
 
-def apply_migrations(session: Session) -> list[str]:
+def apply_migrations(session: Session, schema_dir: Path | None = None) -> list[str]:
     """Apply every migration file. Returns the names applied."""
     applied: list[str] = []
-    for path in migration_files():
+    for path in migration_files(schema_dir):
         log.info("applying %s", path.name)
         # exec_driver_sql: these files contain multiple statements and
         # dollar-quoted DO blocks, which SQLAlchemy's text() would try to parse

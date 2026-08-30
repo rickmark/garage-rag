@@ -53,7 +53,9 @@ struct StatusView: View {
                             Button("Initialize schema (garage init-db)") {
                                 Task {
                                     initRunning = true
-                                    await appState.runGarage(["init-db"])
+                                    await appState.runGarage(
+                                        ["init-db", "--schema-dir", Paths.schemaDir.path]
+                                    )
                                     initRunning = false
                                 }
                             }

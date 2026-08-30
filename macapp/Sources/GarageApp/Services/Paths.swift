@@ -39,6 +39,11 @@ enum Paths {
         return root.appendingPathComponent("postgres", isDirectory: true)
     }
 
+    /// Directory containing the SQL schema bundled with the application.
+    static var schemaDir: URL {
+        return root.appendingPathComponent("schema", isDirectory: true)
+    }
+
     /// Directory containing postgres/initdb/pg_ctl/pg_isready/psql.
     static var postgresBinDir: URL {
         return root.appendingPathComponent("postgres/bin", isDirectory: true)
