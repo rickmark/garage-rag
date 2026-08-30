@@ -201,7 +201,7 @@ def default_exclude_prefixes(source_class: CorpusClass, root: Path) -> tuple[str
     folders; walking them yields nothing but wasted stats and, worse, wasted
     materialization budget.
     """
-    from ..attribute.pathrules import EXCLUDED_PREFIXES
+    from garage_rag.attribute.pathrules import EXCLUDED_PREFIXES
 
     if root.name == "Dropbox" or (root / ".dropbox.device").exists():
         return EXCLUDED_PREFIXES

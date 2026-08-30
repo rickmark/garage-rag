@@ -7,7 +7,13 @@ from pathlib import Path
 
 import yaml
 
-from .base import ContentKind, ExtractionError, ExtractResult, guess_title, normalize_text
+from garage_rag.extract.base import (
+    ContentKind,
+    ExtractionError,
+    ExtractResult,
+    guess_title,
+    normalize_text,
+)
 
 log = logging.getLogger(__name__)
 

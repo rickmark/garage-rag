@@ -107,8 +107,8 @@ def _tesseract(path: Path) -> tuple[str, float]:
 
 def _claude_vision(path: Path, *, source_allows_cloud: bool) -> str:
     """Transcribe an image with Claude. Routed through the egress chokepoint."""
-    from ..db.models import CorpusClass
-    from ..enrich.egress import EgressRequest, send
+    from garage_rag.db.models import CorpusClass
+    from garage_rag.enrich.egress import EgressRequest, send
 
     suffix = path.suffix.lower()
     media_type = _MEDIA_TYPES.get(suffix)
@@ -163,7 +163,7 @@ def extract_image(
     good_enough = len(text) >= settings.ocr_min_chars and confidence >= settings.ocr_min_confidence
 
     if not good_enough:
-        from ..enrich.egress import EgressBlocked, cloud_enabled
+        from garage_rag.enrich.egress import EgressBlocked, cloud_enabled
 
         if cloud_enabled() and source_allows_cloud:
             try:

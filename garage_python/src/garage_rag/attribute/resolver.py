@@ -30,10 +30,9 @@ from garage_rag.attribute.git import (
     relative_posix,
     remote_owner,
 )
+from garage_rag.attribute.pathrules import classify_path
 from garage_rag.config import get_settings
 from garage_rag.db.models import Author, AuthorIdentity, AuthorRole, TrustTier
-
-from .pathrules import classify_path
 
 log = logging.getLogger(__name__)
 

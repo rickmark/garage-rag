@@ -656,8 +656,8 @@ def ingest(
     ] = False,
 ) -> None:
     """Walk a source and index it. Safe to re-run; unchanged files are skipped."""
-    from .db.engine import get_session_factory
-    from .ingest.pipeline import ingest_source
+    from garage_rag.db.engine import get_session_factory
+    from garage_rag.ingest.pipeline import ingest_source
 
     factory = get_session_factory()
     if source == "*":
@@ -739,7 +739,7 @@ def backfill(
     ] = True,
 ) -> None:
     """Embed chunks that a model has no vectors for. Pure insert; safe to re-run."""
-    from .embed.ollama import EmbeddingError, backfill_model, count_pending, verify_model_dims
+    from garage_rag.embed.ollama import EmbeddingError, backfill_model, count_pending, verify_model_dims
 
     with session_scope() as session:
         targets = [get_model(session, model)] if model else list_models(session)
@@ -803,7 +803,7 @@ def reconcile(
     ] = False,
 ) -> None:
     """Delete documents whose source files no longer exist."""
-    from .ingest.reconcile import reconcile_source
+    from garage_rag.ingest.reconcile import reconcile_source
 
     with session_scope() as session:
         result = reconcile_source(session, source, dry_run=not apply, force=force)
@@ -872,7 +872,7 @@ def mcp_install(
     Merges into any existing config: other servers and unrelated keys are kept,
     the previous file is backed up, and the write is atomic.
     """
-    from .mcp_server.install import (
+    from garage_rag.mcp_server.install import (
         ClientTarget,
         client_targets,
         http_url,
@@ -977,7 +977,7 @@ def mcp_uninstall(
     name: Annotated[str, typer.Option("--name")] = "garage-rag",
 ) -> None:
     """Remove this server from a client's config."""
-    from .mcp_server.install import ClientTarget, client_targets, uninstall
+    from garage_rag.mcp_server.install import ClientTarget, client_targets, uninstall
 
     targets = client_targets()
     if path is not None:
@@ -996,7 +996,7 @@ def mcp_uninstall(
 @app.command("mcp-status")
 def mcp_status() -> None:
     """Show which MCP clients this server is registered with."""
-    from .mcp_server.install import client_targets, installed_in, server_command
+    from garage_rag.mcp_server.install import client_targets, installed_in, server_command
 
     command, args = server_command()
     console.print(f"[dim]server command: {command} {' '.join(args)}[/dim]\n")
@@ -1056,7 +1056,7 @@ def mcp_serve(
     several clients from one long-running process, or to reach it from a
     container or another host.
     """
-    from .mcp_server.server import is_loopback, serve
+    from garage_rag.mcp_server.server import is_loopback, serve
 
     if sum(map(bool, (stdio, http, sse))) > 1:
         raise typer.BadParameter("choose one of --stdio, --http, or --sse")
@@ -1132,8 +1132,8 @@ def search(
     full: Annotated[bool, typer.Option("--full", help="Print whole snippets.")] = False,
 ) -> None:
     """Search the corpus with hybrid vector + keyword retrieval."""
-    from .search.hybrid import SearchMode
-    from .search.hybrid import search as run_search
+    from garage_rag.search.hybrid import SearchMode
+    from garage_rag.search.hybrid import search as run_search
 
     with session_scope() as session:
         hits = run_search(
@@ -1178,10 +1178,10 @@ def extract_cmd(
     full: Annotated[bool, typer.Option("--full", help="Print whole chunks.")] = False,
 ) -> None:
     """Extract and chunk a single file without touching the database."""
-    from .extract.base import ExtractionError
-    from .extract.dispatch import extract as run_extract
-    from .extract.placeholder import PlaceholderFile
-    from .ingest.chunking import chunk_text
+    from garage_rag.extract.base import ExtractionError
+    from garage_rag.extract.dispatch import extract as run_extract
+    from garage_rag.extract.placeholder import PlaceholderFile
+    from garage_rag.ingest.chunking import chunk_text
 
     target = path.expanduser()
     try:

@@ -143,7 +143,7 @@ def backfill_model(
     Pure insert: existing vectors are never touched, so this is safe to run
     repeatedly and safe to interrupt.
     """
-    from .factory import get_embedder
+    from garage_rag.embed.factory import get_embedder
 
     settings = get_settings()
     size = batch_size or settings.embed_batch_size
@@ -196,7 +196,7 @@ def verify_model_dims(model: EmbeddingModel) -> tuple[bool, int]:
     A mismatch means every vector would be rejected by the column type, so it is
     worth one probe request before spending hours on a backfill.
     """
-    from .factory import get_embedder
+    from garage_rag.embed.factory import get_embedder
 
     actual = get_embedder(model.provider, model.model_ref).probe_dims()
     return actual == model.dims, actual

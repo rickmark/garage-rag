@@ -170,49 +170,49 @@ INDEXABLE_EXTENSIONS = ALL_TEXT_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 def _markdown(path: Path) -> ExtractResult:
-    from .text import extract_markdown
+    from garage_rag.extract.text import extract_markdown
 
     return extract_markdown(path)
 
 
 def _plaintext(path: Path) -> ExtractResult:
-    from .text import extract_plaintext
+    from garage_rag.extract.text import extract_plaintext
 
     return extract_plaintext(path)
 
 
 def _code(path: Path) -> ExtractResult:
-    from .text import extract_code
+    from garage_rag.extract.text import extract_code
 
     return extract_code(path)
 
 
 def _pdf(path: Path) -> ExtractResult:
-    from .pdf import extract_pdf
+    from garage_rag.extract.pdf import extract_pdf
 
     return extract_pdf(path)
 
 
 def _docx(path: Path) -> ExtractResult:
-    from .office import extract_docx
+    from garage_rag.extract.office import extract_docx
 
     return extract_docx(path)
 
 
 def _pptx(path: Path) -> ExtractResult:
-    from .office import extract_pptx
+    from garage_rag.extract.office import extract_pptx
 
     return extract_pptx(path)
 
 
 def _xlsx(path: Path) -> ExtractResult:
-    from .office import extract_xlsx
+    from garage_rag.extract.office import extract_xlsx
 
     return extract_xlsx(path)
 
 
 def _image(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
-    from .image import extract_image
+    from garage_rag.extract.image import extract_image
 
     return extract_image(path, source_allows_cloud=source_allows_cloud)
 

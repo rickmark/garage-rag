@@ -98,7 +98,7 @@ def _is_documentation_file(path: Path) -> bool:
     extension is not itself a code extension. Otherwise ``security.rb`` and
     ``license.py`` would be misread as prose purely because of their names.
     """
-    from ..extract.dispatch import CODE_EXTENSIONS
+    from garage_rag.extract.dispatch import CODE_EXTENSIONS
 
     suffix = path.suffix.lower()
     if suffix in _DOC_EXTENSIONS_IN_CODE_TREES:
@@ -110,7 +110,7 @@ def _is_documentation_file(path: Path) -> bool:
 
 def is_code_path(path: Path) -> bool:
     """Whether a path would classify as code. Used by the walker's filters."""
-    from ..extract.dispatch import CODE_EXTENSIONS
+    from garage_rag.extract.dispatch import CODE_EXTENSIONS
 
     if _is_documentation_file(path):
         return False

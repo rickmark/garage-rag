@@ -16,7 +16,7 @@ import warnings
 from pathlib import Path
 
 from garage_rag.config import get_settings
-from .base import (
+from garage_rag.extract.base import (
     ContentKind,
     ExtractionError,
     ExtractResult,

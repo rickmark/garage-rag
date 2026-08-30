@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .base import (
+from garage_rag.extract.base import (
     ContentKind,
     ExtractionError,
     ExtractResult,
