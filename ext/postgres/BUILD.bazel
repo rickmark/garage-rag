@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:rpath.bzl", "install_name")
 
 configure_make(
     name = "postgres",
@@ -30,12 +31,16 @@ configure_make(
         "dropdb",
         "dropuser",
     ],
+    out_data_dirs = [
+        "share",
+    ],
     out_data_files = [
         "lib/pgxs/src/makefiles/pgxs.mk",
     ],
     out_shared_libs = [
         "libpq.dylib",
         "plpgsql.dylib",
+        "pg_trgm.dylib",
         "libpgtypes.dylib",
         "libpq.5.dylib",
         "libpgtypes.3.dylib",
@@ -49,8 +54,18 @@ configure_make(
         "libpgtypes.a",
         "libpgcommon.a",
     ],
+    targets = [
+        "world-bin",
+        "install-world-bin",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//ext/libicu",
     ],
+)
+
+install_name(
+    name = "postgres_rpath",
+    dep = ":postgres",
+    visibility = ["//visibility:public"],
 )

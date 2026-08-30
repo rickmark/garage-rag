@@ -24,36 +24,34 @@ enum Paths {
     }()
 
     /// Root of everything vendored into the .app bundle, if we're running packaged.
-    private static var bundleResourceRoot: URL? {
-        guard let resourceURL = Bundle.main.resourceURL else { return nil }
-        return resourceURL
+    private static var root: URL {
+        return Bundle.main.resourceURL!
     }
 
-    private static let devPostgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
-    private static let devPgvectorPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/pgvector")
+    private static let postgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
     private static let devRepoRoot = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("garage"))
 
     static var isPackaged: Bool {
-        guard let root = bundleResourceRoot else { return false }
-        return FileManager.default.fileExists(atPath: root.appendingPathComponent("postgres").path)
+        return true
+    }
+
+    static var postgresDir: URL {
+        return root.appendingPathComponent("postgres", isDirectory: true)
     }
 
     /// Directory containing postgres/initdb/pg_ctl/pg_isready/psql.
     static var postgresBinDir: URL {
-        return devPostgresPrefix
+        return root.appendingPathComponent("postgres/bin", isDirectory: true)
     }
 
     /// Directory postgres should treat as its lib dir (for dynamic loading of extensions).
     static var postgresLibDir: URL {
-        if isPackaged, let root = bundleResourceRoot {
-            return root.appendingPathComponent("postgres/lib", isDirectory: true)
-        }
-        return devPostgresPrefix.appendingPathComponent("lib/postgresql", isDirectory: true)
+        return root.appendingPathComponent("postgres/lib", isDirectory: true)
     }
 
     /// Directory postgres should treat as its share dir (extension SQL/control files).
     static var postgresShareDir: URL {
-        return devPostgresPrefix.appendingPathComponent("postgresql", isDirectory: true)
+        return root.appendingPathComponent("postgres/share", isDirectory: true)
     }
 
     static func postgresTool(_ name: String) -> URL {
@@ -62,13 +60,12 @@ enum Paths {
 
     /// The frozen `garage` CLI binary (packaged) or the venv's `garage` script (dev).
     static var garageCLI: URL {
-        let root = bundleResourceRoot!
         return root.appendingPathComponent("garage", isDirectory: false)
     }
 
     /// The frozen `garage-mcp` binary (packaged) or the venv's script (dev).
     static var garageMCP: URL {
-        return devRepoRoot.appendingPathComponent("garage-mcp", isDirectory: false)
+        return root.appendingPathComponent("garage-mcp", isDirectory: false)
     }
 
     /// Working directory for `garage` CLI invocations, and where its `.env`
@@ -78,9 +75,5 @@ enum Paths {
     /// (garage reads it via GARAGE_ENV_FILE, not cwd-relative discovery).
     static var garageWorkingDirectory: URL {
         isPackaged ? appSupportDir : devRepoRoot
-    }
-
-    static var garageEnvFile: URL {
-        garageWorkingDirectory.appendingPathComponent(".env")
     }
 }

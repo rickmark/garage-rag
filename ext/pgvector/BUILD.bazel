@@ -13,6 +13,9 @@ make(
         "pkgincludedir": "$$INSTALLDIR/include",
     },
     lib_source = "@pgvector//:pgvector_source",
+    out_data_dirs = [
+        "share",
+    ],
     out_shared_libs = [
         "vector.dylib",
     ],

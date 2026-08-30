@@ -82,7 +82,6 @@ final class GarageCLIService: ObservableObject {
     private func environment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["GARAGE_DATABASE_URL"] = postgres.connectionURL
-        env["GARAGE_ENV_FILE"] = Paths.garageEnvFile.path
         return env
     }
 }

@@ -56,9 +56,6 @@ jobs:
           aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
       - run: aspect format --task:name format
 
-
-
-
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -18,8 +18,8 @@ final class PostgresService: ObservableObject {
     @Published private(set) var logs: [LogLine] = []
 
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
-    let port = 5433
-    let databaseName = "rag"
+    let port = 14824
+    let databaseName = "garage-rag"
 
     private let runner = ProcessRunner()
     private let maxLogLines = 2000
@@ -95,7 +95,7 @@ final class PostgresService: ObservableObject {
             throw error
         }
 
-        let ready = await waitUntilReady(timeout: 20)
+        let ready = await waitUntilReady(timeout: 30)
         guard ready else {
             status = .failed("postgres did not become ready within 20s")
             throw PostgresError.startupTimeout
@@ -130,11 +130,12 @@ final class PostgresService: ObservableObject {
     private func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let (code, _) = ProcessRunner.runSync(
+            let (code, messages) = ProcessRunner.runSync(
                 executable: Paths.postgresTool("pg_isready"),
                 arguments: ["-h", "localhost", "-p", String(port)]
             )
             if code == 0 { return true }
+            appendLog(LogLine(stream: .stdout, text: String(messages), source: "pg_isready"))
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
         return false

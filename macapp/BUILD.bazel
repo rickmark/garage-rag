@@ -12,17 +12,15 @@ copy_to_directory(
     name = "postgres_output",
     srcs = [
         "//ext:pgvector",
-        "//ext:postgres",
+        "//ext/postgres:postgres_rpath",
     ],
     out = "postgres",
     exclude_srcs_patterns = [
         "*/include/*",
     ],
     replace_prefixes = {
-        "ext/postgres/postgres/bin": "postgres/bin/",
-        "ext/postgres/postgres/lib": "postgres/lib/",
-        "ext/pgvector/pgvector/bin": "postgres/bin/",
-        "ext/pgvector/pgvector/lib": "postgres/lib/",
+        "ext/postgres/postgres_rpath": "postgres/",
+        "ext/pgvector/pgvector": "postgres/",
     },
 )
 
