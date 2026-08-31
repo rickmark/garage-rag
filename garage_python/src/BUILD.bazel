@@ -28,6 +28,7 @@ alias(
 py_package(
     name = "garage_rag_package",
     packages = ["garage_rag"],  # Only includes files in this dotted Python path
+    pyproject = "//garage_python:pyproject.toml",
 )
 
 py_wheel(

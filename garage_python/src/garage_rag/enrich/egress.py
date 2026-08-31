@@ -75,9 +75,7 @@ def cloud_enabled() -> bool:
     settings = get_settings()
     if not settings.enable_cloud_ocr:
         return False
-    if settings.read_api_key() is None:
-        return False
-    return True
+    return settings.read_api_key() is not None
 
 
 def _client():

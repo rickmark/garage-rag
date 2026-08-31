@@ -304,7 +304,10 @@ class TestLMStudioApiToken:
     def test_reads_token_from_file(self, tmp_path: Path) -> None:
         token_file = tmp_path / "lmstudio.token"
         token_file.write_text("lm-token\n")
-        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "lm-token"
+        assert (
+            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
+            == "lm-token"
+        )
 
     def test_rejects_empty_environment_token(self, monkeypatch) -> None:
         monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", " ")
