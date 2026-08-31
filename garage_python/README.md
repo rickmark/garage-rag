@@ -39,7 +39,9 @@ aspects. The linters are configured in `.aspect/config.axl` and run via the Aspe
 command (not the upstream Bazel CLI), which collects the cached report files, applies fixes
 interactively, and sets a matching exit code.
 
-- Run `aspect lint //...` to check for lint violations.
+- Run `aspect lint //...` to check Ruff lint rules and Ty type checks.
+- Run `aspect format -- //...` to verify and apply Ruff formatting.
+- Run `aspect buildifier` to format Starlark files.
 
 
 
@@ -86,7 +88,6 @@ py_console_script_binary(
     pkg = "@pypi//package_name",
 )
 ```
-
 
 
 

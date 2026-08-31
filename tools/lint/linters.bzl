@@ -19,10 +19,9 @@ load("@aspect_rules_lint//lint:ty.bzl", "lint_ty_aspect")
 
 
 ruff = lint_ruff_aspect(
-    binary = "@multitool//tools/ruff",
+    binary = Label("@aspect_rules_lint//lint:ruff_bin"),
     configs = [
-        Label("//:pyproject.toml"),
-        # if the repository has nested ruff.toml files, they must be added here as well
+        Label("//garage_python:pyproject.toml"),
     ],
 )
 
@@ -30,9 +29,8 @@ ruff_test = lint_test(aspect = ruff)
 
 ty = lint_ty_aspect(
     binary = Label("@aspect_rules_lint//lint:ty_bin"),
-    config = Label("@//:pyproject.toml"),
+    config = Label("//garage_python:pyproject.toml"),
 )
-
 
 
 

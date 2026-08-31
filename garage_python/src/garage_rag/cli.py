@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -745,7 +745,12 @@ def backfill(
     ] = True,
 ) -> None:
     """Embed chunks that a model has no vectors for. Pure insert; safe to re-run."""
-    from garage_rag.embed.ollama import EmbeddingError, backfill_model, count_pending, verify_model_dims
+    from garage_rag.embed.ollama import (
+        EmbeddingError,
+        backfill_model,
+        count_pending,
+        verify_model_dims,
+    )
 
     with session_scope() as session:
         targets = [get_model(session, model)] if model else list_models(session)

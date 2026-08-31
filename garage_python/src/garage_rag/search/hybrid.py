@@ -29,8 +29,8 @@ from sqlalchemy.orm import Session
 
 from garage_rag.db.emb_tables import assert_safe_table, get_model
 from garage_rag.db.engine import apply_search_tuning
-from garage_rag.embed.factory import get_embedder
 from garage_rag.db.registry import StoragePlan, truncate_vector
+from garage_rag.embed.factory import get_embedder
 
 log = logging.getLogger(__name__)
 
