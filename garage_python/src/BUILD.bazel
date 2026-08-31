@@ -1,6 +1,6 @@
 # gazelle:python_root
 
-load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library", "py_pex_binary")
 load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
 
 py_library(
