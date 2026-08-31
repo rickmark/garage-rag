@@ -57,6 +57,13 @@
           "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1).",
           "default": "http://localhost:1234/v1"
         },
+        "lmstudio_api_token_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to an LM Studio API token for an authenticated server. The token itself is kept outside this configuration file; GARAGE_LMSTUDIO_API_TOKEN overrides it."
+        },
         "default_model": {
           "type": "string",
           "description": "Slug of the model used when a command does not name one. Must be registered with 'garage register-model' first.",

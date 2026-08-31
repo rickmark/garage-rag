@@ -7,6 +7,9 @@ struct LogsView: View {
     enum LogSource: String, CaseIterable, Identifiable {
         case postgres = "Postgres"
         case garage = "garage CLI"
+        case ingest = "Ingest"
+        case backfill = "Backfill"
+        case mcp = "MCP Server"
         var id: String { rawValue }
     }
 
@@ -47,6 +50,9 @@ struct LogsView: View {
         switch source {
         case .postgres: appState.postgres.logs
         case .garage: appState.garage.logs
+        case .ingest: appState.ingest.logs
+        case .backfill: appState.backfill.logs
+        case .mcp: appState.mcp.logs
         }
     }
 }

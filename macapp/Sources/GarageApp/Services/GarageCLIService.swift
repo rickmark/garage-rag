@@ -8,18 +8,20 @@ struct GarageCommandResult {
     var succeeded: Bool { exitCode == 0 }
 }
 
-/// Runs `garage` CLI subcommands against the app-managed Postgres instance.
-/// Each call is a fresh process; there is no long-running `garage` daemon.
+/// Runs a category of `garage` CLI subcommands against the app-managed Postgres
+/// instance. Each service has its own process state and rolling log.
 @MainActor
 final class GarageCLIService: ObservableObject {
     @Published private(set) var logs: [LogLine] = []
     @Published private(set) var isRunning = false
 
     private let postgres: PostgresService
+    private let commandLabel: String
     private let maxLogLines = 4000
 
-    init(postgres: PostgresService) {
+    init(postgres: PostgresService, commandLabel: String = "garage CLI") {
         self.postgres = postgres
+        self.commandLabel = commandLabel
     }
 
     private func appendLog(_ line: LogLine) {
@@ -37,11 +39,21 @@ final class GarageCLIService: ObservableObject {
     /// once the process exits.
     @discardableResult
     func run(_ arguments: [String]) async -> GarageCommandResult {
+        guard !isRunning else {
+            let line = LogLine(
+                stream: .stderr,
+                text: "\(commandLabel) is already running",
+                source: commandLabel
+            )
+            appendLog(line)
+            return GarageCommandResult(exitCode: -1, lines: [line])
+        }
+
         guard cliAvailable else {
             let line = LogLine(
                 stream: .stderr,
                 text: "garage CLI not found at \(Paths.garageCLI.path)",
-                source: "garage"
+                source: commandLabel
             )
             appendLog(line)
             return GarageCommandResult(exitCode: -1, lines: [line])
@@ -59,13 +71,17 @@ final class GarageCLIService: ObservableObject {
                 arguments: arguments,
                 environment: try environment(),
                 currentDirectory: Paths.garageWorkingDirectory,
-                source: "garage \(arguments.first ?? "")"
+                source: commandLabel
             ) { [weak self] line in
                 self?.appendLog(line)
                 collected.append(line)
             }
         } catch {
-            let line = LogLine(stream: .stderr, text: "failed to launch garage: \(error.localizedDescription)", source: "garage")
+            let line = LogLine(
+                stream: .stderr,
+                text: "failed to launch garage: \(error.localizedDescription)",
+                source: commandLabel
+            )
             appendLog(line)
             return GarageCommandResult(exitCode: -1, lines: [line])
         }
@@ -82,6 +98,9 @@ final class GarageCLIService: ObservableObject {
     private func environment() throws -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
+        if let lmStudioToken = try LMStudioTokenStore.load() {
+            env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
+        }
         return env
     }
 }

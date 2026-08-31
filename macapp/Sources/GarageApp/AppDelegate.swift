@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // awaited Task completes. terminate() just sends SIGTERM and
         // returns immediately, which is enough — postgres handles its own
         // shutdown from there, orphaned but signaled.
+        appState?.mcp.terminateImmediately()
         appState?.postgres.terminateImmediately()
     }
 }

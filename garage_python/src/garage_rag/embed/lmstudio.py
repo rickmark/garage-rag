@@ -2,8 +2,10 @@
 
 LM Studio exposes an OpenAI-compatible ``/v1/embeddings`` endpoint, so the
 standard ``openai`` Python SDK works out of the box -- just point ``base_url``
-at the local server.  No API key is needed for a local instance; the SDK
-requires *something* in the field, so a placeholder is used.
+at the local server. Local instances need no API key; authenticated instances
+can provide one through ``GARAGE_LMSTUDIO_API_TOKEN`` or the configured token
+file. The SDK requires a non-empty key, so unauthenticated requests use a
+placeholder.
 
 Like Ollama, LM Studio serializes model execution on a single GPU, so batching
 rather than fan-out is the right shape.
@@ -31,12 +33,18 @@ class EmbeddingError(RuntimeError):
 class LMStudioEmbedder:
     """Batched embedding client targeting LM Studio's OpenAI-compatible API."""
 
-    def __init__(self, model_ref: str, *, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        model_ref: str,
+        *,
+        base_url: str | None = None,
+        api_token: str | None = None,
+    ) -> None:
         settings = get_settings()
         self.model_ref = model_ref
         self._client = OpenAI(
             base_url=base_url or settings.lmstudio_host,
-            api_key=_PLACEHOLDER_KEY,
+            api_key=api_token or settings.read_lmstudio_api_token() or _PLACEHOLDER_KEY,
         )
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:

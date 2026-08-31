@@ -46,6 +46,7 @@ configure_make(
         "libpgtypes.3.dylib",
         "libecpg.dylib",
         "pgoutput.dylib",
+        "dict_snowball.dylib",
     ],
     out_static_libs = [
         "libecpg.a",

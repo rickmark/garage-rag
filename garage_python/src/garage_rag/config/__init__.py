@@ -238,6 +238,13 @@ class Settings(BaseModel):
         default="http://localhost:1234/v1",
         description="Base URL of the LM Studio OpenAI-compatible API (include /v1).",
     )
+    lmstudio_api_token_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to an LM Studio API token for an authenticated server. The token itself "
+            "is kept outside this configuration file; GARAGE_LMSTUDIO_API_TOKEN overrides it."
+        ),
+    )
     default_embedding_model: str = Field(
         default="bge-m3",
         description=(
@@ -410,6 +417,25 @@ class Settings(BaseModel):
             return None
         return key or None
 
+    def read_lmstudio_api_token(self) -> str | None:
+        """Load the LM Studio API token without placing it in the configuration."""
+        environment_token = os.environ.get("GARAGE_LMSTUDIO_API_TOKEN")
+        if environment_token is not None:
+            token = environment_token.strip()
+            if not token:
+                raise ConfigError("GARAGE_LMSTUDIO_API_TOKEN must not be empty")
+            return token
+        if not self.lmstudio_api_token_file:
+            return None
+        path = Path(self.lmstudio_api_token_file).expanduser()
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(f"cannot read LM Studio API token file {path}: {exc}") from exc
+        if not token:
+            raise ConfigError(f"LM Studio API token file {path} is empty")
+        return token
+
     def source(self, slug: str) -> SourceSpec | None:
         return next((s for s in self.sources if s.slug == slug), None)
 
@@ -428,6 +454,7 @@ SECTIONS: dict[str, dict[str, str]] = {
     "embedding": {
         "ollama_host": "ollama_host",
         "lmstudio_host": "lmstudio_host",
+        "lmstudio_api_token_file": "lmstudio_api_token_file",
         "default_model": "default_embedding_model",
         "batch_size": "embed_batch_size",
         "max_inflight": "embed_max_inflight",
@@ -483,10 +510,11 @@ def default_config_path() -> Path:
 def repo_schema_path() -> Path:
     """Where the schema is generated for publishing.
 
-    Committed at the repository root so that :data:`SCHEMA_URL` resolves. This is
-    a build artifact, not something written next to a user's config.
+    Committed in the repository's ``data/schema`` target so :data:`SCHEMA_URL`
+    resolves. This is a build artifact, not something written next to a user's
+    config.
     """
-    return repo_root() / SCHEMA_FILENAME
+    return repo_root() / "data" / "schema" / SCHEMA_FILENAME
 
 
 def candidate_paths() -> list[Path]:
@@ -719,8 +747,8 @@ def reset_settings() -> None:
 
 
 def repo_root() -> Path:
-    """Path to the installed package's project root (holds ``sql/``)."""
-    return Path(__file__).resolve().parent.parent.parent
+    """Path to the repository root (holds the published ``data/`` artifacts)."""
+    return Path(__file__).resolve().parents[4]
 
 
 # Kept so modules importing this name keep working; the MCP server no longer

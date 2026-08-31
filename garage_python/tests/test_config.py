@@ -67,6 +67,7 @@ class TestRoundTrip:
             materialize_placeholders=True,
             ocr_min_confidence=42.5,
             api_key_file="~/.secret",
+            lmstudio_api_token_file="~/.lmstudio-token",
         )
         restored = Settings(**flatten(nest(original)))
         assert restored.chunk_size == 512
@@ -74,6 +75,7 @@ class TestRoundTrip:
         assert restored.materialize_placeholders is True
         assert restored.ocr_min_confidence == 42.5
         assert restored.api_key_file == "~/.secret"
+        assert restored.lmstudio_api_token_file == "~/.lmstudio-token"
 
     def test_diff_view_omits_defaults(self) -> None:
         settings = Settings(chunk_size=999)
@@ -283,6 +285,35 @@ class TestApiKeyFile:
         path = tmp_path / CONFIG_FILENAME
         save_config(Settings(api_key_file=str(key)), path)
         assert "sk-ant-secret" not in path.read_text()
+
+
+class TestLMStudioApiToken:
+    def test_reads_token_from_environment(self, monkeypatch) -> None:
+        monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", "lm-token\n")
+        assert Settings().read_lmstudio_api_token() == "lm-token"
+
+    def test_environment_overrides_token_file(self, monkeypatch, tmp_path: Path) -> None:
+        token_file = tmp_path / "lmstudio.token"
+        token_file.write_text("from-file")
+        monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", "from-environment")
+        assert (
+            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
+            == "from-environment"
+        )
+
+    def test_reads_token_from_file(self, tmp_path: Path) -> None:
+        token_file = tmp_path / "lmstudio.token"
+        token_file.write_text("lm-token\n")
+        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "lm-token"
+
+    def test_rejects_empty_environment_token(self, monkeypatch) -> None:
+        monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", " ")
+        with pytest.raises(ConfigError, match="GARAGE_LMSTUDIO_API_TOKEN must not be empty"):
+            Settings().read_lmstudio_api_token()
+
+    def test_rejects_missing_token_file(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="cannot read LM Studio API token file"):
+            Settings(lmstudio_api_token_file=str(tmp_path / "absent")).read_lmstudio_api_token()
 
 
 class TestIdentityParsing:

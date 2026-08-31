@@ -51,6 +51,16 @@ py_test(
 )
 
 py_test(
+    name = "test_lmstudio",
+    srcs = ["test_lmstudio.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/embed",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_mcp_install",
     srcs = ["test_mcp_install.py"],
     deps = [
@@ -76,6 +86,7 @@ test_suite(
         ":test_config",
         ":test_egress_block",
         ":test_migrate",
+        ":test_lmstudio",
         ":test_mcp_install",
         ":test_registry_dims",
     ],

@@ -76,11 +76,29 @@ struct StatusView: View {
 
                 GroupBox("MCP server") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("An MCP client (Claude Desktop, Claude Code, ...) spawns `garage-mcp` itself over stdio once registered. This app just needs Postgres running on port \(appState.postgres.port) for that process to connect to.")
+                        LabeledContent("Endpoint", value: appState.mcp.endpoint.absoluteString)
+                        LabeledContent("Status", value: mcpStatusSummary)
+                        Text("The app runs `garage-mcp` as a loopback-only HTTP service. Client registrations below continue to use their own stdio process.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         HStack {
+                            Button("Start") {
+                                Task { await appState.startPostgres() }
+                            }
+                            .disabled(
+                                appState.postgres.status != .running ||
+                                    appState.mcp.status == .running ||
+                                    appState.mcp.status == .starting
+                            )
+                            Button("Stop") {
+                                Task { await appState.mcp.stop() }
+                            }
+                            .disabled(
+                                appState.mcp.status != .running &&
+                                    appState.mcp.status != .starting
+                            )
+
                             Button("Register with Claude Desktop") {
                                 Task { await appState.runGarage(["mcp-install", "--target", "claude-desktop", "--yes"]) }
                             }
@@ -145,5 +163,15 @@ struct StatusView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: Date())
+    }
+
+    private var mcpStatusSummary: String {
+        switch appState.mcp.status {
+        case .stopped: "Stopped"
+        case .starting: "Starting…"
+        case .running: "Running"
+        case .stopping: "Stopping…"
+        case .failed(let message): "Failed: \(message)"
+        }
     }
 }

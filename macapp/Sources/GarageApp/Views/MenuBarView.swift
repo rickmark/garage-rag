@@ -38,6 +38,13 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button("Ingest now") {
+                Task { await appState.runIngest(["ingest", "--source", "*"]) }
+            }
+            .disabled(appState.postgres.status != .running || appState.ingest.isRunning)
+
+            Divider()
+
             Button("Quit Garage") {
                 Task {
                     await appState.stopPostgres()

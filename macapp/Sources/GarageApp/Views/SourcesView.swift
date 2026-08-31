@@ -67,11 +67,11 @@ struct SourcesView: View {
                         Toggle("Include code files", isOn: $includeCode)
                         Toggle("Force re-extract & re-chunk", isOn: $forceReindex)
                         HStack {
-                            Button("Run ingest") {
+                            Button("Ingest now") {
                                 var args = ["ingest", "--source", ingestSlug]
                                 if includeCode { args.append("--include-code") }
                                 if forceReindex { args.append("--force") }
-                                run(args)
+                                runIngest(args)
                             }
                             .disabled(ingestSlug.isEmpty || notReady)
 
@@ -87,13 +87,34 @@ struct SourcesView: View {
                     .padding(8)
                 }
 
-                if !appState.lastCommandOutput.isEmpty {
-                    GroupBox("Output") {
+                GroupBox("Scheduled maintenance") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Run ingest and backfill automatically", isOn: $appState.scheduledMaintenanceEnabled)
+                        Picker("Every", selection: $appState.scheduledMaintenanceInterval) {
+                            Text("15 minutes").tag(TimeInterval(15 * 60))
+                            Text("1 hour").tag(TimeInterval(60 * 60))
+                            Text("6 hours").tag(TimeInterval(6 * 60 * 60))
+                            Text("24 hours").tag(TimeInterval(24 * 60 * 60))
+                        }
+                        .disabled(!appState.scheduledMaintenanceEnabled)
+                        Text("Each run ingests all sources, then backfills all registered models. The first run starts after the selected interval.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                }
+
+                if !appState.ingest.logs.isEmpty {
+                    GroupBox("Ingest output") {
                         ScrollView {
-                            Text(appState.lastCommandOutput)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
+                            LazyVStack(alignment: .leading, spacing: 2) {
+                                ForEach(appState.ingest.logs) { line in
+                                    Text(line.text)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(line.stream == .stderr ? .red : .primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
                         }
                         .frame(maxHeight: 320)
                         .padding(8)
@@ -123,6 +144,14 @@ struct SourcesView: View {
         busy = true
         Task {
             await appState.runGarage(args)
+            busy = false
+        }
+    }
+
+    private func runIngest(_ args: [String]) {
+        busy = true
+        Task {
+            await appState.runIngest(args)
             busy = false
         }
     }
