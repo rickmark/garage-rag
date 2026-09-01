@@ -64,6 +64,7 @@ py_test(
     name = "test_mcp_install",
     srcs = ["test_mcp_install.py"],
     deps = [
+        "//garage_python/src/garage_rag",
         "//garage_python/src/garage_rag/mcp_server",
         "@pypi//pytest",
     ],

@@ -169,6 +169,11 @@ def _py_python_scie_impl(ctx):
         outputs = [output],
         mnemonic = "PyScie",
         progress_message = "Building SCIE binary %{label}",
+        use_default_shell_env = True,
+        execution_requirements = {
+            "requires-network": "1",
+            "no-sandbox": "1",
+        },
     )
 
     return [

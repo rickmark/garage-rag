@@ -3,6 +3,7 @@ load("//bazel:rpath.bzl", "install_name")
 
 configure_make(
     name = "postgres",
+    configure_in_place = True,
     # Flags passed directly to the GNU ./configure script
     configure_options = [
         "--with-icu",
