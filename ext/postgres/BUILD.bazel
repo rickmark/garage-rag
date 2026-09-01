@@ -6,8 +6,8 @@ configure_make(
     # Flags passed directly to the GNU ./configure script
     configure_options = [
         "--with-icu",
-        "--without-readline",
-        "--without-zlib",
+        "--with-readline",
+        "--with-zlib",
         # Keep features minimal unless your system provides headers (like OpenSSL)
     ],
     copts = [
@@ -19,6 +19,10 @@ configure_make(
         "ARFLAGS": "crs",
     },
     lib_source = "@postgres//:postgres_source",
+    targets = [
+        "world-bin",
+        "install-world-bin",
+    ],
     out_binaries = [
         "initdb",
         "createdb",
@@ -55,13 +59,11 @@ configure_make(
         "libpgtypes.a",
         "libpgcommon.a",
     ],
-    targets = [
-        "world-bin",
-        "install-world-bin",
-    ],
     visibility = ["//visibility:public"],
     deps = [
-        "//ext/libicu",
+        "//ext:libicu",
+        "//ext:libreadline",
+        "//ext:libzlib",
     ],
 )
 

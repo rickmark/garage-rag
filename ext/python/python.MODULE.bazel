@@ -1,0 +1,17 @@
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "python_3_13_framework",
+    build_file = "@//ext/python:python_3_13.BUILD.bazel",
+    sha256 = "d984bcc57cd67caab26f7def42e523b1c015bbc5dc07836cf4f0b63fa159eb56",
+    strip_prefix = "Python-3.13.2",
+    urls = ["https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tar.xz"],
+)
+
+http_archive(
+    name = "python_3_14_framework",
+    build_file = "@//ext/python:python_3_14.BUILD.bazel",
+    sha256 = "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81",
+    strip_prefix = "Python-3.14.7",
+    urls = ["https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tar.xz"],
+)

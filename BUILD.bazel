@@ -23,3 +23,8 @@ alias(
     name = "macapp",
     actual = "//macapp",
 )
+
+alias(
+    name = "xcodeproj",
+    actual = "//macapp:xcodeproj",
+)

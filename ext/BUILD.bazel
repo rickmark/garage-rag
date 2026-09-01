@@ -15,3 +15,21 @@ alias(
     actual = "//ext/libicu:libicu",
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "libreadline",
+    actual = "//ext/libreadline:libreadline",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libzlib",
+    actual = "//ext/libzlib:libzlib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "python",
+    actual = "//ext/python:python_3_13",
+    visibility = ["//visibility:public"],
+)

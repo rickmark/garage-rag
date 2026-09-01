@@ -1,0 +1,17 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+configure_make(
+    name = "libzlib",
+    configure_command = "configure",
+    configure_options = [
+        "--static",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@libzlib//:libzlib_source",
+    out_static_libs = [
+        "libz.a",
+    ],
+    visibility = ["//visibility:public"],
+)

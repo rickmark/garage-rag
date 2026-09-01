@@ -1,0 +1,18 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+configure_make(
+    name = "libreadline",
+    configure_command = "configure",
+    configure_options = [
+        "--enable-static",
+        "--disable-shared",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@libreadline//:libreadline_source",
+    out_static_libs = [
+        "libreadline.a",
+    ],
+    visibility = ["//visibility:public"],
+)

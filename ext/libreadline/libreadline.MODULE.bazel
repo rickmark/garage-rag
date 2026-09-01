@@ -1,0 +1,12 @@
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "libreadline",
+    build_file = "@//ext/libreadline:libreadline.BUILD.bazel",
+    sha256 = "fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc",
+    strip_prefix = "readline-8.3",
+    urls = [
+        "https://ftpmirror.gnu.org/gnu/readline/readline-8.3.tar.gz",
+        "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz",
+    ],
+)

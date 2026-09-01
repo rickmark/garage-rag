@@ -2,6 +2,11 @@ load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load(
+    "@rules_xcodeproj//xcodeproj:defs.bzl",
+    "top_level_target",
+    "xcodeproj",
+)
 
 filegroup(
     name = "GarageApp.xcassets",
@@ -52,7 +57,7 @@ swift_library(
 macos_application(
     name = "GarageApp",
     app_icons = [":GarageApp.xcassets"],
-    bundle_id = "dev.rickmark.garage",
+    bundle_id = "me.rickmark.garage",
     bundle_name = "Garage",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
@@ -60,6 +65,18 @@ macos_application(
     deps = [
         ":GarageApp_lib",
     ],
+)
+
+xcodeproj(
+    name = "xcodeproj",
+    project_name = "Garage",
+    tags = ["manual"],
+    top_level_targets = [
+        top_level_target(
+            ":GarageApp",
+        ),
+    ],
+    visibility = ["//visibility:public"],
 )
 
 alias(
