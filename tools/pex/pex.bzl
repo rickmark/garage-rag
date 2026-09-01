@@ -20,8 +20,11 @@ py_pex_binary(
 
 load("@aspect_rules_py//py/private:py_semantics.bzl", _py_semantics = "semantics")
 load("@aspect_rules_py//py/private/toolchain:types.bzl", "PY_TOOLCHAIN")
+load("@aspect_rules_py//py:defs.bzl", _py_pex_binary = "py_pex_binary")
 load("@bazel_lib//lib:paths.bzl", "to_rlocation_path")
 load("@rules_python//python:defs.bzl", "PyInfo")
+
+py_pex_binary = _py_pex_binary
 
 def _runfiles_path(file, workspace):
     if file.short_path.startswith("../"):
