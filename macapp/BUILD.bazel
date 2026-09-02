@@ -36,8 +36,8 @@ codesign(
     name = "postgres_output",
     src = ":postgres_raw",
     out = "postgres",
-    entitlements = ":Garage.entitlements",
     options = ["runtime"],
+    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
 )
 
 copy_to_directory(
@@ -54,15 +54,15 @@ copy_to_directory(
 codesign(
     name = "garage",
     src = "//garage_python:garage",
-    entitlements = ":Garage.entitlements",
     options = ["runtime"],
+    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
 )
 
 codesign(
     name = "garage-mcp",
     src = "//garage_python:garage-mcp",
-    entitlements = ":Garage.entitlements",
     options = ["runtime"],
+    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
 )
 
 swift_library(
@@ -118,12 +118,6 @@ macos_application(
 xcarchive(
     name = "Garage.xcarchive",
     bundle = ":GarageApp",
-    visibility = ["//visibility:public"],
-)
-
-xcarchive(
-    name = "GarageStore.xcarchive",
-    bundle = ":GarageAppStore",
     visibility = ["//visibility:public"],
 )
 

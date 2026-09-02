@@ -41,7 +41,7 @@ def _codesign_impl(ctx):
     if not codesign_args:
         codesign_args.append("--options=runtime")
 
-    signing_identity = ctx.attr.signing_identity if ctx.attr.signing_identity else (ctx.attr.sign if ctx.attr.sign else "-")
+    signing_identity = ctx.attr.sign if ctx.attr.sign else (ctx.attr.signing_identity if ctx.attr.signing_identity else "-")
 
     extra_inputs = []
     if ctx.file.entitlements:
