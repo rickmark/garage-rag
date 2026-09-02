@@ -48,12 +48,24 @@ while [ "$#" -gt 0 ]; do
 done
 
 find "$output/lib" -type f 2>/dev/null | while IFS= read -r library; do
+    case "$library" in
+        *.a) continue ;;
+    esac
+    if file -b "$library" | grep -q "ar archive"; then
+        continue
+    fi
     if file -b "$library" | grep -q "Mach-O"; then
         /usr/bin/install_name_tool -id "@rpath/$(basename "$library")" "$library"
     fi
 done
 
 find "$output" -type f | while IFS= read -r binary; do
+    case "$binary" in
+        *.a) continue ;;
+    esac
+    if file -b "$binary" | grep -q "ar archive"; then
+        continue
+    fi
     if ! file -b "$binary" | grep -q "Mach-O"; then
         continue
     fi

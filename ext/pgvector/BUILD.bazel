@@ -11,6 +11,9 @@ make(
         "pkglibdir": "$$INSTALLDIR/lib",
         "datadir": "$$INSTALLDIR/share",
         "pkgincludedir": "$$INSTALLDIR/include",
+        "CFLAGS": "-arch arm64 -arch x86_64",
+        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@pgvector//:pgvector_source",
     out_data_dirs = [

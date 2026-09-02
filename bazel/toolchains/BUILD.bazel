@@ -1,1 +1,29 @@
 "Locally declared toolchains resolving to tools managed in this repo"
+
+toolchain(
+    name = "native_build_darwin_cross_to_x86_64_toolchain",
+    exec_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    target_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+    toolchain = "@aspect_rules_py//py/private/toolchain:empty",
+    toolchain_type = "@aspect_rules_py//py/private/toolchain:native_build_toolchain_type",
+)
+
+toolchain(
+    name = "native_build_darwin_cross_to_arm64_toolchain",
+    exec_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+    target_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    toolchain = "@aspect_rules_py//py/private/toolchain:empty",
+    toolchain_type = "@aspect_rules_py//py/private/toolchain:native_build_toolchain_type",
+)

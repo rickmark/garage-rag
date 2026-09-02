@@ -18,6 +18,9 @@ configure_make(
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/Applications",
+        "CFLAGS": "-arch arm64 -arch x86_64",
+        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@python_3_13_framework//:python_source",
     out_binaries = [
@@ -47,6 +50,9 @@ configure_make(
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/Applications",
+        "CFLAGS": "-arch arm64 -arch x86_64",
+        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@python_3_14_framework//:python_source",
     out_binaries = [

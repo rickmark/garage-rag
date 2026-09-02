@@ -18,12 +18,11 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
+        "CFLAGS": "-arch arm64 -arch x86_64",
+        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@postgres//:postgres_source",
-    targets = [
-        "world-bin",
-        "install-world-bin",
-    ],
     out_binaries = [
         "initdb",
         "createdb",
@@ -59,6 +58,10 @@ configure_make(
         "libpgport.a",
         "libpgtypes.a",
         "libpgcommon.a",
+    ],
+    targets = [
+        "world-bin",
+        "install-world-bin",
     ],
     visibility = ["//visibility:public"],
     deps = [
