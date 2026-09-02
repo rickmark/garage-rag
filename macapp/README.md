@@ -1,7 +1,7 @@
 # GarageApp
 
 A macOS menu bar + window app that wraps a private Postgres instance and the
-`garage` CLI / `garage-mcp` server for the [garage-rag](../../README.md) project.
+`garage` CLI / `garage-mcp` server for the [garage-rag](../README.md) project.
 Fully self-contained: no Homebrew or system Python required at runtime.
 
 ## Running in development
@@ -12,7 +12,7 @@ swift run
 
 This uses the Homebrew `postgresql@18`/`pgvector` install and the repo's
 `.venv` directly (see `Paths.swift`) — no vendoring step needed. Requires
-both to already be set up per the [main README](../../README.md#install).
+both to already be set up per the [main README](../README.md#prerequisites).
 
 ## Building the distributable .app
 
