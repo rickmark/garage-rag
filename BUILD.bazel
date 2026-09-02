@@ -26,6 +26,16 @@ alias(
 )
 
 alias(
+    name = "installer",
+    actual = "//macapp:installer",
+)
+
+alias(
+    name = "install",
+    actual = "//macapp:install",
+)
+
+alias(
     name = "xcodeproj",
     actual = "//macapp:xcodeproj",
 )

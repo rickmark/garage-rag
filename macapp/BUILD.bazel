@@ -7,6 +7,7 @@ load(
     "top_level_target",
     "xcodeproj",
 )
+load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
 
 filegroup(
     name = "GarageApp.xcassets",
@@ -104,5 +105,34 @@ xcodeproj(
 alias(
     name = "macapp",
     actual = ":GarageApp",
+    visibility = ["//visibility:public"],
+)
+
+pkgbuild(
+    name = "GarageInstaller",
+    app = ":GarageAppStore",
+    identifier = "me.rickmark.garage.pkg",
+    install_location = "/Applications",
+    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
+    visibility = ["//visibility:public"],
+)
+
+pkgbuild(
+    name = "GaragePkg",
+    app = ":GarageApp",
+    identifier = "me.rickmark.garage.pkg",
+    install_location = "/Applications",
+    visibility = ["//visibility:public"],
+)
+
+pkg_install(
+    name = "install",
+    pkg = ":GarageInstaller",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "installer",
+    actual = ":GarageInstaller",
     visibility = ["//visibility:public"],
 )
