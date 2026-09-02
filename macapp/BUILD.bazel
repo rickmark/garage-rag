@@ -9,6 +9,7 @@ load(
     "xcodeproj",
 )
 load("//bazel:codesign.bzl", "codesign")
+load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
 
 filegroup(
@@ -112,7 +113,7 @@ macos_application(
         "--options=runtime",  # This enables the Hardened Runtime flag
     ],
     entitlements = select({
-        "//bazel:is_store": "Garage.entitlements",
+        "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,
     }),
     infoplists = ["Info.plist"],
@@ -169,5 +170,40 @@ pkg_install(
 alias(
     name = "installer",
     actual = ":GarageInstaller",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "xcarchive",
+    actual = ":Garage.xcarchive",
+)
+
+alias(
+    name = "GarageStore.xcarchive",
+    actual = ":Garage.xcarchive",
+    visibility = ["//visibility:public"],
+)
+
+notarytool(
+    name = "GarageNotary",
+    app = ":GarageApp",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "notarytool",
+    actual = ":GarageNotary",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "notarize",
+    actual = ":GarageNotary",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "notary",
+    actual = ":GarageNotary",
     visibility = ["//visibility:public"],
 )

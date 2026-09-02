@@ -55,9 +55,9 @@ config_setting(
 
 config_setting(
     name = "is_store",
-    constraint_values = [
-        ":distribution_store",
-    ],
+    flag_values = {
+        "@rules_apple//apple/build_settings:signing_certificate_name": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+    },
 )
 
 # 1. Platform for running adhoc on the local machine
@@ -98,12 +98,12 @@ platform(
     name = "universal_developer_id",
     constraint_values = [
         "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
         ":distribution_developer_id",
     ],
     flags = [
         "--apple_generate_dsym",
         "--apple_platform_type=macos",
-        "--macos_cpus=arm64,x86_64",
         "--@rules_apple//apple/build_settings:signing_certificate_name=Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     ],
 )
@@ -133,12 +133,12 @@ platform(
     name = "universal_store",
     constraint_values = [
         "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
         ":distribution_store",
     ],
     flags = [
         "--apple_generate_dsym",
         "--apple_platform_type=macos",
-        "--macos_cpus=arm64,x86_64",
         "--@rules_apple//apple/build_settings:signing_certificate_name=Apple Distribution: Richard Penwell (DWVXMLB45Y)",
     ],
 )
