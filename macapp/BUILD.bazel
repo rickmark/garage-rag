@@ -1,12 +1,14 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
 load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_apple//apple:xcarchive.bzl", "xcarchive")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 load(
     "@rules_xcodeproj//xcodeproj:defs.bzl",
     "top_level_target",
     "xcodeproj",
 )
+load("//bazel:codesign.bzl", "codesign")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
 
 filegroup(
@@ -15,19 +17,27 @@ filegroup(
 )
 
 copy_to_directory(
-    name = "postgres_output",
+    name = "postgres_raw",
     srcs = [
         "//ext:pgvector",
         "//ext/postgres:postgres_rpath",
     ],
-    out = "postgres",
+    out = "postgres_raw",
     exclude_srcs_patterns = [
         "/include/",
     ],
     replace_prefixes = {
-        "ext/postgres/postgres_rpath": "postgres/",
         "ext/pgvector/pgvector": "postgres/",
+        "ext/postgres/postgres_rpath": "postgres/",
     },
+)
+
+codesign(
+    name = "postgres_output",
+    src = ":postgres_raw",
+    out = "postgres",
+    entitlements = ":Garage.entitlements",
+    options = ["runtime"],
 )
 
 copy_to_directory(
@@ -41,15 +51,29 @@ copy_to_directory(
     },
 )
 
+codesign(
+    name = "garage",
+    src = "//garage_python:garage",
+    entitlements = ":Garage.entitlements",
+    options = ["runtime"],
+)
+
+codesign(
+    name = "garage-mcp",
+    src = "//garage_python:garage-mcp",
+    entitlements = ":Garage.entitlements",
+    options = ["runtime"],
+)
+
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/**/*.swift"]),
     data = [
+        ":garage",
+        ":garage-mcp",
         ":postgres_output",
         ":schema_output",
         "//data/schema:config_schema",
-        "//garage_python:garage",
-        "//garage_python:garage-mcp",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:private"],
@@ -60,6 +84,9 @@ macos_application(
     app_icons = [":GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage",
     bundle_name = "Garage",
+    codesignopts = [
+        "--options=runtime",  # This enables the Hardened Runtime flag
+    ],
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     visibility = ["//visibility:public"],
@@ -72,10 +99,11 @@ macos_application(
     name = "GarageAppStore",
     app_icons = [":GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage",
-    bundle_name = "Garage",
+    bundle_name = "GarageAppStore",
     codesignopts = [
         "--sign",
         "\"Apple Distribution: Richard Penwell (DWVXMLB45Y)\"",
+        "--options=runtime",  # This enables the Hardened Runtime flag
     ],
     entitlements = ":Garage.entitlements",
     infoplists = ["Info.plist"],
@@ -85,6 +113,18 @@ macos_application(
     deps = [
         ":GarageApp_lib",
     ],
+)
+
+xcarchive(
+    name = "Garage.xcarchive",
+    bundle = ":GarageApp",
+    visibility = ["//visibility:public"],
+)
+
+xcarchive(
+    name = "GarageStore.xcarchive",
+    bundle = ":GarageAppStore",
+    visibility = ["//visibility:public"],
 )
 
 xcodeproj(
@@ -110,18 +150,10 @@ alias(
 
 pkgbuild(
     name = "GarageInstaller",
-    app = ":GarageAppStore",
-    identifier = "me.rickmark.garage.pkg",
-    install_location = "/Applications",
-    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
-    visibility = ["//visibility:public"],
-)
-
-pkgbuild(
-    name = "GaragePkg",
     app = ":GarageApp",
     identifier = "me.rickmark.garage.pkg",
     install_location = "/Applications",
+    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
     visibility = ["//visibility:public"],
 )
 
