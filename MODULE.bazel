@@ -26,7 +26,7 @@ bazel_dep(name = "platforms", version = "1.1.0")
 # aspect_rules_lint -> rules_buf transitively pulls an ancient rules_go (0.42.0)
 # whose cgo.bzl references the removed CcInfo symbol and fails to load.
 bazel_dep(name = "rules_go", version = "0.62.0")
-bazel_dep(name = "aspect_rules_py", version = "2.0.0-alpha.3")
+bazel_dep(name = "aspect_rules_py", version = "2.0.0-alpha.6")
 bazel_dep(name = "rules_python", version = "2.3.2")
 
 ###############################################################################
@@ -47,7 +47,6 @@ use_repo(multitool, "multitool")
 # Hermetic Python interpreter (python-build-standalone, via aspect_rules_py).
 interpreters = use_extension("@aspect_rules_py//py:extensions.bzl", "python_interpreters")
 interpreters.toolchain(
-    is_default = True,
     python_version = "3.13",
 )
 use_repo(interpreters, "python_interpreters")
@@ -86,6 +85,7 @@ bazel_dep(name = "apple_support", version = "2.8.1")
 bazel_dep(name = "rules_apple", version = "4.5.3")
 bazel_dep(name = "rules_swift", version = "3.6.1")
 bazel_dep(name = "rules_xcodeproj", version = "4.1.0")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "rules_rs", version = "0.0.61")
 

@@ -59,9 +59,27 @@ macos_application(
     app_icons = [":GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage",
     bundle_name = "Garage",
-    entitlements = "Garage.entitlements",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":GarageApp_lib",
+    ],
+)
+
+macos_application(
+    name = "GarageAppStore",
+    app_icons = [":GarageApp.xcassets"],
+    bundle_id = "me.rickmark.garage",
+    bundle_name = "Garage",
+    codesignopts = [
+        "--sign",
+        "\"Apple Distribution: Richard Penwell (DWVXMLB45Y)\"",
+    ],
+    entitlements = ":Garage.entitlements",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    provisioning_profile = ":GarageMacAppConnect.provisionprofile",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageApp_lib",
@@ -75,6 +93,9 @@ xcodeproj(
     top_level_targets = [
         top_level_target(
             ":GarageApp",
+        ),
+        top_level_target(
+            ":GarageAppStore",
         ),
     ],
     visibility = ["//visibility:public"],

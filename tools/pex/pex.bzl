@@ -447,8 +447,7 @@ information from the hermetic python toolchain.
 """,
     ),
     "_scie_tool": attr.label(executable = True, cfg = "exec", default = "//tools/pex:scie_tool"),
-    "_pex_tool": attr.label(executable = True, cfg = "exec", default = "@aspect_rules_py//py/tools/pex:pex"),
-    "_pex": attr.label(executable = True, cfg = "exec", default = "//tools/pex:pex"),
+    "_pex_tool": attr.label(executable = True, cfg = "exec", default = "//tools/pex:pex"),
 })
 
 py_scie_binary = rule(
