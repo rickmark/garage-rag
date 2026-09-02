@@ -12,6 +12,86 @@ exports_files(
 
 platform(
     name = "macos",
+    constraint_values = [
+        "@platforms//os:macos",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Platform aliases delegating to //bazel
+
+# 1. Run adhoc on the local machine
+alias(
+    name = "local_adhoc",
+    actual = "//bazel:local_adhoc",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "adhoc",
+    actual = "//bazel:adhoc",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "local",
+    actual = "//bazel:local",
+    visibility = ["//visibility:public"],
+)
+
+# 2. Universal binary with Developer ID
+alias(
+    name = "universal_developer_id",
+    actual = "//bazel:universal_developer_id",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "developer_id",
+    actual = "//bazel:developer_id",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "universal",
+    actual = "//bazel:universal",
+    visibility = ["//visibility:public"],
+)
+
+# 3. Distribute via App Store
+alias(
+    name = "universal_store",
+    actual = "//bazel:universal_store",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "appstore",
+    actual = "//bazel:appstore",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "store",
+    actual = "//bazel:store",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "is_adhoc",
+    actual = "//bazel:is_adhoc",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "is_developer_id",
+    actual = "//bazel:is_developer_id",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "is_store",
+    actual = "//bazel:is_store",
     visibility = ["//visibility:public"],
 )
 

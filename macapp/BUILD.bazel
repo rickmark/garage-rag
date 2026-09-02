@@ -24,7 +24,7 @@ copy_to_directory(
     ],
     out = "postgres_raw",
     exclude_srcs_patterns = [
-        "/include/",
+        "*/include/**/*",
     ],
     replace_prefixes = {
         "ext/pgvector/pgvector": "postgres/",
@@ -36,8 +36,16 @@ codesign(
     name = "postgres_output",
     src = ":postgres_raw",
     out = "postgres",
+    entitlements = select({
+        "//bazel:is_store": ":Garage.entitlements",
+        "//conditions:default": None,
+    }),
     options = ["runtime"],
-    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
 )
 
 copy_to_directory(
@@ -54,15 +62,31 @@ copy_to_directory(
 codesign(
     name = "garage",
     src = "//garage_python:garage",
+    entitlements = select({
+        "//bazel:is_store": ":Garage.entitlements",
+        "//conditions:default": None,
+    }),
     options = ["runtime"],
-    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
 )
 
 codesign(
     name = "garage-mcp",
     src = "//garage_python:garage-mcp",
+    entitlements = select({
+        "//bazel:is_store": ":Garage.entitlements",
+        "//conditions:default": None,
+    }),
     options = ["runtime"],
-    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
 )
 
 swift_library(
@@ -87,28 +111,16 @@ macos_application(
     codesignopts = [
         "--options=runtime",  # This enables the Hardened Runtime flag
     ],
+    entitlements = select({
+        "//bazel:is_store": "Garage.entitlements",
+        "//conditions:default": None,
+    }),
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":GarageApp_lib",
-    ],
-)
-
-macos_application(
-    name = "GarageAppStore",
-    app_icons = [":GarageApp.xcassets"],
-    bundle_id = "me.rickmark.garage",
-    bundle_name = "GarageAppStore",
-    codesignopts = [
-        "--sign",
-        "\"Apple Distribution: Richard Penwell (DWVXMLB45Y)\"",
-        "--options=runtime",  # This enables the Hardened Runtime flag
-    ],
-    entitlements = ":Garage.entitlements",
-    infoplists = ["Info.plist"],
-    minimum_os_version = "14.0",
-    provisioning_profile = ":GarageMacAppConnect.provisionprofile",
+    provisioning_profile = select({
+        "//bazel:is_store": "GarageMacAppConnect.provisionprofile",
+        "//conditions:default": None,
+    }),
     visibility = ["//visibility:public"],
     deps = [
         ":GarageApp_lib",
@@ -128,9 +140,6 @@ xcodeproj(
     top_level_targets = [
         top_level_target(
             ":GarageApp",
-        ),
-        top_level_target(
-            ":GarageAppStore",
         ),
     ],
     visibility = ["//visibility:public"],

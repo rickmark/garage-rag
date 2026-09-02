@@ -1,5 +1,7 @@
 """Rules for codesigning binaries and directories of binaries on macOS."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 def _codesign_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))
@@ -41,7 +43,14 @@ def _codesign_impl(ctx):
     if not codesign_args:
         codesign_args.append("--options=runtime")
 
-    signing_identity = ctx.attr.sign if ctx.attr.sign else (ctx.attr.signing_identity if ctx.attr.signing_identity else "-")
+    signing_identity = ctx.attr.sign if ctx.attr.sign else ctx.attr.signing_identity
+    if not signing_identity or signing_identity == "-":
+        if hasattr(ctx.attr, "_signing_certificate_name") and ctx.attr._signing_certificate_name:
+            cert_from_setting = ctx.attr._signing_certificate_name[BuildSettingInfo].value
+            if cert_from_setting:
+                signing_identity = cert_from_setting
+    if not signing_identity:
+        signing_identity = "-"
 
     extra_inputs = []
     if ctx.file.entitlements:
@@ -51,10 +60,13 @@ def _codesign_impl(ctx):
     if ctx.attr.timestamp:
         codesign_args.append("--timestamp")
 
+    dylibs_only = ctx.attr.dylibs_only or ctx.attr.dylib_only or ctx.attr.only_dylibs
+
     args = ctx.actions.args()
     args.add(output.path)
     args.add("dir" if is_dir else "file")
     args.add(signing_identity)
+    args.add("1" if dylibs_only else "0")
     args.add(str(len(codesign_args)))
     args.add_all(codesign_args)
     args.add(str(len(inputs)))
@@ -71,8 +83,9 @@ set -euo pipefail
 output="$1"
 kind="$2"
 signing_identity="$3"
-num_opts="$4"
-shift 4
+dylibs_only="$4"
+num_opts="$5"
+shift 5
 
 opts=()
 while [ "$num_opts" -gt 0 ]; do
@@ -105,6 +118,13 @@ if [ "$kind" = "dir" ]; then
         case "$file" in
             *.a) continue ;;
         esac
+        if [ "$dylibs_only" = "1" ]; then
+            filename="$(basename "$file")"
+            case "$filename" in
+                *.dylib|*.dylib.*) ;;
+                *) continue ;;
+            esac
+        fi
         if file -b "$file" | grep -q "ar archive"; then
             continue
         fi
@@ -116,7 +136,15 @@ else
     mkdir -p "$(dirname "$output")"
     cp -pL "${inputs[0]}" "$output"
     chmod u+w "$output" 2>/dev/null || true
-    if file -b "$output" | grep -q "Mach-O"; then
+    should_sign=1
+    if [ "$dylibs_only" = "1" ]; then
+        filename="$(basename "$output")"
+        case "$filename" in
+            *.dylib|*.dylib.*) ;;
+            *) should_sign=0 ;;
+        esac
+    fi
+    if [ "$should_sign" = "1" ] && file -b "$output" | grep -q "Mach-O"; then
         /usr/bin/codesign -f -s "$signing_identity" "${opts[@]}" "$output"
     fi
 fi
@@ -143,9 +171,21 @@ codesign = rule(
         "dep": attr.label(
             doc = "Dependency to codesign (alias for src).",
         ),
+        "dylib_only": attr.bool(
+            default = False,
+            doc = "Alias for dylibs_only.",
+        ),
+        "dylibs_only": attr.bool(
+            default = False,
+            doc = "Whether to only sign dynamic libraries (.dylib files).",
+        ),
         "entitlements": attr.label(
             allow_single_file = True,
             doc = "Entitlements plist file to embed.",
+        ),
+        "only_dylibs": attr.bool(
+            default = False,
+            doc = "Alias for dylibs_only.",
         ),
         "options": attr.string_list(
             default = ["runtime"],
@@ -158,8 +198,8 @@ codesign = rule(
             doc = "Signing identity (alias for signing_identity).",
         ),
         "signing_identity": attr.string(
-            default = "-",
-            doc = "Signing identity or certificate. Defaults to '-' for ad-hoc signing.",
+            default = "",
+            doc = "Signing identity or certificate. Defaults to the active signing certificate build setting, or '-' for ad-hoc signing.",
         ),
         "src": attr.label(
             doc = "Source target or file to codesign.",
@@ -173,6 +213,9 @@ codesign = rule(
         ),
         "_macos_constraint": attr.label(
             default = Label("@platforms//os:macos"),
+        ),
+        "_signing_certificate_name": attr.label(
+            default = Label("@rules_apple//apple/build_settings:signing_certificate_name"),
         ),
     },
     doc = "Codesigns Mach-O binaries and directories of binaries with specified options.",
