@@ -22,7 +22,7 @@ copy_to_directory(
     ],
     out = "postgres",
     exclude_srcs_patterns = [
-        "*/include/*",
+        "/include/",
     ],
     replace_prefixes = {
         "ext/postgres/postgres_rpath": "postgres/",

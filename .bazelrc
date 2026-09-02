@@ -26,7 +26,7 @@ try-import %workspace%/user.bazelrc
 # Automatically look up your local codesigning identity from your macOS Keychain
 build --apple_generate_dsym
 build --custom_malloc=@bazel_tools//tools/cpp:malloc
-build --macos_cpus=arm64 # Or x86_64 depending on your architecture
+build --macos_cpus=arm64,x86_64
 
 # Pass the specific signing identity name if you want to enforce a specific Team
 build --ios_signing_cert_name="Apple Development: Rick Penwell (23E5F7Z5L7)"
