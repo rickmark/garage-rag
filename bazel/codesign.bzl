@@ -53,9 +53,16 @@ def _codesign_impl(ctx):
         signing_identity = "-"
 
     extra_inputs = []
+    default_entitlements_path = ""
     if ctx.file.entitlements:
         extra_inputs.append(ctx.file.entitlements)
-        codesign_args.extend(["--entitlements", ctx.file.entitlements.path])
+        default_entitlements_path = ctx.file.entitlements.path
+
+    entitlements_by_filename = {}
+    for filename, entitlement in ctx.attr.entitlements_by_filename.items():
+        entitlement_file = entitlement.files.to_list()[0]
+        extra_inputs.append(entitlement_file)
+        entitlements_by_filename[filename] = entitlement_file.path
 
     if ctx.attr.timestamp:
         codesign_args.append("--timestamp")
@@ -67,6 +74,11 @@ def _codesign_impl(ctx):
     args.add("dir" if is_dir else "file")
     args.add(signing_identity)
     args.add("1" if dylibs_only else "0")
+    args.add(default_entitlements_path)
+    args.add(str(len(entitlements_by_filename)))
+    for filename, entitlement_path in entitlements_by_filename.items():
+        args.add(filename)
+        args.add(entitlement_path)
     args.add(str(len(codesign_args)))
     args.add_all(codesign_args)
     args.add(str(len(inputs)))
@@ -84,8 +96,21 @@ output="$1"
 kind="$2"
 signing_identity="$3"
 dylibs_only="$4"
-num_opts="$5"
-shift 5
+default_entitlements="$5"
+num_entitlements_by_filename="$6"
+shift 6
+
+entitlement_filenames=()
+entitlement_paths=()
+while [ "$num_entitlements_by_filename" -gt 0 ]; do
+    entitlement_filenames+=("$1")
+    entitlement_paths+=("$2")
+    shift 2
+    num_entitlements_by_filename=$((num_entitlements_by_filename - 1))
+done
+
+num_opts="$1"
+shift 1
 
 opts=()
 while [ "$num_opts" -gt 0 ]; do
@@ -101,6 +126,30 @@ inputs=("$@")
 
 signing_identity="${signing_identity#\\\"}"
 signing_identity="${signing_identity%\\\"}"
+
+codesign_file() {
+    local file="$1"
+    local filename
+    local entitlements
+    local sign_opts
+
+    filename="$(basename "$file")"
+    entitlements="$default_entitlements"
+
+    for i in "${!entitlement_filenames[@]}"; do
+        if [ "$filename" = "${entitlement_filenames[$i]}" ]; then
+            entitlements="${entitlement_paths[$i]}"
+            break
+        fi
+    done
+
+    sign_opts=("${opts[@]}")
+    if [ -n "$entitlements" ]; then
+        sign_opts+=("--entitlements" "$entitlements")
+    fi
+
+    /usr/bin/codesign -f -s "$signing_identity" "${sign_opts[@]}" "$file"
+}
 
 if [ "$kind" = "dir" ]; then
     mkdir -p "$output"
@@ -129,7 +178,7 @@ if [ "$kind" = "dir" ]; then
             continue
         fi
         if file -b "$file" | grep -q "Mach-O"; then
-            /usr/bin/codesign -f -s "$signing_identity" "${opts[@]}" "$file"
+            codesign_file "$file"
         fi
     done
 else
@@ -145,7 +194,7 @@ else
         esac
     fi
     if [ "$should_sign" = "1" ] && file -b "$output" | grep -q "Mach-O"; then
-        /usr/bin/codesign -f -s "$signing_identity" "${opts[@]}" "$output"
+        codesign_file "$output"
     fi
 fi
 """,
@@ -181,7 +230,11 @@ codesign = rule(
         ),
         "entitlements": attr.label(
             allow_single_file = True,
-            doc = "Entitlements plist file to embed.",
+            doc = "Default entitlements plist file to embed.",
+        ),
+        "entitlements_by_filename": attr.string_keyed_label_dict(
+            allow_files = True,
+            doc = "Entitlements plist files to use for specific output basenames.",
         ),
         "only_dylibs": attr.bool(
             default = False,

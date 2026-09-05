@@ -1,0 +1,36 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+cmake(
+    name = "llama_cpp",
+    build_args = [
+        "--",
+        "-j",
+    ],
+    cache_entries = {
+        "BUILD_SHARED_LIBS": "OFF",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "LLAMA_BUILD_APP": "OFF",
+        "LLAMA_BUILD_COMMON": "OFF",
+        "LLAMA_BUILD_EXAMPLES": "OFF",
+        "LLAMA_BUILD_SERVER": "OFF",
+        "LLAMA_BUILD_TESTS": "OFF",
+        "LLAMA_BUILD_TOOLS": "OFF",
+        "LLAMA_CURL": "OFF",
+    },
+    env = {
+        "AR": "/usr/bin/ar",
+        "CFLAGS": "-arch arm64 -arch x86_64",
+        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
+    },
+    lib_source = "@llama_cpp_framework//:llama_cpp_source",
+    out_static_libs = [
+        "libllama.a",
+        "libggml.a",
+        "libggml-base.a",
+        "libggml-cpu.a",
+        "libggml-blas.a",
+        "libggml-metal.a",
+    ],
+    visibility = ["//visibility:public"],
+)

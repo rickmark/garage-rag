@@ -33,3 +33,9 @@ alias(
     actual = "//ext/python:python_3_13",
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "llama_cpp",
+    actual = "//ext/llama_cpp:llama_cpp",
+    visibility = ["//visibility:public"],
+)

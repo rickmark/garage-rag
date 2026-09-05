@@ -1,0 +1,6 @@
+# llama.cpp build file placeholder
+filegroup(
+    name = "llama_cpp_source",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)

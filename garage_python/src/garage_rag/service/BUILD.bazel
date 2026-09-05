@@ -1,0 +1,21 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "service",
+    srcs = [
+        "__init__.py",
+        "client.py",
+        "executor.py",
+        "server.py",
+        "xpc.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//garage_python/src/garage_rag/proto",
+        "@pypi//grpcio",
+        "@pypi//protobuf",
+        "@pypi//rich",
+        "@pypi//typer",
+    ],
+)

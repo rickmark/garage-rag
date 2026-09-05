@@ -1,5 +1,6 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_apple//apple:xcarchive.bzl", "xcarchive")
 load("@rules_swift//swift:swift.bzl", "swift_library")
@@ -11,6 +12,7 @@ load(
 load("//bazel:codesign.bzl", "codesign")
 load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
+load("//bazel:version.bzl", "macapp_version")
 
 filegroup(
     name = "GarageApp.xcassets",
@@ -38,7 +40,7 @@ codesign(
     src = ":postgres_raw",
     out = "postgres",
     entitlements = select({
-        "//bazel:is_store": ":Garage.entitlements",
+        "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],
@@ -67,6 +69,12 @@ codesign(
         "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,
     }),
+    entitlements_by_filename = select({
+        "//bazel:is_store": {
+            "postgres": ":GarageServer.entitlements",
+        },
+        "//conditions:default": {},
+    }),
     options = ["runtime"],
     signing_identity = select({
         "//bazel:is_adhoc": "-",
@@ -79,7 +87,7 @@ codesign(
     name = "garage-mcp",
     src = "//garage_python:garage-mcp",
     entitlements = select({
-        "//bazel:is_store": ":Garage.entitlements",
+        "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],
@@ -99,9 +107,15 @@ swift_library(
         ":postgres_output",
         ":schema_output",
         "//data/schema:config_schema",
+        "//ext/python:python_3_14",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:private"],
+)
+
+macapp_version(
+    name = "GarageAppVersion",
+    short_version_string = "0.7.2",
 )
 
 macos_application(
@@ -122,6 +136,7 @@ macos_application(
         "//bazel:is_store": "GarageMacAppConnect.provisionprofile",
         "//conditions:default": None,
     }),
+    version = ":GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageApp_lib",

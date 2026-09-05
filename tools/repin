@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 bazel run //bazel:preset.update
 
 # Python: regenerate uv.lock from pyproject.toml (uv reads pyproject + lock).
-bazel run @uv -- lock
+bazel run @uv -- lock --directory garage_python
 
 # Accept any resulting MODULE.bazel.lock changes.
 bazel mod deps --lockfile_mode=update

@@ -1251,5 +1251,73 @@ def extract_cmd(
         console.print(body + ("" if full or len(chunk.text) <= 400 else " [dim]...[/dim]"))
 
 
-if __name__ == "__main__":
+def get_version() -> str:
+    import garage_rag
+    return getattr(garage_rag, "__version__", "0.1.0")
+
+
+@app.command("version")
+def version_cmd() -> None:
+    """Print the garage version."""
+    console.print(f"garage v{get_version()}")
+
+
+@app.command("serve")
+def serve(
+    host: Annotated[str, typer.Option("--host", "-h", help="gRPC host binding.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", "-p", help="gRPC port.")] = 50051,
+    xpc: Annotated[bool, typer.Option("--xpc", help="Run as macOS XPC Mach Service instead of TCP gRPC.")] = False,
+    service_name: Annotated[
+        str,
+        typer.Option("--service-name", help="macOS XPC Mach service name (when --xpc is enabled)."),
+    ] = "me.rickmark.garage.xpc",
+    team_id: Annotated[
+        str | None,
+        typer.Option("--team-id", help="Expected peer Apple Team ID for peer codesigning authentication."),
+    ] = "DWVXMLB45Y",
+    bundle_id: Annotated[
+        str | None,
+        typer.Option("--bundle-id", help="Expected peer Bundle ID for peer codesigning authentication."),
+    ] = None,
+    allow_unsigned: Annotated[
+        bool,
+        typer.Option("--allow-unsigned", help="Allow unsigned peers in dev mode."),
+    ] = False,
+) -> None:
+    """Start the long-running gRPC or macOS XPC server for Garage."""
+    if xpc:
+        console.print(f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
+        from garage_rag.service.xpc import serve_xpc
+        serve_xpc(
+            service_name=service_name,
+            team_id=team_id,
+            bundle_id=bundle_id,
+            allow_unsigned_in_dev=allow_unsigned,
+        )
+    else:
+        console.print(f"[bold green]Starting Garage gRPC Server[/bold green] on {host}:{port}...")
+        from garage_rag.service.server import serve_grpc
+        serve_grpc(host=host, port=port)
+
+
+def main_cli() -> None:
+    """Main CLI entrypoint. Serializes console commands over gRPC protobufs in-process."""
+    import sys
+
+    argv = sys.argv[1:]
+    # If starting server, run serve directly
+    if argv and argv[0] in ("serve",):
+        app()
+        return
+
+    # In-process gRPC command serialization execution
+    if argv and not (len(argv) == 1 and argv[0] in ("--help", "-h")):
+        from garage_rag.service.client import execute_and_render_cli
+        exit_code = execute_and_render_cli(argv)
+        raise SystemExit(exit_code)
+
     app()
+
+
+if __name__ == "__main__":
+    main_cli()

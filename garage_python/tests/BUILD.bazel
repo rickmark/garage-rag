@@ -79,16 +79,61 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_grpc_serialization",
+    srcs = ["test_grpc_serialization.py"],
+    deps = [
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_grpc_server",
+    srcs = ["test_grpc_server.py"],
+    deps = [
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//grpcio",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_xpc_service",
+    srcs = ["test_xpc_service.py"],
+    deps = [
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_cli_serve",
+    srcs = ["test_cli_serve.py"],
+    deps = [
+        "//garage_python/src/garage_rag",
+        "@pypi//pytest",
+        "@pypi//typer",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
         ":test_attribution",
         ":test_chunking",
+        ":test_cli_serve",
         ":test_config",
         ":test_egress_block",
-        ":test_migrate",
+        ":test_grpc_serialization",
+        ":test_grpc_server",
         ":test_lmstudio",
         ":test_mcp_install",
+        ":test_migrate",
         ":test_registry_dims",
+        ":test_xpc_service",
     ],
 )

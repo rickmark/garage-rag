@@ -38,14 +38,17 @@ dependencies = [
     "pytest>=9.1.1",
     "anthropic>=1.0.0",
     "pex>=2.101.0",
+    # gRPC & Protobuf
+    "grpcio>=1.68.0",
+    "protobuf>=5.29.0",
 ]
 
 [project.optional-dependencies]
 # Cloud OCR fallback only. Never used for trust_tier='communication'.
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13", "grpcio-tools>=1.68.0"]
 
 [project.scripts]
-garage = "garage_rag.cli:app"
+garage = "garage_rag.cli:main_cli"
 garage-mcp = "garage_rag.mcp_server.server:main"
 
 [build-system]

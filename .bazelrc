@@ -26,6 +26,7 @@ try-import %workspace%/user.bazelrc
 # Automatically look up your local codesigning identity from your macOS Keychain
 build --apple_generate_dsym
 build --apple_platform_type=macos
+build --workspace_status_command=bazel/workspace_status.sh
 
 build --platforms=//bazel:universal_developer_id
 # Platform configuration presets

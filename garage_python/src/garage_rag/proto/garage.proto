@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package garage;
+
+// The GarageService enables controlling and executing Garage commands,
+// streaming status updates and structured data.
+service GarageService {
+    // Execute a command line command and stream execution status/output events
+    rpc ExecuteCommand (CommandRequest) returns (stream CommandStatus);
+
+    // Health check / ping
+    rpc Ping (PingRequest) returns (PingResponse);
+
+    // Inspect server state
+    rpc GetStatus (StatusRequest) returns (StatusResponse);
+
+    // Request server shutdown
+    rpc Stop (StopRequest) returns (StopResponse);
+}
+
+message CommandRequest {
+    // Command line arguments, e.g. ["search", "query", "--limit", "5"] or ["stats"]
+    repeated string argv = 1;
+    // Optional working directory
+    string cwd = 2;
+    // Optional environment variables
+    map<string, string> env = 3;
+    // Optional structured parameters / options
+    map<string, string> options = 4;
+}
+
+enum StatusType {
+    STATUS_UNKNOWN = 0;
+    STATUS_STARTED = 1;
+    STATUS_OUTPUT = 2;
+    STATUS_PROGRESS = 3;
+    STATUS_COMPLETED = 4;
+    STATUS_ERROR = 5;
+}
+
+message CommandStatus {
+    StatusType type = 1;
+    // Output text chunk from stdout / console
+    string stdout = 2;
+    // Output text chunk from stderr
+    string stderr = 3;
+    // Progress indicator (0.0 to 1.0 or step count)
+    float progress = 4;
+    string progress_message = 5;
+    // Exit code: 0 for success, non-zero for error
+    int32 exit_code = 6;
+    // Error message if execution failed
+    string error_message = 7;
+    // JSON-serialized structured result data for programmatic client consumption
+    string json_data = 8;
+}
+
+message PingRequest {
+    string message = 1;
+}
+
+message PingResponse {
+    string message = 1;
+    int64 timestamp = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+    string version = 1;
+    bool is_ready = 2;
+    int32 pid = 3;
+    string db_status = 4;
+    string server_type = 5;
+}
+
+message StopRequest {
+    string reason = 1;
+}
+
+message StopResponse {
+    bool success = 1;
+}
