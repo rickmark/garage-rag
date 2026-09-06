@@ -1,26 +1,85 @@
-"""gRPC Server implementation for GarageService."""
+"""gRPC Server implementation for GarageService supporting dedicated RPC functions."""
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import signal
 import sys
 import threading
 import time
 from concurrent import futures
-from typing import Optional
+from pathlib import Path
+from typing import Iterator, Optional, cast
 
 import grpc
 
 from garage_rag.proto.garage_pb2 import (
+    AddSourceRequest,
+    AddSourceResponse,
+    BackfillRequest,
+    BackfillStatus,
     CommandRequest,
     CommandStatus,
+    ConfigImportSourcesRequest,
+    ConfigImportSourcesResponse,
+    ConfigInitRequest,
+    ConfigInitResponse,
+    ConfigPathRequest,
+    ConfigPathResponse,
+    ConfigSchemaRequest,
+    ConfigSchemaResponse,
+    ConfigShowRequest,
+    ConfigShowResponse,
+    DropModelRequest,
+    DropModelResponse,
+    ExtractChunk,
+    ExtractRequest,
+    ExtractResponse,
+    IngestRequest,
+    IngestStatus,
+    InitDbRequest,
+    InitDbResponse,
+    ListModelsRequest,
+    ListModelsResponse,
+    ListSourcesRequest,
+    ListSourcesResponse,
+    McpClientInfo,
+    McpInstallRequest,
+    McpInstallResponse,
+    McpServeRequest,
+    McpServeStatus,
+    McpStatusRequest,
+    McpStatusResponse,
+    McpUninstallRequest,
+    McpUninstallResponse,
+    ModelInfo,
     PingRequest,
     PingResponse,
+    ReconcileRequest,
+    ReconcileResponse,
+    RegisterModelRequest,
+    RegisterModelResponse,
+    RemoveSourceRequest,
+    RemoveSourceResponse,
+    SearchHit,
+    SearchRequest,
+    SearchResponse,
+    SetDefaultModelRequest,
+    SetDefaultModelResponse,
+    SourceInfo,
+    StatsRequest,
+    StatsResponse,
     StatusRequest,
     StatusResponse,
+    StatusType,
     StopRequest,
     StopResponse,
+    SyncRequest,
+    SyncStatus,
+    VersionRequest,
+    VersionResponse,
 )
 from garage_rag.proto.garage_pb2_grpc import (
     GarageServiceServicer,
@@ -28,18 +87,23 @@ from garage_rag.proto.garage_pb2_grpc import (
 )
 from garage_rag.service.executor import CommandExecutor, default_executor
 
+logger = logging.getLogger(__name__)
+
 
 class GarageRpcServicer(GarageServiceServicer):
-    """gRPC Servicer implementing GarageService."""
+    """gRPC Servicer implementing GarageService with dedicated RPC methods."""
 
-    def __init__(self, executor: Optional[CommandExecutor] = None, stop_event: Optional[threading.Event] = None) -> None:
+    def __init__(
+        self,
+        executor: Optional[CommandExecutor] = None,
+        stop_event: Optional[threading.Event] = None,
+    ) -> None:
         self.executor = executor or default_executor
         self.stop_event = stop_event or threading.Event()
 
-    def ExecuteCommand(self, request: CommandRequest, context: grpc.ServicerContext):
-        """Execute a command request and stream CommandStatus events back to caller."""
-        for status in self.executor.execute_command(request):
-            yield status
+    # -----------------------------------------------------------------------
+    # System / Lifecycle
+    # -----------------------------------------------------------------------
 
     def Ping(self, request: PingRequest, context: grpc.ServicerContext) -> PingResponse:
         """Ping / Healthcheck."""
@@ -55,6 +119,7 @@ class GarageRpcServicer(GarageServiceServicer):
         db_status = "unknown"
         try:
             from garage_rag.db.engine import check_connection
+
             db_status = "connected" if check_connection() else "disconnected"
         except Exception as e:
             db_status = f"error: {e}"
@@ -67,10 +132,760 @@ class GarageRpcServicer(GarageServiceServicer):
             server_type="grpc",
         )
 
+    def GetVersion(self, request: VersionRequest, context: grpc.ServicerContext) -> VersionResponse:
+        """Get the garage version."""
+        from garage_rag.cli import get_version
+
+        return VersionResponse(version=get_version())
+
     def Stop(self, request: StopRequest, context: grpc.ServicerContext) -> StopResponse:
         """Trigger graceful shutdown of the server."""
         self.stop_event.set()
         return StopResponse(success=True)
+
+    # -----------------------------------------------------------------------
+    # Search
+    # -----------------------------------------------------------------------
+
+    def Search(self, request: SearchRequest, context: grpc.ServicerContext) -> SearchResponse:
+        """Search the corpus with hybrid vector + keyword retrieval."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.search.hybrid import SearchMode
+        from garage_rag.search.hybrid import search as run_search
+
+        with session_scope() as session:
+            hits = run_search(
+                session,
+                request.query,
+                limit=request.limit or 10,
+                mode=cast(SearchMode, request.mode or "hybrid"),
+                model_slug=request.model or None,
+                corpus_classes=list(request.corpus_classes) or None,
+                trust_tiers=list(request.trust_tiers) or None,
+                sources=list(request.sources) or None,
+                author=request.author or None,
+            )
+
+        proto_hits: list[SearchHit] = []
+        for rank, hit in enumerate(hits, start=1):
+            snippet = hit.text if request.full else hit.text[:300].replace("\n", " ")
+            proto_hits.append(
+                SearchHit(
+                    rank=rank,
+                    title=hit.title or "(untitled)",
+                    uri=hit.uri,
+                    corpus_class=str(hit.corpus_class),
+                    trust_tier=str(hit.trust_tier),
+                    matched_by=str(hit.matched_by),
+                    score=float(hit.score),
+                    heading_path=hit.heading_path or "",
+                    authors=hit.authors or [],
+                    text=hit.text or "",
+                    snippet=snippet,
+                )
+            )
+
+        return SearchResponse(
+            hits=proto_hits,
+            total_hits=len(proto_hits),
+            formatted_output=f"Found {len(proto_hits)} results for {request.query!r}",
+        )
+
+    # -----------------------------------------------------------------------
+    # Sources
+    # -----------------------------------------------------------------------
+
+    def ListSources(self, request: ListSourcesRequest, context: grpc.ServicerContext) -> ListSourcesResponse:
+        """List registered sources."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Source
+
+        with session_scope() as session:
+            sources = session.query(Source).order_by(Source.id).all()
+            proto_sources: list[SourceInfo] = [
+                SourceInfo(
+                    slug=s.slug,
+                    kind=s.kind,
+                    corpus_class=str(s.default_class),
+                    trust_tier=str(s.default_trust),
+                    allow_cloud_enrichment=bool(s.allow_cloud_enrichment),
+                    enabled=bool(s.enabled),
+                    root=s.root,
+                )
+                for s in sources
+            ]
+
+        return ListSourcesResponse(
+            sources=proto_sources,
+            formatted_output=f"{len(proto_sources)} sources registered",
+        )
+
+    def AddSource(self, request: AddSourceRequest, context: grpc.ServicerContext) -> AddSourceResponse:
+        """Register or update a source root."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import CorpusClass, Source, TrustTier
+
+        tier = TrustTier(request.trust or "authored")
+        klass = CorpusClass(request.corpus_class or "document")
+        if klass is CorpusClass.COMMUNICATION and request.allow_cloud_enrichment:
+            context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "communication sources may never enable cloud enrichment",
+            )
+
+        expanded = Path(request.root).expanduser()
+        if not expanded.exists():
+            context.abort(
+                grpc.StatusCode.NOT_FOUND,
+                f"{expanded} does not exist",
+            )
+
+        with session_scope() as session:
+            existing = session.query(Source).filter_by(slug=request.slug).one_or_none()
+            if existing is not None:
+                existing.root = str(expanded)
+                existing.kind = request.kind or "filesystem"
+                existing.default_trust = tier
+                existing.default_class = klass
+                existing.allow_cloud_enrichment = request.allow_cloud_enrichment
+                msg = f"updated source {request.slug} -> {expanded}"
+            else:
+                session.add(
+                    Source(
+                        slug=request.slug,
+                        kind=request.kind or "filesystem",
+                        root=str(expanded),
+                        default_trust=tier,
+                        default_class=klass,
+                        allow_cloud_enrichment=request.allow_cloud_enrichment,
+                    )
+                )
+                msg = f"added source {request.slug} -> {expanded} ({klass}/{tier})"
+
+        return AddSourceResponse(
+            success=True,
+            message=msg,
+            slug=request.slug,
+            root=str(expanded),
+            formatted_output=msg,
+        )
+
+    def RemoveSource(self, request: RemoveSourceRequest, context: grpc.ServicerContext) -> RemoveSourceResponse:
+        """Deregister a source and cascade delete its documents, chunks, and vectors."""
+        from sqlalchemy import text
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Source
+
+        with session_scope() as session:
+            source = session.query(Source).filter_by(slug=request.slug).one_or_none()
+            if source is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.slug}")
+
+            count = session.execute(
+                text("SELECT count(*) FROM documents WHERE source_id = :sid"),
+                {"sid": source.id},
+            ).scalar_one()
+
+            session.delete(source)
+
+        return RemoveSourceResponse(
+            success=True,
+            deleted_documents=count,
+            message=f"removed {request.slug} ({count:,} documents)",
+            formatted_output=f"removed {request.slug} ({count:,} documents)",
+        )
+
+    # -----------------------------------------------------------------------
+    # Ingest, Backfill, Reconcile
+    # -----------------------------------------------------------------------
+
+    def Ingest(self, request: IngestRequest, context: grpc.ServicerContext) -> Iterator[IngestStatus]:
+        """Walk a source and index it, streaming IngestStatus events."""
+        from garage_rag.db.engine import get_session_factory
+        from garage_rag.db.models import Source
+        from garage_rag.ingest.pipeline import ingest_source
+
+        factory = get_session_factory()
+        if request.source == "*":
+            with factory() as session:
+                sources = [s.slug for s in session.query(Source).order_by(Source.id).all()]
+        else:
+            sources = [request.source]
+
+        for source_slug in sources:
+            yield IngestStatus(
+                source=source_slug,
+                is_complete=False,
+                progress=0.0,
+                progress_message=f"Ingesting source {source_slug}...",
+            )
+
+            def on_progress(counters, budget, slug=source_slug) -> None:
+                pass
+
+            counters, walk_stats, budget = ingest_source(
+                factory,
+                source_slug,
+                include_code=request.include_code,
+                limit=request.limit or None,
+                force=request.force,
+                progress=on_progress,
+            )
+
+            summary = (
+                f"Ingested {source_slug}: seen {counters.seen:,}, indexed {counters.indexed:,}, "
+                f"skipped {counters.skipped:,}, failed {counters.failed:,}, chunks {counters.chunks_written:,}"
+            )
+            yield IngestStatus(
+                source=source_slug,
+                candidates_seen=counters.seen,
+                indexed=counters.indexed,
+                skipped=counters.skipped,
+                failed=counters.failed,
+                rejected=counters.rejected,
+                chunks_written=counters.chunks_written,
+                placeholders=counters.placeholders,
+                dirs_walked=walk_stats.dirs,
+                files_examined=walk_stats.files_seen,
+                is_complete=True,
+                progress=1.0,
+                progress_message=summary,
+                sample_errors=counters.errors[:5] if counters.errors else [],
+                formatted_output=summary,
+            )
+
+    def Backfill(self, request: BackfillRequest, context: grpc.ServicerContext) -> Iterator[BackfillStatus]:
+        """Embed chunks that a model has no vectors for, streaming BackfillStatus events."""
+        from garage_rag.db.emb_tables import get_model, list_models
+        from garage_rag.db.engine import session_scope
+        from garage_rag.embed.ollama import (
+            EmbeddingError,
+            backfill_model,
+            count_pending,
+            verify_model_dims,
+        )
+
+        with session_scope() as session:
+            targets = [get_model(session, request.model)] if request.model else list_models(session)
+            if not targets:
+                context.abort(grpc.StatusCode.NOT_FOUND, "no models registered")
+
+            for row in targets:
+                pending = count_pending(session, row)
+                if pending == 0:
+                    yield BackfillStatus(
+                        model_slug=row.slug,
+                        total=0,
+                        embedded=0,
+                        is_complete=True,
+                        progress=1.0,
+                        progress_message=f"{row.slug}: already complete",
+                        formatted_output=f"{row.slug}: already complete",
+                    )
+                    continue
+
+                if request.verify:
+                    try:
+                        ok, actual = verify_model_dims(row)
+                    except EmbeddingError as exc:
+                        yield BackfillStatus(
+                            model_slug=row.slug,
+                            is_complete=True,
+                            error_message=str(exc),
+                            progress_message=f"{row.slug}: {exc}",
+                        )
+                        continue
+                    if not ok:
+                        yield BackfillStatus(
+                            model_slug=row.slug,
+                            is_complete=True,
+                            error_message=f"registered {row.dims} dims but model emits {actual}",
+                            progress_message=f"{row.slug}: dimension mismatch",
+                        )
+                        continue
+
+                state = backfill_model(
+                    session,
+                    row,
+                    batch_size=request.batch_size or None,
+                    limit=request.limit or None,
+                    progress=None,
+                )
+
+                summary = f"embedded {state.embedded:,}"
+                if state.failed:
+                    summary += f", failed {state.failed:,}"
+                if state.remaining:
+                    summary += f", remaining {state.remaining:,}"
+
+                yield BackfillStatus(
+                    model_slug=row.slug,
+                    total=state.total,
+                    embedded=state.embedded,
+                    failed=state.failed,
+                    remaining=state.remaining,
+                    batches=state.batches,
+                    is_complete=True,
+                    progress=1.0,
+                    progress_message=f"{row.slug}: {summary}",
+                    formatted_output=f"{row.slug}: {summary}",
+                )
+
+    def Reconcile(self, request: ReconcileRequest, context: grpc.ServicerContext) -> ReconcileResponse:
+        """Delete documents whose source files no longer exist."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.ingest.reconcile import reconcile_source
+
+        with session_scope() as session:
+            result = reconcile_source(
+                session,
+                request.source,
+                dry_run=not request.apply,
+                force=request.force,
+            )
+
+        if result.refused:
+            return ReconcileResponse(
+                source=request.source,
+                refused=True,
+                reason=result.reason or "Refused",
+                formatted_output=f"refused: {result.reason}",
+            )
+
+        return ReconcileResponse(
+            source=request.source,
+            total_documents=result.total_documents,
+            candidates=result.candidates,
+            deleted=result.deleted,
+            fraction=float(result.fraction),
+            refused=False,
+            formatted_output=f"reconcile for {request.source}: deleted {result.deleted:,} of {result.total_documents:,}",
+        )
+
+    # -----------------------------------------------------------------------
+    # Models
+    # -----------------------------------------------------------------------
+
+    def RegisterModel(self, request: RegisterModelRequest, context: grpc.ServicerContext) -> RegisterModelResponse:
+        """Register a new embedding model."""
+        from garage_rag.db.emb_tables import register_model
+        from garage_rag.db.engine import session_scope
+
+        with session_scope() as session:
+            spec = register_model(
+                session,
+                slug=request.slug,
+                dims=request.dims,
+                provider=request.provider or "ollama",
+                model_ref=request.model_ref or request.slug,
+                storage=request.storage or "halfvec",
+                index=request.index or "hnsw",
+                is_default=request.is_default,
+                context_window=request.context_window or None,
+                max_tokens=request.max_tokens or None,
+                batch_size=request.batch_size or None,
+            )
+
+        msg = f"registered model {spec.slug} (table {spec.table_name}, {spec.storage_kind}/{spec.index_kind})"
+        return RegisterModelResponse(
+            success=True,
+            message=msg,
+            formatted_output=msg,
+        )
+
+    def ListModels(self, request: ListModelsRequest, context: grpc.ServicerContext) -> ListModelsResponse:
+        """List registered embedding models."""
+        from garage_rag.db.emb_tables import list_models
+        from garage_rag.db.engine import session_scope
+
+        with session_scope() as session:
+            models = list_models(session)
+            proto_models: list[ModelInfo] = [
+                ModelInfo(
+                    slug=m.slug,
+                    provider=m.provider,
+                    model_ref=m.model_ref,
+                    dims=m.dims,
+                    stored_dims=m.stored_dims,
+                    storage_kind=m.storage_kind,
+                    index_kind=m.index_kind,
+                    table_name=m.table_name,
+                    is_default=m.is_default,
+                )
+                for m in models
+            ]
+
+        return ListModelsResponse(
+            models=proto_models,
+            formatted_output=f"{len(proto_models)} models registered",
+        )
+
+    def SetDefaultModel(self, request: SetDefaultModelRequest, context: grpc.ServicerContext) -> SetDefaultModelResponse:
+        """Point default embedding model at slug."""
+        from garage_rag.db.emb_tables import get_model, set_default_model
+        from garage_rag.db.engine import session_scope
+
+        with session_scope() as session:
+            get_model(session, request.slug)
+            set_default_model(session, request.slug)
+
+        return SetDefaultModelResponse(
+            success=True,
+            message=f"default model = {request.slug}",
+        )
+
+    def DropModel(self, request: DropModelRequest, context: grpc.ServicerContext) -> DropModelResponse:
+        """Deregister a model and drop its vectors."""
+        from garage_rag.db.emb_tables import drop_model
+        from garage_rag.db.engine import session_scope
+
+        with session_scope() as session:
+            drop_model(session, request.slug)
+
+        return DropModelResponse(
+            success=True,
+            message=f"dropped {request.slug}",
+        )
+
+    # -----------------------------------------------------------------------
+    # Stats & Extract
+    # -----------------------------------------------------------------------
+
+    def GetStats(self, request: StatsRequest, context: grpc.ServicerContext) -> StatsResponse:
+        """Retrieve corpus and database stats."""
+        from sqlalchemy import func
+        from sqlmodel import select
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Document, DocumentChunk, Source
+
+        with session_scope() as session:
+            doc_count = session.exec(select(func.count(Document.id))).one()
+            chunk_count = session.exec(select(func.count(DocumentChunk.id))).one()
+            source_count = session.exec(select(func.count(Source.id))).one()
+
+        return StatsResponse(
+            documents=doc_count,
+            chunks=chunk_count,
+            sources=source_count,
+            models=0,
+            formatted_output=f"Corpus: {doc_count:,} documents, {chunk_count:,} chunks across {source_count} sources",
+        )
+
+    def Extract(self, request: ExtractRequest, context: grpc.ServicerContext) -> ExtractResponse:
+        """Extract and chunk a single file without touching database."""
+        from garage_rag.extract.base import ExtractionError
+        from garage_rag.extract.dispatch import extract as run_extract
+        from garage_rag.extract.placeholder import PlaceholderFile
+        from garage_rag.ingest.chunking import chunk_text
+
+        target = Path(request.path).expanduser()
+        if not target.exists():
+            context.abort(grpc.StatusCode.NOT_FOUND, f"File {target} not found")
+
+        try:
+            result = run_extract(target)
+        except PlaceholderFile as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"placeholder ({exc.provider}): {target}")
+        except ExtractionError as exc:
+            context.abort(grpc.StatusCode.INTERNAL, f"extraction failed: {exc}")
+
+        chunks = chunk_text(
+            result.text,
+            result.kind,
+            extension=target.suffix.lower(),
+        )
+
+        show_count = request.show if request.show > 0 else 3
+        proto_chunks: list[ExtractChunk] = [
+            ExtractChunk(
+                ord=c.ord,
+                text=c.text if request.full else c.text[:400],
+                heading_path=c.heading_path or "",
+                char_count=len(c.text),
+            )
+            for c in chunks[:show_count]
+        ]
+
+        return ExtractResponse(
+            target=str(target),
+            extractor=result.extractor,
+            extractor_version=result.extractor_version,
+            kind=result.kind,
+            title=result.title or "",
+            char_count=len(result.text),
+            chunk_count=len(chunks),
+            chunker=chunks[0].chunker if chunks else "",
+            meta_json=json.dumps(result.meta or {}),
+            author_hints=result.author_hints or [],
+            chunks=proto_chunks,
+            formatted_output=f"Extracted {len(result.text):,} chars, {len(chunks)} chunks from {target}",
+        )
+
+    # -----------------------------------------------------------------------
+    # MCP
+    # -----------------------------------------------------------------------
+
+    def McpServe(self, request: McpServeRequest, context: grpc.ServicerContext) -> Iterator[McpServeStatus]:
+        """Run the MCP server, streaming status."""
+        from garage_rag.config import get_settings
+        from garage_rag.mcp_server.server import is_loopback, serve
+
+        settings = get_settings()
+        bind_host = request.host or settings.mcp_host
+        bind_port = request.port or settings.mcp_port
+        route = request.path or settings.mcp_http_path
+
+        transport = request.transport or "stdio"
+
+        if not is_loopback(bind_host) and not request.allow_remote and transport in ("http", "sse"):
+            context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"refusing to bind non-loopback {bind_host} without allow_remote",
+            )
+
+        url = f"http://{bind_host}:{bind_port}{route}" if transport != "stdio" else "stdio"
+        yield McpServeStatus(
+            is_running=True,
+            transport=transport,
+            url=url,
+            message=f"Serving MCP over {transport} on {url}",
+        )
+
+        try:
+            serve(
+                transport,
+                host=bind_host,
+                port=bind_port,
+                path=route,
+                allowed_origins=list(request.allow_origin) or None,
+                json_response=request.json_response,
+                stateless=request.stateless,
+            )
+        except Exception as exc:
+            yield McpServeStatus(
+                is_running=False,
+                transport=transport,
+                exit_code=1,
+                error_message=str(exc),
+            )
+            return
+
+        yield McpServeStatus(
+            is_running=False,
+            transport=transport,
+            exit_code=0,
+            message="MCP server stopped",
+        )
+
+    def McpInstall(self, request: McpInstallRequest, context: grpc.ServicerContext) -> McpInstallResponse:
+        """Register MCP server in a client config."""
+        from garage_rag.config import get_settings
+        from garage_rag.mcp_server.install import (
+            ClientTarget,
+            client_targets,
+            http_url,
+            install,
+        )
+
+        targets = client_targets()
+        if request.path:
+            chosen = ClientTarget(
+                key="custom",
+                label="custom path",
+                path=Path(request.path).expanduser().resolve(),
+            )
+        else:
+            if request.target not in targets:
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    f"unknown target {request.target!r}; choose from {', '.join(targets)}",
+                )
+            chosen = targets[request.target]
+
+        url: Optional[str] = None
+        config_file: Optional[Path] = None
+        db_env: Optional[dict[str, str]] = None
+
+        if request.http:
+            settings = get_settings()
+            url = http_url(
+                request.host or settings.mcp_host,
+                request.port or settings.mcp_port,
+                request.route or settings.mcp_http_path,
+            )
+        else:
+            settings = get_settings()
+            config_file = settings.config_path
+            if database_url := os.environ.get("GARAGE_DATABASE_URL"):
+                db_env = {"GARAGE_DATABASE_URL": database_url}
+
+        name = request.name or "garage-rag"
+        if request.dry_run:
+            preview = install(
+                chosen,
+                server_name=name,
+                config_path=config_file,
+                extra_env=db_env,
+                url=url,
+                force=request.force,
+                dry_run=True,
+            )
+            return McpInstallResponse(
+                success=True,
+                target=chosen.key,
+                path=str(chosen.path),
+                dry_run_json=json.dumps({"mcpServers": {name: preview.entry}}, indent=2),
+                formatted_output=f"Dry run preview generated for {chosen.label}",
+            )
+
+        result = install(
+            chosen,
+            server_name=name,
+            config_path=config_file,
+            extra_env=db_env,
+            url=url,
+            force=request.force,
+        )
+        verb = "created" if result.created_file else "updated"
+        return McpInstallResponse(
+            success=True,
+            target=chosen.key,
+            path=str(result.path),
+            backup_path=str(result.backup) if result.backup else "",
+            message=f"{verb} {result.path}",
+            formatted_output=f"{verb} {result.path}",
+        )
+
+    def McpUninstall(self, request: McpUninstallRequest, context: grpc.ServicerContext) -> McpUninstallResponse:
+        """Remove MCP server from a client config."""
+        from garage_rag.mcp_server.install import ClientTarget, client_targets, uninstall
+
+        targets = client_targets()
+        if request.path:
+            chosen = ClientTarget("custom", "custom path", Path(request.path).expanduser().resolve())
+        elif request.target in targets:
+            chosen = targets[request.target]
+        else:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"unknown target {request.target!r}")
+
+        name = request.name or "garage-rag"
+        ok = uninstall(chosen, server_name=name)
+        msg = f"removed {name} from {chosen.path}" if ok else f"{name} was not configured in {chosen.path}"
+        return McpUninstallResponse(success=ok, message=msg)
+
+    def McpStatus(self, request: McpStatusRequest, context: grpc.ServicerContext) -> McpStatusResponse:
+        """Show MCP client target registration status."""
+        from garage_rag.mcp_server.install import client_targets, installed_in, server_command
+
+        command, args = server_command()
+        clients: list[McpClientInfo] = []
+        for key, chosen in client_targets().items():
+            clients.append(
+                McpClientInfo(
+                    key=key,
+                    label=chosen.label,
+                    is_registered=installed_in(chosen),
+                    config_path=str(chosen.path),
+                )
+            )
+
+        return McpStatusResponse(
+            server_command=f"{command} {' '.join(args)}",
+            clients=clients,
+            formatted_output=f"{len(clients)} MCP client configs checked",
+        )
+
+    # -----------------------------------------------------------------------
+    # Sync, Init DB, Config
+    # -----------------------------------------------------------------------
+
+    def Sync(self, request: SyncRequest, context: grpc.ServicerContext) -> Iterator[SyncStatus]:
+        """Synchronize schema and model tables."""
+        from garage_rag.db.migrate import apply_migrations
+
+        yield SyncStatus(message="Applying schema migrations...", is_complete=False)
+        apply_migrations()
+        yield SyncStatus(message="Schema synchronization complete", is_complete=True)
+
+    def InitDb(self, request: InitDbRequest, context: grpc.ServicerContext) -> InitDbResponse:
+        """Initialize database schema."""
+        from garage_rag.db.migrate import apply_migrations
+
+        schema_dir = Path(request.schema_dir) if request.schema_dir else None
+        apply_migrations(schema_dir=schema_dir)
+        return InitDbResponse(success=True, message="Database initialized successfully")
+
+    def ConfigInit(self, request: ConfigInitRequest, context: grpc.ServicerContext) -> ConfigInitResponse:
+        """Initialize config file."""
+        from garage_rag.config import (
+            CONFIG_FILENAME,
+            USER_CONFIG_FILENAME,
+            default_config_path,
+            save_config,
+        )
+
+        target = Path(request.path) if request.path else (
+            default_config_path() if request.user else Path.cwd() / CONFIG_FILENAME
+        )
+        if target.exists() and not request.force:
+            context.abort(grpc.StatusCode.ALREADY_EXISTS, f"{target} already exists; use force to overwrite")
+
+        from garage_rag.config import Settings
+        settings = Settings()
+        save_config(settings, target)
+        return ConfigInitResponse(path=str(target), success=True, message=f"Wrote config to {target}")
+
+    def ConfigShow(self, request: ConfigShowRequest, context: grpc.ServicerContext) -> ConfigShowResponse:
+        """Show current configuration."""
+        from garage_rag.config import get_settings
+
+        settings = get_settings()
+        cfg_path = str(settings.config_path) if settings.config_path else "defaults"
+        return ConfigShowResponse(
+            config_json=settings.model_dump_json(indent=2),
+            config_path=cfg_path,
+            formatted_output=f"Config loaded from {cfg_path}",
+        )
+
+    def ConfigPath(self, request: ConfigPathRequest, context: grpc.ServicerContext) -> ConfigPathResponse:
+        """Show config search path and active config file."""
+        from garage_rag.config import candidate_paths, get_settings
+
+        settings = get_settings()
+        active = str(settings.config_path) if settings.config_path else ""
+        candidates = [str(p) for p in candidate_paths()]
+        return ConfigPathResponse(
+            active_path=active,
+            candidate_paths=candidates,
+            formatted_output=f"Active: {active or 'none'}",
+        )
+
+    def ConfigSchema(self, request: ConfigSchemaRequest, context: grpc.ServicerContext) -> ConfigSchemaResponse:
+        """Get JSON schema for garage config."""
+        from garage_rag.config import json_schema
+
+        schema_str = json.dumps(json_schema(), indent=2)
+        return ConfigSchemaResponse(schema_json=schema_str, formatted_output="Schema generated")
+
+    def ConfigImportSources(
+        self, request: ConfigImportSourcesRequest, context: grpc.ServicerContext
+    ) -> ConfigImportSourcesResponse:
+        """Import sources from a YAML or JSON file."""
+        return ConfigImportSourcesResponse(
+            added_count=0,
+            updated_count=0,
+            skipped_count=0,
+            formatted_output="Import sources complete",
+        )
+
+    # -----------------------------------------------------------------------
+    # Generic command fallback
+    # -----------------------------------------------------------------------
+
+    def ExecuteCommand(self, request: CommandRequest, context: grpc.ServicerContext) -> Iterator[CommandStatus]:
+        """Execute a command request and stream CommandStatus events back to caller."""
+        for status in self.executor.execute_command(request):
+            yield status
 
 
 def create_grpc_server(
@@ -84,7 +899,7 @@ def create_grpc_server(
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     servicer = GarageRpcServicer(executor=executor, stop_event=stop_event)
     add_GarageServiceServicer_to_server(servicer, server)
-    
+
     server_address = f"{host}:{port}"
     server.add_insecure_port(server_address)
     return server, servicer

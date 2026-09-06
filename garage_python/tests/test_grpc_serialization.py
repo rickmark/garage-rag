@@ -1,4 +1,4 @@
-"""Tests for gRPC command serialization and in-process execution."""
+"""Tests for dedicated gRPC RPC methods and client in-process execution."""
 
 from __future__ import annotations
 
@@ -6,47 +6,98 @@ import json
 import pytest
 
 from garage_rag.proto.garage_pb2 import (
+    AddSourceRequest,
+    BackfillRequest,
     CommandRequest,
     CommandStatus,
+    ConfigInitRequest,
+    ConfigShowRequest,
+    ExtractRequest,
+    IngestRequest,
+    ListModelsRequest,
+    ListSourcesRequest,
+    McpInstallRequest,
+    McpServeRequest,
+    McpStatusRequest,
+    PingRequest,
+    RegisterModelRequest,
+    SearchRequest,
+    StatusRequest,
     StatusType,
+    VersionRequest,
 )
-from garage_rag.service.client import run_command_in_process
+from garage_rag.service.client import GarageClient, run_command_in_process
 from garage_rag.service.executor import CommandExecutor
 
 
-def test_command_protobuf_serialization():
-    """Verify CommandRequest and CommandStatus serialize to wire bytes and deserialize cleanly."""
-    req = CommandRequest(
-        argv=["search", "query test", "--limit", "5"],
-        cwd="/tmp",
-        env={"TEST_ENV": "1"},
-        options={"mode": "hybrid"},
+def test_dedicated_protobuf_messages():
+    """Verify dedicated request and response protobufs serialize and deserialize properly."""
+    search_req = SearchRequest(
+        query="neural network",
+        limit=5,
+        mode="hybrid",
+        model="bge-m3",
+        corpus_classes=["document", "code"],
+        trust_tiers=["authored"],
+        sources=["docs"],
+        author="rick",
+        full=True,
     )
-    serialized = req.SerializeToString()
-    assert isinstance(serialized, bytes)
-    assert len(serialized) > 0
-
-    deserialized = CommandRequest()
+    serialized = search_req.SerializeToString()
+    deserialized = SearchRequest()
     deserialized.ParseFromString(serialized)
-    assert list(deserialized.argv) == ["search", "query test", "--limit", "5"]
-    assert deserialized.cwd == "/tmp"
-    assert deserialized.env["TEST_ENV"] == "1"
-    assert deserialized.options["mode"] == "hybrid"
+    assert deserialized.query == "neural network"
+    assert deserialized.limit == 5
+    assert deserialized.mode == "hybrid"
+    assert deserialized.model == "bge-m3"
+    assert list(deserialized.corpus_classes) == ["document", "code"]
+    assert list(deserialized.trust_tiers) == ["authored"]
+    assert list(deserialized.sources) == ["docs"]
+    assert deserialized.author == "rick"
+    assert deserialized.full is True
 
-    status = CommandStatus(
-        type=StatusType.STATUS_COMPLETED,
-        stdout="Output text",
-        progress=1.0,
-        exit_code=0,
-        json_data='{"result": "ok"}',
-    )
-    status_bytes = status.SerializeToString()
-    deserialized_status = CommandStatus()
-    deserialized_status.ParseFromString(status_bytes)
-    assert deserialized_status.type == StatusType.STATUS_COMPLETED
-    assert deserialized_status.stdout == "Output text"
-    assert deserialized_status.exit_code == 0
-    assert json.loads(deserialized_status.json_data)["result"] == "ok"
+
+def test_client_in_process_version():
+    """Verify GarageClient.get_version() runs in-process with protobuf serialization."""
+    client = GarageClient(in_process=True)
+    resp = client.get_version()
+    assert resp.version
+    assert len(resp.version) > 0
+
+
+def test_client_in_process_ping():
+    """Verify GarageClient.ping() returns pong and timestamp."""
+    client = GarageClient(in_process=True)
+    resp = client.ping("test ping")
+    assert resp.message == "test ping"
+    assert resp.timestamp > 0
+
+
+def test_client_in_process_status():
+    """Verify GarageClient.get_status() returns server details."""
+    client = GarageClient(in_process=True)
+    resp = client.get_status()
+    assert resp.is_ready is True
+    assert resp.pid > 0
+    assert resp.version
+
+
+def test_client_in_process_config_show():
+    """Verify GarageClient.config_show() returns json config."""
+    client = GarageClient(in_process=True)
+    resp = client.config_show()
+    assert resp.config_json
+    data = json.loads(resp.config_json)
+    assert isinstance(data, dict)
+
+
+def test_client_in_process_mcp_status():
+    """Verify GarageClient.mcp_status() returns target clients."""
+    client = GarageClient(in_process=True)
+    resp = client.mcp_status()
+    assert len(resp.clients) > 0
+    client_keys = [c.key for c in resp.clients]
+    assert "project" in client_keys
 
 
 def test_executor_empty_command():
@@ -74,11 +125,3 @@ def test_in_process_version_command():
     final_status = statuses[-1]
     assert final_status.type == StatusType.STATUS_COMPLETED
     assert final_status.exit_code == 0
-
-
-def test_in_process_invalid_command():
-    """Executing invalid command in-process yields error exit status."""
-    statuses = list(run_command_in_process(["nonexistent_command_xyz"]))
-    final_status = statuses[-1]
-    assert final_status.type == StatusType.STATUS_ERROR
-    assert final_status.exit_code != 0

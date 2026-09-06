@@ -3,6 +3,8 @@
     <words>
       <w>HALFVEC</w>
       <w>HNSW</w>
+      <w>halfvec</w>
+      <w>protobufs</w>
     </words>
   </dictionary>
 </component>

@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
@@ -64,7 +64,7 @@ def main(
         typer.Option(
             "--config",
             "-c",
-            help=(f"Config file. Default: ./{CONFIG_FILENAME}, then ~/{USER_CONFIG_FILENAME}."),
+            help=f"Config file. Default: ./{CONFIG_FILENAME}, then ~/{USER_CONFIG_FILENAME}.",
         ),
     ] = None,
 ) -> None:
@@ -101,10 +101,6 @@ def config_init(
         bool,
         typer.Option("--user", help=f"Write to ~/{USER_CONFIG_FILENAME} instead of the project."),
     ] = False,
-    from_env: Annotated[
-        Path | None,
-        typer.Option("--from-env", help="Migrate settings from a legacy .env file."),
-    ] = None,
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
 ) -> None:
     """Write a configuration file with every setting at its default."""
@@ -116,70 +112,18 @@ def config_init(
         raise typer.Exit(code=1)
 
     settings = Settings()
-    migrated: list[str] = []
-    if from_env is not None:
-        settings, migrated = _settings_from_env_file(from_env.expanduser())
-
     save_config(settings, target)
 
     console.print(f"[green]wrote[/green] {target}")
     # No schema file is written beside the config: `$schema` names the published
     # URL, so editors resolve field documentation without a local copy.
     console.print(f"  [dim]$schema -> {SCHEMA_URL}[/dim]")
-    if migrated:
-        console.print(f"  migrated {len(migrated)} settings: {', '.join(migrated[:8])}")
-        if len(migrated) > 8:
-            console.print(f"  ...and {len(migrated) - 8} more")
     if not settings.self_name:
         console.print(
             "\n[yellow]next[/yellow]: set [cyan]identity.name[/cyan] and "
             "[cyan]identity.identities[/cyan] so your own writing can be told "
             "apart from reference material"
         )
-
-
-def _settings_from_env_file(path: Path) -> tuple[Settings, list[str]]:
-    """Translate a legacy GARAGE_* .env file into settings.
-
-    Kept so upgrading does not silently lose a configured identity, which is the
-    one setting that cannot be re-derived.
-    """
-    if not path.is_file():
-        raise typer.BadParameter(f"{path} does not exist", param_hint="--from-env")
-
-    # Legacy env name -> flat field. Only the names that ever existed.
-    legacy = {f"GARAGE_{name.upper()}": name for name in Settings.model_fields}
-    values: dict[str, Any] = {}
-    migrated: list[str] = []
-
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, _, raw = stripped.partition("=")
-        field = legacy.get(key.strip())
-        if field is None:
-            continue
-        raw = raw.strip().strip('"').strip("'")
-        annotation = Settings.model_fields[field].annotation
-        try:
-            if annotation is bool:
-                values[field] = raw.lower() in {"1", "true", "yes", "on"}
-            elif annotation is int:
-                values[field] = int(raw)
-            elif annotation is float:
-                values[field] = float(raw)
-            elif annotation == list[str]:
-                values[field] = json.loads(raw)
-            else:
-                values[field] = raw
-        except (ValueError, json.JSONDecodeError):
-            console.print(f"  [yellow]skipped[/yellow] {key}: cannot parse {raw!r}")
-            continue
-        migrated.append(field)
-
-    return Settings(**values), migrated
-
 
 @config_app.command("import-sources")
 def config_import_sources(
@@ -454,7 +398,7 @@ def register_model_cmd(
     ] = None,
     default: Annotated[bool, typer.Option("--default", help="Make this the default.")] = False,
 ) -> None:
-    """Register an embedding model and create its table + index."""
+    """Register an embedding model and create its table and index."""
     spec = resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider)
     with session_scope() as session:
         row = register_model(session, spec, make_default=default)
@@ -675,13 +619,14 @@ def ingest(
     for source in sources:
         with console.status(f"ingesting {source}...") as status:
             # slug bound as a default: the closure outlives this loop iteration.
-            def on_progress(counters, budget, slug=source) -> None:
+            def on_progress(progress_counters,
+                            progress_budget, slug=source) -> None:
                 note = ""
-                if budget.files_done or budget.deferred:
-                    note = f" | downloaded {budget.files_done:,} deferred {budget.deferred:,}"
+                if progress_budget.files_done or progress_budget.deferred:
+                    note = f" | downloaded {progress_budget.files_done:,} deferred {progress_budget.deferred:,}"
                 status.update(
-                    f"{slug}: seen {counters.seen:,} indexed {counters.indexed:,} "
-                    f"skipped {counters.skipped:,} failed {counters.failed:,}{note}"
+                    f"{slug}: seen {progress_counters.seen:,} indexed {progress_counters.indexed:,} "
+                    f"skipped {progress_counters.skipped:,} failed {progress_counters.failed:,}{note}"
                 )
 
             counters, walk_stats, budget = ingest_source(
@@ -881,7 +826,7 @@ def mcp_install(
     """Register this MCP server in a client's config file.
 
     Merges into any existing config: other servers and unrelated keys are kept,
-    the previous file is backed up, and the write is atomic.
+    the previous file is backed up, and the writing is atomic.
     """
     from garage_rag.mcp_server.install import (
         ClientTarget,
@@ -1075,7 +1020,7 @@ def mcp_serve(
     """Run the MCP server.
 
     Defaults to stdio, which is how MCP clients spawn it. Use --http to serve
-    several clients from one long-running process, or to reach it from a
+    several clients from one long-running process or to reach it from a
     container or another host.
     """
     from garage_rag.mcp_server.server import is_loopback, serve
@@ -1153,7 +1098,7 @@ def search(
     author: Annotated[str | None, typer.Option("--author")] = None,
     full: Annotated[bool, typer.Option("--full", help="Print whole snippets.")] = False,
 ) -> None:
-    """Search the corpus with hybrid vector + keyword retrieval."""
+    """Search the corpus with hybrid vector and keyword retrieval."""
     from garage_rag.search.hybrid import SearchMode
     from garage_rag.search.hybrid import search as run_search
 
@@ -1266,18 +1211,22 @@ def version_cmd() -> None:
 def serve(
     host: Annotated[str, typer.Option("--host", "-h", help="gRPC host binding.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="gRPC port.")] = 50051,
-    xpc: Annotated[bool, typer.Option("--xpc", help="Run as macOS XPC Mach Service instead of TCP gRPC.")] = False,
+    xpc: Annotated[bool, typer.Option("--xpc",
+                                      help="Run as macOS XPC Mach Service instead of TCP gRPC.")
+    ] = False,
     service_name: Annotated[
         str,
         typer.Option("--service-name", help="macOS XPC Mach service name (when --xpc is enabled)."),
     ] = "me.rickmark.garage.xpc",
     team_id: Annotated[
         str | None,
-        typer.Option("--team-id", help="Expected peer Apple Team ID for peer codesigning authentication."),
+        typer.Option("--team-id",
+                     help="Expected peer Apple Team ID for peer codesigning authentication."),
     ] = "DWVXMLB45Y",
     bundle_id: Annotated[
         str | None,
-        typer.Option("--bundle-id", help="Expected peer Bundle ID for peer codesigning authentication."),
+        typer.Option("--bundle-id",
+                     help="Expected peer Bundle ID for peer codesigning authentication."),
     ] = None,
     allow_unsigned: Annotated[
         bool,
@@ -1286,7 +1235,8 @@ def serve(
 ) -> None:
     """Start the long-running gRPC or macOS XPC server for Garage."""
     if xpc:
-        console.print(f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
+        console.print(
+            f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
         from garage_rag.service.xpc import serve_xpc
         serve_xpc(
             service_name=service_name,

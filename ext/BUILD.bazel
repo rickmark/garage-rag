@@ -39,3 +39,15 @@ alias(
     actual = "//ext/llama_cpp:llama_cpp",
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "PythonKit",
+    actual = "//ext/pythonkit:PythonKit",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pythonkit",
+    actual = "//ext/pythonkit:PythonKit",
+    visibility = ["//visibility:public"],
+)

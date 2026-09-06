@@ -6,6 +6,7 @@ py_library(
         "__init__.py",
         "base.py",
         "factory.py",
+        "llama_xpc.py",
         "lmstudio.py",
         "ollama.py",
     ],
@@ -14,6 +15,7 @@ py_library(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/service",
         "@pypi//ollama",
         "@pypi//openai",
         "@pypi//pgvector",

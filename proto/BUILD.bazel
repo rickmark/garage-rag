@@ -1,0 +1,25 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@protobuf//bazel:py_proto_library.bzl", "py_proto_library")
+load("@rules_swift//proto:proto.bzl", "swift_proto_library")
+
+proto_library(
+    name = "garage_proto",
+    srcs = ["garage.proto"],
+    visibility = ["//visibility:public"],
+)
+
+swift_proto_library(
+    name = "garage_proto_swift",
+    compilers = [
+        "@rules_swift//proto/compilers:swift_proto",
+        "@rules_swift//proto/compilers:swift_client_proto",
+    ],
+    protos = [":garage_proto"],
+    visibility = ["//visibility:public"],
+)
+
+py_proto_library(
+    name = "garage_proto_py",
+    visibility = ["//visibility:public"],
+    deps = [":garage_proto"],
+)

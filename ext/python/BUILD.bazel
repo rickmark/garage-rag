@@ -61,3 +61,15 @@ configure_make(
     ],
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "python_3_13_framework",
+    actual = ":python_3_13",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "python_3_14_framework",
+    actual = ":python_3_14",
+    visibility = ["//visibility:public"],
+)

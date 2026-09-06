@@ -1,0 +1,11 @@
+alias(
+    name = "PythonKit",
+    actual = "@PythonKit//:PythonKit",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pythonkit",
+    actual = ":PythonKit",
+    visibility = ["//visibility:public"],
+)

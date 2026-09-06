@@ -6,6 +6,7 @@ py_library(
         "__init__.py",
         "client.py",
         "executor.py",
+        "llama_xpc.py",
         "server.py",
         "xpc.py",
     ],

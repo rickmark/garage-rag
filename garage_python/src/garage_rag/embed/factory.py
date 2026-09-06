@@ -7,11 +7,12 @@ right backend without the caller knowing which SDK is behind it.
 from __future__ import annotations
 
 from garage_rag.embed.base import Embedder
+from garage_rag.embed.llama_xpc import LlamaXPCEmbedder
 from garage_rag.embed.lmstudio import LMStudioEmbedder
 from garage_rag.embed.ollama import OllamaEmbedder
 
 # Providers recognised by the factory. Extend this when a new backend is added.
-PROVIDERS: set[str] = {"ollama", "lmstudio"}
+PROVIDERS: set[str] = {"ollama", "lmstudio", "llama_xpc"}
 
 
 def get_embedder(provider: str, model_ref: str) -> Embedder:
@@ -24,6 +25,8 @@ def get_embedder(provider: str, model_ref: str) -> Embedder:
         return OllamaEmbedder(model_ref)
     if provider == "lmstudio":
         return LMStudioEmbedder(model_ref)
+    if provider == "llama_xpc":
+        return LlamaXPCEmbedder(model_ref)
     raise ValueError(
         f"unknown embedding provider {provider!r}; supported: {', '.join(sorted(PROVIDERS))}"
     )

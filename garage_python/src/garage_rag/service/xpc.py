@@ -112,21 +112,20 @@ class PeerAuthenticator:
 
             if status != 0 or not guest_code.value:
                 if self.allow_unsigned_in_dev:
-                    return True, f"Unsigned process allowed in dev mode (PID {pid}, status {status})"
-                return False, f"Failed to acquire SecCode for PID {pid} (status {status})"
+                    return True, f"Dev mode bypass: SecCodeCopyGuestWithAttributes returned {status}"
+                return False, f"Could not obtain SecCode for PID {pid} (status {status})"
 
             try:
-                # 2. Check Requirement if Team ID or Bundle ID specified
-                req_parts = []
+                # 2. Check code signing requirements
+                req_strings: list[str] = []
                 if self.expected_team_id:
-                    req_parts.append(f'certificate leaf[subject.OU] = "{self.expected_team_id}"')
+                    req_strings.append(f'certificate leaf[subject.OU] = "{self.expected_team_id}"')
                 if self.expected_bundle_id:
-                    req_parts.append(f'identifier "{self.expected_bundle_id}"')
+                    req_strings.append(f'identifier "{self.expected_bundle_id}"')
 
-                if req_parts:
-                    req_str = "anchor apple generic and " + " and ".join(req_parts)
+                if req_strings:
+                    req_str = " and ".join(req_strings)
                     cf_req_str = self._to_cf_string(req_str)
-                    
                     sec_req = ctypes.c_void_p()
                     req_status = libsec.SecRequirementCreateWithString(
                         cf_req_str,
@@ -135,8 +134,10 @@ class PeerAuthenticator:
                     )
                     libcf.CFRelease(cf_req_str)
 
-                    if req_status != 0:
-                        return False, f"Failed to compile requirement '{req_str}' (status {req_status})"
+                    if req_status != 0 or not sec_req.value:
+                        if self.allow_unsigned_in_dev:
+                            return True, f"Dev mode bypass: requirement string compilation failed ({req_status})"
+                        return False, f"Failed to compile SecRequirement: {req_str} (status {req_status})"
 
                     try:
                         validity_status = libsec.SecCodeCheckValidity(
@@ -202,8 +203,13 @@ class XpcServiceServer:
         self._running = False
         self._stop_event = threading.Event()
 
-    def handle_request_bytes(self, peer_pid: int, request_bytes: bytes) -> tuple[int, list[bytes]]:
-        """Process serialized CommandRequest bytes and return (exit_code, list of CommandStatus bytes)."""
+    def handle_request_bytes(
+        self,
+        peer_pid: int,
+        request_bytes: bytes,
+        rpc_name: str = "ExecuteCommand",
+    ) -> tuple[int, list[bytes]]:
+        """Process serialized request bytes and return (exit_code, list of serialized response bytes)."""
         # Authenticate peer
         is_authenticated, reason = self.authenticator.verify_peer(peer_pid)
         if not is_authenticated:
@@ -259,11 +265,11 @@ def serve_xpc(
     allow_unsigned_in_dev: bool = False,
     stop_event: Optional[threading.Event] = None,
 ) -> None:
-    """Entrypoint for `garage serve --xpc`."""
+    """Start the macOS XPC Mach service and block until stopped."""
     server = XpcServiceServer(
         service_name=service_name,
         team_id=team_id,
         bundle_id=bundle_id,
-        allow_unsigned_in_dev=allow_unsigned_in_dev,
+        allow_unsigned_in_dev=allow_unsigned,
     )
     server.run(stop_event=stop_event)

@@ -120,6 +120,35 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_dedicated_rpcs",
+    srcs = ["test_dedicated_rpcs.py"],
+    deps = [
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_llama_xpc",
+    srcs = ["test_llama_xpc.py"],
+    deps = [
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_llama_embedder",
+    srcs = ["test_llama_embedder.py"],
+    deps = [
+        "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
@@ -127,9 +156,12 @@ test_suite(
         ":test_chunking",
         ":test_cli_serve",
         ":test_config",
+        ":test_dedicated_rpcs",
         ":test_egress_block",
         ":test_grpc_serialization",
         ":test_grpc_server",
+        ":test_llama_embedder",
+        ":test_llama_xpc",
         ":test_lmstudio",
         ":test_mcp_install",
         ":test_migrate",

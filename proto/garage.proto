@@ -1,0 +1,532 @@
+syntax = "proto3";
+
+package garage;
+
+// The GarageService enables controlling and executing Garage commands,
+// streaming status updates and structured data.
+service GarageService {
+    // Ping / Healthcheck
+    rpc Ping (PingRequest) returns (PingResponse);
+
+    // Inspect server state
+    rpc GetStatus (StatusRequest) returns (StatusResponse);
+
+    // Version info
+    rpc GetVersion (VersionRequest) returns (VersionResponse);
+
+    // Request server shutdown
+    rpc Stop (StopRequest) returns (StopResponse);
+
+    // --- Search ---
+    rpc Search (SearchRequest) returns (SearchResponse);
+
+    // --- Sources ---
+    rpc ListSources (ListSourcesRequest) returns (ListSourcesResponse);
+    rpc AddSource (AddSourceRequest) returns (AddSourceResponse);
+    rpc RemoveSource (RemoveSourceRequest) returns (RemoveSourceResponse);
+
+    // --- Ingestion & Pipeline ---
+    rpc Ingest (IngestRequest) returns (stream IngestStatus);
+    rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
+    rpc Reconcile (ReconcileRequest) returns (ReconcileResponse);
+
+    // --- Embedding Models ---
+    rpc RegisterModel (RegisterModelRequest) returns (RegisterModelResponse);
+    rpc ListModels (ListModelsRequest) returns (ListModelsResponse);
+    rpc SetDefaultModel (SetDefaultModelRequest) returns (SetDefaultModelResponse);
+    rpc DropModel (DropModelRequest) returns (DropModelResponse);
+
+    // --- Corpus & DB Stats ---
+    rpc GetStats (StatsRequest) returns (StatsResponse);
+    rpc Extract (ExtractRequest) returns (ExtractResponse);
+    rpc InitDb (InitDbRequest) returns (InitDbResponse);
+    rpc Sync (SyncRequest) returns (stream SyncStatus);
+
+    // --- MCP Operations ---
+    rpc McpServe (McpServeRequest) returns (stream McpServeStatus);
+    rpc McpInstall (McpInstallRequest) returns (McpInstallResponse);
+    rpc McpUninstall (McpUninstallRequest) returns (McpUninstallResponse);
+    rpc McpStatus (McpStatusRequest) returns (McpStatusResponse);
+
+    // --- Config Operations ---
+    rpc ConfigInit (ConfigInitRequest) returns (ConfigInitResponse);
+    rpc ConfigShow (ConfigShowRequest) returns (ConfigShowResponse);
+    rpc ConfigPath (ConfigPathRequest) returns (ConfigPathResponse);
+    rpc ConfigSchema (ConfigSchemaRequest) returns (ConfigSchemaResponse);
+    rpc ConfigImportSources (ConfigImportSourcesRequest) returns (ConfigImportSourcesResponse);
+
+    // --- Legacy / Generic Command Fallback ---
+    rpc ExecuteCommand (CommandRequest) returns (stream CommandStatus);
+}
+
+// ---------------------------------------------------------------------------
+// Base / Generic / System Messages
+// ---------------------------------------------------------------------------
+
+message PingRequest {
+    string message = 1;
+}
+
+message PingResponse {
+    string message = 1;
+    int64 timestamp = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+    string version = 1;
+    bool is_ready = 2;
+    int32 pid = 3;
+    string db_status = 4;
+    string server_type = 5;
+}
+
+message VersionRequest {}
+
+message VersionResponse {
+    string version = 1;
+}
+
+message StopRequest {
+    string reason = 1;
+}
+
+message StopResponse {
+    bool success = 1;
+}
+
+message CommandRequest {
+    repeated string argv = 1;
+    string cwd = 2;
+    map<string, string> env = 3;
+    map<string, string> options = 4;
+}
+
+enum StatusType {
+    STATUS_UNKNOWN = 0;
+    STATUS_STARTED = 1;
+    STATUS_OUTPUT = 2;
+    STATUS_PROGRESS = 3;
+    STATUS_COMPLETED = 4;
+    STATUS_ERROR = 5;
+}
+
+message CommandStatus {
+    StatusType type = 1;
+    string stdout = 2;
+    string stderr = 3;
+    float progress = 4;
+    string progress_message = 5;
+    int32 exit_code = 6;
+    string error_message = 7;
+    string json_data = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+message SearchRequest {
+    string query = 1;
+    int32 limit = 2;
+    string mode = 3; // hybrid | vector | fts
+    string model = 4;
+    repeated string corpus_classes = 5;
+    repeated string trust_tiers = 6;
+    repeated string sources = 7;
+    string author = 8;
+    bool full = 9;
+}
+
+message SearchHit {
+    int32 rank = 1;
+    string title = 2;
+    string uri = 3;
+    string corpus_class = 4;
+    string trust_tier = 5;
+    string matched_by = 6;
+    float score = 7;
+    string heading_path = 8;
+    repeated string authors = 9;
+    string text = 10;
+    string snippet = 11;
+}
+
+message SearchResponse {
+    repeated SearchHit hits = 1;
+    int32 total_hits = 2;
+    string formatted_output = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Sources
+// ---------------------------------------------------------------------------
+
+message SourceInfo {
+    string slug = 1;
+    string kind = 2;
+    string corpus_class = 3;
+    string trust_tier = 4;
+    bool allow_cloud_enrichment = 5;
+    bool enabled = 6;
+    string root = 7;
+}
+
+message ListSourcesRequest {}
+
+message ListSourcesResponse {
+    repeated SourceInfo sources = 1;
+    string formatted_output = 2;
+}
+
+message AddSourceRequest {
+    string slug = 1;
+    string root = 2;
+    string kind = 3;
+    string corpus_class = 4;
+    string trust = 5;
+    bool allow_cloud_enrichment = 6;
+}
+
+message AddSourceResponse {
+    bool success = 1;
+    string message = 2;
+    string slug = 3;
+    string root = 4;
+    string formatted_output = 5;
+}
+
+message RemoveSourceRequest {
+    string slug = 1;
+    bool force = 2;
+}
+
+message RemoveSourceResponse {
+    bool success = 1;
+    int64 deleted_documents = 2;
+    string message = 3;
+    string formatted_output = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Ingest, Backfill, Reconcile
+// ---------------------------------------------------------------------------
+
+message IngestRequest {
+    string source = 1;
+    bool include_code = 2;
+    int32 limit = 3;
+    bool force = 4;
+}
+
+message IngestStatus {
+    string source = 1;
+    int64 candidates_seen = 2;
+    int64 indexed = 3;
+    int64 skipped = 4;
+    int64 failed = 5;
+    int64 rejected = 6;
+    int64 chunks_written = 7;
+    int64 placeholders = 8;
+    int64 dirs_walked = 9;
+    int64 files_examined = 10;
+    bool is_complete = 11;
+    float progress = 12;
+    string progress_message = 13;
+    string error_message = 14;
+    repeated string sample_errors = 15;
+    string formatted_output = 16;
+}
+
+message BackfillRequest {
+    string model = 1;
+    int32 batch_size = 2;
+    int32 limit = 3;
+    bool verify = 4;
+}
+
+message BackfillStatus {
+    string model_slug = 1;
+    int64 total = 2;
+    int64 embedded = 3;
+    int64 failed = 4;
+    int64 remaining = 5;
+    int64 batches = 6;
+    bool is_complete = 7;
+    float progress = 8;
+    string progress_message = 9;
+    string error_message = 10;
+    string formatted_output = 11;
+}
+
+message ReconcileRequest {
+    string source = 1;
+    bool apply = 2;
+    bool force = 3;
+}
+
+message ReconcileResponse {
+    string source = 1;
+    int64 total_documents = 2;
+    int64 candidates = 3;
+    int64 deleted = 4;
+    float fraction = 5;
+    bool refused = 6;
+    string reason = 7;
+    string formatted_output = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Embedding Models
+// ---------------------------------------------------------------------------
+
+message ModelInfo {
+    string slug = 1;
+    string provider = 2;
+    string model_ref = 3;
+    int32 dims = 4;
+    int32 stored_dims = 5;
+    string storage_kind = 6;
+    string index_kind = 7;
+    string table_name = 8;
+    bool is_default = 9;
+}
+
+message RegisterModelRequest {
+    string slug = 1;
+    string provider = 2;
+    string model_ref = 3;
+    int32 dims = 4;
+    string storage = 5;
+    string index = 6;
+    bool is_default = 7;
+    int32 context_window = 8;
+    int32 max_tokens = 9;
+    int32 batch_size = 10;
+}
+
+message RegisterModelResponse {
+    bool success = 1;
+    string message = 2;
+    string formatted_output = 3;
+}
+
+message ListModelsRequest {}
+
+message ListModelsResponse {
+    repeated ModelInfo models = 1;
+    string formatted_output = 2;
+}
+
+message SetDefaultModelRequest {
+    string slug = 1;
+}
+
+message SetDefaultModelResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message DropModelRequest {
+    string slug = 1;
+    bool force = 2;
+}
+
+message DropModelResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Stats & Extract
+// ---------------------------------------------------------------------------
+
+message StatsRequest {}
+
+message StatsResponse {
+    int64 documents = 1;
+    int64 chunks = 2;
+    int64 sources = 3;
+    int64 models = 4;
+    map<string, int64> chunks_by_model = 5;
+    map<string, int64> documents_by_source = 6;
+    string formatted_output = 7;
+}
+
+message ExtractRequest {
+    string path = 1;
+    int32 show = 2;
+    bool full = 3;
+}
+
+message ExtractChunk {
+    int32 ord = 1;
+    string text = 2;
+    string heading_path = 3;
+    int32 char_count = 4;
+}
+
+message ExtractResponse {
+    string target = 1;
+    string extractor = 2;
+    string extractor_version = 3;
+    string kind = 4;
+    string title = 5;
+    int64 char_count = 6;
+    int32 chunk_count = 7;
+    string chunker = 8;
+    string meta_json = 9;
+    repeated string author_hints = 10;
+    repeated ExtractChunk chunks = 11;
+    string formatted_output = 12;
+}
+
+// ---------------------------------------------------------------------------
+// MCP
+// ---------------------------------------------------------------------------
+
+message McpServeRequest {
+    string transport = 1; // stdio | http | sse
+    string host = 2;
+    int32 port = 3;
+    string path = 4;
+    repeated string allow_origin = 5;
+    bool json_response = 6;
+    bool stateless = 7;
+    bool allow_remote = 8;
+}
+
+message McpServeStatus {
+    bool is_running = 1;
+    string transport = 2;
+    string url = 3;
+    string message = 4;
+    int32 exit_code = 5;
+    string error_message = 6;
+}
+
+message McpInstallRequest {
+    string target = 1;
+    string path = 2;
+    string name = 3;
+    bool http = 4;
+    string host = 5;
+    int32 port = 6;
+    string route = 7;
+    bool force = 8;
+    bool dry_run = 9;
+}
+
+message McpInstallResponse {
+    bool success = 1;
+    string target = 2;
+    string path = 3;
+    string backup_path = 4;
+    string dry_run_json = 5;
+    string message = 6;
+    string formatted_output = 7;
+}
+
+message McpUninstallRequest {
+    string target = 1;
+    string path = 2;
+    string name = 3;
+}
+
+message McpUninstallResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message McpClientInfo {
+    string key = 1;
+    string label = 2;
+    bool is_registered = 3;
+    string config_path = 4;
+}
+
+message McpStatusRequest {}
+
+message McpStatusResponse {
+    string server_command = 1;
+    repeated McpClientInfo clients = 2;
+    string formatted_output = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Config, Sync, Init DB
+// ---------------------------------------------------------------------------
+
+message SyncRequest {
+    bool apply = 1;
+    bool force = 2;
+    bool prune = 3;
+}
+
+message SyncStatus {
+    string message = 1;
+    bool is_complete = 2;
+    string formatted_output = 3;
+}
+
+message InitDbRequest {
+    string schema_dir = 1;
+}
+
+message InitDbResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ConfigInitRequest {
+    string path = 1;
+    bool user = 2;
+    string from_env = 3;
+    bool force = 4;
+}
+
+message ConfigInitResponse {
+    string path = 1;
+    bool success = 2;
+    string message = 3;
+}
+
+message ConfigShowRequest {
+    bool show_defaults = 1;
+}
+
+message ConfigShowResponse {
+    string config_json = 1;
+    string config_path = 2;
+    string formatted_output = 3;
+}
+
+message ConfigPathRequest {}
+
+message ConfigPathResponse {
+    string active_path = 1;
+    repeated string candidate_paths = 2;
+    string formatted_output = 3;
+}
+
+message ConfigSchemaRequest {
+    string path = 1;
+}
+
+message ConfigSchemaResponse {
+    string schema_json = 1;
+    string formatted_output = 2;
+}
+
+message ConfigImportSourcesRequest {
+    string path = 1;
+    bool dry_run = 2;
+}
+
+message ConfigImportSourcesResponse {
+    int32 added_count = 1;
+    int32 updated_count = 2;
+    int32 skipped_count = 3;
+    string formatted_output = 4;
+}

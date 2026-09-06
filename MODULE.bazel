@@ -108,3 +108,6 @@ include("//ext/python:python.MODULE.bazel")
 include("//ext/libreadline:libreadline.MODULE.bazel")
 include("//ext/libzlib:libzlib.MODULE.bazel")
 include("//ext/llama_cpp:llama_cpp.MODULE.bazel")
+include("//ext/pythonkit:pythonkit.MODULE.bazel")
+
+bazel_dep(name = "protobuf", version = "36.1.bcr.1")
