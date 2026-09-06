@@ -1,0 +1,37 @@
+load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "GarageMCPServerService_lib",
+    srcs = glob(["**/*.swift"]),
+    data = [
+        "//garage_python:garage-par",
+    ],
+    module_name = "GarageMCPServerService",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//ext:PythonKit",
+        "//ext/python:python_3_14_framework",
+    ],
+)
+
+macos_xpc_service(
+    name = "GarageMCPServerService",
+    bundle_id = "me.rickmark.garage.mcp-server-xpc",
+    bundle_name = "GarageMCPServerService",
+    codesignopts = [
+        "--options=runtime",
+    ],
+    entitlements = select({
+        "//bazel:is_store": ":GarageMCPServerService.entitlements",
+        "//conditions:default": None,
+    }),
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    version = "//macapp:GarageAppVersion",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":GarageMCPServerService_lib",
+        "//ext/python:python_3_14_framework",
+    ],
+)

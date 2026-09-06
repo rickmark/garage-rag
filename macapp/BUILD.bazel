@@ -106,6 +106,13 @@ swift_library(
 )
 
 swift_library(
+    name = "ModelDownloadClient_lib",
+    srcs = glob(["Sources/ModelDownloadClient/**/*.swift"]),
+    module_name = "ModelDownloadClient",
+    visibility = ["//visibility:public"],
+)
+
+swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/GarageApp/**/*.swift"]),
     data = [
@@ -120,76 +127,15 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":LlamaClient_lib",
+        ":ModelDownloadClient_lib",
         "//proto:garage_proto_swift",
-    ],
-)
-
-swift_library(
-    name = "LlamaXPCService_lib",
-    srcs = glob(["Sources/LlamaXPCService/**/*.swift"]),
-    module_name = "LlamaXPCService",
-    visibility = ["//visibility:private"],
-    deps = [
-        ":LlamaClient_lib",
-    ],
-)
-
-swift_library(
-    name = "PythonXPCService_lib",
-    srcs = glob(["Sources/PythonXPCService/**/*.swift"]),
-    module_name = "PythonXPCService",
-    visibility = ["//visibility:private"],
-    deps = [
-        "//ext:PythonKit",
-        "//ext/python:python_3_14_framework",
     ],
 )
 
 macapp_version(
     name = "GarageAppVersion",
     short_version_string = "0.7.2",
-)
-
-macos_xpc_service(
-    name = "LlamaXPCService",
-    bundle_id = "me.rickmark.garage.llama-xpc",
-    bundle_name = "LlamaXPCService",
-    codesignopts = [
-        "--options=runtime",
-    ],
-    entitlements = select({
-        "//bazel:is_store": ":GarageServer.entitlements",
-        "//conditions:default": None,
-    }),
-    infoplists = ["LlamaXPCService-Info.plist"],
-    minimum_os_version = "14.0",
-    version = ":GarageAppVersion",
     visibility = ["//visibility:public"],
-    deps = [
-        ":LlamaXPCService_lib",
-        "//ext/llama_cpp",
-    ],
-)
-
-macos_xpc_service(
-    name = "PythonXPCService",
-    bundle_id = "me.rickmark.garage.python-xpc",
-    bundle_name = "PythonXPCService",
-    codesignopts = [
-        "--options=runtime",
-    ],
-    entitlements = select({
-        "//bazel:is_store": ":GarageServer.entitlements",
-        "//conditions:default": None,
-    }),
-    infoplists = ["PythonXPCService-Info.plist"],
-    minimum_os_version = "14.0",
-    version = ":GarageAppVersion",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":PythonXPCService_lib",
-        "//ext/python:python_3_14_framework",
-    ],
 )
 
 macos_application(
@@ -213,8 +159,12 @@ macos_application(
     version = ":GarageAppVersion",
     visibility = ["//visibility:public"],
     xpc_services = [
-        ":LlamaXPCService",
-        ":PythonXPCService",
+        "//macapp/Sources/LlamaXPCService:LlamaXPCService",
+        "//macapp/Sources/GarageMCPServerService:GarageMCPServerService",
+        "//macapp/Sources/GarageEmbedXPCService:GarageEmbedXPCService",
+        "//macapp/Sources/GarageIngestXPCService:GarageIngestXPCService",
+        "//macapp/Sources/GarageXPCService:GarageXPCService",
+        "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
     ],
     deps = [
         ":GarageApp_lib",
@@ -236,10 +186,22 @@ xcodeproj(
             ":GarageApp",
         ),
         top_level_target(
-            ":LlamaXPCService",
+            "//macapp/Sources/LlamaXPCService:LlamaXPCService",
         ),
         top_level_target(
-            ":PythonXPCService",
+            "//macapp/Sources/GarageMCPServerService:GarageMCPServerService",
+        ),
+        top_level_target(
+            "//macapp/Sources/GarageEmbedXPCService:GarageEmbedXPCService",
+        ),
+        top_level_target(
+            "//macapp/Sources/GarageIngestXPCService:GarageIngestXPCService",
+        ),
+        top_level_target(
+            "//macapp/Sources/GarageXPCService:GarageXPCService",
+        ),
+        top_level_target(
+            "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
         ),
         top_level_target(
             ":GarageAppUnitTests",
@@ -260,6 +222,7 @@ swift_library(
     deps = [
         ":GarageApp_lib",
         ":LlamaClient_lib",
+        ":ModelDownloadClient_lib",
     ],
 )
 

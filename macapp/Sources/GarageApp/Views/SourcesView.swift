@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 struct SourcesView: View {
     @EnvironmentObject var appState: AppState
 
@@ -24,6 +25,67 @@ struct SourcesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                GroupBox("App Sandbox & Full Volume Access") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: volumeStatusIcon)
+                                .font(.title2)
+                                .foregroundStyle(volumeStatusColor)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(volumeStatusTitle)
+                                    .fontWeight(.semibold)
+                                Text(appState.volumeAccess.status.displayDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+
+                        Text("To allow Garage to ingest documents across your system within the macOS Sandbox, select your root hard-drive (e.g. Macintosh HD or '/'). The security-scoped bookmark will be persisted across restarts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Button("Select Root Hard Drive…") {
+                                appState.promptAndSelectRootVolume()
+                            }
+                            Button("Test Full Volume Access") {
+                                appState.testVolumeAccess()
+                            }
+                            if appState.volumeAccess.status.isGranted {
+                                Button("Revoke Access") {
+                                    appState.revokeVolumeAccess()
+                                }
+                                .foregroundStyle(.red)
+                            }
+                        }
+
+                        if let testResult = appState.volumeAccess.lastTestResult {
+                            Divider()
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Test Result:")
+                                        .font(.caption.bold())
+                                    Text(testResult.isAccessible ? "Passed" : "Failed")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(testResult.isAccessible ? .green : .red)
+                                }
+                                Text(testResult.message)
+                                    .font(.caption)
+                                if !testResult.accessibleSubpaths.isEmpty {
+                                    Text("Accessible directories: \(testResult.accessibleSubpaths.joined(separator: ", "))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(6)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                    .padding(8)
+                }
+
                 GroupBox("Add / update a source") {
                     VStack(alignment: .leading, spacing: 10) {
                         LabeledContent("Slug") {
@@ -128,6 +190,45 @@ struct SourcesView: View {
 
     private var notReady: Bool {
         appState.postgres.status != .running || busy
+    }
+
+    private var volumeStatusIcon: String {
+        switch appState.volumeAccess.status {
+        case .accessGranted:
+            return "checkmark.seal.fill"
+        case .staleBookmark:
+            return "exclamationmark.triangle.fill"
+        case .accessDenied:
+            return "xmark.octagon.fill"
+        case .notConfigured:
+            return "lock.trianglebadge.exclamationmark"
+        }
+    }
+
+    private var volumeStatusColor: Color {
+        switch appState.volumeAccess.status {
+        case .accessGranted:
+            return .green
+        case .staleBookmark:
+            return .yellow
+        case .accessDenied:
+            return .red
+        case .notConfigured:
+            return .orange
+        }
+    }
+
+    private var volumeStatusTitle: String {
+        switch appState.volumeAccess.status {
+        case .accessGranted:
+            return "Full Volume Access Granted"
+        case .staleBookmark:
+            return "Root Volume Bookmark Stale"
+        case .accessDenied:
+            return "Full Volume Access Denied"
+        case .notConfigured:
+            return "Root Hard Drive Not Selected"
+        }
     }
 
     private func chooseRoot() {

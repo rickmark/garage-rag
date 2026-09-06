@@ -72,7 +72,9 @@ final class ProcessRunnerTests: XCTestCase {
         }
 
         process.terminationHandler = { _ in
-            expectation.fulfill()
+            DispatchQueue.main.async {
+                expectation.fulfill()
+            }
         }
 
         wait(for: [expectation], timeout: 5.0)

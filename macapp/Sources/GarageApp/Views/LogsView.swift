@@ -10,6 +10,7 @@ struct LogsView: View {
         case ingest = "Ingest"
         case backfill = "Backfill"
         case mcp = "MCP Server"
+        case llama = "Llama Service"
         var id: String { rawValue }
     }
 
@@ -53,6 +54,7 @@ struct LogsView: View {
         case .ingest: appState.ingest.logs
         case .backfill: appState.backfill.logs
         case .mcp: appState.mcp.logs
+        case .llama: appState.llama.logs
         }
     }
 }

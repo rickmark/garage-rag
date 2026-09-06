@@ -285,13 +285,19 @@ final class PostgresService: ObservableObject {
         if let cachedPassword {
             return cachedPassword
         }
-        if let storedPassword = try KeychainPostgresPassword.load() {
+        if let storedPassword = try? KeychainPostgresPassword.load() {
             cachedPassword = storedPassword
             return storedPassword
         }
 
         let generatedPassword = try KeychainPostgresPassword.generate()
-        try KeychainPostgresPassword.save(generatedPassword)
+        do {
+            try KeychainPostgresPassword.save(generatedPassword)
+        } catch {
+            // In headless/test environments without keychain access, keep in-memory
+            cachedPassword = generatedPassword
+            return generatedPassword
+        }
         cachedPassword = generatedPassword
         return generatedPassword
     }
@@ -330,15 +336,30 @@ private enum KeychainPostgresPassword {
     }
 
     static func save(_ password: String) throws {
-        let attributes: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-            kSecValueData: Data(password.utf8),
         ]
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(status))")
+        let attributes: [CFString: Any] = [
+            kSecValueData: Data(password.utf8),
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked,
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(updateStatus))")
+        }
+
+        var newItem = query
+        for (key, value) in attributes {
+            newItem[key] = value
+        }
+        let addStatus = SecItemAdd(newItem as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(addStatus))")
         }
     }
 

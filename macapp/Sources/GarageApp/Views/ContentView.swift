@@ -3,7 +3,7 @@ import SwiftUI
 enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
     case sources = "Sources & Ingest"
-    case models = "Embedding Models"
+    case models = "Models"
     case search = "Search"
     case logs = "Logs"
 

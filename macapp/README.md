@@ -61,10 +61,11 @@ postgres's fork-safety check runs.
 - `GarageCLIService` — runs `garage <subcommand>` one-shot invocations against that cluster, streaming output. The app uses dedicated service instances and log streams for `ingest` and `backfill`, so either can run while ordinary CLI commands continue.
 - `GarageMCPService` — owns a separate loopback HTTP `garage-mcp` process at `http://127.0.0.1:8787/mcp`, starting it after Postgres and stopping it before Postgres.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres to stop on every quit path (Cmd+Q, Dock quit, menu item).
-- Views: Status, Sources & Ingest, Embedding Models, Search, Logs. Sources
+- Views: Status, Sources & Ingest, Models, Search, Logs. Sources
   provides manual ingestion and an optional persisted schedule that ingests all
-  sources and then backfills every registered model. The Embedding Models view
-  provides the known-model catalog and fills each selection's slug, dimensions,
+  sources and then backfills every registered model. The Models view
+  provides controls for Llama models and embedding models: it includes
+  the known-model catalog and fills each selection's slug, dimensions,
   provider-side reference, and default provider. The provider can then be
   changed between Ollama and LM Studio; start the selected provider locally
   before backfilling embeddings. An LM Studio API token can be saved in the

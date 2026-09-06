@@ -177,7 +177,16 @@ class LlamaServiceEngine:
             inputs = []
 
         model = payload.get("model", self.model_alias)
-        dims = payload.get("dimensions", 768)
+        default_dims = (
+            1024
+            if (
+                "bge-m3" in str(model).lower()
+                or "bge-m3" in self.model_alias.lower()
+                or (self.model_path and "bge-m3" in self.model_path.lower())
+            )
+            else 768
+        )
+        dims = payload.get("dimensions", default_dims)
 
         data = []
         total_tokens = 0

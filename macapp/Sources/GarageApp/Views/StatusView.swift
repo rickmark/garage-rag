@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 struct StatusView: View {
     @EnvironmentObject var appState: AppState
     @State private var initRunning = false
@@ -40,6 +41,30 @@ struct StatusView: View {
                                 .tint(.red)
                         }
                         .disabled(appState.postgres.status != .running)
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("Sandbox & Volume Access") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        LabeledContent("Status", value: appState.volumeAccess.status.displayDescription)
+                        if let rootURL = appState.volumeAccess.activeRootURL {
+                            LabeledContent("Root path", value: rootURL.path)
+                        }
+                        HStack {
+                            Button("Select Root Drive…") {
+                                appState.promptAndSelectRootVolume()
+                            }
+                            Button("Test Volume Access") {
+                                appState.testVolumeAccess()
+                            }
+                            if appState.volumeAccess.status.isGranted {
+                                Button("Revoke") {
+                                    appState.revokeVolumeAccess()
+                                }
+                                .foregroundStyle(.red)
+                            }
+                        }
                     }
                     .padding(8)
                 }

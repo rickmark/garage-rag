@@ -42,6 +42,24 @@ final class GarageViewTests: XCTestCase {
     }
 
     @MainActor
+    func testEmbeddingModelsViewHosting() {
+        let appState = AppState()
+        let embeddingModelsView = EmbeddingModelsView()
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: embeddingModelsView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
+    func testLlamaModelsViewHosting() {
+        let appState = AppState()
+        let llamaModelsView = LlamaModelsView()
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: llamaModelsView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
     func testSearchViewHosting() {
         let appState = AppState()
         let searchView = SearchView()
@@ -70,7 +88,7 @@ final class GarageViewTests: XCTestCase {
 
     func testLogSourceCases() {
         let cases = LogsView.LogSource.allCases
-        XCTAssertEqual(cases.count, 5)
-        XCTAssertEqual(cases.map(\.rawValue), ["Postgres", "garage CLI", "Ingest", "Backfill", "MCP Server"])
+        XCTAssertEqual(cases.count, 6)
+        XCTAssertEqual(cases.map(\.rawValue), ["Postgres", "garage CLI", "Ingest", "Backfill", "MCP Server", "Llama Service"])
     }
 }

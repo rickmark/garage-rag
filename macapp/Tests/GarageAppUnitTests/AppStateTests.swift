@@ -12,6 +12,8 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.lastCommandOutput, "")
         XCTAssertNil(state.lastCommandSucceeded)
         XCTAssertEqual(state.postgres.status, .stopped)
+        XCTAssertNotNil(state.llama)
+        XCTAssertFalse(state.llama.isConnected)
     }
 
     @MainActor
@@ -56,5 +58,26 @@ final class AppStateTests: XCTestCase {
         let result = await state.runGarage(["status"])
         // If CLI is not found or fails
         XCTAssertEqual(result, state.lastCommandSucceeded ?? false)
+    }
+
+    @MainActor
+    func testVolumeAccessIntegration() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+        mockFS.directoryContents = [URL(fileURLWithPath: "/System")]
+
+        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let state = AppState(llama: LlamaService(), volumeAccess: volumeService)
+
+        let testResult = state.testVolumeAccess()
+        XCTAssertTrue(testResult.isAccessible)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertTrue(state.lastCommandOutput.contains("Full volume access verified"))
+
+        state.revokeVolumeAccess()
+        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertEqual(state.lastCommandOutput, "Volume access revoked and saved bookmark cleared.")
+        XCTAssertEqual(state.volumeAccess.status, .notConfigured)
     }
 }

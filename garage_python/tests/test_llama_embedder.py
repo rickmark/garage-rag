@@ -30,3 +30,25 @@ def test_embedder_factory_llama_xpc():
 
     dims = embedder.probe_dims()
     assert dims == 768
+
+
+def test_llama_embedder_bge_m3():
+    model_path = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
+    client = LlamaXPCClient()
+    load_res = client.load_model(model_path, alias="bge-m3")
+    assert load_res["success"] is True
+
+    embedder = LlamaXPCEmbedder(model_ref="bge-m3", client=client)
+    assert isinstance(embedder, Embedder)
+
+    dims = embedder.probe_dims()
+    assert dims == 1024
+
+    texts = [
+        "First document for BGE-M3 dense multilingual embeddings.",
+        "Second query testing semantic search indexing with 1024-dimension vectors.",
+    ]
+    vectors = embedder.embed(texts)
+    assert len(vectors) == 2
+    assert len(vectors[0]) == 1024
+    assert len(vectors[1]) == 1024

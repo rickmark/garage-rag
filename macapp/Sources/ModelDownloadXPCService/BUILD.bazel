@@ -1,0 +1,32 @@
+load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "ModelDownloadXPCService_lib",
+    srcs = glob(["**/*.swift"]),
+    module_name = "ModelDownloadXPCService",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//macapp:ModelDownloadClient_lib",
+    ],
+)
+
+macos_xpc_service(
+    name = "ModelDownloadXPCService",
+    bundle_id = "me.rickmark.garage.model-download-xpc",
+    bundle_name = "ModelDownloadXPCService",
+    codesignopts = [
+        "--options=runtime",
+    ],
+    entitlements = select({
+        "//bazel:is_store": ":ModelDownloadXPCService.entitlements",
+        "//conditions:default": None,
+    }),
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    version = "//macapp:GarageAppVersion",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ModelDownloadXPCService_lib",
+    ],
+)

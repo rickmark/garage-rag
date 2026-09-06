@@ -200,7 +200,8 @@ public final class LlamaServerEngine: @unchecked Sendable {
             inputs = arrOfTokens.map { _ in "tokenized input" }
         }
 
-        let dimensions = (dict["dimensions"] as? Int) ?? 768
+        let defaultDims = (modelAlias.lowercased().contains("bge-m3") || (loadedModelPath?.lowercased().contains("bge-m3") == true)) ? 1024 : 768
+        let dimensions = (dict["dimensions"] as? Int) ?? defaultDims
         var embeddingData: [[String: Any]] = []
         var totalTokens = 0
 

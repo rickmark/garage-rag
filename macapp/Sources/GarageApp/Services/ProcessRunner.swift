@@ -89,7 +89,18 @@ final class ProcessRunner {
         onLine: @escaping (LogLine) -> Void
     ) {
         let data = handle.availableData
-        guard !data.isEmpty else { return }
+        guard !data.isEmpty else {
+            if !self[keyPath: buffer].isEmpty {
+                let text = String(data: self[keyPath: buffer], encoding: .utf8) ?? ""
+                self[keyPath: buffer].removeAll()
+                if !text.isEmpty {
+                    DispatchQueue.main.async {
+                        onLine(LogLine(stream: stream, text: text, source: source))
+                    }
+                }
+            }
+            return
+        }
         self[keyPath: buffer].append(data)
         while let range = self[keyPath: buffer].firstRange(of: Data([0x0A])) {
             let lineData = self[keyPath: buffer].subdata(in: self[keyPath: buffer].startIndex..<range.lowerBound)

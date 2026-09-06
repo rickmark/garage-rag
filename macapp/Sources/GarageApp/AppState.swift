@@ -11,6 +11,8 @@ final class AppState: ObservableObject {
     let ingest: GarageCLIService
     let backfill: GarageCLIService
     let mcp: GarageMCPService
+    let llama: LlamaService
+    let volumeAccess: VolumeAccessService
 
     /// Output of the most recent manual or scheduled `garage` command,
     /// separate from the rolling activity log.
@@ -41,7 +43,13 @@ final class AppState: ObservableObject {
     private var hasLaunched = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
 
-    init() {
+    convenience init() {
+        self.init(llama: LlamaService(), volumeAccess: VolumeAccessService())
+    }
+
+    init(llama: LlamaService, volumeAccess: VolumeAccessService? = nil) {
+        self.llama = llama
+        self.volumeAccess = volumeAccess ?? VolumeAccessService()
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
@@ -63,7 +71,9 @@ final class AppState: ObservableObject {
 
     func launch() {
         hasLaunched = true
+        volumeAccess.restoreAndVerifyAccess()
         configureScheduledMaintenance()
+        Task { await llama.refreshStatus() }
         guard autoStartPostgres else { return }
         Task { await startPostgres() }
     }
@@ -125,6 +135,30 @@ final class AppState: ObservableObject {
 
     func restoreDatabase(from source: URL) {
         performDatabaseOperation { try postgres.restoreDatabase(from: source) }
+    }
+
+    @discardableResult
+    func promptAndSelectRootVolume() -> URL? {
+        let url = volumeAccess.promptForRootVolumeSelection()
+        if let url = url {
+            lastCommandSucceeded = true
+            lastCommandOutput = "Granted full volume access for: \(url.path)"
+        }
+        return url
+    }
+
+    @discardableResult
+    func testVolumeAccess() -> VolumeAccessTestResult {
+        let result = volumeAccess.testFullVolumeAccess()
+        lastCommandSucceeded = result.isAccessible
+        lastCommandOutput = result.message
+        return result
+    }
+
+    func revokeVolumeAccess() {
+        volumeAccess.revokeAccess()
+        lastCommandSucceeded = true
+        lastCommandOutput = "Volume access revoked and saved bookmark cleared."
     }
 
     /// Runs a garage subcommand and captures its combined output for display.

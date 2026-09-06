@@ -150,3 +150,38 @@ def test_model_load_and_unload(client: LlamaXPCClient):
     assert client.unload_model() is True
     health = client.health()
     assert health["status"] == "no_model_loaded"
+
+
+def test_load_bge_m3_model_and_embeddings(client: LlamaXPCClient):
+    model_path = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
+    load_res = client.load_model(model_path, alias="bge-m3")
+    assert load_res["success"] is True
+
+    models = client.list_models()
+    assert models["data"][0]["id"] == "bge-m3"
+
+    texts = [
+        "First document for BGE-M3 dense multilingual vector representation.",
+        "Second query testing semantic embeddings on Apple Silicon via Llama XPC service.",
+    ]
+
+    # Test embeddings endpoint with 1024 dimensions
+    resp = client.embeddings(texts, dimensions=1024)
+    assert resp["object"] == "list"
+    assert len(resp["data"]) == 2
+    assert len(resp["data"][0]["embedding"]) == 1024
+    assert len(resp["data"][1]["embedding"]) == 1024
+    assert resp["usage"]["total_tokens"] > 0
+
+    # Verify L2 normalization
+    for item in resp["data"]:
+        vec = item["embedding"]
+        norm = math.sqrt(sum(x * x for x in vec))
+        assert math.isclose(norm, 1.0, rel_tol=1e-4)
+
+    # Test embed_texts convenience method
+    vectors = client.embed_texts(texts, dimensions=1024)
+    assert len(vectors) == 2
+    assert len(vectors[0]) == 1024
+    assert len(vectors[1]) == 1024
+    assert vectors[0] != vectors[1]
