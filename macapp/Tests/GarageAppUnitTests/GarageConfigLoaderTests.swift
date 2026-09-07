@@ -13,7 +13,8 @@ final class GarageConfigLoaderTests: XCTestCase {
             allowCloudEnrichment: true,
             enabled: true,
             includeCode: false,
-            origin: .config
+            origin: .config,
+            documentCount: 42
         )
 
         XCTAssertEqual(source.id, "dropbox")
@@ -26,6 +27,7 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertTrue(source.enabled)
         XCTAssertFalse(source.includeCode)
         XCTAssertEqual(source.origin, .config)
+        XCTAssertEqual(source.documentCount, 42)
         XCTAssertFalse(source.expandedRootPath.hasPrefix("~"))
         XCTAssertEqual(source.expandedRootURL.path, (source.root as NSString).expandingTildeInPath)
     }

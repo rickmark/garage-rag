@@ -567,16 +567,22 @@ def list_sources() -> None:
     """List registered sources."""
     with session_scope() as session:
         sources = session.query(Source).order_by(Source.id).all()
+        doc_counts = dict(
+            session.execute(
+                text("SELECT source_id, count(*) FROM documents GROUP BY source_id")
+            ).all()
+        )
     if not sources:
         console.print("[yellow]no sources registered[/yellow]")
         return
     table = Table()
-    for col in ("slug", "kind", "class", "trust", "cloud", "enabled", "root"):
-        table.add_column(col)
+    for col in ("slug", "kind", "docs", "class", "trust", "cloud", "enabled", "root"):
+        table.add_column(col, justify="right" if col == "docs" else "left")
     for s in sources:
         table.add_row(
             s.slug,
             s.kind,
+            f"{doc_counts.get(s.id, 0):,}",
             str(s.default_class),
             str(s.default_trust),
             "yes" if s.allow_cloud_enrichment else "no",
@@ -692,6 +698,7 @@ def ingest(
                 if phase == "scan":
                     item_type = scan_result.item_type if scan_result else "items"
                     status.update(f"scanned {slug}: found {total_items:,} {item_type}")
+                    console.print(f"[cyan]scanned {slug}[/cyan]: found {total_items:,} {item_type}")
                     return
                 pct_str = f" [{(progress_counters.seen / total_items * 100):.1f}%]" if total_items > 0 else ""
                 status.update(

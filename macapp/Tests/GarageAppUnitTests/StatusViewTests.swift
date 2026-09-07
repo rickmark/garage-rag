@@ -112,4 +112,37 @@ final class StatusViewTests: XCTestCase {
         let controller = NSHostingController(rootView: statusView)
         XCTAssertNotNil(controller.view)
     }
+
+    @MainActor
+    func testSourcesStatusItemDetailsWithDocumentCount() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", "/Users/test/Documents", "/Users/test/Notes"]
+        mockFS.directoryContents = [URL(fileURLWithPath: "/Users/test/Documents")]
+
+        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        _ = volumeService.restoreAndVerifyAccess()
+        let appState = AppState(llama: LlamaService(), volumeAccess: volumeService)
+
+        appState.setRegisteredSourcesForTesting([
+            RegisteredSource(slug: "docs", root: "~/Documents", documentCount: 15),
+            RegisteredSource(slug: "notes", root: "~/Notes", documentCount: 5)
+        ])
+        appState.setCorpusStatsForTesting(CorpusStats(
+            sourcesCount: 2,
+            documentsCount: 20,
+            documentsOkCount: 20,
+            documentsFailedCount: 0,
+            totalChunks: 100,
+            embeddedChunks: 100,
+            totalSeenFiles: 25,
+            totalIndexedFiles: 20
+        ))
+
+        let item = StatusView.sourcesStatusItem(for: appState)
+        XCTAssertEqual(item.section, .sources)
+        XCTAssertEqual(item.severity, .healthy)
+        XCTAssertTrue(item.statusDetails.contains("2 source(s) active"))
+        XCTAssertTrue(item.statusDetails.contains("20 documents ingested"))
+    }
 }

@@ -211,11 +211,18 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def ListSources(self, request: ListSourcesRequest, context: grpc.ServicerContext) -> ListSourcesResponse:
         """List registered sources."""
+        from sqlalchemy import text
+
         from garage_rag.db.engine import session_scope
         from garage_rag.db.models import Source
 
         with session_scope() as session:
             sources = session.query(Source).order_by(Source.id).all()
+            doc_counts = dict(
+                session.execute(
+                    text("SELECT source_id, count(*) FROM documents GROUP BY source_id")
+                ).all()
+            )
             proto_sources: list[SourceInfo] = [
                 SourceInfo(
                     slug=s.slug,
@@ -225,6 +232,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     allow_cloud_enrichment=bool(s.allow_cloud_enrichment),
                     enabled=bool(s.enabled),
                     root=s.root,
+                    document_count=doc_counts.get(s.id, 0),
                 )
                 for s in sources
             ]
@@ -372,13 +380,26 @@ class GarageRpcServicer(GarageServiceServicer):
             sources = [request.source]
 
         for source_slug in sources:
-            yield IngestStatus(
-                source=source_slug,
-                is_complete=False,
-                progress=0.0,
-                progress_message=f"Scanning source {source_slug}...",
-                phase="scan",
-            )
+            with factory() as session:
+                src_obj = session.query(Source).filter_by(slug=source_slug).one_or_none()
+                if src_obj:
+                    scan_res = scan_source(src_obj, include_code=request.include_code)
+                    yield IngestStatus(
+                        source=source_slug,
+                        is_complete=False,
+                        progress=0.0,
+                        progress_message=f"Scanned {source_slug}: found {scan_res.item_count:,} {scan_res.item_type}",
+                        total_items=scan_res.item_count,
+                        phase="scan",
+                    )
+                else:
+                    yield IngestStatus(
+                        source=source_slug,
+                        is_complete=False,
+                        progress=0.0,
+                        progress_message=f"Scanning source {source_slug}...",
+                        phase="scan",
+                    )
 
             counters, walk_stats, budget = ingest_source(
                 factory,

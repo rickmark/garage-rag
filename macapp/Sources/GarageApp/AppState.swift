@@ -166,7 +166,8 @@ final class AppState: ObservableObject {
                     allowCloudEnrichment: ds.allowCloudEnrichment,
                     enabled: ds.enabled,
                     includeCode: existing.includeCode,
-                    origin: .both
+                    origin: .both,
+                    documentCount: ds.documentCount
                 )
             } else {
                 merged[ds.slug] = ds
@@ -191,6 +192,15 @@ final class AppState: ObservableObject {
                 stats.sourcesCount = registeredSources.count
             }
             self.corpusStats = stats
+            if let docCounts = try? postgres.fetchSourceDocumentCounts() {
+                self.registeredSources = self.registeredSources.map { source in
+                    var updated = source
+                    if let count = docCounts[source.slug] {
+                        updated.documentCount = count
+                    }
+                    return updated
+                }
+            }
         } catch {
             var fallback = self.corpusStats
             if fallback.sourcesCount == 0 {
@@ -345,6 +355,16 @@ final class AppState: ObservableObject {
         lastCommandSucceeded = true
         lastCommandOutput = "Volume access revoked and saved bookmark cleared."
     }
+
+    #if DEBUG
+    func setRegisteredSourcesForTesting(_ sources: [RegisteredSource]) {
+        self.registeredSources = sources
+    }
+
+    func setCorpusStatsForTesting(_ stats: CorpusStats) {
+        self.corpusStats = stats
+    }
+    #endif
 
     /// Runs a garage subcommand and captures its combined output for display.
     @discardableResult

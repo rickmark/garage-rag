@@ -390,11 +390,17 @@ final class PostgresService: ObservableObject {
         return models
     }
 
-    /// Fetches all registered ingest sources directly from the backing database.
+    /// Fetches all registered ingest sources directly from the backing database along with their document counts.
     func listRegisteredSources() throws -> [RegisteredSource] {
         try requireRunning()
         let password = try postgresPassword()
-        let sql = "SELECT slug, kind, root, default_class::text, default_trust::text, allow_cloud_enrichment, enabled FROM sources ORDER BY id;"
+        let sql = """
+        SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.allow_cloud_enrichment, s.enabled, count(d.id)
+        FROM sources s
+        LEFT JOIN documents d ON d.source_id = s.id
+        GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.allow_cloud_enrichment, s.enabled
+        ORDER BY s.id;
+        """
         let (status, output) = ProcessRunner.runSync(
             executable: Paths.postgresTool("psql"),
             arguments: [
@@ -419,6 +425,7 @@ final class PostgresService: ObservableObject {
             let trust = parts[4]
             let allowCloud = parts[5] == "t" || parts[5] == "true"
             let enabled = parts[6] == "t" || parts[6] == "true"
+            let docCount = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
             sources.append(RegisteredSource(
                 slug: slug,
                 kind: kind,
@@ -428,10 +435,40 @@ final class PostgresService: ObservableObject {
                 allowCloudEnrichment: allowCloud,
                 enabled: enabled,
                 includeCode: false,
-                origin: .database
+                origin: .database,
+                documentCount: docCount
             ))
         }
         return sources
+    }
+
+    /// Fetches document counts mapped by source slug.
+    func fetchSourceDocumentCounts() throws -> [String: Int] {
+        try requireRunning()
+        let password = try postgresPassword()
+        let sql = "SELECT s.slug, count(d.id) FROM sources s LEFT JOIN documents d ON d.source_id = s.id GROUP BY s.slug;"
+        let (status, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAF\t", "-c", sql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard status == 0 else {
+            throw PostgresError.other("psql query failed: \(output)")
+        }
+        var counts: [String: Int] = [:]
+        for line in output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.components(separatedBy: "\t")
+            guard parts.count >= 2 else { continue }
+            let slug = parts[0]
+            let count = Int(parts[1]) ?? 0
+            counts[slug] = count
+        }
+        return counts
     }
 
     /// Queries the Postgres database for overall corpus, ingestion, and embedding statistics.

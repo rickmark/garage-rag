@@ -103,6 +103,29 @@ struct StatusView: View {
                 }
                 .padding(.vertical, 4)
 
+                if !appState.registeredSources.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Source Ingest Breakdown")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        ForEach(appState.registeredSources) { src in
+                            HStack {
+                                Image(systemName: "folder")
+                                    .font(.caption2)
+                                    .foregroundStyle(.blue)
+                                Text(src.slug)
+                                    .font(.caption.bold())
+                                Spacer()
+                                Text("\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s") ingested")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+
                 HStack {
                     if let lastUpdated = appState.corpusStats.lastUpdated {
                         Text("Updated \(lastUpdated, style: .time)")
@@ -150,7 +173,8 @@ struct StatusView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("\(effectiveSourcesCount) source\(effectiveSourcesCount == 1 ? "" : "s") registered")
+                let totalDocs = appState.corpusStats.documentsCount
+                Text("\(effectiveSourcesCount) source\(effectiveSourcesCount == 1 ? "" : "s") (\(totalDocs) doc\(totalDocs == 1 ? "" : "s") ingested)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -201,7 +225,7 @@ struct StatusView: View {
                 .progressViewStyle(.linear)
 
             if stats.totalSeenFiles > 0 {
-                Text("\(stats.totalIndexedFiles) of \(stats.totalSeenFiles) files indexed")
+                Text("\(stats.totalIndexedFiles) of \(stats.totalSeenFiles) files indexed (\(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if stats.documentsCount > 0 {
@@ -598,7 +622,12 @@ struct StatusView: View {
             } else {
                 severity = .healthy
                 headline = "Sources Configured & Accessible"
-                details = "\(appState.registeredSources.count) source(s) active with verified disk access."
+                let totalDocs = appState.corpusStats.documentsCount
+                if appState.corpusStats.totalSeenFiles > 0 {
+                    details = "\(appState.registeredSources.count) source(s) active with \(totalDocs) document\(totalDocs == 1 ? "" : "s") ingested (\(appState.corpusStats.totalIndexedFiles) indexed of \(appState.corpusStats.totalSeenFiles) seen files)."
+                } else {
+                    details = "\(appState.registeredSources.count) source(s) active with \(totalDocs) document\(totalDocs == 1 ? "" : "s") ingested."
+                }
                 quickAction = nil
             }
         }

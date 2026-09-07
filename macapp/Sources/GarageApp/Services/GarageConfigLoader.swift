@@ -13,6 +13,7 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
     public let enabled: Bool
     public let includeCode: Bool
     public let origin: SourceOrigin
+    public var documentCount: Int
 
     public enum SourceOrigin: String, Sendable, Codable {
         case config = "Config File"
@@ -29,7 +30,8 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         allowCloudEnrichment: Bool = false,
         enabled: Bool = true,
         includeCode: Bool = false,
-        origin: SourceOrigin = .config
+        origin: SourceOrigin = .config,
+        documentCount: Int = 0
     ) {
         self.slug = slug
         self.kind = kind
@@ -40,6 +42,7 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         self.enabled = enabled
         self.includeCode = includeCode
         self.origin = origin
+        self.documentCount = documentCount
     }
 
     /// Expanded filesystem path, expanding '~' if present.

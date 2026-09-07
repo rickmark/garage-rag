@@ -100,3 +100,20 @@ def test_model_info_proto_model_id():
         model_id="test-org/test-slug",
     )
     assert req.model_id == "test-org/test-slug"
+
+
+def test_source_info_proto_document_count():
+    from garage_rag.proto.garage_pb2 import SourceInfo
+
+    s = SourceInfo(
+        slug="test-source",
+        kind="filesystem",
+        corpus_class="document",
+        trust_tier="authored",
+        allow_cloud_enrichment=False,
+        enabled=True,
+        root="/path/to/source",
+        document_count=42,
+    )
+    assert s.slug == "test-source"
+    assert s.document_count == 42

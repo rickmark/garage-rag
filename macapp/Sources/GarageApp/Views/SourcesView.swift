@@ -227,6 +227,8 @@ struct SourcesView: View {
 
                         originBadge(for: source.origin)
 
+                        badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
+
                         if !source.enabled {
                             badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
                         }
@@ -261,7 +263,7 @@ struct SourcesView: View {
                         }
                     }
 
-                    Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust)")
+                    Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust) • Documents: \(source.documentCount)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -496,9 +498,9 @@ struct SourcesView: View {
                 LabeledContent("Source to Ingest") {
                     VStack(alignment: .leading, spacing: 6) {
                         Picker("", selection: $ingestSelection) {
-                            Text("All Sources (*)").tag("*")
+                            Text("All Sources (*) — \(appState.corpusStats.documentsCount) total doc\(appState.corpusStats.documentsCount == 1 ? "" : "s")").tag("*")
                             ForEach(appState.registeredSources) { src in
-                                Text("\(src.slug) (\(src.root))").tag(src.slug)
+                                Text("\(src.slug) (\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s"), \(src.root))").tag(src.slug)
                             }
                             Text("Custom Slug…").tag("custom")
                         }
@@ -509,7 +511,7 @@ struct SourcesView: View {
                                 .textFieldStyle(.roundedBorder)
                         } else if let selectedSource = appState.registeredSources.first(where: { $0.slug == ingestSelection }) {
                             HStack(spacing: 8) {
-                                Text("Path: \(selectedSource.root)")
+                                Text("\(selectedSource.documentCount) doc\(selectedSource.documentCount == 1 ? "" : "s") ingested • Path: \(selectedSource.root)")
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
 
@@ -531,6 +533,13 @@ struct SourcesView: View {
                 Toggle("Force re-extract & re-chunk", isOn: $forceReindex)
 
                 HStack {
+                    Button("Scan sources") {
+                        var args = ["scan", "--source", effectiveIngestSlug]
+                        if includeCode { args.append("--include-code") }
+                        runIngest(args)
+                    }
+                    .disabled(effectiveIngestSlug.isEmpty || notReady)
+
                     Button("Ingest now") {
                         var args = ["ingest", "--source", effectiveIngestSlug]
                         if includeCode { args.append("--include-code") }

@@ -172,6 +172,7 @@ message SourceInfo {
     bool allow_cloud_enrichment = 5;
     bool enabled = 6;
     string root = 7;
+    int64 document_count = 8;
 }
 
 message ListSourcesRequest {}
