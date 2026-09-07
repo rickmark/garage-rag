@@ -272,4 +272,105 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertFalse(result.sourcePathResults[0].isAccessible)
         XCTAssertEqual(result.sourcePathResults[0].statusDescription, "Path does not exist")
     }
+
+    func testTCCPermissionCategoryDetection() {
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "apple-sms", path: "~/Library/Messages"), .messages)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "sms", path: "/Users/user/Library/Messages"), .messages)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "messages", path: "/tmp/custom"), .messages)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "custom", path: "~/Library/Messages"), .messages)
+
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "apple-mail", path: "~/Library/Mail"), .mail)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "mail", path: "/Users/user/Library/Mail"), .mail)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "maildir", path: "~/Library/Mail"), .mail)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "custom", path: "~/Library/Mail"), .mail)
+
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "documents", path: "~/Documents"), .documents)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "downloads", path: "~/Downloads"), .downloads)
+        XCTAssertEqual(TCCPermissionCategory.detect(slug: "desktop", path: "~/Desktop"), .desktop)
+
+        XCTAssertNil(TCCPermissionCategory.detect(slug: "random-corpus", path: "/opt/corpus"))
+    }
+
+    func testTCCPermissionCategoryProperties() {
+        let messages = TCCPermissionCategory.messages
+        XCTAssertEqual(messages.displayName, "Messages (apple-sms)")
+        XCTAssertEqual(messages.iconName, "message.fill")
+        XCTAssertTrue(messages.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
+        XCTAssertTrue(messages.helpMessage.contains("Messages databases"))
+
+        let mail = TCCPermissionCategory.mail
+        XCTAssertEqual(mail.displayName, "Apple Mail (apple-mail)")
+        XCTAssertEqual(mail.iconName, "envelope.fill")
+        XCTAssertTrue(mail.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
+        XCTAssertTrue(mail.helpMessage.contains("Mail storage"))
+
+        let docs = TCCPermissionCategory.documents
+        XCTAssertEqual(docs.displayName, "Documents")
+        XCTAssertTrue(docs.systemSettingsURL?.absoluteString.contains("Privacy_FilesAndFolders") == true)
+    }
+
+    func testVolumeAccessWithMessagesAndMailTCCRestriction() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"] // Messages & Mail not readable
+
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let result = service.testFullVolumeAccess(sourcePaths: [
+            (slug: "apple-sms", root: "~/Library/Messages"),
+            (slug: "apple-mail", root: "~/Library/Mail")
+        ])
+
+        XCTAssertFalse(result.isAccessible)
+        XCTAssertEqual(result.sourcePathResults.count, 2)
+
+        let smsResult = result.sourcePathResults[0]
+        XCTAssertFalse(smsResult.isAccessible)
+        XCTAssertEqual(smsResult.tccCategory, .messages)
+        XCTAssertTrue(smsResult.requiresTCCPermission)
+        XCTAssertEqual(smsResult.statusDescription, "TCC permission required (Messages (apple-sms))")
+        XCTAssertTrue(smsResult.tccHelpMessage?.contains("Messages databases") == true)
+
+        let mailResult = result.sourcePathResults[1]
+        XCTAssertFalse(mailResult.isAccessible)
+        XCTAssertEqual(mailResult.tccCategory, .mail)
+        XCTAssertTrue(mailResult.requiresTCCPermission)
+        XCTAssertEqual(mailResult.statusDescription, "TCC permission required (Apple Mail (apple-mail))")
+        XCTAssertTrue(mailResult.tccHelpMessage?.contains("Mail storage") == true)
+    }
+
+    func testUserDefaultsVolumeBookmarkStorePathSpecific() {
+        let suiteName = "test.garage.volumeaccess.paths.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = UserDefaultsVolumeBookmarkStore(defaults: defaults)
+        let samplePath = "/Users/test/Library/Messages"
+        let sampleData = Data("messages_bookmark".utf8)
+
+        XCTAssertNil(store.loadBookmarkData(forPath: samplePath))
+        XCTAssertTrue(store.loadAllSourceBookmarks().isEmpty)
+
+        store.saveBookmarkData(sampleData, forPath: samplePath)
+        XCTAssertEqual(store.loadBookmarkData(forPath: samplePath), sampleData)
+        XCTAssertEqual(store.loadAllSourceBookmarks()[samplePath], sampleData)
+
+        store.clearBookmark(forPath: samplePath)
+        XCTAssertNil(store.loadBookmarkData(forPath: samplePath))
+        XCTAssertTrue(store.loadAllSourceBookmarks().isEmpty)
+    }
+
+    func testGrantSourceAccessUpdatesActiveSources() throws {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        let testDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", testDir.path]
+
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        try service.grantSourceAccess(for: testDir, forSourcePath: testDir.path)
+
+        XCTAssertNotNil(service.activeSourceURLs[testDir.path])
+        XCTAssertEqual(service.activeSourceURLs[testDir.path]?.path, testDir.path)
+    }
 }

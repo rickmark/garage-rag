@@ -157,4 +157,20 @@ final class AppStateTests: XCTestCase {
         XCTAssertNotNil(state.lastCommandSucceeded)
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
     }
+
+    @MainActor
+    func testAppStateTCCConvenienceMethods() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+        mockFS.directoryContents = [URL(fileURLWithPath: "/System")]
+
+        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let state = AppState(llama: LlamaService(), volumeAccess: volumeService)
+
+        // Test openPrivacySettings invocation (does not crash or throw)
+        state.openPrivacySettings(for: .messages)
+        state.openPrivacySettings(for: .mail)
+        state.openPrivacySettings(for: .fullDiskAccess)
+    }
 }

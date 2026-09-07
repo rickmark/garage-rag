@@ -22,5 +22,21 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Garage requires permission to communicate with system applications for indexing data.</string>
+	<key>NSSystemAdministrationUsageDescription</key>
+	<string>Garage requires access to system and user directories (including Messages and Mail) to index your personal knowledge base locally.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Garage needs access to your Documents folder to index documents.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Garage needs access to your Downloads folder to index files.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Garage needs access to your Desktop folder to index files.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Garage accesses contacts to resolve author identities and communications.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Garage accesses calendar events for local knowledge retrieval.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Garage accesses reminders for local knowledge retrieval.</string>
 </dict>
 </plist>

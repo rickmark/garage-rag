@@ -24,6 +24,25 @@ struct SourcesView: View {
     private let classes = ["document", "code", "communication"]
     private let trusts = ["authored", "reference", "received"]
 
+    private struct SourcePreset: Identifiable {
+        let id: String
+        let title: String
+        let slug: String
+        let root: String
+        let kind: String
+        let corpusClass: String
+        let trust: String
+        let allowCloud: Bool
+    }
+
+    private let commonPresets: [SourcePreset] = [
+        SourcePreset(id: "apple-sms", title: "Messages (apple-sms)", slug: "apple-sms", root: "~/Library/Messages", kind: "sqlite", corpusClass: "communication", trust: "received", allowCloud: false),
+        SourcePreset(id: "apple-mail", title: "Apple Mail (apple-mail)", slug: "apple-mail", root: "~/Library/Mail", kind: "maildir", corpusClass: "communication", trust: "received", allowCloud: false),
+        SourcePreset(id: "documents", title: "Documents", slug: "documents", root: "~/Documents", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false),
+        SourcePreset(id: "downloads", title: "Downloads", slug: "downloads", root: "~/Downloads", kind: "filesystem", corpusClass: "document", trust: "received", allowCloud: false),
+        SourcePreset(id: "desktop", title: "Desktop", slug: "desktop", root: "~/Desktop", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false)
+    ]
+
     var effectiveIngestSlug: String {
         if ingestSelection == "custom" {
             return customIngestSlug.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -79,6 +98,9 @@ struct SourcesView: View {
                     }
                     Button("Test Ingest Paths & Disk Access") {
                         _ = appState.testVolumeAccess()
+                    }
+                    Button("Open Privacy Settings…") {
+                        appState.openPrivacySettings(for: .fullDiskAccess)
                     }
                     if appState.volumeAccess.status.isGranted {
                         Button("Revoke Access") {
@@ -246,7 +268,7 @@ struct SourcesView: View {
                     if let access = accessResult, !access.isAccessible {
                         Text("Disk Access Status: \(access.statusDescription)")
                             .font(.caption2.bold())
-                            .foregroundStyle(.red)
+                            .foregroundStyle(access.requiresTCCPermission ? .orange : .red)
                     }
                 }
 
@@ -274,6 +296,22 @@ struct SourcesView: View {
                             populateForm(from: source)
                         }
 
+                        if let access = accessResult, !access.isAccessible {
+                            Button("Grant Directory Access…") {
+                                appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                            }
+
+                            if let cat = access.tccCategory {
+                                Button("TCC Permission Prompt…") {
+                                    appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
+                                }
+
+                                Button("Open Privacy Settings…") {
+                                    appState.openPrivacySettings(for: cat)
+                                }
+                            }
+                        }
+
                         Button("Reconcile (Dry Run)") {
                             run(["reconcile", "--source", source.slug])
                         }
@@ -296,6 +334,49 @@ struct SourcesView: View {
                     .menuStyle(.borderlessButton)
                     .frame(width: 24)
                 }
+            }
+
+            if let access = accessResult, !access.isAccessible {
+                let isTCC = access.requiresTCCPermission || access.tccCategory != nil
+                let cat = access.tccCategory ?? TCCPermissionCategory.detect(slug: source.slug, path: source.root)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isTCC ? (cat?.iconName ?? "lock.shield.fill") : "exclamationmark.triangle.fill")
+                            .foregroundStyle(isTCC ? Color.orange : Color.red)
+                        Text(isTCC ? "Permissions Required: \(cat?.displayName ?? "macOS TCC")" : "Access Denied")
+                            .font(.caption.bold())
+                            .foregroundStyle(isTCC ? Color.orange : Color.red)
+                    }
+
+                    if let help = access.tccHelpMessage ?? cat?.helpMessage {
+                        Text(help)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Grant Folder Access…") {
+                            appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+
+                        if let cat = cat {
+                            Button("TCC Prompt…") {
+                                appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
+                            }
+                            .controlSize(.small)
+
+                            Button("Open Privacy Settings…") {
+                                appState.openPrivacySettings(for: cat)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                .padding(8)
+                .background((isTCC ? Color.orange : Color.red).opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(10)
@@ -329,9 +410,23 @@ struct SourcesView: View {
     private var addOrUpdateSourceSection: some View {
         GroupBox("Add / Update a Source") {
             VStack(alignment: .leading, spacing: 10) {
-                if !appState.registeredSources.isEmpty {
-                    HStack {
-                        Text("Fill from existing source:")
+                HStack {
+                    Text("Quick Presets:")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Menu("Choose preset…") {
+                        ForEach(commonPresets) { preset in
+                            Button(preset.title) {
+                                applyPreset(preset)
+                            }
+                        }
+                    }
+                    .controlSize(.small)
+
+                    Spacer()
+
+                    if !appState.registeredSources.isEmpty {
+                        Text("Fill from existing:")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Menu("Select source…") {
@@ -342,7 +437,6 @@ struct SourcesView: View {
                             }
                         }
                         .controlSize(.small)
-                        Spacer()
                     }
                 }
 
@@ -551,29 +645,53 @@ struct SourcesView: View {
     }
 
     private func sourcePathResultRow(_ res: SourcePathAccessResult) -> some View {
-        HStack(alignment: .center, spacing: 6) {
-            Image(systemName: res.isAccessible ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(res.isAccessible ? Color.green : Color.red)
-                .font(.caption)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: res.isAccessible ? "checkmark.circle.fill" : (res.requiresTCCPermission ? "lock.shield.fill" : "xmark.circle.fill"))
+                    .foregroundStyle(res.isAccessible ? Color.green : (res.requiresTCCPermission ? Color.orange : Color.red))
+                    .font(.caption)
 
-            Text(res.slug.isEmpty ? res.rawPath : res.slug)
-                .font(.caption.bold().monospaced())
+                Text(res.slug.isEmpty ? res.rawPath : res.slug)
+                    .font(.caption.bold().monospaced())
 
-            Text(res.rawPath)
-                .font(.caption.monospaced())
-                .foregroundStyle(Color.secondary)
-
-            if res.rawPath != res.resolvedPath {
-                Text("(\(res.resolvedPath))")
-                    .font(.caption2)
+                Text(res.rawPath)
+                    .font(.caption.monospaced())
                     .foregroundStyle(Color.secondary)
+
+                if res.rawPath != res.resolvedPath {
+                    Text("(\(res.resolvedPath))")
+                        .font(.caption2)
+                        .foregroundStyle(Color.secondary)
+                }
+
+                Spacer()
+
+                Text(res.statusDescription)
+                    .font(.caption2)
+                    .foregroundStyle(res.isAccessible ? Color.secondary : (res.requiresTCCPermission ? Color.orange : Color.red))
             }
 
-            Spacer()
+            if !res.isAccessible {
+                HStack(spacing: 8) {
+                    Button("Grant Access…") {
+                        appState.promptAndSelectSourceDirectory(slug: res.slug, suggestedPath: res.rawPath)
+                    }
+                    .controlSize(.mini)
 
-            Text(res.statusDescription)
-                .font(.caption2)
-                .foregroundStyle(res.isAccessible ? Color.secondary : Color.red)
+                    if let cat = res.tccCategory {
+                        Button("Prompt…") {
+                            appState.promptTCCPermission(category: cat, sourceSlug: res.slug, sourcePath: res.rawPath)
+                        }
+                        .controlSize(.mini)
+
+                        Button("Settings…") {
+                            appState.openPrivacySettings(for: cat)
+                        }
+                        .controlSize(.mini)
+                    }
+                }
+                .padding(.leading, 18)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -586,6 +704,15 @@ struct SourcesView: View {
         if panel.runModal() == .OK, let url = panel.url {
             root = url.path
         }
+    }
+
+    private func applyPreset(_ preset: SourcePreset) {
+        slug = preset.slug
+        root = preset.root
+        kind = preset.kind
+        corpusClass = preset.corpusClass
+        trust = preset.trust
+        allowCloud = preset.allowCloud
     }
 
     private func populateForm(from source: RegisteredSource) {

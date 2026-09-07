@@ -1,6 +1,113 @@
 import Foundation
 import AppKit
 
+/// Represents categories of TCC (Transparency, Consent, and Control) permissions in macOS.
+public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
+    case messages = "apple-sms"
+    case mail = "apple-mail"
+    case documents = "documents"
+    case downloads = "downloads"
+    case desktop = "desktop"
+    case fullDiskAccess = "full-disk-access"
+    case filesAndFolders = "files-and-folders"
+
+    public var displayName: String {
+        switch self {
+        case .messages:
+            return "Messages (apple-sms)"
+        case .mail:
+            return "Apple Mail (apple-mail)"
+        case .documents:
+            return "Documents"
+        case .downloads:
+            return "Downloads"
+        case .desktop:
+            return "Desktop"
+        case .fullDiskAccess:
+            return "Full Disk Access"
+        case .filesAndFolders:
+            return "Files & Folders"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .messages:
+            return "message.fill"
+        case .mail:
+            return "envelope.fill"
+        case .documents:
+            return "doc.text.fill"
+        case .downloads:
+            return "arrow.down.circle.fill"
+        case .desktop:
+            return "menubar.dock.rectangle"
+        case .fullDiskAccess:
+            return "internaldrive.fill"
+        case .filesAndFolders:
+            return "folder.fill.badge.gearshape"
+        }
+    }
+
+    public var systemSettingsURL: URL? {
+        switch self {
+        case .messages, .mail, .fullDiskAccess:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+        case .documents, .downloads, .desktop, .filesAndFolders:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        }
+    }
+
+    public var helpMessage: String {
+        switch self {
+        case .messages:
+            return "macOS protects Messages databases (~/Library/Messages). Full Disk Access in System Settings or selecting the Messages directory directly is required to index SMS and iMessage history."
+        case .mail:
+            return "macOS protects Mail storage (~/Library/Mail). Full Disk Access in System Settings or selecting the Mail directory directly is required to index email archives."
+        case .documents:
+            return "Permission to access your Documents directory is required to index local documents."
+        case .downloads:
+            return "Permission to access your Downloads directory is required to index downloaded items."
+        case .desktop:
+            return "Permission to access your Desktop directory is required to index desktop files."
+        case .fullDiskAccess:
+            return "Full Disk Access in macOS System Settings is required for complete system ingestion."
+        case .filesAndFolders:
+            return "File access permission is required to index files in this location."
+        }
+    }
+
+    /// Detects the relevant TCC permission category based on the slug or path.
+    public static func detect(slug: String, path: String) -> TCCPermissionCategory? {
+        let lowerSlug = slug.lowercased()
+        let lowerPath = (path as NSString).expandingTildeInPath.lowercased()
+
+        if lowerSlug == "apple-sms" || lowerSlug == "sms" || lowerSlug == "messages" || lowerSlug == "imessage"
+            || lowerPath.contains("/library/messages") || lowerPath.hasSuffix("/messages") {
+            return .messages
+        }
+
+        if lowerSlug == "apple-mail" || lowerSlug == "mail" || lowerSlug == "maildir"
+            || lowerPath.contains("/library/mail") || lowerPath.hasSuffix("/mail") {
+            return .mail
+        }
+
+        if lowerSlug == "documents" || lowerPath.contains("/documents") {
+            return .documents
+        }
+
+        if lowerSlug == "downloads" || lowerPath.contains("/downloads") {
+            return .downloads
+        }
+
+        if lowerSlug == "desktop" || lowerPath.contains("/desktop") {
+            return .desktop
+        }
+
+        return nil
+    }
+}
+
 /// Represents the status of volume access inside the sandbox.
 public enum VolumeAccessStatus: Equatable {
     case notConfigured
@@ -41,6 +148,9 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
     public let isDirectory: Bool
     public let itemCount: Int?
     public let errorMessage: String?
+    public let tccCategory: TCCPermissionCategory?
+    public let requiresTCCPermission: Bool
+    public let tccHelpMessage: String?
 
     public init(
         slug: String,
@@ -50,7 +160,10 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         isReadable: Bool,
         isDirectory: Bool,
         itemCount: Int?,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        tccCategory: TCCPermissionCategory? = nil,
+        requiresTCCPermission: Bool = false,
+        tccHelpMessage: String? = nil
     ) {
         self.slug = slug
         self.rawPath = rawPath
@@ -60,6 +173,9 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         self.isDirectory = isDirectory
         self.itemCount = itemCount
         self.errorMessage = errorMessage
+        self.tccCategory = tccCategory
+        self.requiresTCCPermission = requiresTCCPermission
+        self.tccHelpMessage = tccHelpMessage
     }
 
     public var isAccessible: Bool {
@@ -71,6 +187,9 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
             return "Path does not exist"
         }
         if !isReadable {
+            if let cat = tccCategory {
+                return "TCC permission required (\(cat.displayName))"
+            }
             return "Permission denied / not readable"
         }
         if let error = errorMessage {
@@ -121,6 +240,18 @@ public protocol VolumeBookmarkStoring {
     func saveBookmarkData(_ data: Data, path: String)
     func loadBookmarkPath() -> String?
     func clearBookmark()
+
+    func loadBookmarkData(forPath path: String) -> Data?
+    func saveBookmarkData(_ data: Data, forPath path: String)
+    func clearBookmark(forPath path: String)
+    func loadAllSourceBookmarks() -> [String: Data]
+}
+
+public extension VolumeBookmarkStoring {
+    func loadBookmarkData(forPath path: String) -> Data? { nil }
+    func saveBookmarkData(_ data: Data, forPath path: String) {}
+    func clearBookmark(forPath path: String) {}
+    func loadAllSourceBookmarks() -> [String: Data] { [:] }
 }
 
 /// Standard UserDefaults-backed bookmark store.
@@ -128,15 +259,18 @@ public final class UserDefaultsVolumeBookmarkStore: VolumeBookmarkStoring {
     private let defaults: UserDefaults
     private let bookmarkKey: String
     private let pathKey: String
+    private let sourceBookmarksKey: String
 
     public init(
         defaults: UserDefaults = .standard,
         bookmarkKey: String = "garage.rootVolumeBookmark",
-        pathKey: String = "garage.rootVolumePath"
+        pathKey: String = "garage.rootVolumePath",
+        sourceBookmarksKey: String = "garage.sourceBookmarks"
     ) {
         self.defaults = defaults
         self.bookmarkKey = bookmarkKey
         self.pathKey = pathKey
+        self.sourceBookmarksKey = sourceBookmarksKey
     }
 
     public func loadBookmarkData() -> Data? {
@@ -155,6 +289,27 @@ public final class UserDefaultsVolumeBookmarkStore: VolumeBookmarkStoring {
     public func clearBookmark() {
         defaults.removeObject(forKey: bookmarkKey)
         defaults.removeObject(forKey: pathKey)
+    }
+
+    public func loadBookmarkData(forPath path: String) -> Data? {
+        let dict = defaults.dictionary(forKey: sourceBookmarksKey) as? [String: Data]
+        return dict?[path]
+    }
+
+    public func saveBookmarkData(_ data: Data, forPath path: String) {
+        var dict = (defaults.dictionary(forKey: sourceBookmarksKey) as? [String: Data]) ?? [:]
+        dict[path] = data
+        defaults.set(dict, forKey: sourceBookmarksKey)
+    }
+
+    public func clearBookmark(forPath path: String) {
+        var dict = (defaults.dictionary(forKey: sourceBookmarksKey) as? [String: Data]) ?? [:]
+        dict.removeValue(forKey: path)
+        defaults.set(dict, forKey: sourceBookmarksKey)
+    }
+
+    public func loadAllSourceBookmarks() -> [String: Data] {
+        (defaults.dictionary(forKey: sourceBookmarksKey) as? [String: Data]) ?? [:]
     }
 }
 
@@ -192,6 +347,7 @@ public final class VolumeAccessService: ObservableObject {
     @Published public private(set) var status: VolumeAccessStatus = .notConfigured
     @Published public private(set) var activeRootURL: URL?
     @Published public private(set) var lastTestResult: VolumeAccessTestResult?
+    @Published public private(set) var activeSourceURLs: [String: URL] = [:]
 
     private let bookmarkStore: VolumeBookmarkStoring
     private let fileSystem: FileSystemAccessing
@@ -208,12 +364,15 @@ public final class VolumeAccessService: ObservableObject {
     deinit {
         MainActor.assumeIsolated {
             stopAccessingCurrentScope()
+            stopAccessingAllSourceScopes()
         }
     }
 
     /// Automatically restores persisted bookmark and validates access.
     @discardableResult
     public func restoreAndVerifyAccess() -> Bool {
+        restoreSourceBookmarks()
+
         guard let bookmarkData = bookmarkStore.loadBookmarkData() else {
             // Check if root is directly accessible (e.g. Non-sandboxed development environment)
             let rootURL = URL(fileURLWithPath: "/")
@@ -282,6 +441,21 @@ public final class VolumeAccessService: ObservableObject {
         }
     }
 
+    /// Restores individual security-scoped bookmarks saved for specific source directories.
+    private func restoreSourceBookmarks() {
+        let sourceBookmarks = bookmarkStore.loadAllSourceBookmarks()
+        for (path, data) in sourceBookmarks {
+            var isStale = false
+            #if os(macOS)
+            if let resolvedURL = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                if resolvedURL.startAccessingSecurityScopedResource() {
+                    activeSourceURLs[path] = resolvedURL
+                }
+            }
+            #endif
+        }
+    }
+
     /// Displays an NSOpenPanel configured to assist the user in choosing the root hard-drive.
     public func promptForRootVolumeSelection() -> URL? {
         let panel = NSOpenPanel()
@@ -308,6 +482,104 @@ public final class VolumeAccessService: ObservableObject {
         }
     }
 
+    /// Displays an NSOpenPanel configured to select a specific source directory such as Messages or Mail.
+    public func promptForSourceDirectoryAccess(slug: String? = nil, suggestedPath: String) -> URL? {
+        let resolvedPath = (suggestedPath as NSString).expandingTildeInPath
+        let cat = TCCPermissionCategory.detect(slug: slug ?? "", path: resolvedPath)
+        let displayName = cat?.displayName ?? (slug ?? "Source Directory")
+
+        let panel = NSOpenPanel()
+        panel.title = "Grant Access to \(displayName)"
+        panel.message = "To allow Garage to index \(displayName) ('\(suggestedPath)'), please select the folder and click 'Grant Access'."
+        panel.prompt = "Grant Access"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = URL(fileURLWithPath: resolvedPath)
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return nil
+        }
+
+        do {
+            try grantSourceAccess(for: selectedURL, forSourcePath: suggestedPath)
+            return selectedURL
+        } catch {
+            return nil
+        }
+    }
+
+    /// Grants access for a specific source path and persists its security-scoped bookmark.
+    public func grantSourceAccess(for url: URL, forSourcePath path: String) throws {
+        _ = url.startAccessingSecurityScopedResource()
+        let resolvedPath = (path as NSString).expandingTildeInPath
+        activeSourceURLs[resolvedPath] = url
+
+        #if os(macOS)
+        let bookmarkData: Data
+        do {
+            bookmarkData = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            bookmarkData = try url.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        }
+        bookmarkStore.saveBookmarkData(bookmarkData, forPath: resolvedPath)
+        #endif
+
+        _ = testFullVolumeAccess()
+    }
+
+    /// Opens macOS System Settings to the appropriate Privacy & Security pane.
+    public func openPrivacySettings(for category: TCCPermissionCategory = .fullDiskAccess) {
+        if let url = category.systemSettingsURL, NSWorkspace.shared.open(url) {
+            return
+        }
+        if let fallbackURL = URL(string: "x-apple.systempreferences:com.apple.preference.security"), NSWorkspace.shared.open(fallbackURL) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    /// Displays an interactive TCC prompt alert explaining the missing permission and offering direct actions.
+    @discardableResult
+    public func promptForTCCPermission(
+        category: TCCPermissionCategory,
+        sourceSlug: String? = nil,
+        sourcePath: String? = nil
+    ) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Permission Required: \(category.displayName)"
+        alert.informativeText = "\(category.helpMessage)\n\nYou can grant folder access directly via Open Panel or open macOS System Settings to enable Full Disk Access."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Select Folder Directly…")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            openPrivacySettings(for: category)
+            return true
+        } else if response == .alertSecondButtonReturn {
+            if let path = sourcePath ?? sourceSlug {
+                _ = promptForSourceDirectoryAccess(slug: sourceSlug, suggestedPath: path)
+                return true
+            } else {
+                _ = promptForRootVolumeSelection()
+                return true
+            }
+        }
+        return false
+    }
+
     /// Grants access for a user-selected URL and saves the security-scoped bookmark.
     public func grantAccess(for url: URL) throws {
         stopAccessingCurrentScope()
@@ -327,6 +599,7 @@ public final class VolumeAccessService: ObservableObject {
     /// Revokes stored bookmark and terminates security-scoped access.
     public func revokeAccess() {
         stopAccessingCurrentScope()
+        stopAccessingAllSourceScopes()
         bookmarkStore.clearBookmark()
         activeRootURL = nil
         lastTestResult = nil
@@ -380,6 +653,10 @@ public final class VolumeAccessService: ObservableObject {
             var count: Int? = nil
             var errorMsg: String? = nil
 
+            let tccCategory = TCCPermissionCategory.detect(slug: slug, path: resolvedPath)
+            let requiresTCC = !isReadable && exists && (tccCategory != nil)
+            let helpMsg = requiresTCC ? tccCategory?.helpMessage : nil
+
             if exists && isReadable {
                 if isDir.boolValue {
                     do {
@@ -392,7 +669,11 @@ public final class VolumeAccessService: ObservableObject {
             } else if !exists {
                 errorMsg = "Path does not exist"
             } else if !isReadable {
-                errorMsg = "Permission denied / not readable"
+                if let cat = tccCategory {
+                    errorMsg = "TCC permission required (\(cat.displayName))"
+                } else {
+                    errorMsg = "Permission denied / not readable"
+                }
             }
 
             sourceResults.append(SourcePathAccessResult(
@@ -403,7 +684,10 @@ public final class VolumeAccessService: ObservableObject {
                 isReadable: isReadable,
                 isDirectory: isDir.boolValue,
                 itemCount: count,
-                errorMessage: errorMsg
+                errorMessage: errorMsg,
+                tccCategory: tccCategory,
+                requiresTCCPermission: requiresTCC || (!isReadable && exists),
+                tccHelpMessage: helpMsg
             ))
         }
 
@@ -426,7 +710,10 @@ public final class VolumeAccessService: ObservableObject {
                 message = "Root volume access test failed for '\(targetURL.path)'."
             } else {
                 let inaccessible = sourceResults.filter { !$0.isAccessible }
-                let details = inaccessible.map { "\($0.slug.isEmpty ? $0.rawPath : $0.slug) (\($0.statusDescription))" }.joined(separator: ", ")
+                let details = inaccessible.map { res in
+                    let label = res.slug.isEmpty ? res.rawPath : res.slug
+                    return "\(label) (\(res.statusDescription))"
+                }.joined(separator: ", ")
                 message = "Volume access granted at '\(targetURL.path)', but \(inaccessible.count) of \(totalCount) ingest source \(totalCount == 1 ? "path is" : "paths are") inaccessible: \(details)"
             }
         } else {
@@ -494,5 +781,12 @@ public final class VolumeAccessService: ObservableObject {
             active.stopAccessingSecurityScopedResource()
             isAccessingSecurityScope = false
         }
+    }
+
+    private func stopAccessingAllSourceScopes() {
+        for (_, url) in activeSourceURLs {
+            url.stopAccessingSecurityScopedResource()
+        }
+        activeSourceURLs.removeAll()
     }
 }

@@ -316,11 +316,29 @@ struct StatusView: View {
             }
         case .accessGranted:
             if let testResult = appState.volumeAccess.lastTestResult, !testResult.isAccessible {
-                severity = .warning
-                headline = "Source Path Access Issue"
-                details = testResult.message
-                quickAction = PageStatusItem.QuickAction(label: "Test Access") {
-                    _ = appState.testVolumeAccess()
+                let inaccessibleTCC = testResult.sourcePathResults.filter { !$0.isAccessible && ($0.requiresTCCPermission || $0.tccCategory != nil) }
+                if !inaccessibleTCC.isEmpty {
+                    severity = .warning
+                    let names = inaccessibleTCC.map { $0.tccCategory?.displayName ?? $0.slug }.joined(separator: ", ")
+                    headline = "Permissions Required: \(names)"
+                    details = testResult.message
+                    if let first = inaccessibleTCC.first {
+                        let labelName = first.slug.isEmpty ? (first.tccCategory?.displayName ?? "Access") : first.slug
+                        quickAction = PageStatusItem.QuickAction(label: "Grant \(labelName)…") {
+                            appState.promptAndSelectSourceDirectory(slug: first.slug, suggestedPath: first.rawPath)
+                        }
+                    } else {
+                        quickAction = PageStatusItem.QuickAction(label: "Open Privacy Settings") {
+                            appState.openPrivacySettings(for: .fullDiskAccess)
+                        }
+                    }
+                } else {
+                    severity = .warning
+                    headline = "Source Path Access Issue"
+                    details = testResult.message
+                    quickAction = PageStatusItem.QuickAction(label: "Test Access") {
+                        _ = appState.testVolumeAccess()
+                    }
                 }
             } else if appState.ingest.isRunning {
                 severity = .info

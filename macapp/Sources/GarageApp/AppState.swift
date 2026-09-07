@@ -278,6 +278,30 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
+    func promptAndSelectSourceDirectory(slug: String? = nil, suggestedPath: String) -> URL? {
+        let url = volumeAccess.promptForSourceDirectoryAccess(slug: slug, suggestedPath: suggestedPath)
+        if let url = url {
+            lastCommandSucceeded = true
+            lastCommandOutput = "Granted access for '\(slug ?? suggestedPath)' at: \(url.path)"
+            _ = testVolumeAccess()
+        }
+        return url
+    }
+
+    @discardableResult
+    func promptTCCPermission(category: TCCPermissionCategory, sourceSlug: String? = nil, sourcePath: String? = nil) -> Bool {
+        let handled = volumeAccess.promptForTCCPermission(category: category, sourceSlug: sourceSlug, sourcePath: sourcePath)
+        if handled {
+            _ = testVolumeAccess()
+        }
+        return handled
+    }
+
+    func openPrivacySettings(for category: TCCPermissionCategory = .fullDiskAccess) {
+        volumeAccess.openPrivacySettings(for: category)
+    }
+
+    @discardableResult
     func testVolumeAccess() -> VolumeAccessTestResult {
         let sourceTuples = registeredSources.map { (slug: $0.slug, root: $0.root) }
         let result = volumeAccess.testFullVolumeAccess(sourcePaths: sourceTuples)
