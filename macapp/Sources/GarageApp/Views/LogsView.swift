@@ -16,33 +16,24 @@ struct LogsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $source) {
-                ForEach(LogSource.allCases) { Text($0.rawValue).tag($0) }
+            Picker("Log Source", selection: $source) {
+                ForEach(LogSource.allCases) { src in
+                    Text(src.rawValue).tag(src)
+                }
             }
             .pickerStyle(.segmented)
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(lines) { line in
-                            Text(line.text)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(line.stream == .stderr ? .red : .primary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id(line.id)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-                    .textSelection(.enabled)
+            LogTableView(
+                lines: lines,
+                sourceName: source.rawValue,
+                onClear: {
+                    appState.clearLogs(for: source.rawValue)
                 }
-                .onChange(of: lines.count) {
-                    if let last = lines.last {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                }
-            }
+            )
+            .id(source)
         }
         .navigationTitle("Logs")
     }

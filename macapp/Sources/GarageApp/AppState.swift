@@ -404,6 +404,19 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
+    func clearLogs(for sourceName: String) {
+        switch sourceName {
+        case "Postgres": postgres.clearLogs()
+        case "garage CLI": garage.clearLogs()
+        case "Ingest": ingest.clearLogs()
+        case "Backfill": backfill.clearLogs()
+        case "MCP Server": mcp.clearLogs()
+        case "Llama Service": llama.clearLogs()
+        case "Model Downloader": modelDownload.clearLogs()
+        default: break
+        }
+    }
+
     private func configureScheduledMaintenance() {
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil
