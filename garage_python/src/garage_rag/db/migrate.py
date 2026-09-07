@@ -12,16 +12,33 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import psycopg
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from garage_rag.config import repo_root
+from garage_rag.config import get_settings, repo_root
 
 log = logging.getLogger(__name__)
 
 
 def sql_dir() -> Path:
     return repo_root() / "sql"
+
+
+def to_psycopg_conninfo(url: str) -> str:
+    """Convert an engine database URL (e.g. postgresql+psycopg://...) to psycopg conninfo/URL."""
+    try:
+        parsed = make_url(url)
+        if "+" in parsed.drivername:
+            parsed = parsed.set(drivername=parsed.drivername.split("+")[0])
+        return parsed.render_as_string(hide_password=False)
+    except Exception:
+        if url.startswith("postgresql+"):
+            prefix, rest = url.split("://", 1)
+            base_driver = prefix.split("+")[0]
+            return f"{base_driver}://{rest}"
+        return url
 
 
 def migration_files(schema_dir: Path | None = None) -> list[Path]:
@@ -32,16 +49,71 @@ def migration_files(schema_dir: Path | None = None) -> list[Path]:
     return sorted(directory.glob("[0-9][0-9][0-9]_*.sql"))
 
 
-def apply_migrations(session: Session, schema_dir: Path | None = None) -> list[str]:
-    """Apply every migration file. Returns the names applied."""
+def init_extensions(database_url: str | None = None, schema_dir: Path | None = None) -> list[str]:
+    """Execute extension setup outside of SQLAlchemy on a direct raw connection."""
+    raw_url = database_url or get_settings().database_url
+    url = to_psycopg_conninfo(raw_url)
     applied: list[str] = []
-    for path in migration_files(schema_dir):
-        log.info("applying %s", path.name)
-        # exec_driver_sql: these files contain multiple statements and
-        # dollar-quoted DO blocks, which SQLAlchemy's text() would try to parse
-        # for bind parameters.
-        session.connection().exec_driver_sql(path.read_text(encoding="utf-8"))
-        applied.append(path.name)
+    try:
+        files = migration_files(schema_dir)
+        extension_files = [f for f in files if "extension" in f.name.lower()]
+    except FileNotFoundError:
+        extension_files = []
+
+    with psycopg.connect(url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            if extension_files:
+                for path in extension_files:
+                    log.info("applying extension migration outside sqlalchemy: %s", path.name)
+                    cur.execute(path.read_text(encoding="utf-8"))
+                    applied.append(path.name)
+            else:
+                log.info("creating default extensions outside sqlalchemy")
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+                applied.append("default_extensions")
+    return applied
+
+
+def apply_migrations(
+    session: Session | None = None,
+    schema_dir: Path | None = None,
+    database_url: str | None = None,
+) -> list[str]:
+    """Apply every migration file. Returns the names applied.
+
+    Extension creation is executed outside of SQLAlchemy to prevent vector
+    operations or type-registration listeners from running before the extension
+    is installed.
+    """
+    from garage_rag.db.engine import reset_engine
+
+    raw_url = database_url or get_settings().database_url
+
+    # Always ensure extensions are initialized outside normal SQLAlchemy
+    init_extensions(database_url=raw_url, schema_dir=schema_dir)
+
+    files = migration_files(schema_dir)
+    applied: list[str] = []
+
+    if session is not None:
+        for path in files:
+            log.info("applying %s", path.name)
+            # exec_driver_sql: these files contain multiple statements and
+            # dollar-quoted DO blocks, which SQLAlchemy's text() would try to parse
+            # for bind parameters.
+            session.connection().exec_driver_sql(path.read_text(encoding="utf-8"))
+            applied.append(path.name)
+    else:
+        conninfo = to_psycopg_conninfo(raw_url)
+        with psycopg.connect(conninfo, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                for path in files:
+                    log.info("applying %s", path.name)
+                    cur.execute(path.read_text(encoding="utf-8"))
+                    applied.append(path.name)
+        reset_engine()
+
     return applied
 
 

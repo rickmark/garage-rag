@@ -5,6 +5,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case database = "Database"
     case sources = "Sources & Ingest"
     case models = "Models"
+    case mcp = "MCP Server"
     case search = "Search"
     case logs = "Logs"
 
@@ -16,6 +17,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .database: "cylinder.split.1x2"
         case .sources: "tray.and.arrow.down"
         case .models: "cpu"
+        case .mcp: "server.rack"
         case .search: "magnifyingglass"
         case .logs: "terminal"
         }
@@ -34,10 +36,11 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(190)
         } detail: {
             switch selection ?? .status {
-            case .status: StatusView()
+            case .status: StatusView(selection: $selection)
             case .database: DatabaseView()
             case .sources: SourcesView()
             case .models: ModelsView()
+            case .mcp: MCPServerView()
             case .search: SearchView()
             case .logs: LogsView()
             }

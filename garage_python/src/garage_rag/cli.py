@@ -321,11 +321,7 @@ def init_db(
     ] = None,
 ) -> None:
     """Apply the schema: extensions, enums, core tables, model registry."""
-    with session_scope() as session:
-        applied = apply_migrations(session, schema_dir)
-    # Connections opened before the `vector` extension existed have no vector
-    # types registered. Discard the pool so later work gets fresh connections.
-    reset_engine()
+    applied = apply_migrations(schema_dir=schema_dir)
     for name in applied:
         console.print(f"  applied [cyan]{name}[/cyan]")
     console.print(f"[green]schema ready[/green] ({get_settings().database_url})")

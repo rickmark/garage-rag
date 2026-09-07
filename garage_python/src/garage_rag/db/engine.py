@@ -45,7 +45,7 @@ def get_engine() -> Engine:
     def _receive_connect(dbapi_connection, connection_record):
         try:
             register_vector(dbapi_connection)
-        except psycopg.ProgrammingError:
+        except (psycopg.Error, Exception):
             log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
 
     @event.listens_for(engine, "connect")
@@ -57,7 +57,7 @@ def get_engine() -> Engine:
         # connections do get the type registered.
         try:
             register_vector(dbapi_connection)
-        except psycopg.ProgrammingError:
+        except (psycopg.Error, Exception):
             log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
 
     _engine = engine

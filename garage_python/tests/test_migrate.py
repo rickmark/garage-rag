@@ -1,6 +1,29 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from garage_rag.db.migrate import migration_files
+import psycopg
+from garage_rag.db.migrate import (
+    apply_migrations,
+    init_extensions,
+    migration_files,
+    to_psycopg_conninfo,
+)
+
+
+def test_to_psycopg_conninfo() -> None:
+    assert (
+        to_psycopg_conninfo("postgresql+psycopg://user:pass@localhost:14824/garage-rag")
+        == "postgresql://user:pass@localhost:14824/garage-rag"
+    )
+    assert to_psycopg_conninfo("postgresql+psycopg:///rag") == "postgresql:///rag"
+    assert (
+        to_psycopg_conninfo("postgresql://user:pass@localhost:5432/test")
+        == "postgresql://user:pass@localhost:5432/test"
+    )
+    assert (
+        to_psycopg_conninfo("host=localhost port=5432 dbname=rag")
+        == "host=localhost port=5432 dbname=rag"
+    )
 
 
 def test_migration_files_uses_supplied_schema_directory(tmp_path: Path) -> None:
@@ -8,3 +31,47 @@ def test_migration_files_uses_supplied_schema_directory(tmp_path: Path) -> None:
     (tmp_path / "notes.sql").write_text("-- ignored", encoding="utf-8")
 
     assert migration_files(tmp_path) == [tmp_path / "001_schema.sql"]
+
+
+def test_init_extensions_executes_outside_sqlalchemy(tmp_path: Path) -> None:
+    (tmp_path / "001_extensions.sql").write_text(
+        "CREATE EXTENSION IF NOT EXISTS vector;\nCREATE EXTENSION IF NOT EXISTS pg_trgm;",
+        encoding="utf-8",
+    )
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
+        applied = init_extensions(
+            database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        )
+
+        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        assert mock_cursor.execute.call_count == 1
+        assert "001_extensions.sql" in applied
+
+
+def test_apply_migrations_without_session(tmp_path: Path) -> None:
+    (tmp_path / "001_extensions.sql").write_text("CREATE EXTENSION IF NOT EXISTS vector;", encoding="utf-8")
+    (tmp_path / "002_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
+        with patch("garage_rag.db.engine.reset_engine") as mock_reset:
+            applied = apply_migrations(
+                schema_dir=tmp_path,
+                database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
+            )
+
+            assert mock_connect.call_count == 2
+            mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+            assert applied == ["001_extensions.sql", "002_core.sql"]
+            mock_reset.assert_called_once()

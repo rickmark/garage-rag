@@ -69,6 +69,15 @@ final class GarageViewTests: XCTestCase {
     }
 
     @MainActor
+    func testMCPServerViewHosting() {
+        let appState = AppState()
+        let mcpServerView = MCPServerView()
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: mcpServerView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
     func testSearchViewHosting() {
         let appState = AppState()
         let searchView = SearchView()
