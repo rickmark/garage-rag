@@ -398,10 +398,28 @@ final class AppState: ObservableObject {
         self.registeredSources = sources
     }
 
+    func setRegisteredModelsForTesting(_ models: [RegisteredModel]) {
+        self.registeredModels = models
+    }
+
     func setCorpusStatsForTesting(_ stats: CorpusStats) {
         self.corpusStats = stats
     }
     #endif
+
+    /// Performs a scan on configured sources to calculate item counts and update expected element totals.
+    @discardableResult
+    func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
+        guard postgres.status == .running else { return false }
+        var args = ["scan", "--source", source]
+        if includeCode {
+            args.append("--include-code")
+        }
+        let succeeded = await runGarage(args)
+        await fetchRegisteredSources()
+        await fetchCorpusStats()
+        return succeeded
+    }
 
     /// Runs a garage subcommand and captures its combined output for display.
     @discardableResult
@@ -497,8 +515,10 @@ final class AppState: ObservableObject {
     private func runScheduledMaintenance() async {
         guard postgres.status == .running, !ingest.isRunning, !backfill.isRunning else { return }
 
+        _ = await scanSources()
         let ingestSucceeded = await runIngest(["ingest", "--source", "*"])
         let backfillSucceeded = await runBackfill(["backfill"])
+        await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded
     }
 

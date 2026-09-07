@@ -79,7 +79,7 @@ struct StatusView: View {
         .navigationTitle("Status")
         .onAppear {
             Task {
-                await appState.fetchCorpusStats()
+                await appState.scanSources()
             }
         }
         .onReceive(refreshTimer) { _ in
@@ -117,9 +117,16 @@ struct StatusView: View {
                                 Text(src.slug)
                                     .font(.caption.bold())
                                 Spacer()
-                                Text("\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s") ingested")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                if src.expectedElements > 0 {
+                                    let uningested = max(0, src.expectedElements - src.documentCount)
+                                    Text("\(uningested) uningested (\(src.documentCount) of \(src.expectedElements) docs)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s") ingested")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -134,7 +141,7 @@ struct StatusView: View {
                     }
                     Spacer()
                     Button {
-                        Task { await appState.fetchCorpusStats() }
+                        Task { await appState.scanSources() }
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
@@ -197,7 +204,7 @@ struct StatusView: View {
             HStack(spacing: 6) {
                 Image(systemName: "doc.text.fill")
                     .foregroundStyle(.green)
-                Text("Ingestion Progress")
+                Text("Ingestion Status")
                     .font(.subheadline.bold())
                 if appState.ingest.isRunning {
                     ProgressView().controlSize(.small)
@@ -209,27 +216,27 @@ struct StatusView: View {
                 Text("Ingesting…")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.blue)
-            } else if stats.totalSeenFiles > 0 {
-                let percent = Int(stats.ingestionProgressFraction * 100)
-                Text("\(percent)%")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-            } else if stats.documentsCount > 0 {
-                Text("\(stats.documentsCount)")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
             } else {
-                Text("0")
+                Text("\(stats.uningestedElements)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
             }
 
             ProgressView(value: stats.ingestionProgressFraction)
                 .progressViewStyle(.linear)
 
-            if stats.totalSeenFiles > 0 {
-                Text("\(stats.totalIndexedFiles) of \(stats.totalSeenFiles) files indexed (\(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if stats.uningestedElements > 0 {
+                let total = max(stats.totalExpectedElements, stats.totalSeenFiles)
+                if total > 0 {
+                    Text("\(stats.uningestedElements) not ingested (\(stats.documentsCount) of \(total) files indexed)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(stats.uningestedElements) element(s) not ingested")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else if stats.documentsCount > 0 {
-                Text("\(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") indexed\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
+                Text("All \(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -268,20 +275,30 @@ struct StatusView: View {
                 Text("Embedding…")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.blue)
-            } else if stats.totalChunks > 0 {
-                let percent = Int(stats.embeddingProgressFraction * 100)
-                Text("\(percent)%")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
             } else {
-                Text("0%")
+                Text("\(stats.unembeddedChunks)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
             }
 
             ProgressView(value: stats.embeddingProgressFraction)
                 .progressViewStyle(.linear)
 
-            if stats.totalChunks > 0 {
-                Text("\(stats.embeddedChunks) of \(stats.totalChunks) chunks embedded")
+            if stats.unembeddedChunks > 0 {
+                let modelCount = max(1, stats.modelStats.count)
+                let totalEmbedded = stats.totalEmbeddedAcrossAllModels
+                let totalReq = stats.totalRequiredEmbeddingsAcrossAllModels
+                if totalReq > 0 {
+                    Text("\(stats.unembeddedChunks) not embedded (\(totalEmbedded) of \(totalReq) across \(modelCount) model\(modelCount == 1 ? "" : "s"))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(stats.unembeddedChunks) chunks not yet embedded")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if stats.totalChunks > 0 {
+                let modelCount = max(1, stats.modelStats.count)
+                Text("All \(stats.totalChunks) chunks embedded across \(modelCount) model\(modelCount == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -653,7 +670,10 @@ struct StatusView: View {
                 severity = .healthy
                 headline = "Sources Configured & Accessible"
                 let totalDocs = appState.corpusStats.documentsCount
-                if appState.corpusStats.totalSeenFiles > 0 {
+                let uningested = appState.corpusStats.uningestedElements
+                if uningested > 0 {
+                    details = "\(appState.registeredSources.count) source(s) active with \(uningested) uningested element(s) (\(totalDocs) ingested)."
+                } else if appState.corpusStats.totalSeenFiles > 0 {
                     details = "\(appState.registeredSources.count) source(s) active with \(totalDocs) document\(totalDocs == 1 ? "" : "s") ingested (\(appState.corpusStats.totalIndexedFiles) indexed of \(appState.corpusStats.totalSeenFiles) seen files)."
                 } else {
                     details = "\(appState.registeredSources.count) source(s) active with \(totalDocs) document\(totalDocs == 1 ? "" : "s") ingested."
@@ -707,12 +727,22 @@ struct StatusView: View {
         } else if appState.llama.isConnected {
             severity = .healthy
             headline = "Models & Llama Ready"
-            details = "Llama service connected. \(appState.registeredModels.count) model(s) registered (\(appState.presetModels.count) presets available)."
+            let unembedded = appState.corpusStats.unembeddedChunks
+            if unembedded > 0 {
+                details = "Llama service connected. \(appState.registeredModels.count) model(s) registered with \(unembedded) chunk(s) remaining to embed across models."
+            } else {
+                details = "Llama service connected. \(appState.registeredModels.count) model(s) registered (\(appState.presetModels.count) presets available)."
+            }
             quickAction = nil
         } else {
             severity = .healthy
             headline = "Models Configured"
-            details = "\(appState.registeredModels.count) model(s) registered (\(appState.presetModels.count) presets available)."
+            let unembedded = appState.corpusStats.unembeddedChunks
+            if unembedded > 0 {
+                details = "\(appState.registeredModels.count) model(s) registered with \(unembedded) chunk(s) remaining to embed across models."
+            } else {
+                details = "\(appState.registeredModels.count) model(s) registered (\(appState.presetModels.count) presets available)."
+            }
             quickAction = nil
         }
 

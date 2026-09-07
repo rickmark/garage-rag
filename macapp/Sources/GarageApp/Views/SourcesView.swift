@@ -539,9 +539,11 @@ struct SourcesView: View {
 
                 HStack {
                     Button("Scan sources") {
-                        var args = ["scan", "--source", effectiveIngestSlug]
-                        if includeCode { args.append("--include-code") }
-                        runIngest(args)
+                        busy = true
+                        Task {
+                            await appState.scanSources(source: effectiveIngestSlug, includeCode: includeCode)
+                            busy = false
+                        }
                     }
                     .disabled(effectiveIngestSlug.isEmpty || notReady)
 
@@ -780,6 +782,8 @@ struct SourcesView: View {
         busy = true
         Task {
             await appState.runIngest(args)
+            await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
             busy = false
         }
     }

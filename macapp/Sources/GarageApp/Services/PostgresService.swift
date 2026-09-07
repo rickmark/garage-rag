@@ -50,6 +50,7 @@ public struct CorpusStats: Equatable, Sendable {
     public var embeddedChunks: Int
     public var totalSeenFiles: Int
     public var totalIndexedFiles: Int
+    public var totalExpectedElements: Int
     public var modelStats: [ModelEmbeddingStats]
     public var lastUpdated: Date?
 
@@ -62,6 +63,7 @@ public struct CorpusStats: Equatable, Sendable {
         embeddedChunks: Int = 0,
         totalSeenFiles: Int = 0,
         totalIndexedFiles: Int = 0,
+        totalExpectedElements: Int = 0,
         modelStats: [ModelEmbeddingStats] = [],
         lastUpdated: Date? = nil
     ) {
@@ -73,6 +75,7 @@ public struct CorpusStats: Equatable, Sendable {
         self.embeddedChunks = embeddedChunks
         self.totalSeenFiles = totalSeenFiles
         self.totalIndexedFiles = totalIndexedFiles
+        self.totalExpectedElements = totalExpectedElements
         self.modelStats = modelStats
         self.lastUpdated = lastUpdated
     }
@@ -92,7 +95,35 @@ public struct CorpusStats: Equatable, Sendable {
         }
     }
 
+    public var uningestedElements: Int {
+        if totalExpectedElements > 0 {
+            return max(0, totalExpectedElements - documentsCount)
+        }
+        if totalSeenFiles > 0 {
+            return max(0, totalSeenFiles - totalIndexedFiles)
+        }
+        return 0
+    }
+
+    public var totalEmbeddedAcrossAllModels: Int {
+        modelStats.reduce(0) { $0 + $1.embeddedCount }
+    }
+
+    public var totalRequiredEmbeddingsAcrossAllModels: Int {
+        modelStats.count * totalChunks
+    }
+
+    public var unembeddedChunks: Int {
+        if modelStats.isEmpty {
+            return totalChunks
+        }
+        return modelStats.reduce(0) { $0 + max(0, totalChunks - $1.embeddedCount) }
+    }
+
     public var ingestionProgressFraction: Double {
+        if totalExpectedElements > 0 {
+            return min(1.0, max(0.0, Double(documentsCount) / Double(totalExpectedElements)))
+        }
         if totalSeenFiles > 0 {
             return min(1.0, max(0.0, Double(totalIndexedFiles) / Double(totalSeenFiles)))
         }
@@ -103,8 +134,14 @@ public struct CorpusStats: Equatable, Sendable {
     }
 
     public var embeddingProgressFraction: Double {
-        guard totalChunks > 0 else { return 0.0 }
-        return min(1.0, max(0.0, Double(embeddedChunks) / Double(totalChunks)))
+        let totalRequired = totalRequiredEmbeddingsAcrossAllModels
+        guard totalRequired > 0 else {
+            if totalChunks > 0 && embeddedChunks > 0 {
+                return min(1.0, max(0.0, Double(embeddedChunks) / Double(totalChunks)))
+            }
+            return 0.0
+        }
+        return min(1.0, max(0.0, Double(totalEmbeddedAcrossAllModels) / Double(totalRequired)))
     }
 }
 
@@ -726,7 +763,8 @@ final class PostgresService: ObservableObject {
             (SELECT count(*) FROM documents WHERE state <> 'ok'),
             (SELECT count(*) FROM chunks),
             (SELECT coalesce(sum(seen_count), 0) FROM (SELECT DISTINCT ON (source_id) seen_count FROM ingest_runs ORDER BY source_id, started_at DESC) r),
-            (SELECT coalesce(sum(indexed_count), 0) FROM (SELECT DISTINCT ON (source_id) indexed_count FROM ingest_runs ORDER BY source_id, started_at DESC) r);
+            (SELECT coalesce(sum(indexed_count), 0) FROM (SELECT DISTINCT ON (source_id) indexed_count FROM ingest_runs ORDER BY source_id, started_at DESC) r),
+            (SELECT coalesce(sum(expected_elements), 0) FROM sources);
         """
 
         let (status, output) = ProcessRunner.runSync(
@@ -754,6 +792,7 @@ final class PostgresService: ObservableObject {
         let chunksCount = Int(parts[4]) ?? 0
         let seenCount = Int(parts[5]) ?? 0
         let indexedCount = Int(parts[6]) ?? 0
+        let totalExpected = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
 
         let models = (try? listRegisteredModels()) ?? []
         var modelStats: [CorpusStats.ModelEmbeddingStats] = []
@@ -797,6 +836,7 @@ final class PostgresService: ObservableObject {
             embeddedChunks: totalEmbedded,
             totalSeenFiles: seenCount,
             totalIndexedFiles: indexedCount,
+            totalExpectedElements: totalExpected,
             modelStats: modelStats,
             lastUpdated: Date()
         )

@@ -83,20 +83,83 @@ final class StatusViewTests: XCTestCase {
         var stats = CorpusStats()
         XCTAssertEqual(stats.ingestionProgressFraction, 0.0)
         XCTAssertEqual(stats.embeddingProgressFraction, 0.0)
+        XCTAssertEqual(stats.uningestedElements, 0)
+        XCTAssertEqual(stats.unembeddedChunks, 0)
 
         stats.documentsCount = 10
         XCTAssertEqual(stats.ingestionProgressFraction, 1.0)
+        XCTAssertEqual(stats.uningestedElements, 0)
 
         stats.totalSeenFiles = 100
         stats.totalIndexedFiles = 75
         XCTAssertEqual(stats.ingestionProgressFraction, 0.75)
+        XCTAssertEqual(stats.uningestedElements, 25)
+
+        stats.totalExpectedElements = 200
+        stats.documentsCount = 150
+        XCTAssertEqual(stats.ingestionProgressFraction, 0.75)
+        XCTAssertEqual(stats.uningestedElements, 50)
 
         stats.totalChunks = 500
         stats.embeddedChunks = 250
-        XCTAssertEqual(stats.embeddingProgressFraction, 0.5)
+        stats.modelStats = [
+            CorpusStats.ModelEmbeddingStats(slug: "m1", tableName: "emb_m1", isDefault: true, embeddedCount: 250),
+            CorpusStats.ModelEmbeddingStats(slug: "m2", tableName: "emb_m2", isDefault: false, embeddedCount: 150)
+        ]
+        // Across both models: (250 + 150) / (500 * 2) = 400 / 1000 = 0.4
+        XCTAssertEqual(stats.totalEmbeddedAcrossAllModels, 400)
+        XCTAssertEqual(stats.totalRequiredEmbeddingsAcrossAllModels, 1000)
+        XCTAssertEqual(stats.embeddingProgressFraction, 0.4)
+        // Unembedded chunks across both models: (500 - 250) + (500 - 150) = 250 + 350 = 600
+        XCTAssertEqual(stats.unembeddedChunks, 600)
 
         stats.embeddedChunks = 600 // More than totalChunks
+        stats.modelStats = [
+            CorpusStats.ModelEmbeddingStats(slug: "m1", tableName: "emb_m1", isDefault: true, embeddedCount: 500)
+        ]
         XCTAssertEqual(stats.embeddingProgressFraction, 1.0)
+        XCTAssertEqual(stats.unembeddedChunks, 0)
+    }
+
+    func testCorpusStatsUningestedElementsAndUnembeddedChunks() {
+        // Test when expectedElements is present
+        let statsWithExpected = CorpusStats(
+            sourcesCount: 2,
+            documentsCount: 40,
+            documentsOkCount: 40,
+            documentsFailedCount: 0,
+            totalChunks: 100,
+            embeddedChunks: 80,
+            totalSeenFiles: 50,
+            totalIndexedFiles: 40,
+            totalExpectedElements: 60,
+            modelStats: [
+                CorpusStats.ModelEmbeddingStats(slug: "model-a", tableName: "emb_model_a", isDefault: true, embeddedCount: 70),
+                CorpusStats.ModelEmbeddingStats(slug: "model-b", tableName: "emb_model_b", isDefault: false, embeddedCount: 50)
+            ]
+        )
+
+        // Expected uningested: 60 - 40 = 20
+        XCTAssertEqual(statsWithExpected.uningestedElements, 20)
+        // Expected unembedded: (100 - 70) + (100 - 50) = 30 + 50 = 80
+        XCTAssertEqual(statsWithExpected.unembeddedChunks, 80)
+        XCTAssertEqual(statsWithExpected.totalEmbeddedAcrossAllModels, 120)
+        XCTAssertEqual(statsWithExpected.totalRequiredEmbeddingsAcrossAllModels, 200)
+        XCTAssertEqual(statsWithExpected.embeddingProgressFraction, 0.6)
+        XCTAssertEqual(statsWithExpected.ingestionProgressFraction, 40.0 / 60.0)
+
+        // Test fallback to totalSeenFiles when expectedElements is 0
+        let statsWithoutExpected = CorpusStats(
+            sourcesCount: 1,
+            documentsCount: 10,
+            totalChunks: 50,
+            totalSeenFiles: 15,
+            totalIndexedFiles: 10,
+            totalExpectedElements: 0,
+            modelStats: []
+        )
+        XCTAssertEqual(statsWithoutExpected.uningestedElements, 5)
+        XCTAssertEqual(statsWithoutExpected.unembeddedChunks, 50)
     }
 
     @MainActor
@@ -143,6 +206,75 @@ final class StatusViewTests: XCTestCase {
         XCTAssertEqual(item.section, .sources)
         XCTAssertEqual(item.severity, .healthy)
         XCTAssertTrue(item.statusDetails.contains("2 source(s) active"))
-        XCTAssertTrue(item.statusDetails.contains("20 documents ingested"))
+        XCTAssertTrue(item.statusDetails.contains("5 uningested element(s)"))
+    }
+
+    @MainActor
+    func testSourcesStatusItemDetailsWithTotalExpectedElements() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", "/Users/test/Documents"]
+        mockFS.directoryContents = [URL(fileURLWithPath: "/Users/test/Documents")]
+
+        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        _ = volumeService.restoreAndVerifyAccess()
+        let appState = AppState(llama: LlamaService(), volumeAccess: volumeService)
+
+        appState.setRegisteredSourcesForTesting([
+            RegisteredSource(slug: "docs", root: "~/Documents", documentCount: 30, expectedElements: 50)
+        ])
+        appState.setCorpusStatsForTesting(CorpusStats(
+            sourcesCount: 1,
+            documentsCount: 30,
+            documentsOkCount: 30,
+            documentsFailedCount: 0,
+            totalChunks: 100,
+            embeddedChunks: 100,
+            totalSeenFiles: 0,
+            totalIndexedFiles: 0,
+            totalExpectedElements: 50
+        ))
+
+        let item = StatusView.sourcesStatusItem(for: appState)
+        XCTAssertEqual(item.section, .sources)
+        XCTAssertEqual(item.severity, .healthy)
+        XCTAssertTrue(item.statusDetails.contains("1 source(s) active"))
+        XCTAssertTrue(item.statusDetails.contains("20 uningested element(s)"))
+        XCTAssertTrue(item.statusDetails.contains("30 ingested"))
+    }
+
+    @MainActor
+    func testModelsStatusItemWithUnembeddedChunks() {
+        let appState = AppState()
+        appState.setRegisteredModelsForTesting([
+            RegisteredModel(
+                slug: "bge-m3",
+                provider: "local",
+                modelRef: "bge-m3",
+                dims: 1024,
+                storedDims: 1024,
+                storageKind: "halfvec",
+                indexKind: "hnsw",
+                tableName: "emb_bge_m3",
+                isDefault: true,
+                modelId: "test"
+            )
+        ])
+        appState.setCorpusStatsForTesting(CorpusStats(
+            sourcesCount: 1,
+            documentsCount: 10,
+            documentsOkCount: 10,
+            documentsFailedCount: 0,
+            totalChunks: 50,
+            embeddedChunks: 30,
+            modelStats: [
+                CorpusStats.ModelEmbeddingStats(slug: "bge-m3", tableName: "emb_bge_m3", isDefault: true, embeddedCount: 30)
+            ]
+        ))
+
+        let item = StatusView.modelsStatusItem(for: appState)
+        XCTAssertEqual(item.section, .models)
+        XCTAssertEqual(item.severity, .healthy)
+        XCTAssertTrue(item.statusDetails.contains("20 chunk(s) remaining to embed across models"))
     }
 }
