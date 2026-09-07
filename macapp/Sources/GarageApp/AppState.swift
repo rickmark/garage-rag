@@ -181,6 +181,25 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
+    func openDatabaseInHandler() -> Bool {
+        do {
+            let opened = try postgres.openInRegisteredHandler()
+            if opened {
+                lastCommandSucceeded = true
+                lastCommandOutput = "Opened PostgreSQL database URL in registered handler: \(try postgres.standardConnectionURLString())"
+            } else {
+                lastCommandSucceeded = false
+                lastCommandOutput = "No application registered to open postgresql:// URLs."
+            }
+            return opened
+        } catch {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Failed to open database connection URL: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    @discardableResult
     func saveLMStudioToken(_ rawToken: String) -> Bool {
         let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {

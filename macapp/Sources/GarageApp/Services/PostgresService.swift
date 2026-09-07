@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import AppKit
 
 public struct RegisteredModel: Identifiable, Hashable, Sendable {
     public var id: String { slug }
@@ -68,6 +69,26 @@ final class PostgresService: ObservableObject {
         let username = try percentEncode(NSUserName())
         let password = try percentEncode(postgresPassword())
         return "postgresql+psycopg://\(username):\(password)@localhost:\(port)/\(databaseName)"
+    }
+
+    func standardConnectionURLString() throws -> String {
+        let username = try percentEncode(NSUserName())
+        let password = try percentEncode(postgresPassword())
+        return "postgresql://\(username):\(password)@localhost:\(port)/\(databaseName)"
+    }
+
+    func standardConnectionURL() throws -> URL {
+        let urlString = try standardConnectionURLString()
+        guard let url = URL(string: urlString) else {
+            throw PostgresError.other("could not create standard PostgreSQL connection URL: \(urlString)")
+        }
+        return url
+    }
+
+    @discardableResult
+    func openInRegisteredHandler() throws -> Bool {
+        let url = try standardConnectionURL()
+        return NSWorkspace.shared.open(url)
     }
 
     private func appendLog(_ line: LogLine) {

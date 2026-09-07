@@ -129,4 +129,13 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(result.isAccessible)
         XCTAssertEqual(state.lastCommandSucceeded, true)
     }
+
+    @MainActor
+    func testOpenDatabaseInHandler() {
+        let state = AppState()
+        // Calling openDatabaseInHandler executes URL creation and attempts NSWorkspace open
+        _ = state.openDatabaseInHandler()
+        XCTAssertNotNil(state.lastCommandSucceeded)
+        XCTAssertFalse(state.lastCommandOutput.isEmpty)
+    }
 }

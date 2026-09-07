@@ -26,6 +26,23 @@ struct DatabaseView: View {
                         LabeledContent("Port", value: String(appState.postgres.port))
                         LabeledContent("Database", value: appState.postgres.databaseName)
                         LabeledContent("Bundled binaries", value: Paths.isPackaged ? "yes (vendored)" : "no (using Homebrew install for development)")
+                        LabeledContent("Connection URL") {
+                            HStack(spacing: 8) {
+                                if let url = try? appState.postgres.standardConnectionURL() {
+                                    Text(url.absoluteString)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                    Button("Open with Registered Handler") {
+                                        appState.openDatabaseInHandler()
+                                    }
+                                } else {
+                                    Text("Unavailable")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
                     .padding(8)
                 }

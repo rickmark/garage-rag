@@ -41,13 +41,6 @@ def get_engine() -> Engine:
         future=True,
     )
 
-    @event.listens_for(Pool, "connect")
-    def _receive_connect(dbapi_connection, connection_record):
-        try:
-            register_vector(dbapi_connection)
-        except (psycopg.Error, Exception):
-            log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
-
     @event.listens_for(engine, "connect")
     def _register_vector(dbapi_connection, _record) -> None:  # noqa: ANN001
         # Bootstrap case: on a fresh database the `vector` extension does not
@@ -57,7 +50,7 @@ def get_engine() -> Engine:
         # connections do get the type registered.
         try:
             register_vector(dbapi_connection)
-        except (psycopg.Error, Exception):
+        except (psycopg.Error, ValueError, Exception):
             log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
 
     _engine = engine

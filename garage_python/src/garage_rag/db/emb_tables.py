@@ -27,7 +27,7 @@ from garage_rag.db.registry import (
 
 log = logging.getLogger(__name__)
 
-# Matches the CHECK constraint in sql/003_registry.sql. Validated again here
+# Matches the CHECK constraint in sql/004_registry.sql. Validated again here
 # because these identifiers are interpolated into DDL and search SQL, where bind
 # parameters are not usable.
 _TABLE_RE = re.compile(r"^emb_[a-z0-9_]+$")

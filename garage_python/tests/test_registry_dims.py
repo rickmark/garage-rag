@@ -108,7 +108,7 @@ class TestTableNaming:
         assert table_name_for(slug) == expected
 
     def test_result_matches_schema_check_constraint(self) -> None:
-        """sql/003_registry.sql enforces ^emb_[a-z0-9_]+$."""
+        """sql/004_registry.sql enforces ^emb_[a-z0-9_]+$."""
         import re
 
         pattern = re.compile(r"^emb_[a-z0-9_]+$")

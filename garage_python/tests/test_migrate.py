@@ -2,8 +2,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import psycopg
+from garage_rag.db.engine import get_engine, reset_engine
 from garage_rag.db.migrate import (
     apply_migrations,
+    database_exists,
     init_extensions,
     migration_files,
     to_psycopg_conninfo,
@@ -75,3 +77,55 @@ def test_apply_migrations_without_session(tmp_path: Path) -> None:
             mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
             assert applied == ["001_extensions.sql", "002_core.sql"]
             mock_reset.assert_called_once()
+
+
+def test_apply_migrations_with_session(tmp_path: Path) -> None:
+    (tmp_path / "001_extensions.sql").write_text("CREATE EXTENSION IF NOT EXISTS vector;", encoding="utf-8")
+    (tmp_path / "002_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    mock_session = MagicMock()
+    mock_driver = MagicMock()
+    mock_session.connection.return_value = mock_driver
+
+    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
+        applied = apply_migrations(
+            session=mock_session,
+            schema_dir=tmp_path,
+            database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
+        )
+
+        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        assert mock_cursor.execute.call_count == 1
+        mock_driver.exec_driver_sql.assert_called_once_with("CREATE TABLE test_table (id int);")
+        assert applied == ["001_extensions.sql", "002_core.sql"]
+
+
+def test_database_exists() -> None:
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch("psycopg.connect", return_value=mock_conn):
+        assert database_exists("postgresql://user:pass@localhost:5432/testdb") is True
+
+    with patch("psycopg.connect", side_effect=psycopg.OperationalError("connection failed")):
+        assert database_exists("postgresql://user:pass@localhost:5432/testdb") is False
+
+
+def test_engine_connect_listener_bypasses_pgvector_error() -> None:
+    reset_engine()
+    with patch("garage_rag.db.engine.register_vector", side_effect=ValueError("vector type not found")):
+        engine = get_engine()
+        # Trigger the connect event listener
+        with patch.object(engine.pool, "connect", return_value=MagicMock()):
+            # Listener is attached to engine on connect
+            conn = MagicMock()
+            for fn in engine.dispatch.connect:
+                fn(conn, None)
+    reset_engine()

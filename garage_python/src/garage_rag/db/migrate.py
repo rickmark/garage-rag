@@ -49,6 +49,12 @@ def migration_files(schema_dir: Path | None = None) -> list[Path]:
     return sorted(directory.glob("[0-9][0-9][0-9]_*.sql"))
 
 
+def is_extension_migration(path: Path) -> bool:
+    """Check if a migration file is for extensions / bootstrap (e.g. 001)."""
+    name = path.name.lower()
+    return "extension" in name or name.startswith("001")
+
+
 def init_extensions(database_url: str | None = None, schema_dir: Path | None = None) -> list[str]:
     """Execute extension setup outside of SQLAlchemy on a direct raw connection."""
     raw_url = database_url or get_settings().database_url
@@ -56,7 +62,7 @@ def init_extensions(database_url: str | None = None, schema_dir: Path | None = N
     applied: list[str] = []
     try:
         files = migration_files(schema_dir)
-        extension_files = [f for f in files if "extension" in f.name.lower()]
+        extension_files = [f for f in files if is_extension_migration(f)]
     except FileNotFoundError:
         extension_files = []
 
@@ -82,22 +88,27 @@ def apply_migrations(
 ) -> list[str]:
     """Apply every migration file. Returns the names applied.
 
-    Extension creation is executed outside of SQLAlchemy to prevent vector
-    operations or type-registration listeners from running before the extension
-    is installed.
+    Extension creation (migration 001) is executed outside of SQLAlchemy on a
+    direct psycopg connection to prevent vector operations or type-registration
+    listeners from running before the extension is installed.
     """
     from garage_rag.db.engine import reset_engine
 
     raw_url = database_url or get_settings().database_url
 
-    # Always ensure extensions are initialized outside normal SQLAlchemy
-    init_extensions(database_url=raw_url, schema_dir=schema_dir)
+    # Always ensure extensions (001) are initialized outside normal SQLAlchemy
+    ext_applied = init_extensions(database_url=raw_url, schema_dir=schema_dir)
 
     files = migration_files(schema_dir)
-    applied: list[str] = []
+    applied: list[str] = list(ext_applied)
+
+    remaining_files = [
+        f for f in files
+        if f.name not in ext_applied and not is_extension_migration(f)
+    ]
 
     if session is not None:
-        for path in files:
+        for path in remaining_files:
             log.info("applying %s", path.name)
             # exec_driver_sql: these files contain multiple statements and
             # dollar-quoted DO blocks, which SQLAlchemy's text() would try to parse
@@ -105,13 +116,14 @@ def apply_migrations(
             session.connection().exec_driver_sql(path.read_text(encoding="utf-8"))
             applied.append(path.name)
     else:
-        conninfo = to_psycopg_conninfo(raw_url)
-        with psycopg.connect(conninfo, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                for path in files:
-                    log.info("applying %s", path.name)
-                    cur.execute(path.read_text(encoding="utf-8"))
-                    applied.append(path.name)
+        if remaining_files:
+            conninfo = to_psycopg_conninfo(raw_url)
+            with psycopg.connect(conninfo, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    for path in remaining_files:
+                        log.info("applying %s", path.name)
+                        cur.execute(path.read_text(encoding="utf-8"))
+                        applied.append(path.name)
         reset_engine()
 
     return applied
@@ -138,14 +150,11 @@ def schema_summary(session: Session) -> dict[str, int]:
 
 def database_exists(url: str) -> bool:
     """Whether the target database is reachable."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.exc import OperationalError
-
+    conninfo = to_psycopg_conninfo(url)
     try:
-        engine = create_engine(url)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
+        with psycopg.connect(conninfo, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
         return True
-    except OperationalError:
+    except (psycopg.OperationalError, psycopg.Error, Exception):
         return False

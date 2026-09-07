@@ -49,6 +49,40 @@ final class PostgresServiceTests: XCTestCase {
         XCTAssertEqual(url1, url2)
     }
 
+    @MainActor
+    func testStandardConnectionURLFormat() throws {
+        let service = PostgresService()
+        let urlString = try service.standardConnectionURLString()
+        let url = try service.standardConnectionURL()
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        let encodedUser = NSUserName().addingPercentEncoding(withAllowedCharacters: allowed) ?? NSUserName()
+
+        XCTAssertTrue(urlString.starts(with: "postgresql://\(encodedUser):"))
+        XCTAssertFalse(urlString.contains("psycopg"))
+        XCTAssertFalse(urlString.contains("postgres-superuser"))
+        XCTAssertFalse(urlString.contains("postgres-master"))
+        XCTAssertTrue(urlString.contains("@localhost:14824/garage-rag"))
+
+        XCTAssertEqual(url.scheme, "postgresql")
+        XCTAssertEqual(url.user, encodedUser)
+        XCTAssertEqual(url.host, "localhost")
+        XCTAssertEqual(url.port, 14824)
+        XCTAssertEqual(url.path, "/garage-rag")
+        XCTAssertEqual(url.absoluteString, urlString)
+    }
+
+    @MainActor
+    func testStandardConnectionURLMatchesConnectionURLCredentials() throws {
+        let service = PostgresService()
+        let psycopgURL = try service.connectionURL()
+        let standardURL = try service.standardConnectionURLString()
+
+        // Extract user and host parts
+        let psycopgSuffix = psycopgURL.replacingOccurrences(of: "postgresql+psycopg://", with: "")
+        let standardSuffix = standardURL.replacingOccurrences(of: "postgresql://", with: "")
+        XCTAssertEqual(psycopgSuffix, standardSuffix)
+    }
+
     func testPostgresStatusEquality() {
         XCTAssertEqual(PostgresStatus.stopped, PostgresStatus.stopped)
         XCTAssertEqual(PostgresStatus.starting, PostgresStatus.starting)
