@@ -1,0 +1,11 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "xpc",
+    srcs = [
+        "__init__.py",
+        "llama_xpc.py",
+    ],
+    imports = ["../.."],
+    visibility = ["//garage_python/src:__subpackages__"],
+)

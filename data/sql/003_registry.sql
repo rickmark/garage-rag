@@ -15,8 +15,9 @@
 CREATE TABLE IF NOT EXISTS embedding_models (
     id           smallserial PRIMARY KEY,
     slug         text        NOT NULL UNIQUE,
-    provider     text        NOT NULL DEFAULT 'ollama',
+    provider     text        NOT NULL DEFAULT 'llama_xpc',
     model_ref    text        NOT NULL,
+    model_id     text,
     -- Native output width of the model.
     dims         int         NOT NULL,
     -- Width actually stored, after any Matryoshka truncation.
@@ -51,3 +52,6 @@ CREATE TABLE IF NOT EXISTS embedding_models (
 -- At most one default model.
 CREATE UNIQUE INDEX IF NOT EXISTS embedding_models_one_default
     ON embedding_models ((is_default)) WHERE is_default;
+
+-- Idempotent column addition for existing databases
+ALTER TABLE embedding_models ADD COLUMN IF NOT EXISTS model_id text;

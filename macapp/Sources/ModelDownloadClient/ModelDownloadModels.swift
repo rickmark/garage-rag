@@ -59,6 +59,7 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
     public var bytesPerSecond: Double
     public var estimatedTimeRemaining: TimeInterval?
     public var errorMessage: String?
+    public var modelId: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -74,6 +75,7 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
         bytesPerSecond: Double = 0.0,
         estimatedTimeRemaining: TimeInterval? = nil,
         errorMessage: String? = nil,
+        modelId: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -88,6 +90,7 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
         self.bytesPerSecond = bytesPerSecond
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.errorMessage = errorMessage
+        self.modelId = modelId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -312,5 +315,37 @@ public struct ModelPresetCatalog {
 
     public static func item(for id: String) -> ModelCatalogItem? {
         items.first { $0.id == id }
+    }
+
+    public static func item(forModelIdOrSlug idOrSlug: String) -> ModelCatalogItem? {
+        if let exact = items.first(where: { $0.id == idOrSlug || $0.filename.lowercased() == idOrSlug.lowercased() }) {
+            return exact
+        }
+        let normalized = idOrSlug.lowercased()
+        if normalized.contains("bge-m3") || normalized.contains("baai/bge-m3") {
+            return item(for: "bge-m3-gguf")
+        }
+        if normalized.contains("nomic-embed") || normalized.contains("nomic-ai") {
+            return item(for: "nomic-embed-text-v1.5")
+        }
+        if normalized.contains("snowflake-arctic") {
+            return item(for: "snowflake-arctic-embed-m")
+        }
+        if normalized.contains("llama-3.2-1b") {
+            return item(for: "llama-3.2-1b-instruct")
+        }
+        if normalized.contains("llama-3.2-3b") {
+            return item(for: "llama-3.2-3b-instruct")
+        }
+        if normalized.contains("qwen-2.5-coder-7b") || normalized.contains("qwen2.5-coder-7b") {
+            return item(for: "qwen-2.5-coder-7b")
+        }
+        if normalized.contains("mistral-7b") {
+            return item(for: "mistral-7b-instruct-v0.3")
+        }
+        if normalized.contains("deepseek-r1-distill-qwen-7b") {
+            return item(for: "deepseek-r1-distill-qwen-7b")
+        }
+        return nil
     }
 }

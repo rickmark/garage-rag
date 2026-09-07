@@ -80,14 +80,10 @@ class IngestState(enum.StrEnum):
 
 # values_callable keeps Postgres seeing the lowercase enum labels rather than
 # Python's uppercase member names.
-_corpus_class = Enum(
-    CorpusClass, name="corpus_class", values_callable=lambda e: [m.value for m in e]
-)
+_corpus_class = Enum(CorpusClass, name="corpus_class", values_callable=lambda e: [m.value for m in e])
 _trust_tier = Enum(TrustTier, name="trust_tier", values_callable=lambda e: [m.value for m in e])
 _author_role = Enum(AuthorRole, name="author_role", values_callable=lambda e: [m.value for m in e])
-_ingest_state = Enum(
-    IngestState, name="ingest_state", values_callable=lambda e: [m.value for m in e]
-)
+_ingest_state = Enum(IngestState, name="ingest_state", values_callable=lambda e: [m.value for m in e])
 
 
 class Source(Base):
@@ -122,9 +118,7 @@ class Author(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    identities: Mapped[list[AuthorIdentity]] = relationship(
-        back_populates="author", cascade="all, delete-orphan"
-    )
+    identities: Mapped[list[AuthorIdentity]] = relationship(back_populates="author", cascade="all, delete-orphan")
 
 
 class AuthorIdentity(Base):
@@ -164,16 +158,10 @@ class Document(Base):
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     state: Mapped[IngestState] = mapped_column(_ingest_state, default=IngestState.OK)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ingested_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    chunks: Mapped[list[Chunk]] = relationship(
-        back_populates="document", cascade="all, delete-orphan"
-    )
-    authors: Mapped[list[DocumentAuthor]] = relationship(
-        back_populates="document", cascade="all, delete-orphan"
-    )
+    chunks: Mapped[list[Chunk]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    authors: Mapped[list[DocumentAuthor]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("source_id", "uri", name="documents_uri_unique"),)
 
@@ -184,9 +172,7 @@ class DocumentAuthor(Base):
     document_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
-    author_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True
-    )
+    author_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True)
     role: Mapped[AuthorRole] = mapped_column(_author_role, primary_key=True)
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     # How this attribution was reached: 'git-log', 'pdf-metadata',
@@ -201,9 +187,7 @@ class Chunk(Base):
     __tablename__ = "chunks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    document_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("documents.id", ondelete="CASCADE")
-    )
+    document_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id", ondelete="CASCADE"))
     ord: Mapped[int] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -228,8 +212,9 @@ class EmbeddingModel(Base):
 
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
     slug: Mapped[str] = mapped_column(Text, unique=True)
-    provider: Mapped[str] = mapped_column(Text, default="ollama")
+    provider: Mapped[str] = mapped_column(Text, default="llama_xpc")
     model_ref: Mapped[str] = mapped_column(Text)
+    model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     dims: Mapped[int] = mapped_column(Integer)
     stored_dims: Mapped[int] = mapped_column(Integer)
     storage_kind: Mapped[StorageKind] = mapped_column(String)

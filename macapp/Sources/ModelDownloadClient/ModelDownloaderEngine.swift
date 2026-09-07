@@ -103,6 +103,8 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
             totalBytes: request.expectedSize ?? 0,
             fractionCompleted: 0.0,
             bytesPerSecond: 0.0,
+            errorMessage: nil,
+            modelId: request.modelId,
             createdAt: Date(),
             updatedAt: Date()
         )

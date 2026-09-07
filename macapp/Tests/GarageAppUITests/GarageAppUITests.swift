@@ -29,6 +29,16 @@ final class GarageAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testDatabaseViewControls() {
+        let appState = AppState()
+        let databaseView = DatabaseView()
+            .environmentObject(appState)
+
+        let controller = NSHostingController(rootView: databaseView)
+        XCTAssertNotNil(controller.view)
+    }
+
+    @MainActor
     func testSourcesViewControls() {
         let appState = AppState()
         let sourcesView = SourcesView()

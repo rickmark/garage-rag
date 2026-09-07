@@ -1,6 +1,10 @@
 # gazelle:map_kind py_binary py_binary @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_library py_library @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_test py_test @aspect_rules_py//py:defs.bzl
+# gazelle:resolve py grpc @pypi//grpcio
+# gazelle:resolve py garage_rag.proto //garage_python/src/garage_rag/proto
+# gazelle:resolve py garage_rag.proto.garage_pb2 //garage_python/src/garage_rag/proto
+# gazelle:resolve py garage_rag.proto.garage_pb2_grpc //garage_python/src/garage_rag/proto
 
 load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("@aspect_rules_py//uv:defs.bzl", "gazelle_python_manifest")

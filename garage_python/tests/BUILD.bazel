@@ -44,10 +44,7 @@ py_test(
 py_test(
     name = "test_migrate",
     srcs = ["test_migrate.py"],
-    deps = [
-        "//garage_python/src/garage_rag/db",
-        "@pypi//pytest",
-    ],
+    deps = ["//garage_python/src/garage_rag/db"],
 )
 
 py_test(
@@ -56,7 +53,6 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
-        "@pypi//pytest",
     ],
 )
 
@@ -67,6 +63,7 @@ py_test(
         "//garage_python/src/garage_rag",
         "//garage_python/src/garage_rag/mcp_server",
         "@pypi//pytest",
+        "@pypi//typer",
     ],
 )
 
@@ -115,7 +112,6 @@ py_test(
     srcs = ["test_cli_serve.py"],
     deps = [
         "//garage_python/src/garage_rag",
-        "@pypi//pytest",
         "@pypi//typer",
     ],
 )

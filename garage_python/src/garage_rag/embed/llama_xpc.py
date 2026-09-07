@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from garage_rag.embed.base import Embedder
-from garage_rag.service.llama_xpc import LlamaXPCClient
+from garage_rag.xpc.llama_xpc import LlamaXPCClient
 
 
 class LlamaXPCEmbedder(Embedder):
@@ -33,7 +33,6 @@ class LlamaXPCEmbedder(Embedder):
         vectors = self.embed(["probe"])
         if not vectors or not vectors[0]:
             raise ValueError(
-                f"LlamaXPCEmbedder probe failed for model {self.model_ref!r}: "
-                "received empty embedding response"
+                f"LlamaXPCEmbedder probe failed for model {self.model_ref!r}: received empty embedding response"
             )
         return len(vectors[0])

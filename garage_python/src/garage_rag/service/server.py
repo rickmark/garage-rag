@@ -6,12 +6,12 @@ import json
 import logging
 import os
 import signal
-import sys
 import threading
 import time
+from collections.abc import Iterator
 from concurrent import futures
 from pathlib import Path
-from typing import Iterator, Optional, cast
+from typing import cast
 
 import grpc
 
@@ -73,7 +73,6 @@ from garage_rag.proto.garage_pb2 import (
     StatsResponse,
     StatusRequest,
     StatusResponse,
-    StatusType,
     StopRequest,
     StopResponse,
     SyncRequest,
@@ -95,8 +94,8 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def __init__(
         self,
-        executor: Optional[CommandExecutor] = None,
-        stop_event: Optional[threading.Event] = None,
+        executor: CommandExecutor | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self.executor = executor or default_executor
         self.stop_event = stop_event or threading.Event()
@@ -114,7 +113,13 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetStatus(self, request: StatusRequest, context: grpc.ServicerContext) -> StatusResponse:
         """Retrieve server and database status."""
-        from garage_rag.cli import get_version
+        version = "0.1.0"
+        try:
+            import importlib.metadata
+
+            version = importlib.metadata.version("garage_rag")
+        except Exception:
+            pass
 
         db_status = "unknown"
         try:
@@ -125,7 +130,7 @@ class GarageRpcServicer(GarageServiceServicer):
             db_status = f"error: {e}"
 
         return StatusResponse(
-            version=get_version(),
+            version=version,
             is_ready=True,
             pid=os.getpid(),
             db_status=db_status,
@@ -134,9 +139,15 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetVersion(self, request: VersionRequest, context: grpc.ServicerContext) -> VersionResponse:
         """Get the garage version."""
-        from garage_rag.cli import get_version
+        version = "0.1.0"
+        try:
+            import importlib.metadata
 
-        return VersionResponse(version=get_version())
+            version = importlib.metadata.version("garage_rag")
+        except Exception:
+            pass
+
+        return VersionResponse(version=version)
 
     def Stop(self, request: StopRequest, context: grpc.ServicerContext) -> StopResponse:
         """Trigger graceful shutdown of the server."""
@@ -273,6 +284,7 @@ class GarageRpcServicer(GarageServiceServicer):
     def RemoveSource(self, request: RemoveSourceRequest, context: grpc.ServicerContext) -> RemoveSourceResponse:
         """Deregister a source and cascade delete its documents, chunks, and vectors."""
         from sqlalchemy import text
+
         from garage_rag.db.engine import session_scope
         from garage_rag.db.models import Source
 
@@ -459,7 +471,9 @@ class GarageRpcServicer(GarageServiceServicer):
             deleted=result.deleted,
             fraction=float(result.fraction),
             refused=False,
-            formatted_output=f"reconcile for {request.source}: deleted {result.deleted:,} of {result.total_documents:,}",
+            formatted_output=(
+                f"reconcile for {request.source}: deleted {result.deleted:,} of {result.total_documents:,}"
+            ),
         )
 
     # -----------------------------------------------------------------------
@@ -468,25 +482,20 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def RegisterModel(self, request: RegisterModelRequest, context: grpc.ServicerContext) -> RegisterModelResponse:
         """Register a new embedding model."""
-        from garage_rag.db.emb_tables import register_model
+        from garage_rag.db.emb_tables import register_model, resolve_spec
         from garage_rag.db.engine import session_scope
 
         with session_scope() as session:
-            spec = register_model(
-                session,
+            spec = resolve_spec(
                 slug=request.slug,
-                dims=request.dims,
-                provider=request.provider or "ollama",
-                model_ref=request.model_ref or request.slug,
-                storage=request.storage or "halfvec",
-                index=request.index or "hnsw",
-                is_default=request.is_default,
-                context_window=request.context_window or None,
-                max_tokens=request.max_tokens or None,
-                batch_size=request.batch_size or None,
+                dims=request.dims or None,
+                model_ref=request.model_ref or None,
+                provider=request.provider or None,
+                model_id=request.model_id or None,
             )
+            row = register_model(session, spec, make_default=request.is_default)
 
-        msg = f"registered model {spec.slug} (table {spec.table_name}, {spec.storage_kind}/{spec.index_kind})"
+        msg = f"registered model {row.slug} (table {row.table_name}, {row.storage_kind}/{row.index_kind})"
         return RegisterModelResponse(
             success=True,
             message=msg,
@@ -511,6 +520,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     index_kind=m.index_kind,
                     table_name=m.table_name,
                     is_default=m.is_default,
+                    model_id=m.model_id or "",
                 )
                 for m in models
             ]
@@ -520,7 +530,9 @@ class GarageRpcServicer(GarageServiceServicer):
             formatted_output=f"{len(proto_models)} models registered",
         )
 
-    def SetDefaultModel(self, request: SetDefaultModelRequest, context: grpc.ServicerContext) -> SetDefaultModelResponse:
+    def SetDefaultModel(
+        self, request: SetDefaultModelRequest, context: grpc.ServicerContext
+    ) -> SetDefaultModelResponse:
         """Point default embedding model at slug."""
         from garage_rag.db.emb_tables import get_model, set_default_model
         from garage_rag.db.engine import session_scope
@@ -553,15 +565,15 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetStats(self, request: StatsRequest, context: grpc.ServicerContext) -> StatsResponse:
         """Retrieve corpus and database stats."""
-        from sqlalchemy import func
-        from sqlmodel import select
+        from sqlalchemy import func, select
+
         from garage_rag.db.engine import session_scope
         from garage_rag.db.models import Document, DocumentChunk, Source
 
         with session_scope() as session:
-            doc_count = session.exec(select(func.count(Document.id))).one()
-            chunk_count = session.exec(select(func.count(DocumentChunk.id))).one()
-            source_count = session.exec(select(func.count(Source.id))).one()
+            doc_count = session.scalar(select(func.count(Document.id))) or 0
+            chunk_count = session.scalar(select(func.count(DocumentChunk.id))) or 0
+            source_count = session.scalar(select(func.count(Source.id))) or 0
 
         return StatsResponse(
             documents=doc_count,
@@ -702,9 +714,9 @@ class GarageRpcServicer(GarageServiceServicer):
                 )
             chosen = targets[request.target]
 
-        url: Optional[str] = None
-        config_file: Optional[Path] = None
-        db_env: Optional[dict[str, str]] = None
+        url: str | None = None
+        config_file: Path | None = None
+        db_env: dict[str, str] | None = None
 
         if request.http:
             settings = get_settings()
@@ -819,18 +831,20 @@ class GarageRpcServicer(GarageServiceServicer):
         """Initialize config file."""
         from garage_rag.config import (
             CONFIG_FILENAME,
-            USER_CONFIG_FILENAME,
             default_config_path,
             save_config,
         )
 
-        target = Path(request.path) if request.path else (
-            default_config_path() if request.user else Path.cwd() / CONFIG_FILENAME
+        target = (
+            Path(request.path)
+            if request.path
+            else (default_config_path() if request.user else Path.cwd() / CONFIG_FILENAME)
         )
         if target.exists() and not request.force:
             context.abort(grpc.StatusCode.ALREADY_EXISTS, f"{target} already exists; use force to overwrite")
 
         from garage_rag.config import Settings
+
         settings = Settings()
         save_config(settings, target)
         return ConfigInitResponse(path=str(target), success=True, message=f"Wrote config to {target}")
@@ -884,16 +898,15 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def ExecuteCommand(self, request: CommandRequest, context: grpc.ServicerContext) -> Iterator[CommandStatus]:
         """Execute a command request and stream CommandStatus events back to caller."""
-        for status in self.executor.execute_command(request):
-            yield status
+        yield from self.executor.execute_command(request)
 
 
 def create_grpc_server(
     host: str = "127.0.0.1",
     port: int = 50051,
     max_workers: int = 10,
-    executor: Optional[CommandExecutor] = None,
-    stop_event: Optional[threading.Event] = None,
+    executor: CommandExecutor | None = None,
+    stop_event: threading.Event | None = None,
 ) -> tuple[grpc.Server, GarageRpcServicer]:
     """Create and configure a gRPC server for Garage."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
@@ -908,7 +921,7 @@ def create_grpc_server(
 def serve_grpc(
     host: str = "127.0.0.1",
     port: int = 50051,
-    stop_event: Optional[threading.Event] = None,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Start the gRPC server and block until stopped."""
     stop_evt = stop_event or threading.Event()

@@ -17,6 +17,11 @@ enum Paths {
 
     static let pgDataDir = appSupportDir.appendingPathComponent("pgdata", isDirectory: true)
     static let pgSocketDir = appSupportDir.appendingPathComponent("sockets", isDirectory: true)
+    static let modelsDir: URL = {
+        let dir = appSupportDir.appendingPathComponent("models", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
     static let logsDir: URL = {
         let dir = appSupportDir.appendingPathComponent("logs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -42,6 +47,29 @@ enum Paths {
     /// Directory containing the SQL schema bundled with the application.
     static var schemaDir: URL {
         return root.appendingPathComponent("schema", isDirectory: true)
+    }
+
+    /// Path to models.json manifest file.
+    static var modelsJSON: URL {
+        if let resourceURL = Bundle.main.url(forResource: "models", withExtension: "json") {
+            return resourceURL
+        }
+        if let resourceURL = Bundle.main.url(forResource: "models.json", withExtension: nil) {
+            return resourceURL
+        }
+        let bundled = root.appendingPathComponent("models.json")
+        if FileManager.default.fileExists(atPath: bundled.path) {
+            return bundled
+        }
+        let bundledDataModels = root.appendingPathComponent("data/models/models.json")
+        if FileManager.default.fileExists(atPath: bundledDataModels.path) {
+            return bundledDataModels
+        }
+        let devPath = devRepoRoot.appendingPathComponent("data/models/models.json")
+        if FileManager.default.fileExists(atPath: devPath.path) {
+            return devPath
+        }
+        return bundled
     }
 
     /// Directory containing postgres/initdb/pg_ctl/pg_isready/psql.

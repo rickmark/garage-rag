@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
-from typing import Any, Iterator, List, Optional
-
-from rich.console import Console
+from collections.abc import Iterator
+from typing import Any
 
 from garage_rag.proto.garage_pb2 import (
     CommandRequest,
@@ -22,8 +19,8 @@ from garage_rag.proto.garage_pb2 import (
 class CommandExecutor:
     """Executes Garage commands, streaming CommandStatus protobuf messages."""
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, app: Any = None) -> None:
+        self._app = app
 
     def execute_command(self, request: CommandRequest) -> Iterator[CommandStatus]:
         """Execute a command specified by CommandRequest and yield streaming CommandStatus events."""
@@ -41,8 +38,6 @@ class CommandExecutor:
             progress=0.0,
             progress_message=f"Starting command: {' '.join(argv)}",
         )
-
-        cmd_name = argv[0]
 
         # Dispatch commands
         try:
@@ -73,13 +68,13 @@ class CommandExecutor:
 
     def _dispatch_command(self, argv: list[str], request: CommandRequest) -> Iterator[CommandStatus]:
         """Execute command and capture stdout/stderr as streaming chunks."""
-        # Use Typer CLI runner / direct app invocation
-        from garage_rag.cli import app
-        import typer.main
+        import importlib
 
-        # Create string buffer for capturing console output
-        output_buffer = io.StringIO()
-        custom_console = Console(file=output_buffer, force_terminal=False, width=120)
+        if self._app is not None:
+            cli_app = self._app
+        else:
+            cli_mod = importlib.import_module("garage_rag.cli")
+            cli_app = cli_mod.app
 
         # We can run Typer app with argv
         old_stdout = sys.stdout
@@ -89,22 +84,26 @@ class CommandExecutor:
 
         exit_code = 0
         err_message = ""
-        structured_data: Optional[str] = None
+        structured_data: str | None = None
 
         try:
             # First check if this is a known structured command that can provide JSON data
             if argv[0] == "stats":
                 structured_data = self._get_stats_json()
             elif argv[0] == "version":
-                from garage_rag.cli import get_version
-                structured_data = json.dumps({"version": get_version()})
+                try:
+                    cli_mod = importlib.import_module("garage_rag.cli")
+                    version_str = cli_mod.get_version()
+                except Exception:
+                    version_str = "0.1.0"
+                structured_data = json.dumps({"version": version_str})
 
             sys.stdout = capture_out
             sys.stderr = capture_err
 
             try:
                 # Typer CLI execution
-                app(argv, standalone_mode=False)
+                cli_app(argv, standalone_mode=False)
             except SystemExit as se:
                 exit_code = se.code if isinstance(se.code, int) else 0
             except Exception as e:
@@ -149,18 +148,21 @@ class CommandExecutor:
 
     def _get_stats_json(self) -> str:
         try:
-            from garage_rag.db.engine import get_session
-            from garage_rag.db.models import Document, DocumentChunk
-            from sqlmodel import select, func
+            from sqlalchemy import func, select
 
-            with get_session() as session:
-                doc_count = session.exec(select(func.count(Document.id))).one()
-                chunk_count = session.exec(select(func.count(DocumentChunk.id))).one()
-                return json.dumps({
-                    "documents": doc_count,
-                    "chunks": chunk_count,
-                    "status": "ok",
-                })
+            from garage_rag.db.engine import session_scope
+            from garage_rag.db.models import Document, DocumentChunk
+
+            with session_scope() as session:
+                doc_count = session.scalar(select(func.count(Document.id))) or 0
+                chunk_count = session.scalar(select(func.count(DocumentChunk.id))) or 0
+                return json.dumps(
+                    {
+                        "documents": doc_count,
+                        "chunks": chunk_count,
+                        "status": "ok",
+                    }
+                )
         except Exception as e:
             return json.dumps({"error": str(e)})
 

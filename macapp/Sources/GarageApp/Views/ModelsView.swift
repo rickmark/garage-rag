@@ -84,21 +84,30 @@ struct ModelsView: View {
         }
     }
 
-    enum ModelProvider: String, CaseIterable, Identifiable {
+    public enum ModelProvider: String, CaseIterable, Identifiable, Codable {
         case llamaXPC = "Llama XPC"
         case ollama = "Ollama"
         case lmStudio = "LM Studio"
 
-        var id: Self { self }
+        public var id: Self { self }
 
-        var displayName: String { rawValue }
+        public var displayName: String { rawValue }
 
-        var cliValue: String {
+        public var cliValue: String {
             switch self {
             case .llamaXPC: "llama_xpc"
             case .ollama: "ollama"
             case .lmStudio: "lmstudio"
             }
+        }
+
+        public static func from(string: String?) -> ModelProvider {
+            guard let str = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                return .llamaXPC
+            }
+            if str.contains("ollama") { return .ollama }
+            if str.contains("lmstudio") || str.contains("lm_studio") || str.contains("lm studio") { return .lmStudio }
+            return .llamaXPC
         }
     }
 

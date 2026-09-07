@@ -75,3 +75,28 @@ def test_dedicated_rpc_mcp_install_dry_run():
     assert res.dry_run_json
     data = json.loads(res.dry_run_json)
     assert "mcpServers" in data
+
+
+def test_model_info_proto_model_id():
+    from garage_rag.proto.garage_pb2 import ModelInfo, RegisterModelRequest
+
+    m = ModelInfo(
+        slug="test-slug",
+        provider="ollama",
+        model_ref="test-ref",
+        dims=1024,
+        stored_dims=1024,
+        storage_kind="vector",
+        index_kind="hnsw",
+        table_name="emb_test_slug",
+        is_default=False,
+        model_id="test-org/test-slug",
+    )
+    assert m.model_id == "test-org/test-slug"
+
+    req = RegisterModelRequest(
+        slug="test-slug",
+        dims=1024,
+        model_id="test-org/test-slug",
+    )
+    assert req.model_id == "test-org/test-slug"

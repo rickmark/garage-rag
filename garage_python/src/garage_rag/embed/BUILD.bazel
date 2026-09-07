@@ -15,7 +15,7 @@ py_library(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
-        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//ollama",
         "@pypi//openai",
         "@pypi//pgvector",

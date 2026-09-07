@@ -2,6 +2,7 @@ import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
+    case database = "Database"
     case sources = "Sources & Ingest"
     case models = "Models"
     case search = "Search"
@@ -12,6 +13,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .status: "gauge.with.dots.needle.50percent"
+        case .database: "cylinder.split.1x2"
         case .sources: "tray.and.arrow.down"
         case .models: "cpu"
         case .search: "magnifyingglass"
@@ -33,6 +35,7 @@ struct ContentView: View {
         } detail: {
             switch selection ?? .status {
             case .status: StatusView()
+            case .database: DatabaseView()
             case .sources: SourcesView()
             case .models: ModelsView()
             case .search: SearchView()

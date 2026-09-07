@@ -1,0 +1,148 @@
+[
+  {
+    "name": "BGE-M3 (Embeddings)",
+    "model_id": "BAAI/bge-m3",
+    "slug": "bge-m3",
+    "model_ref": "bge-m3",
+    "provider": "llama_xpc",
+    "native_dims": 1024,
+    "default_dims": 1024,
+    "context_size": 8192,
+    "download_model_id": "CompendiumLabs/bge-m3-GGUF",
+    "download_file": "bge-m3-Q8_0.gguf"
+  },
+  {
+    "name": "Nomic Embed Text",
+    "model_id": "nomic-ai/nomic-embed-text-v1.5",
+    "slug": "nomic-embed-text",
+    "model_ref": "nomic-embed-text",
+    "provider": "llama_xpc",
+    "native_dims": 768,
+    "default_dims": 768,
+    "context_size": 8192,
+    "download_model_id": "nomic-ai/nomic-embed-text-v1.5-GGUF",
+    "download_file": "nomic-embed-text-v1.5.Q8_0.gguf"
+  },
+  {
+    "name": "mxbai Embed Large",
+    "model_id": "mixedbread-ai/mxbai-embed-large",
+    "slug": "mxbai-embed-large",
+    "model_ref": "mxbai-embed-large",
+    "provider": "llama_xpc",
+    "native_dims": 1024,
+    "default_dims": 1024,
+    "context_size": 8192
+  },
+  {
+    "name": "Embedding Gemma",
+    "model_id": "google/embeddinggemma-2b",
+    "slug": "embeddinggemma",
+    "model_ref": "embeddinggemma",
+    "provider": "llama_xpc",
+    "native_dims": 768,
+    "default_dims": 768,
+    "context_size": 8192
+  },
+  {
+    "name": "Snowflake Arctic Embed 2",
+    "model_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
+    "slug": "snowflake-arctic-embed2",
+    "model_ref": "snowflake-arctic-embed2",
+    "provider": "llama_xpc",
+    "native_dims": 1024,
+    "default_dims": 1024,
+    "context_size": 8192,
+    "download_model_id": "ChristianAzinn/snowflake-arctic-embed-m-gguf",
+    "download_file": "snowflake-arctic-embed-m.Q8_0.gguf"
+  },
+  {
+    "name": "Qwen 3 Embedding 0.6B",
+    "model_id": "Qwen/Qwen3-Embedding-0.6B",
+    "slug": "qwen3-embedding-0.6b",
+    "model_ref": "qwen3-embedding-0.6b",
+    "provider": "llama_xpc",
+    "native_dims": 1024,
+    "default_dims": 1024,
+    "context_size": 8192
+  },
+  {
+    "name": "Qwen 3 Embedding 4B",
+    "model_id": "Qwen/Qwen3-Embedding-4B",
+    "slug": "qwen3-embedding-4b",
+    "model_ref": "qwen3-embedding-4b",
+    "provider": "llama_xpc",
+    "native_dims": 2560,
+    "default_dims": 2560,
+    "context_size": 8192
+  },
+  {
+    "name": "Qwen 3 Embedding 8B",
+    "model_id": "Qwen/Qwen3-Embedding-8B",
+    "slug": "qwen3-embedding-8b",
+    "model_ref": "qwen3-embedding-8b",
+    "provider": "llama_xpc",
+    "native_dims": 4096,
+    "default_dims": 4000,
+    "context_size": 32768
+  },
+  {
+    "name": "Llama 3.2 1B (Instruct)",
+    "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+    "slug": "llama-3.2-1b-instruct",
+    "model_ref": "llama-3.2-1b-instruct",
+    "provider": "llama_xpc",
+    "context_size": 8192,
+    "download_model_id": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+    "download_file": "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+  },
+  {
+    "name": "Llama 3.2 3B (Instruct)",
+    "model_id": "meta-llama/Llama-3.2-3B-Instruct",
+    "slug": "llama-3.2-3b-instruct",
+    "model_ref": "llama-3.2-3b-instruct",
+    "provider": "llama_xpc",
+    "context_size": 8192,
+    "download_model_id": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+    "download_file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+  },
+  {
+    "name": "Qwen 2.5 7B (Coder)",
+    "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "slug": "qwen-2.5-coder-7b",
+    "model_ref": "qwen-2.5-coder-7b",
+    "provider": "llama_xpc",
+    "context_size": 16384,
+    "download_model_id": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+    "download_file": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+  },
+  {
+    "name": "Mistral 7B (Instruct)",
+    "model_id": "mistralai/Mistral-7B-Instruct-v0.3",
+    "slug": "mistral-7b-instruct",
+    "model_ref": "mistral-7b-instruct",
+    "provider": "llama_xpc",
+    "context_size": 8192,
+    "download_model_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
+    "download_file": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+  },
+  {
+    "name": "NVIDIA Llama-Embed-Nemotron-8B",
+    "model_id": "NVIDIA/Llama-Embed-Nemotron-8B",
+    "slug": "llama-embed-nemotron-8b",
+    "model_ref": "llama-embed-nemotron-8b",
+    "provider": "llama_xpc",
+    "native_dims": 4096,
+    "default_dims": 4096,
+    "context_size": 8192,
+    "download_model_id": "mradermacher/llama-embed-nemotron-8b-GGUF",
+    "download_file": "llama-embed-nemotron-8b.Q8_0.gguf"
+  },
+  {
+    "name": "Microsoft Harrier-oss-v1-0.6b",
+    "model_id": "microsoft/harrier-oss-v1-0.6b",
+    "slug": "harrier-oss-v1-0.6b",
+    "model_ref": "harrier-oss-v1-0.6b",
+    "provider": "llama_xpc",
+    "context_size": 8192
+  }
+]

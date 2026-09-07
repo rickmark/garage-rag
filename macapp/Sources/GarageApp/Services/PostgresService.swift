@@ -2,6 +2,44 @@ import Foundation
 import Combine
 import Security
 
+public struct RegisteredModel: Identifiable, Hashable, Sendable {
+    public var id: String { slug }
+    public let slug: String
+    public let provider: String
+    public let modelRef: String
+    public let dims: Int
+    public let storedDims: Int
+    public let storageKind: String
+    public let indexKind: String
+    public let tableName: String
+    public let isDefault: Bool
+    public let modelId: String?
+
+    public init(
+        slug: String,
+        provider: String,
+        modelRef: String,
+        dims: Int,
+        storedDims: Int,
+        storageKind: String,
+        indexKind: String,
+        tableName: String,
+        isDefault: Bool,
+        modelId: String? = nil
+    ) {
+        self.slug = slug
+        self.provider = provider
+        self.modelRef = modelRef
+        self.dims = dims
+        self.storedDims = storedDims
+        self.storageKind = storageKind
+        self.indexKind = indexKind
+        self.tableName = tableName
+        self.isDefault = isDefault
+        self.modelId = modelId
+    }
+}
+
 enum PostgresStatus: Equatable {
     case stopped
     case starting
@@ -195,6 +233,98 @@ final class PostgresService: ObservableObject {
         appendLog(LogLine(stream: .stdout, text: "restored database from \(source.path)", source: "pg_restore"))
     }
 
+    /// Fetches all registered embedding models directly from the backing database.
+    func listRegisteredModels() throws -> [RegisteredModel] {
+        try requireRunning()
+        let password = try postgresPassword()
+        let sql = "SELECT slug, provider, model_ref, dims, stored_dims, storage_kind, index_kind, table_name, is_default, coalesce(model_id, '') FROM embedding_models ORDER BY id;"
+        let (status, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAF\t", "-c", sql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard status == 0 else {
+            throw PostgresError.other("psql query failed: \(output)")
+        }
+        var models: [RegisteredModel] = []
+        for line in output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.components(separatedBy: "\t")
+            guard parts.count >= 9 else { continue }
+            let slug = parts[0]
+            let provider = parts[1]
+            let modelRef = parts[2]
+            let dims = Int(parts[3]) ?? 0
+            let storedDims = Int(parts[4]) ?? 0
+            let storageKind = parts[5]
+            let indexKind = parts[6]
+            let tableName = parts[7]
+            let isDefault = parts[8] == "t" || parts[8] == "true"
+            let modelId = parts.count >= 10 && !parts[9].isEmpty ? parts[9] : nil
+            models.append(RegisteredModel(
+                slug: slug,
+                provider: provider,
+                modelRef: modelRef,
+                dims: dims,
+                storedDims: storedDims,
+                storageKind: storageKind,
+                indexKind: indexKind,
+                tableName: tableName,
+                isDefault: isDefault,
+                modelId: modelId
+            ))
+        }
+        return models
+    }
+
+    /// Fetches all registered ingest sources directly from the backing database.
+    func listRegisteredSources() throws -> [RegisteredSource] {
+        try requireRunning()
+        let password = try postgresPassword()
+        let sql = "SELECT slug, kind, root, default_class::text, default_trust::text, allow_cloud_enrichment, enabled FROM sources ORDER BY id;"
+        let (status, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAF\t", "-c", sql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard status == 0 else {
+            throw PostgresError.other("psql query failed: \(output)")
+        }
+        var sources: [RegisteredSource] = []
+        for line in output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.components(separatedBy: "\t")
+            guard parts.count >= 7 else { continue }
+            let slug = parts[0]
+            let kind = parts[1]
+            let root = parts[2]
+            let corpusClass = parts[3]
+            let trust = parts[4]
+            let allowCloud = parts[5] == "t" || parts[5] == "true"
+            let enabled = parts[6] == "t" || parts[6] == "true"
+            sources.append(RegisteredSource(
+                slug: slug,
+                kind: kind,
+                root: root,
+                corpusClass: corpusClass,
+                trust: trust,
+                allowCloudEnrichment: allowCloud,
+                enabled: enabled,
+                includeCode: false,
+                origin: .database
+            ))
+        }
+        return sources
+    }
+
     private var isFailed: Bool {
         if case .failed = status { return true }
         return false
@@ -285,15 +415,23 @@ final class PostgresService: ObservableObject {
         if let cachedPassword {
             return cachedPassword
         }
-        if let storedPassword = try? KeychainPostgresPassword.load() {
-            cachedPassword = storedPassword
-            return storedPassword
+        do {
+            if let storedPassword = try KeychainPostgresPassword.load() {
+                cachedPassword = storedPassword
+                return storedPassword
+            }
+        } catch {
+            // In headless/test environments without keychain access, fall through to in-memory generation
         }
 
         let generatedPassword = try KeychainPostgresPassword.generate()
         do {
             try KeychainPostgresPassword.save(generatedPassword)
         } catch {
+            if let storedPassword = try? KeychainPostgresPassword.load() {
+                cachedPassword = storedPassword
+                return storedPassword
+            }
             // In headless/test environments without keychain access, keep in-memory
             cachedPassword = generatedPassword
             return generatedPassword
@@ -313,17 +451,37 @@ final class PostgresService: ObservableObject {
 
 private enum KeychainPostgresPassword {
     private static let service = "com.rickmark.garage.postgres"
-    private static let account = "postgres-superuser"
+    private static var account: String { NSUserName() }
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
+    private static func openLoginKeychain() -> SecKeychain? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidatePaths = [
+            "\(home)/Library/Keychains/login.keychain-db",
+            "\(home)/Library/Keychains/login.keychain",
+        ]
+        for path in candidatePaths {
+            var keychain: SecKeychain?
+            let status = SecKeychainOpen(path, &keychain)
+            if status == errSecSuccess, let keychain {
+                return keychain
+            }
+        }
+        return nil
+    }
+
     static func load() throws -> String? {
-        let query: [CFString: Any] = [
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
         ]
+        if let keychain = openLoginKeychain() {
+            query[kSecUseKeychain] = keychain
+            query[kSecMatchSearchList] = [keychain] as CFArray
+        }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound {
@@ -336,26 +494,16 @@ private enum KeychainPostgresPassword {
     }
 
     static func save(_ password: String) throws {
-        let query: [CFString: Any] = [
+        var newItem: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-        ]
-        let attributes: [CFString: Any] = [
             kSecValueData: Data(password.utf8),
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked,
         ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return
-        }
-        guard updateStatus == errSecItemNotFound else {
-            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(updateStatus))")
-        }
-
-        var newItem = query
-        for (key, value) in attributes {
-            newItem[key] = value
+        let keychain = openLoginKeychain()
+        if let keychain {
+            newItem[kSecUseKeychain] = keychain
         }
         let addStatus = SecItemAdd(newItem as CFDictionary, nil)
         guard addStatus == errSecSuccess else {

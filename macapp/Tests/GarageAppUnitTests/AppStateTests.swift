@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import ModelDownloadClient
 @testable import GarageApp
 
 final class AppStateTests: XCTestCase {
@@ -79,5 +80,45 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.lastCommandSucceeded, true)
         XCTAssertEqual(state.lastCommandOutput, "Volume access revoked and saved bookmark cleared.")
         XCTAssertEqual(state.volumeAccess.status, .notConfigured)
+    }
+
+    @MainActor
+    func testModelDownloadTaskInfoWithModelId() {
+        let task = DownloadTaskInfo(
+            url: "https://example.com/bge-m3.gguf",
+            filename: "bge-m3.gguf",
+            destinationPath: "/tmp/bge-m3.gguf",
+            modelId: "BAAI/bge-m3"
+        )
+        XCTAssertEqual(task.modelId, "BAAI/bge-m3")
+        XCTAssertEqual(task.filename, "bge-m3.gguf")
+        XCTAssertEqual(task.status, .queued)
+    }
+
+    @MainActor
+    func testRegisteredSourcesInitialAndFetch() async {
+        let state = AppState()
+        XCTAssertTrue(state.registeredSources.isEmpty)
+        XCTAssertFalse(state.isFetchingSources)
+
+        await state.fetchRegisteredSources()
+        // Should complete without error and update isFetchingSources to false
+        XCTAssertFalse(state.isFetchingSources)
+    }
+
+    @MainActor
+    func testVolumeAccessPassesSourcePaths() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        let sourcePath = "/Users/test/Dropbox"
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", sourcePath]
+        mockFS.directoryContents = [URL(fileURLWithPath: "\(sourcePath)/file1.txt")]
+
+        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let state = AppState(llama: LlamaService(), volumeAccess: volumeService)
+
+        let result = state.testVolumeAccess()
+        XCTAssertTrue(result.isAccessible)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
     }
 }

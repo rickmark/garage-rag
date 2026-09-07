@@ -120,6 +120,7 @@ swift_library(
         ":garage-mcp",
         ":postgres_output",
         ":schema_output",
+        "//data/models:model_manifest",
         "//data/schema:config_schema",
         "//ext/python:python_3_14",
     ],
@@ -217,6 +218,9 @@ swift_library(
     name = "GarageAppUnitTests_lib",
     testonly = True,
     srcs = glob(["Tests/GarageAppUnitTests/**/*.swift"]),
+    data = [
+        "//data/models:model_manifest",
+    ],
     module_name = "GarageAppUnitTests",
     visibility = ["//visibility:public"],
     deps = [
@@ -228,6 +232,8 @@ swift_library(
 
 macos_unit_test(
     name = "GarageAppUnitTests",
+    bundle_id = "me.rickmark.garage.GarageAppUnitTests",
+    bundle_name = "GarageAppUnitTests",
     minimum_os_version = "14.0",
     visibility = ["//visibility:public"],
     deps = [
@@ -248,6 +254,8 @@ swift_library(
 
 macos_unit_test(
     name = "LlamaClientTests",
+    bundle_id = "me.rickmark.garage.LlamaClientTests",
+    bundle_name = "LlamaClientTests",
     minimum_os_version = "14.0",
     visibility = ["//visibility:public"],
     deps = [
@@ -266,10 +274,11 @@ swift_library(
     ],
 )
 
-macos_ui_test(
+macos_unit_test(
     name = "GarageAppUITests",
+    bundle_id = "me.rickmark.garage.GarageAppUITests",
+    bundle_name = "GarageAppUITests",
     minimum_os_version = "14.0",
-    test_host = ":GarageApp",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageAppUITests_lib",

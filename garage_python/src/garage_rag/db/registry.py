@@ -44,10 +44,11 @@ class ModelSpec:
     slug: str
     model_ref: str
     dims: int
-    provider: str = "ollama"
+    provider: str = "llama_xpc"
     normalized: bool = True
     # True only for models documented as Matryoshka-trained (e.g. Qwen3-Embedding).
     supports_mrl: bool = False
+    model_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,16 +88,12 @@ def plan_storage(dims: int, *, supports_mrl: bool = False) -> StoragePlan:
         raise ValueError(f"dims must be positive, got {dims}")
 
     if dims <= HNSW_MAX_VECTOR_DIMS:
-        return StoragePlan(
-            stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW
-        )
+        return StoragePlan(stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW)
 
     if dims <= HNSW_MAX_HALFVEC_DIMS:
         # Too wide for an indexed `vector`, but halfvec's ceiling covers it.
         # Half precision costs little for retrieval and halves index size.
-        return StoragePlan(
-            stored_dims=dims, storage_kind=StorageKind.HALFVEC, index_kind=IndexKind.HNSW
-        )
+        return StoragePlan(stored_dims=dims, storage_kind=StorageKind.HALFVEC, index_kind=IndexKind.HNSW)
 
     if supports_mrl:
         # Truncate to the halfvec ceiling; MRL guarantees the prefix is valid.
@@ -109,9 +106,7 @@ def plan_storage(dims: int, *, supports_mrl: bool = False) -> StoragePlan:
 
     # Cannot truncate safely and cannot index directly: keep full fidelity and
     # index a binary quantization, re-ranking exact cosine at query time.
-    return StoragePlan(
-        stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW_BQ
-    )
+    return StoragePlan(stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW_BQ)
 
 
 def column_type_sql(plan: StoragePlan) -> str:
@@ -159,14 +154,35 @@ def truncate_vector(values: list[float], plan: StoragePlan) -> list[float]:
 # Known models, so `garage register-model bge-m3` does not require the user to
 # look up widths. Anything absent can be registered with an explicit --dims.
 KNOWN_MODELS: dict[str, ModelSpec] = {
-    "nomic-embed-text": ModelSpec(slug="nomic-embed-text", model_ref="nomic-embed-text", dims=768),
-    "bge-m3": ModelSpec(slug="bge-m3", model_ref="bge-m3", dims=1024),
-    "mxbai-embed-large": ModelSpec(
-        slug="mxbai-embed-large", model_ref="mxbai-embed-large", dims=1024
+    "nomic-embed-text": ModelSpec(
+        slug="nomic-embed-text",
+        model_ref="nomic-embed-text",
+        dims=768,
+        model_id="nomic-ai/nomic-embed-text-v1.5",
     ),
-    "embeddinggemma": ModelSpec(slug="embeddinggemma", model_ref="embeddinggemma", dims=768),
+    "bge-m3": ModelSpec(
+        slug="bge-m3",
+        model_ref="bge-m3",
+        dims=1024,
+        model_id="BAAI/bge-m3",
+    ),
+    "mxbai-embed-large": ModelSpec(
+        slug="mxbai-embed-large",
+        model_ref="mxbai-embed-large",
+        dims=1024,
+        model_id="mixedbread-ai/mxbai-embed-large",
+    ),
+    "embeddinggemma": ModelSpec(
+        slug="embeddinggemma",
+        model_ref="embeddinggemma",
+        dims=768,
+        model_id="google/embeddinggemma-2b",
+    ),
     "snowflake-arctic-embed2": ModelSpec(
-        slug="snowflake-arctic-embed2", model_ref="snowflake-arctic-embed2", dims=1024
+        slug="snowflake-arctic-embed2",
+        model_ref="snowflake-arctic-embed2",
+        dims=1024,
+        model_id="Snowflake/snowflake-arctic-embed-m-v2.0",
     ),
     # Qwen3 embedding family is Matryoshka-trained, so truncation is safe.
     "qwen3-embedding-0.6b": ModelSpec(
@@ -174,17 +190,20 @@ KNOWN_MODELS: dict[str, ModelSpec] = {
         model_ref="qwen3-embedding:0.6b",
         dims=1024,
         supports_mrl=True,
+        model_id="Qwen/Qwen3-Embedding-0.6B",
     ),
     "qwen3-embedding-4b": ModelSpec(
         slug="qwen3-embedding-4b",
         model_ref="qwen3-embedding:4b",
         dims=2560,
         supports_mrl=True,
+        model_id="Qwen/Qwen3-Embedding-4B",
     ),
     "qwen3-embedding-8b": ModelSpec(
         slug="qwen3-embedding-8b",
         model_ref="qwen3-embedding:8b",
         dims=4096,
         supports_mrl=True,
+        model_id="Qwen/Qwen3-Embedding-8B",
     ),
 }

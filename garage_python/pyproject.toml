@@ -67,9 +67,13 @@ environments = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["garage_rag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,3 +82,10 @@ filterwarnings = ["error::DeprecationWarning"]
 [tool.mypy]
 python_version = "3.13"
 warn_unused_ignores = true
+exclude = ["garage_pb2\\.py$", "garage_pb2_grpc\\.py$"]
+
+[tool.ty]
+exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+
+[tool.ty.rules]
+unresolved-import = "ignore"

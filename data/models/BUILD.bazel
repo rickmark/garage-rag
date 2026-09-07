@@ -1,0 +1,5 @@
+filegroup(
+    name = "model_manifest",
+    srcs = ["models.json"],
+    visibility = ["//visibility:public"],
+)

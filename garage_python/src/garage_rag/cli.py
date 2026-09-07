@@ -94,9 +94,7 @@ app.add_typer(config_app, name="config")
 
 @config_app.command("init")
 def config_init(
-    path: Annotated[
-        Path | None, typer.Option("--path", help=f"Where to write. Default ./{CONFIG_FILENAME}.")
-    ] = None,
+    path: Annotated[Path | None, typer.Option("--path", help=f"Where to write. Default ./{CONFIG_FILENAME}.")] = None,
     user: Annotated[
         bool,
         typer.Option("--user", help=f"Write to ~/{USER_CONFIG_FILENAME} instead of the project."),
@@ -125,11 +123,10 @@ def config_init(
             "apart from reference material"
         )
 
+
 @config_app.command("import-sources")
 def config_import_sources(
-    path: Annotated[
-        Path | None, typer.Option("--path", help="Config file to update. Default: the one in use.")
-    ] = None,
+    path: Annotated[Path | None, typer.Option("--path", help="Config file to update. Default: the one in use.")] = None,
 ) -> None:
     """Copy the database's sources into the config file.
 
@@ -175,9 +172,7 @@ def config_import_sources(
 
 @config_app.command("show")
 def config_show(
-    defaults: Annotated[
-        bool, typer.Option("--defaults/--diff", help="Show all values, or only overrides.")
-    ] = True,
+    defaults: Annotated[bool, typer.Option("--defaults/--diff", help="Show all values, or only overrides.")] = True,
 ) -> None:
     """Print the effective configuration."""
     settings = get_settings()
@@ -199,9 +194,7 @@ def config_path_cmd() -> None:
 
 @config_app.command("schema")
 def config_schema(
-    path: Annotated[
-        Path | None, typer.Option("--path", help="Write here instead of stdout.")
-    ] = None,
+    path: Annotated[Path | None, typer.Option("--path", help="Write here instead of stdout.")] = None,
     publish: Annotated[
         bool,
         typer.Option(
@@ -228,9 +221,7 @@ def config_schema(
 
 @app.command()
 def sync(
-    apply: Annotated[
-        bool, typer.Option("--apply/--dry-run", help="Write changes to the database.")
-    ] = True,
+    apply: Annotated[bool, typer.Option("--apply/--dry-run", help="Write changes to the database.")] = True,
 ) -> None:
     """Apply sources declared in the config file to the database.
 
@@ -240,9 +231,7 @@ def sync(
     """
     settings = get_settings()
     if not settings.sources:
-        console.print(
-            f"[yellow]no sources declared[/yellow] in {settings.config_path or 'the config file'}"
-        )
+        console.print(f"[yellow]no sources declared[/yellow] in {settings.config_path or 'the config file'}")
         return
 
     created: list[str] = []
@@ -253,10 +242,7 @@ def sync(
             klass = CorpusClass(spec.corpus_class)
             tier = TrustTier(spec.trust)
             if klass is CorpusClass.COMMUNICATION and spec.allow_cloud_enrichment:
-                console.print(
-                    f"[red]{spec.slug}[/red]: communication sources may never "
-                    "enable cloud enrichment"
-                )
+                console.print(f"[red]{spec.slug}[/red]: communication sources may never enable cloud enrichment")
                 raise typer.Exit(code=1)
 
             row = session.query(Source).filter_by(slug=spec.slug).one_or_none()
@@ -321,9 +307,7 @@ def sync(
         console.print("\n[dim]in the database but not declared (left untouched):[/dim]")
         for slug, count in undeclared:
             console.print(f"  {slug} ({count:,} documents)")
-        console.print(
-            "  [dim]add them to the config, or remove with 'garage remove-source <slug>'[/dim]"
-        )
+        console.print("  [dim]add them to the config, or remove with 'garage remove-source <slug>'[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -387,19 +371,14 @@ def stats() -> None:
 @app.command("register-model")
 def register_model_cmd(
     slug: Annotated[str, typer.Argument(help="Model slug, e.g. bge-m3.")],
-    dims: Annotated[
-        int | None, typer.Option(help="Output width. Required for unknown models.")
-    ] = None,
-    model_ref: Annotated[
-        str | None, typer.Option(help="Provider-side name, if it differs from the slug.")
-    ] = None,
-    provider: Annotated[
-        str | None, typer.Option(help="Embedding backend: ollama | lmstudio.")
-    ] = None,
+    dims: Annotated[int | None, typer.Option(help="Output width. Required for unknown models.")] = None,
+    model_ref: Annotated[str | None, typer.Option(help="Provider-side name, if it differs from the slug.")] = None,
+    provider: Annotated[str | None, typer.Option(help="Embedding backend: llama_xpc | ollama | lmstudio.")] = None,
+    model_id: Annotated[str | None, typer.Option(help="Model identifier (e.g. HuggingFace repo).")] = None,
     default: Annotated[bool, typer.Option("--default", help="Make this the default.")] = False,
 ) -> None:
     """Register an embedding model and create its table and index."""
-    spec = resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider)
+    spec = resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id)
     with session_scope() as session:
         row = register_model(session, spec, make_default=default)
         console.print(
@@ -413,24 +392,50 @@ def register_model_cmd(
                 "(Matryoshka) to fit the halfvec HNSW ceiling"
             )
         if row.index_kind == "hnsw_bq":
-            console.print(
-                "  [yellow]note[/yellow]: binary-quantized index; queries re-rank on exact cosine"
-            )
+            console.print("  [yellow]note[/yellow]: binary-quantized index; queries re-rank on exact cosine")
 
 
 @app.command("list-models")
-def list_models_cmd() -> None:
+def list_models_cmd(
+    json_output: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
+) -> None:
     """List registered embedding models."""
     with session_scope() as session:
         models = list_models(session)
     if not models:
-        console.print("[yellow]no models registered[/yellow]")
+        if json_output:
+            import json
+
+            console.print(json.dumps([]))
+        else:
+            console.print("[yellow]no models registered[/yellow]")
+        return
+    if json_output:
+        import json
+
+        out = [
+            {
+                "slug": m.slug,
+                "provider": m.provider,
+                "model_ref": m.model_ref,
+                "model_id": m.model_id,
+                "dims": m.dims,
+                "stored_dims": m.stored_dims,
+                "storage_kind": m.storage_kind,
+                "index_kind": m.index_kind,
+                "table_name": m.table_name,
+                "is_default": m.is_default,
+            }
+            for m in models
+        ]
+        console.print(json.dumps(out, indent=2))
         return
     table = Table()
     for col in (
         "slug",
         "provider",
         "ref",
+        "model_id",
         "dims",
         "stored",
         "storage",
@@ -444,6 +449,7 @@ def list_models_cmd() -> None:
             m.slug,
             m.provider,
             m.model_ref,
+            m.model_id or "",
             str(m.dims),
             str(m.stored_dims),
             m.storage_kind,
@@ -483,9 +489,7 @@ def drop_model_cmd(
 def add_source(
     slug: Annotated[str, typer.Argument(help="Short name, e.g. dropbox.")],
     root: Annotated[Path, typer.Argument(help="Directory or file to index.")],
-    kind: Annotated[
-        str, typer.Option(help="filesystem | git | sqlite | maildir | feed")
-    ] = "filesystem",
+    kind: Annotated[str, typer.Option(help="filesystem | git | sqlite | maildir | feed")] = "filesystem",
     corpus_class: Annotated[
         str,
         typer.Option(
@@ -493,9 +497,7 @@ def add_source(
             help="Default grouping: document | code | communication",
         ),
     ] = "document",
-    trust: Annotated[
-        str, typer.Option(help="Default trust: authored | reference | received")
-    ] = "authored",
+    trust: Annotated[str, typer.Option(help="Default trust: authored | reference | received")] = "authored",
     allow_cloud: Annotated[
         bool,
         typer.Option(
@@ -598,12 +600,8 @@ def ingest(
         bool,
         typer.Option("--include-code", help="Also index source files, not just documents."),
     ] = False,
-    limit: Annotated[
-        int | None, typer.Option(help="Stop after this many candidates (for trials).")
-    ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Re-extract and re-chunk even if unchanged.")
-    ] = False,
+    limit: Annotated[int | None, typer.Option(help="Stop after this many candidates (for trials).")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-extract and re-chunk even if unchanged.")] = False,
 ) -> None:
     """Walk a source and index it. Safe to re-run; unchanged files are skipped."""
     from garage_rag.db.engine import get_session_factory
@@ -619,8 +617,7 @@ def ingest(
     for source in sources:
         with console.status(f"ingesting {source}...") as status:
             # slug bound as a default: the closure outlives this loop iteration.
-            def on_progress(progress_counters,
-                            progress_budget, slug=source) -> None:
+            def on_progress(progress_counters, progress_budget, slug=source) -> None:
                 note = ""
                 if progress_budget.files_done or progress_budget.deferred:
                     note = f" | downloaded {progress_budget.files_done:,} deferred {progress_budget.deferred:,}"
@@ -680,14 +677,10 @@ def ingest(
 
 @app.command()
 def backfill(
-    model: Annotated[
-        str | None, typer.Option("--model", "-m", help="Model slug. Default: all models.")
-    ] = None,
+    model: Annotated[str | None, typer.Option("--model", "-m", help="Model slug. Default: all models.")] = None,
     batch_size: Annotated[int | None, typer.Option(help="Chunks per request.")] = None,
     limit: Annotated[int | None, typer.Option(help="Stop after this many chunks.")] = None,
-    verify: Annotated[
-        bool, typer.Option("--verify/--no-verify", help="Probe the model's width first.")
-    ] = True,
+    verify: Annotated[bool, typer.Option("--verify/--no-verify", help="Probe the model's width first.")] = True,
 ) -> None:
     """Embed chunks that a model has no vectors for. Pure insert; safe to re-run."""
     from garage_rag.embed.ollama import (
@@ -728,9 +721,7 @@ def backfill(
             with console.status(f"{row.slug}...") as status:
 
                 def on_progress(state, slug=row.slug) -> None:
-                    status.update(
-                        f"{slug}: {state.embedded:,}/{state.total:,} ({state.batches} batches)"
-                    )
+                    status.update(f"{slug}: {state.embedded:,}/{state.total:,} ({state.batches} batches)")
 
                 state = backfill_model(
                     session,
@@ -751,12 +742,8 @@ def backfill(
 @app.command()
 def reconcile(
     source: Annotated[str, typer.Option("--source", "-s", help="Source slug.")],
-    apply: Annotated[
-        bool, typer.Option("--apply", help="Actually delete. Default is a dry run.")
-    ] = False,
-    force: Annotated[
-        bool, typer.Option("--force", help="Override the mass-deletion guard.")
-    ] = False,
+    apply: Annotated[bool, typer.Option("--apply", help="Actually delete. Default is a dry run.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Override the mass-deletion guard.")] = False,
 ) -> None:
     """Delete documents whose source files no longer exist."""
     from garage_rag.ingest.reconcile import reconcile_source
@@ -774,8 +761,7 @@ def reconcile(
 
     if apply:
         console.print(
-            f"[green]deleted[/green] {result.deleted:,} of "
-            f"{result.total_documents:,} documents from {source}"
+            f"[green]deleted[/green] {result.deleted:,} of {result.total_documents:,} documents from {source}"
         )
     else:
         console.print(
@@ -812,15 +798,9 @@ def mcp_install(
     ] = False,
     host: Annotated[str | None, typer.Option(help="HTTP host, with --http.")] = None,
     port: Annotated[int | None, typer.Option("--port", help="HTTP port, with --http.")] = None,
-    path_route: Annotated[
-        str | None, typer.Option("--route", help="HTTP route, with --http. Default /mcp.")
-    ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Overwrite an existing entry of the same name.")
-    ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Show what would be written, change nothing.")
-    ] = False,
+    path_route: Annotated[str | None, typer.Option("--route", help="HTTP route, with --http. Default /mcp.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing entry of the same name.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be written, change nothing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not prompt before writing.")] = False,
 ) -> None:
     """Register this MCP server in a client's config file.
@@ -864,8 +844,7 @@ def mcp_install(
         # The client only connects; keeping the process alive is someone else's
         # job, so say so rather than letting it look like a spawned server.
         console.print(
-            "  [dim]the client connects to this URL; run "
-            "`garage mcp-serve --http` yourself to keep it up[/dim]"
+            "  [dim]the client connects to this URL; run `garage mcp-serve --http` yourself to keep it up[/dim]"
         )
     else:
         # Point the server at this configuration explicitly: a client launches it
@@ -931,10 +910,7 @@ def mcp_install(
     console.print(f"[green]{verb}[/green] {result.path}")
     if result.backup:
         console.print(f"  backup: {result.backup.name}")
-    console.print(
-        "\nRestart the client, then try: "
-        "[cyan]what does my reference material say about secure boot?[/cyan]"
-    )
+    console.print("\nRestart the client, then try: [cyan]what does my reference material say about secure boot?[/cyan]")
 
 
 @app.command("mcp-uninstall")
@@ -1006,9 +982,7 @@ def mcp_serve(
     json_response: Annotated[
         bool, typer.Option("--json-response", help="Reply with JSON instead of an SSE stream.")
     ] = False,
-    stateless: Annotated[
-        bool, typer.Option("--stateless", help="No session state between requests.")
-    ] = False,
+    stateless: Annotated[bool, typer.Option("--stateless", help="No session state between requests.")] = False,
     allow_remote: Annotated[
         bool,
         typer.Option(
@@ -1056,9 +1030,7 @@ def mcp_serve(
 
     transport = "sse" if sse else "streamable-http"
     scheme_note = " [dim](legacy transport)[/dim]" if sse else ""
-    console.print(
-        f"[green]serving[/green] {transport}{scheme_note} on http://{bind_host}:{bind_port}{route}"
-    )
+    console.print(f"[green]serving[/green] {transport}{scheme_note} on http://{bind_host}:{bind_port}{route}")
     if not is_loopback(bind_host):
         console.print("[yellow]warning[/yellow]: reachable from other machines, unauthenticated")
     console.print("[dim]Ctrl-C to stop[/dim]")
@@ -1176,10 +1148,7 @@ def extract_cmd(
     console.print(f"  chunks    : {len(chunks)}")
     if chunks:
         sizes = [len(c.text) for c in chunks]
-        console.print(
-            f"  chunk len : min={min(sizes)} median="
-            f"{sorted(sizes)[len(sizes) // 2]} max={max(sizes)}"
-        )
+        console.print(f"  chunk len : min={min(sizes)} median={sorted(sizes)[len(sizes) // 2]} max={max(sizes)}")
         console.print(f"  chunker   : {chunks[0].chunker}")
     if result.meta:
         console.print(f"  meta      : {result.meta}")
@@ -1198,6 +1167,7 @@ def extract_cmd(
 
 def get_version() -> str:
     import garage_rag
+
     return getattr(garage_rag, "__version__", "0.1.0")
 
 
@@ -1211,22 +1181,18 @@ def version_cmd() -> None:
 def serve(
     host: Annotated[str, typer.Option("--host", "-h", help="gRPC host binding.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="gRPC port.")] = 50051,
-    xpc: Annotated[bool, typer.Option("--xpc",
-                                      help="Run as macOS XPC Mach Service instead of TCP gRPC.")
-    ] = False,
+    xpc: Annotated[bool, typer.Option("--xpc", help="Run as macOS XPC Mach Service instead of TCP gRPC.")] = False,
     service_name: Annotated[
         str,
         typer.Option("--service-name", help="macOS XPC Mach service name (when --xpc is enabled)."),
     ] = "me.rickmark.garage.xpc",
     team_id: Annotated[
         str | None,
-        typer.Option("--team-id",
-                     help="Expected peer Apple Team ID for peer codesigning authentication."),
+        typer.Option("--team-id", help="Expected peer Apple Team ID for peer codesigning authentication."),
     ] = "DWVXMLB45Y",
     bundle_id: Annotated[
         str | None,
-        typer.Option("--bundle-id",
-                     help="Expected peer Bundle ID for peer codesigning authentication."),
+        typer.Option("--bundle-id", help="Expected peer Bundle ID for peer codesigning authentication."),
     ] = None,
     allow_unsigned: Annotated[
         bool,
@@ -1235,9 +1201,9 @@ def serve(
 ) -> None:
     """Start the long-running gRPC or macOS XPC server for Garage."""
     if xpc:
-        console.print(
-            f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
+        console.print(f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
         from garage_rag.service.xpc import serve_xpc
+
         serve_xpc(
             service_name=service_name,
             team_id=team_id,
@@ -1247,6 +1213,7 @@ def serve(
     else:
         console.print(f"[bold green]Starting Garage gRPC Server[/bold green] on {host}:{port}...")
         from garage_rag.service.server import serve_grpc
+
         serve_grpc(host=host, port=port)
 
 
@@ -1263,6 +1230,7 @@ def main_cli() -> None:
     # In-process gRPC command serialization execution
     if argv and not (len(argv) == 1 and argv[0] in ("--help", "-h")):
         from garage_rag.service.client import execute_and_render_cli
+
         exit_code = execute_and_render_cli(argv)
         raise SystemExit(exit_code)
 

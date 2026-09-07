@@ -200,4 +200,76 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertTrue(stale.displayDescription.contains("Stale bookmark: / (needs re-grant)"))
         XCTAssertFalse(stale.isGranted)
     }
+
+    func testVolumeAccessWithSourcePathsAllAccessible() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        let sourcePath1 = "/Users/test/Dropbox"
+        let sourcePath2 = "/Users/test/Developer"
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", sourcePath1, sourcePath2]
+        mockFS.directoryContents = [URL(fileURLWithPath: "\(sourcePath1)/doc1.pdf"), URL(fileURLWithPath: "\(sourcePath1)/doc2.pdf")]
+
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let result = service.testFullVolumeAccess(sourcePaths: [
+            (slug: "dropbox", root: sourcePath1),
+            (slug: "dev", root: sourcePath2)
+        ])
+
+        XCTAssertTrue(result.isAccessible)
+        XCTAssertEqual(result.sourcePathResults.count, 2)
+        XCTAssertTrue(result.sourcePathResults[0].isAccessible)
+        XCTAssertEqual(result.sourcePathResults[0].slug, "dropbox")
+        XCTAssertEqual(result.sourcePathResults[0].itemCount, 2)
+        XCTAssertTrue(result.sourcePathResults[1].isAccessible)
+        XCTAssertTrue(result.message.contains("All 2 ingest source paths are accessible"))
+    }
+
+    func testVolumeAccessWithInaccessibleSourcePath() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        let sourcePath1 = "/Users/test/Dropbox"
+        let sourcePath2 = "/Users/test/Restricted"
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", sourcePath1] // sourcePath2 not readable
+
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let result = service.testFullVolumeAccess(sourcePaths: [
+            (slug: "dropbox", root: sourcePath1),
+            (slug: "restricted", root: sourcePath2)
+        ])
+
+        XCTAssertFalse(result.isAccessible)
+        XCTAssertEqual(result.sourcePathResults.count, 2)
+        XCTAssertTrue(result.sourcePathResults[0].isAccessible)
+        XCTAssertFalse(result.sourcePathResults[1].isAccessible)
+        XCTAssertEqual(result.sourcePathResults[1].statusDescription, "Permission denied / not readable")
+        XCTAssertTrue(result.message.contains("1 of 2 ingest source paths are inaccessible"))
+    }
+
+    func testVolumeAccessWithNonExistentSourcePath() {
+        let mockStore = MockVolumeBookmarkStore()
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+
+        final class NonExistentFileSystemAccessor: FileSystemAccessing {
+            var readablePaths: Set<String> = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+            func contentsOfDirectory(at url: URL) throws -> [URL] { [URL(fileURLWithPath: "/Users")] }
+            func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+                if path.contains("missing") { return false }
+                isDirectory?.pointee = true
+                return true
+            }
+            func isReadableFile(atPath path: String) -> Bool { readablePaths.contains(path) }
+        }
+
+        let nonExistentFS = NonExistentFileSystemAccessor()
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: nonExistentFS)
+        let result = service.testFullVolumeAccess(sourcePaths: [
+            (slug: "missing_docs", root: "/Users/test/missing_dir")
+        ])
+
+        XCTAssertFalse(result.isAccessible)
+        XCTAssertEqual(result.sourcePathResults.count, 1)
+        XCTAssertFalse(result.sourcePathResults[0].isAccessible)
+        XCTAssertEqual(result.sourcePathResults[0].statusDescription, "Path does not exist")
+    }
 }

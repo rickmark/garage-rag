@@ -20,48 +20,58 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+      - name: Install dependencies via Brew
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install aspect bazelisk
       - run: aspect test --task:name test -- //...
 
   gazelle:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+      - name: Install dependencies via Brew
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install aspect bazelisk
       - run: aspect gazelle --task:name gazelle
 
   buildifier:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+      - name: Install dependencies via Brew
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install aspect bazelisk
       - run: aspect buildifier --task:name buildifier
 
 
   format:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+      - name: Install dependencies via Brew
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install aspect bazelisk
       - run: aspect format --task:name format
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+      - name: Install dependencies via Brew
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install aspect bazelisk
       - run: aspect lint --task:name lint -- //...
 

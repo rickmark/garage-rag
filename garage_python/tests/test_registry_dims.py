@@ -70,12 +70,9 @@ class TestPlanStorage:
                 plan = plan_storage(dims, supports_mrl=mrl)
                 if plan.index_kind != "hnsw":
                     continue
-                ceiling = (
-                    HNSW_MAX_VECTOR_DIMS if plan.storage_kind == "vector" else HNSW_MAX_HALFVEC_DIMS
-                )
+                ceiling = HNSW_MAX_VECTOR_DIMS if plan.storage_kind == "vector" else HNSW_MAX_HALFVEC_DIMS
                 assert plan.stored_dims <= ceiling, (
-                    f"{dims=} mrl={mrl} produced an unindexable "
-                    f"{plan.storage_kind}({plan.stored_dims})"
+                    f"{dims=} mrl={mrl} produced an unindexable {plan.storage_kind}({plan.stored_dims})"
                 )
 
 
@@ -168,3 +165,12 @@ class TestKnownModels:
     def test_pulled_models_have_expected_widths(self) -> None:
         assert KNOWN_MODELS["bge-m3"].dims == 1024
         assert KNOWN_MODELS["nomic-embed-text"].dims == 768
+
+    def test_known_models_default_provider_is_llama_xpc(self) -> None:
+        for slug, spec in KNOWN_MODELS.items():
+            assert spec.provider == "llama_xpc", f"{slug} must default to llama_xpc provider"
+
+    def test_known_models_have_model_id(self) -> None:
+        for slug, spec in KNOWN_MODELS.items():
+            assert spec.model_id is not None
+            assert "/" in spec.model_id

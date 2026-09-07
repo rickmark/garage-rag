@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 final class AppState: ObservableObject {
@@ -12,7 +13,9 @@ final class AppState: ObservableObject {
     let backfill: GarageCLIService
     let mcp: GarageMCPService
     let llama: LlamaService
+    let modelDownload: ModelDownloadService
     let volumeAccess: VolumeAccessService
+    private var cancellables = Set<AnyCancellable>()
 
     /// Output of the most recent manual or scheduled `garage` command,
     /// separate from the rolling activity log.
@@ -20,6 +23,10 @@ final class AppState: ObservableObject {
     @Published var lastCommandSucceeded: Bool?
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
+    @Published private(set) var registeredModels: [RegisteredModel] = []
+    @Published private(set) var isFetchingModels = false
+    @Published private(set) var registeredSources: [RegisteredSource] = []
+    @Published private(set) var isFetchingSources = false
     @Published var scheduledMaintenanceEnabled: Bool {
         didSet {
             UserDefaults.standard.set(
@@ -44,16 +51,19 @@ final class AppState: ObservableObject {
     private var scheduledMaintenanceTask: Task<Void, Never>?
 
     convenience init() {
-        self.init(llama: LlamaService(), volumeAccess: VolumeAccessService())
+        self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
     }
 
-    init(llama: LlamaService, volumeAccess: VolumeAccessService? = nil) {
+    init(llama: LlamaService, volumeAccess: VolumeAccessService? = nil, modelDownload: ModelDownloadService? = nil) {
         self.llama = llama
         self.volumeAccess = volumeAccess ?? VolumeAccessService()
+        let downloadService = modelDownload ?? ModelDownloadService()
+        self.modelDownload = downloadService
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
         mcp = GarageMCPService(postgres: postgres)
+
         scheduledMaintenanceEnabled = UserDefaults.standard.bool(
             forKey: Self.scheduledMaintenanceEnabledKey
         )
@@ -61,6 +71,16 @@ final class AppState: ObservableObject {
             forKey: Self.scheduledMaintenanceIntervalKey
         )
         scheduledMaintenanceInterval = storedInterval > 0 ? storedInterval : 60 * 60
+
+        // Forward changes from child ObservableObjects to AppState observers
+        downloadService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        llama.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        postgres.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+
         do {
             lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil
         } catch {
@@ -72,8 +92,10 @@ final class AppState: ObservableObject {
     func launch() {
         hasLaunched = true
         volumeAccess.restoreAndVerifyAccess()
+        Task { await fetchRegisteredSources() }
         configureScheduledMaintenance()
         Task { await llama.refreshStatus() }
+        Task { await modelDownload.refresh() }
         guard autoStartPostgres else { return }
         Task { await startPostgres() }
     }
@@ -82,9 +104,62 @@ final class AppState: ObservableObject {
         do {
             try await postgres.start()
             try await mcp.start()
+            await fetchRegisteredModels()
+            await fetchRegisteredSources()
         } catch {
             // Status already reflects .failed(...); nothing else to do here.
         }
+    }
+
+    func fetchRegisteredModels() async {
+        guard postgres.status == .running else { return }
+        isFetchingModels = true
+        defer { isFetchingModels = false }
+        do {
+            let models = try postgres.listRegisteredModels()
+            self.registeredModels = models
+        } catch {
+            // Silently ignore or leave models as-is if table not yet migrated
+        }
+    }
+
+    func fetchRegisteredSources() async {
+        isFetchingSources = true
+        defer { isFetchingSources = false }
+
+        let configSources = GarageConfigLoader.loadSourcesFromConfig()
+        var dbSources: [RegisteredSource] = []
+        if postgres.status == .running {
+            do {
+                dbSources = try postgres.listRegisteredSources()
+            } catch {
+                // Table might not exist yet or error
+            }
+        }
+
+        var merged: [String: RegisteredSource] = [:]
+        for cs in configSources {
+            merged[cs.slug] = cs
+        }
+        for ds in dbSources {
+            if let existing = merged[ds.slug] {
+                merged[ds.slug] = RegisteredSource(
+                    slug: ds.slug,
+                    kind: ds.kind.isEmpty ? existing.kind : ds.kind,
+                    root: ds.root.isEmpty ? existing.root : ds.root,
+                    corpusClass: ds.corpusClass.isEmpty ? existing.corpusClass : ds.corpusClass,
+                    trust: ds.trust.isEmpty ? existing.trust : ds.trust,
+                    allowCloudEnrichment: ds.allowCloudEnrichment,
+                    enabled: ds.enabled,
+                    includeCode: existing.includeCode,
+                    origin: .both
+                )
+            } else {
+                merged[ds.slug] = ds
+            }
+        }
+
+        self.registeredSources = Array(merged.values).sorted { $0.slug < $1.slug }
     }
 
     func stopPostgres() async {
@@ -149,7 +224,8 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func testVolumeAccess() -> VolumeAccessTestResult {
-        let result = volumeAccess.testFullVolumeAccess()
+        let sourceTuples = registeredSources.map { (slug: $0.slug, root: $0.root) }
+        let result = volumeAccess.testFullVolumeAccess(sourcePaths: sourceTuples)
         lastCommandSucceeded = result.isAccessible
         lastCommandOutput = result.message
         return result

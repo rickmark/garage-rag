@@ -16,6 +16,7 @@ final class LlamaService: ObservableObject {
     @Published private(set) var lastSuccess: String?
     @Published private(set) var logs: [LogLine] = []
     @Published private(set) var testOutput: String?
+    @Published private(set) var lastEmbeddingVector: [Float]?
 
     let client: LlamaClient
     private let maxLogLines = 2000
@@ -259,6 +260,7 @@ final class LlamaService: ObservableObject {
         defer { isBusy = false }
         lastError = nil
         testOutput = nil
+        lastEmbeddingVector = nil
 
         do {
             appendLog("Generating embeddings for text: \"\(trimmed)\"...")
@@ -267,7 +269,9 @@ final class LlamaService: ObservableObject {
                 lastError = "No embedding returned."
                 return false
             }
-            testOutput = "Embedding vector (\(firstVec.count) dimensions):\n[\(firstVec.prefix(8).map { String(format: "%.4f", $0) }.joined(separator: ", "))...]"
+            self.lastEmbeddingVector = firstVec
+            let formattedValues = firstVec.map { String(format: "%.6f", $0) }.joined(separator: ", ")
+            testOutput = "Embedding vector (\(firstVec.count) dimensions):\n[\(formattedValues)]"
             lastSuccess = "Embedding generated (\(firstVec.count) dims)."
             appendLog("Embedding finished with \(firstVec.count) dimensions")
             return true

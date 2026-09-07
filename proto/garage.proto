@@ -291,6 +291,7 @@ message ModelInfo {
     string index_kind = 7;
     string table_name = 8;
     bool is_default = 9;
+    string model_id = 10;
 }
 
 message RegisterModelRequest {
@@ -304,6 +305,7 @@ message RegisterModelRequest {
     int32 context_window = 8;
     int32 max_tokens = 9;
     int32 batch_size = 10;
+    string model_id = 11;
 }
 
 message RegisterModelResponse {

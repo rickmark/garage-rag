@@ -70,10 +70,12 @@ def resolve_spec(
     dims: int | None = None,
     model_ref: str | None = None,
     provider: str | None = None,
+    model_id: str | None = None,
 ) -> ModelSpec:
     """Look up a known model, or build a spec from explicit arguments."""
     known = KNOWN_MODELS.get(slug)
     if known is not None:
+        effective_model_id = model_id or known.model_id
         if dims is not None and dims != known.dims:
             # Trust the caller: a quantized or MRL-truncated pull can differ.
             return ModelSpec(
@@ -83,6 +85,7 @@ def resolve_spec(
                 provider=provider or known.provider,
                 normalized=known.normalized,
                 supports_mrl=known.supports_mrl,
+                model_id=effective_model_id,
             )
         if provider is not None and provider != known.provider:
             return ModelSpec(
@@ -92,13 +95,28 @@ def resolve_spec(
                 provider=provider,
                 normalized=known.normalized,
                 supports_mrl=known.supports_mrl,
+                model_id=effective_model_id,
+            )
+        if model_id is not None and model_id != known.model_id:
+            return ModelSpec(
+                slug=known.slug,
+                model_ref=model_ref or known.model_ref,
+                dims=known.dims,
+                provider=known.provider,
+                normalized=known.normalized,
+                supports_mrl=known.supports_mrl,
+                model_id=model_id,
             )
         return known
 
     if dims is None:
         raise ValueError(f"model {slug!r} is not in the known-model table; pass --dims explicitly")
     return ModelSpec(
-        slug=slug, model_ref=model_ref or slug, dims=dims, provider=provider or "ollama"
+        slug=slug,
+        model_ref=model_ref or slug,
+        dims=dims,
+        provider=provider or "llama_xpc",
+        model_id=model_id,
     )
 
 
@@ -120,8 +138,7 @@ def register_model(
 
     if plan.is_truncated:
         log.warning(
-            "%s is %d-dim, above the halfvec HNSW ceiling; storing %d dims "
-            "via Matryoshka truncation",
+            "%s is %d-dim, above the halfvec HNSW ceiling; storing %d dims via Matryoshka truncation",
             spec.slug,
             spec.dims,
             plan.stored_dims,
@@ -140,6 +157,7 @@ def register_model(
         slug=spec.slug,
         provider=spec.provider,
         model_ref=spec.model_ref,
+        model_id=spec.model_id,
         dims=spec.dims,
         stored_dims=plan.stored_dims,
         storage_kind=plan.storage_kind,
@@ -174,11 +192,7 @@ def set_default_model(session: Session, slug: str) -> None:
 def get_model(session: Session, slug: str | None = None) -> EmbeddingModel:
     """Fetch a model by slug, or the default when ``slug`` is None."""
     query = session.query(EmbeddingModel)
-    row = (
-        query.filter_by(slug=slug).one_or_none()
-        if slug
-        else query.filter_by(is_default=True).one_or_none()
-    )
+    row = query.filter_by(slug=slug).one_or_none() if slug else query.filter_by(is_default=True).one_or_none()
     if row is None:
         which = f"model {slug!r}" if slug else "default model"
         raise LookupError(f"no {which} registered; run 'garage register-model' first")

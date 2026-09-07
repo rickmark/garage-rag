@@ -30,13 +30,67 @@ public enum VolumeAccessStatus: Equatable {
     }
 }
 
+/// Detailed result of checking disk access for an individual ingest source path.
+public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendable, Codable {
+    public var id: String { slug.isEmpty ? rawPath : "\(slug):\(rawPath)" }
+    public let slug: String
+    public let rawPath: String
+    public let resolvedPath: String
+    public let exists: Bool
+    public let isReadable: Bool
+    public let isDirectory: Bool
+    public let itemCount: Int?
+    public let errorMessage: String?
+
+    public init(
+        slug: String,
+        rawPath: String,
+        resolvedPath: String,
+        exists: Bool,
+        isReadable: Bool,
+        isDirectory: Bool,
+        itemCount: Int?,
+        errorMessage: String? = nil
+    ) {
+        self.slug = slug
+        self.rawPath = rawPath
+        self.resolvedPath = resolvedPath
+        self.exists = exists
+        self.isReadable = isReadable
+        self.isDirectory = isDirectory
+        self.itemCount = itemCount
+        self.errorMessage = errorMessage
+    }
+
+    public var isAccessible: Bool {
+        exists && isReadable && errorMessage == nil
+    }
+
+    public var statusDescription: String {
+        if !exists {
+            return "Path does not exist"
+        }
+        if !isReadable {
+            return "Permission denied / not readable"
+        }
+        if let error = errorMessage {
+            return "Error: \(error)"
+        }
+        if let count = itemCount {
+            return "Accessible (\(count) \(count == 1 ? "item" : "items"))"
+        }
+        return "Accessible"
+    }
+}
+
 /// Detailed result of a volume access verification test.
-public struct VolumeAccessTestResult: Equatable {
+public struct VolumeAccessTestResult: Equatable, Sendable {
     public let isAccessible: Bool
     public let testedURL: URL
     public let rootItemsCount: Int
     public let accessibleSubpaths: [String]
     public let inaccessibleSubpaths: [String]
+    public let sourcePathResults: [SourcePathAccessResult]
     public let message: String
     public let isSecurityScoped: Bool
 
@@ -46,6 +100,7 @@ public struct VolumeAccessTestResult: Equatable {
         rootItemsCount: Int,
         accessibleSubpaths: [String],
         inaccessibleSubpaths: [String],
+        sourcePathResults: [SourcePathAccessResult] = [],
         message: String,
         isSecurityScoped: Bool
     ) {
@@ -54,6 +109,7 @@ public struct VolumeAccessTestResult: Equatable {
         self.rootItemsCount = rootItemsCount
         self.accessibleSubpaths = accessibleSubpaths
         self.inaccessibleSubpaths = inaccessibleSubpaths
+        self.sourcePathResults = sourcePathResults
         self.message = message
         self.isSecurityScoped = isSecurityScoped
     }
@@ -277,9 +333,9 @@ public final class VolumeAccessService: ObservableObject {
         status = .notConfigured
     }
 
-    /// Runs a verification test against the root hard drive / volume to verify full volume read access.
+    /// Runs a verification test against the root hard drive / volume and each registered ingest source path.
     @discardableResult
-    public func testFullVolumeAccess() -> VolumeAccessTestResult {
+    public func testFullVolumeAccess(sourcePaths: [(slug: String, root: String)] = []) -> VolumeAccessTestResult {
         let targetURL = activeRootURL ?? URL(fileURLWithPath: "/")
         var isSecurityScoped = false
 
@@ -312,36 +368,92 @@ public final class VolumeAccessService: ObservableObject {
             }
         }
 
-        let isAccessible: Bool
-        if isRootVolume {
-            isAccessible = rootAccessible && (!accessibleSubpaths.isEmpty || !rootItems.isEmpty)
-        } else {
-            isAccessible = rootAccessible && fileSystem.isReadableFile(atPath: targetURL.path)
+        // Test each ingest source path
+        var sourceResults: [SourcePathAccessResult] = []
+        for source in sourcePaths {
+            let rawPath = source.root
+            let slug = source.slug
+            let resolvedPath = (rawPath as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            let exists = fileSystem.fileExists(atPath: resolvedPath, isDirectory: &isDir)
+            let isReadable = fileSystem.isReadableFile(atPath: resolvedPath)
+            var count: Int? = nil
+            var errorMsg: String? = nil
+
+            if exists && isReadable {
+                if isDir.boolValue {
+                    do {
+                        let contents = try fileSystem.contentsOfDirectory(at: URL(fileURLWithPath: resolvedPath))
+                        count = contents.count
+                    } catch {
+                        errorMsg = error.localizedDescription
+                    }
+                }
+            } else if !exists {
+                errorMsg = "Path does not exist"
+            } else if !isReadable {
+                errorMsg = "Permission denied / not readable"
+            }
+
+            sourceResults.append(SourcePathAccessResult(
+                slug: slug,
+                rawPath: rawPath,
+                resolvedPath: resolvedPath,
+                exists: exists,
+                isReadable: isReadable,
+                isDirectory: isDir.boolValue,
+                itemCount: count,
+                errorMessage: errorMsg
+            ))
         }
 
+        let rootVolumeAccessible: Bool
+        if isRootVolume {
+            rootVolumeAccessible = rootAccessible && (!accessibleSubpaths.isEmpty || !rootItems.isEmpty)
+        } else {
+            rootVolumeAccessible = rootAccessible && fileSystem.isReadableFile(atPath: targetURL.path)
+        }
+
+        let allSourcesAccessible = sourceResults.isEmpty || sourceResults.allSatisfy(\.isAccessible)
+        let isOverallAccessible = rootVolumeAccessible && allSourcesAccessible
+
         let message: String
-        if isAccessible {
-            if !accessibleSubpaths.isEmpty {
-                message = "Full volume access verified at '\(targetURL.path)'. Found \(rootItems.count) root items, and \(accessibleSubpaths.count) common directories are readable."
+        if !sourceResults.isEmpty {
+            let totalCount = sourceResults.count
+            if isOverallAccessible {
+                message = "Volume & source access verified at '\(targetURL.path)'. All \(totalCount) ingest source \(totalCount == 1 ? "path is" : "paths are") accessible."
+            } else if !rootVolumeAccessible {
+                message = "Root volume access test failed for '\(targetURL.path)'."
             } else {
-                message = "Volume access verified at '\(targetURL.path)'. Found \(rootItems.count) items."
+                let inaccessible = sourceResults.filter { !$0.isAccessible }
+                let details = inaccessible.map { "\($0.slug.isEmpty ? $0.rawPath : $0.slug) (\($0.statusDescription))" }.joined(separator: ", ")
+                message = "Volume access granted at '\(targetURL.path)', but \(inaccessible.count) of \(totalCount) ingest source \(totalCount == 1 ? "path is" : "paths are") inaccessible: \(details)"
             }
         } else {
-            message = "Volume access test failed for '\(targetURL.path)'. The directory could not be enumerated or read."
+            if rootVolumeAccessible {
+                if !accessibleSubpaths.isEmpty {
+                    message = "Full volume access verified at '\(targetURL.path)'. Found \(rootItems.count) root items, and \(accessibleSubpaths.count) common directories are readable."
+                } else {
+                    message = "Volume access verified at '\(targetURL.path)'. Found \(rootItems.count) items."
+                }
+            } else {
+                message = "Volume access test failed for '\(targetURL.path)'. The directory could not be enumerated or read."
+            }
         }
 
         let result = VolumeAccessTestResult(
-            isAccessible: isAccessible,
+            isAccessible: isOverallAccessible,
             testedURL: targetURL,
             rootItemsCount: rootItems.count,
             accessibleSubpaths: accessibleSubpaths,
             inaccessibleSubpaths: inaccessibleSubpaths,
+            sourcePathResults: sourceResults,
             message: message,
             isSecurityScoped: isSecurityScoped
         )
 
         self.lastTestResult = result
-        if isAccessible {
+        if rootVolumeAccessible {
             self.status = .accessGranted(url: targetURL, isSecurityScoped: isSecurityScoped)
         } else {
             self.status = .accessDenied(reason: message)
