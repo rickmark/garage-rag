@@ -8,7 +8,8 @@ enum GarageMCPStatus: Equatable {
     case failed(String)
 }
 
-enum GarageMCPError: LocalizedError {
+enum GarageMCPError: LocalizedError, Equatable {
+    case databaseNotOnline
     case cliNotFound
     case startupTimeout
     case launchFailed(String)
@@ -17,6 +18,8 @@ enum GarageMCPError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .databaseNotOnline:
+            "Database is not online. MCP server requires an online database."
         case .cliNotFound:
             "garage CLI not found at \(Paths.garageCLI.path)"
         case .startupTimeout:
@@ -120,6 +123,7 @@ final class GarageMCPService: ObservableObject {
     @Published private(set) var lastTestResult: MCPTestResult?
     @Published private(set) var isTesting: Bool = false
     @Published private(set) var isRegistering: Bool = false
+    @Published private(set) var sessionId: String?
 
     let host = "127.0.0.1"
     let path = "/mcp"
@@ -320,7 +324,7 @@ final class GarageMCPService: ObservableObject {
             refreshDetectedClients()
         }
 
-        var args = ["mcp-install", "--all", "--yes"]
+        var args = ["mcp-install", "--all", "--yes", "--port", "\(port)", "--host", host]
         if force {
             args.append("--force")
         }
@@ -335,7 +339,7 @@ final class GarageMCPService: ObservableObject {
             refreshDetectedClients()
         }
 
-        var args = ["mcp-install", "--target", targetId, "--yes"]
+        var args = ["mcp-install", "--target", targetId, "--yes", "--port", "\(port)", "--host", host]
         if force {
             args.append("--force")
         }
@@ -350,7 +354,7 @@ final class GarageMCPService: ObservableObject {
             refreshDetectedClients()
         }
 
-        var args = ["mcp-install", "--path", url.path, "--yes"]
+        var args = ["mcp-install", "--path", url.path, "--yes", "--port", "\(port)", "--host", host]
         if force {
             args.append("--force")
         }
@@ -358,6 +362,31 @@ final class GarageMCPService: ObservableObject {
     }
 
     // MARK: - Testing & Diagnostics
+
+    func initializeSession() async throws {
+        self.sessionId = nil
+        let initPayload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": [
+                "protocolVersion": "2024-11-05",
+                "capabilities": [String: Any](),
+                "clientInfo": [
+                    "name": "GarageAppDiagnostic",
+                    "version": "1.0.0"
+                ]
+            ]
+        ]
+        _ = try await sendJSONRPC(initPayload)
+
+        let initNotification: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": [String: Any]()
+        ]
+        _ = try? await sendJSONRPC(initNotification)
+    }
 
     @discardableResult
     func testServerConnection(sampleTool: String? = "rag_stats", query: String? = nil) async -> MCPTestResult {
@@ -378,20 +407,7 @@ final class GarageMCPService: ObservableObject {
 
         do {
             // 1. Initialize session
-            let initPayload: [String: Any] = [
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": [
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": [String: Any](),
-                    "clientInfo": [
-                        "name": "GarageAppDiagnostic",
-                        "version": "1.0.0"
-                    ]
-                ]
-            ]
-            _ = try await sendJSONRPC(initPayload)
+            try await initializeSession()
 
             // 2. Query tools/list
             let listToolsPayload: [String: Any] = [
@@ -451,6 +467,10 @@ final class GarageMCPService: ObservableObject {
     }
 
     func executeToolCall(toolName: String, arguments: [String: Any] = [:]) async throws -> String {
+        if sessionId == nil {
+            try await initializeSession()
+        }
+
         let callPayload: [String: Any] = [
             "jsonrpc": "2.0",
             "id": Int.random(in: 100...9999),
@@ -460,7 +480,20 @@ final class GarageMCPService: ObservableObject {
                 "arguments": arguments
             ]
         ]
-        let resp = try await sendJSONRPC(callPayload)
+
+        let resp: [String: Any]
+        do {
+            resp = try await sendJSONRPC(callPayload)
+        } catch {
+            if let mcpError = error as? GarageMCPError,
+               case .invalidResponse(let msg) = mcpError,
+               msg.localizedCaseInsensitiveContains("session") {
+                try await initializeSession()
+                resp = try await sendJSONRPC(callPayload)
+            } else {
+                throw error
+            }
+        }
 
         if let errorObj = resp["error"] as? [String: Any] {
             let message = errorObj["message"] as? String ?? "Unknown error"
@@ -488,6 +521,9 @@ final class GarageMCPService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        if let sid = self.sessionId, !sid.isEmpty {
+            request.setValue(sid, forHTTPHeaderField: "Mcp-Session-Id")
+        }
         request.timeoutInterval = 10
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
@@ -495,9 +531,22 @@ final class GarageMCPService: ObservableObject {
         guard let httpResp = response as? HTTPURLResponse else {
             throw GarageMCPError.invalidResponse("No HTTP response received")
         }
+
+        if let newSessionId = httpResp.value(forHTTPHeaderField: "mcp-session-id") ?? httpResp.value(forHTTPHeaderField: "Mcp-Session-Id"),
+           !newSessionId.isEmpty {
+            self.sessionId = newSessionId
+        }
+
         guard (200...299).contains(httpResp.statusCode) else {
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
+            if (httpResp.statusCode == 400 || httpResp.statusCode == 404) && bodyStr.localizedCaseInsensitiveContains("session") {
+                self.sessionId = nil
+            }
             throw GarageMCPError.invalidResponse("HTTP \(httpResp.statusCode): \(bodyStr)")
+        }
+
+        if data.isEmpty {
+            return [:]
         }
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -517,13 +566,19 @@ final class GarageMCPService: ObservableObject {
             }
         }
 
-        throw GarageMCPError.invalidResponse("Failed to parse JSON-RPC payload")
+        return [:]
     }
 
     // MARK: - Server Lifecycle
 
     func start(maxAttempts: Int = 3, readyTimeout: TimeInterval = 10) async throws {
         guard status == .stopped || isFailed else { return }
+        guard postgres.status == .running else {
+            let errorMsg = "Database is not online (status: \(postgres.status)). MCP server requires an online database."
+            status = .failed(errorMsg)
+            appendLog(LogLine(stream: .stderr, text: errorMsg, source: "garage-mcp"))
+            throw GarageMCPError.databaseNotOnline
+        }
         guard FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) else {
             status = .failed(GarageMCPError.cliNotFound.localizedDescription)
             throw GarageMCPError.cliNotFound
@@ -537,6 +592,7 @@ final class GarageMCPService: ObservableObject {
             triedPorts.insert(currentPort)
             status = .starting
             isStopping = false
+            sessionId = nil
 
             var processInstance: Process?
             do {
@@ -604,6 +660,7 @@ final class GarageMCPService: ObservableObject {
         guard status == .running || status == .starting else { return }
         status = .stopping
         isStopping = true
+        sessionId = nil
         runner.terminate()
         for _ in 0..<50 where runner.isRunning {
             try? await Task.sleep(nanoseconds: 100_000_000)
@@ -613,6 +670,7 @@ final class GarageMCPService: ObservableObject {
 
     func terminateImmediately() {
         isStopping = true
+        sessionId = nil
         runner.terminate()
     }
 

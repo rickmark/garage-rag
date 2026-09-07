@@ -16,6 +16,7 @@ final class GarageMCPServiceTests: XCTestCase {
         XCTAssertEqual(mcp.path, "/mcp")
         XCTAssertEqual(mcp.endpoint.absoluteString, "http://127.0.0.1:8787/mcp")
         XCTAssertTrue(mcp.logs.isEmpty)
+        XCTAssertNil(mcp.sessionId)
     }
 
     @MainActor
@@ -144,5 +145,41 @@ final class GarageMCPServiceTests: XCTestCase {
         XCTAssertFalse(result.isSuccess)
         XCTAssertTrue(result.errorMessage?.contains("not running") == true)
         XCTAssertEqual(mcp.lastTestResult, result)
+        XCTAssertNil(mcp.sessionId)
+    }
+
+    @MainActor
+    func testSessionIdClearedOnStop() async {
+        let postgres = PostgresService()
+        let mcp = GarageMCPService(postgres: postgres)
+
+        XCTAssertNil(mcp.sessionId)
+        await mcp.stop()
+        XCTAssertNil(mcp.sessionId)
+
+        mcp.terminateImmediately()
+        XCTAssertNil(mcp.sessionId)
+    }
+
+    @MainActor
+    func testStartRefusedWhenDatabaseOffline() async {
+        let postgres = PostgresService()
+        XCTAssertEqual(postgres.status, .stopped)
+        let mcp = GarageMCPService(postgres: postgres)
+
+        do {
+            try await mcp.start()
+            XCTFail("Expected start to throw databaseNotOnline")
+        } catch let error as GarageMCPError {
+            XCTAssertEqual(error, .databaseNotOnline)
+        } catch {
+            XCTFail("Unexpected error thrown: \(error)")
+        }
+
+        if case .failed(let message) = mcp.status {
+            XCTAssertTrue(message.contains("Database is not online"))
+        } else {
+            XCTFail("Expected status to be .failed, but got \(mcp.status)")
+        }
     }
 }

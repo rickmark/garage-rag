@@ -610,7 +610,7 @@ def scan(
     """Scan sources and count items by source type before ingesting."""
     import json
     from garage_rag.db.engine import get_session_factory
-    from garage_rag.ingest.scanner import scan_source
+    from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
     factory = get_session_factory()
     with factory() as session:
@@ -628,9 +628,12 @@ def scan(
         return
 
     results = []
-    for src in sources:
-        res = scan_source(src, include_code=include_code)
-        results.append(res)
+    with factory() as session:
+        for src in sources:
+            res = scan_source(src, include_code=include_code)
+            results.append(res)
+            persist_scan_result(session, res)
+        session.commit()
 
     if json_output:
         console.print_json(json.dumps([r.to_dict() for r in results]))
@@ -878,10 +881,17 @@ def mcp_install(
     ] = False,
     name: Annotated[str, typer.Option("--name", help="Server name in the config.")] = "garage-rag",
     http: Annotated[
-        bool,
+        bool | None,
         typer.Option(
             "--http",
-            help="Register a URL for an already-running HTTP server instead of a spawned command.",
+            help="Register a URL for an HTTP server (preferred/default).",
+        ),
+    ] = None,
+    stdio: Annotated[
+        bool,
+        typer.Option(
+            "--stdio",
+            help="Register a spawned command using STDIO instead of an HTTP URL.",
         ),
     ] = False,
     host: Annotated[str | None, typer.Option(help="HTTP host, with --http.")] = None,
@@ -904,6 +914,11 @@ def mcp_install(
         install,
         server_command,
     )
+
+    if http is True and stdio is True:
+        raise typer.BadParameter("choose either --http or --stdio")
+
+    use_http = True if http is not False and not stdio else False
 
     targets = client_targets()
     is_multi_install = all_configs or target in ("all", "any", "found", "all-found")
@@ -930,7 +945,7 @@ def mcp_install(
     config_file: Path | None = None
     database_environment: dict[str, str] | None = None
 
-    if http:
+    if use_http:
         settings = get_settings()
         url = http_url(
             host or settings.mcp_host,
@@ -939,7 +954,7 @@ def mcp_install(
         )
         console.print(f"  url     : {url}")
         console.print(
-            "  [dim]the client connects to this URL; run `garage mcp-serve --http` yourself to keep it up[/dim]"
+            "  [dim]the client connects to this URL; run `garage mcp-serve --http` or use the macOS app to keep it up[/dim]"
         )
     else:
         settings = get_settings()
@@ -958,7 +973,7 @@ def mcp_install(
         console.print(f"\n[bold]{chosen.label}[/bold] -> {chosen.path}")
         if chosen.note:
             console.print(f"  [dim]{chosen.note}[/dim]")
-        if chosen.project_scoped and not http:
+        if chosen.project_scoped and not use_http:
             console.print(
                 "  [yellow]note[/yellow]: project-scoped config records an absolute "
                 "path to this virtualenv, which will not resolve on another machine"

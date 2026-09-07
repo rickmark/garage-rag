@@ -125,16 +125,27 @@ class GarageRpcServicer(GarageServiceServicer):
             pass
 
         db_status = "unknown"
+        is_ready = True
         try:
             from garage_rag.db.engine import check_connection
+            from garage_rag.db.migrate import has_pending_migrations
 
-            db_status = "connected" if check_connection() else "disconnected"
+            if not check_connection():
+                db_status = "disconnected"
+                is_ready = False
+            elif has_pending_migrations():
+                db_status = "needs_migration"
+                is_ready = False
+            else:
+                db_status = "connected"
+                is_ready = True
         except Exception as e:
             db_status = f"error: {e}"
+            is_ready = False
 
         return StatusResponse(
             version=version,
-            is_ready=True,
+            is_ready=is_ready,
             pid=os.getpid(),
             db_status=db_status,
             server_type="grpc",
@@ -233,6 +244,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     enabled=bool(s.enabled),
                     root=s.root,
                     document_count=doc_counts.get(s.id, 0),
+                    expected_elements=getattr(s, "expected_elements", 0) or 0,
                 )
                 for s in sources
             ]
@@ -328,7 +340,7 @@ class GarageRpcServicer(GarageServiceServicer):
         """Scan source(s) to count items based on their source type."""
         from garage_rag.db.engine import get_session_factory
         from garage_rag.db.models import Source
-        from garage_rag.ingest.scanner import scan_source
+        from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
         factory = get_session_factory()
         target_sources = []
@@ -343,20 +355,23 @@ class GarageRpcServicer(GarageServiceServicer):
 
         results = []
         total_items = 0
-        for src in target_sources:
-            res = scan_source(src, include_code=request.include_code)
-            total_items += res.item_count
-            results.append(
-                SourceScanStatus(
-                    source=res.source_slug,
-                    kind=res.kind,
-                    root=str(res.root),
-                    item_count=res.item_count,
-                    item_type=res.item_type,
-                    error=res.error or "",
-                    details={str(k): str(v) for k, v in res.details.items()},
+        with factory() as session:
+            for src in target_sources:
+                res = scan_source(src, include_code=request.include_code)
+                total_items += res.item_count
+                persist_scan_result(session, res)
+                results.append(
+                    SourceScanStatus(
+                        source=res.source_slug,
+                        kind=res.kind,
+                        root=str(res.root),
+                        item_count=res.item_count,
+                        item_type=res.item_type,
+                        error=res.error or "",
+                        details={str(k): str(v) for k, v in res.details.items()},
+                    )
                 )
-            )
+            session.commit()
 
         formatted = "\n".join(
             f"{r.source} ({r.kind}): {r.item_count:,} {r.item_type}" + (f" [error: {r.error}]" if r.error else "")
@@ -373,6 +388,7 @@ class GarageRpcServicer(GarageServiceServicer):
         from garage_rag.db.engine import get_session_factory
         from garage_rag.db.models import Source
         from garage_rag.ingest.pipeline import ingest_source
+        from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
         factory = get_session_factory()
         if request.source == "*":
@@ -386,6 +402,8 @@ class GarageRpcServicer(GarageServiceServicer):
                 src_obj = session.query(Source).filter_by(slug=source_slug).one_or_none()
                 if src_obj:
                     scan_res = scan_source(src_obj, include_code=request.include_code)
+                    persist_scan_result(session, scan_res)
+                    session.commit()
                     yield IngestStatus(
                         source=source_slug,
                         is_complete=False,
@@ -796,18 +814,18 @@ class GarageRpcServicer(GarageServiceServicer):
         config_file: Path | None = None
         db_env: dict[str, str] | None = None
 
-        if request.http:
+        if getattr(request, "stdio", False):
+            settings = get_settings()
+            config_file = settings.config_path
+            if database_url := os.environ.get("GARAGE_DATABASE_URL"):
+                db_env = {"GARAGE_DATABASE_URL": database_url}
+        else:
             settings = get_settings()
             url = http_url(
                 request.host or settings.mcp_host,
                 request.port or settings.mcp_port,
                 request.route or settings.mcp_http_path,
             )
-        else:
-            settings = get_settings()
-            config_file = settings.config_path
-            if database_url := os.environ.get("GARAGE_DATABASE_URL"):
-                db_env = {"GARAGE_DATABASE_URL": database_url}
 
         name = request.name or "garage-rag"
         if request.dry_run:

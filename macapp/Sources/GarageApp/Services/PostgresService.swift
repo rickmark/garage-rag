@@ -111,6 +111,7 @@ public struct CorpusStats: Equatable, Sendable {
 enum PostgresStatus: Equatable {
     case stopped
     case starting
+    case needsMigration
     case running
     case stopping
     case failed(String)
@@ -250,7 +251,11 @@ final class PostgresService: ObservableObject {
         }
 
         try await ensureDatabaseExists(password: try postgresPassword())
-        status = .running
+        if (try? hasPendingMigrations()) == true {
+            status = .needsMigration
+        } else {
+            status = .running
+        }
     }
 
     /// Fire-and-forget SIGTERM for app-quit paths that can't await cleanup
@@ -261,7 +266,7 @@ final class PostgresService: ObservableObject {
     }
 
     func stop() async {
-        guard status == .running || status == .starting || runner.isRunning else {
+        guard status == .running || status == .needsMigration || status == .starting || runner.isRunning else {
             Self.stopAnyRunningInstance()
             return
         }
@@ -320,11 +325,16 @@ final class PostgresService: ObservableObject {
     /// re-initializes the database cluster from scratch if stopped or failed.
     /// Preserves the Keychain-managed superuser credential.
     func resetDatabase() async throws {
-        if status == .running {
+        if status == .running || status == .needsMigration {
             let password = try postgresPassword()
             try dropDatabase(password: password)
             try createDatabase(password: password)
             appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
+            if (try? hasPendingMigrations()) == true {
+                status = .needsMigration
+            } else {
+                status = .running
+            }
         } else {
             runner.terminate()
             for _ in 0..<20 where runner.isRunning {
@@ -441,10 +451,10 @@ final class PostgresService: ObservableObject {
         try requireRunning()
         let password = try postgresPassword()
         let sql = """
-        SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.allow_cloud_enrichment, s.enabled, count(d.id)
+        SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.allow_cloud_enrichment, s.enabled, count(d.id), coalesce(s.expected_elements, 0)
         FROM sources s
         LEFT JOIN documents d ON d.source_id = s.id
-        GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.allow_cloud_enrichment, s.enabled
+        GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.allow_cloud_enrichment, s.enabled, s.expected_elements
         ORDER BY s.id;
         """
         let (status, output) = ProcessRunner.runSync(
@@ -472,6 +482,7 @@ final class PostgresService: ObservableObject {
             let allowCloud = parts[5] == "t" || parts[5] == "true"
             let enabled = parts[6] == "t" || parts[6] == "true"
             let docCount = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
+            let expectedElements = parts.count >= 9 ? (Int(parts[8]) ?? 0) : 0
             sources.append(RegisteredSource(
                 slug: slug,
                 kind: kind,
@@ -482,10 +493,157 @@ final class PostgresService: ObservableObject {
                 enabled: enabled,
                 includeCode: false,
                 origin: .database,
-                documentCount: docCount
+                documentCount: docCount,
+                expectedElements: expectedElements
             ))
         }
         return sources
+    }
+
+    /// Checks if there are unapplied migration SQL files in the schema directory.
+    func hasPendingMigrations() throws -> Bool {
+        let password = try postgresPassword()
+        let sql = """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+        );
+        """
+        let (checkStatus, checkOutput) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAc", sql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard checkStatus == 0 else {
+            throw PostgresError.other("failed to check schema_migrations table: \(checkOutput)")
+        }
+
+        let trimmedCheck = checkOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedCheck != "t" && trimmedCheck != "true" {
+            return true
+        }
+
+        let schemaDir = Paths.schemaDir
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
+            return false
+        }
+        let sqlFiles = files.filter { $0.hasSuffix(".sql") }.sorted()
+        if sqlFiles.isEmpty {
+            return false
+        }
+
+        let appliedSql = "SELECT version FROM schema_migrations;"
+        let (appliedStatus, appliedOutput) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAc", appliedSql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard appliedStatus == 0 else {
+            throw PostgresError.other("failed to query applied migrations: \(appliedOutput)")
+        }
+
+        let appliedVersions = Set(
+            appliedOutput
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+
+        for file in sqlFiles {
+            let version = (file as NSString).deletingPathExtension
+            if !appliedVersions.contains(version) && !appliedVersions.contains(file) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /// Applies all pending schema migrations and updates the database status.
+    func applyMigrations() async throws {
+        guard status == .running || status == .needsMigration else {
+            throw PostgresError.other("Postgres is not running")
+        }
+        let password = try postgresPassword()
+        let schemaDir = Paths.schemaDir
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
+            throw PostgresError.other("Schema directory not found at \(schemaDir.path)")
+        }
+        let sqlFiles = files.filter { $0.hasSuffix(".sql") }.sorted()
+
+        let createTableSql = """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version text PRIMARY KEY,
+            applied_at timestamptz NOT NULL DEFAULT now()
+        );
+        """
+        let (initTableStatus, initTableOutput) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-c", createTableSql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard initTableStatus == 0 else {
+            throw PostgresError.other("Failed to initialize schema_migrations table: \(initTableOutput)")
+        }
+
+        let appliedSql = "SELECT version FROM schema_migrations;"
+        let (appliedStatus, appliedOutput) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAc", appliedSql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        let appliedVersions = Set(
+            appliedOutput
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+
+        for file in sqlFiles {
+            let version = (file as NSString).deletingPathExtension
+            if appliedVersions.contains(version) || appliedVersions.contains(file) {
+                continue
+            }
+            let filePath = schemaDir.appendingPathComponent(file).path
+            let (migStatus, migOutput) = ProcessRunner.runSync(
+                executable: Paths.postgresTool("psql"),
+                arguments: [
+                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                    "-f", filePath,
+                ],
+                environment: runtimeEnvironment(password: password)
+            )
+            guard migStatus == 0 else {
+                throw PostgresError.other("Migration \(file) failed: \(migOutput)")
+            }
+
+            let recordSql = "INSERT INTO schema_migrations (version) VALUES ('\(version)') ON CONFLICT (version) DO NOTHING;"
+            _ = ProcessRunner.runSync(
+                executable: Paths.postgresTool("psql"),
+                arguments: [
+                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                    "-c", recordSql,
+                ],
+                environment: runtimeEnvironment(password: password)
+            )
+            appendLog(LogLine(stream: .stdout, text: "applied migration: \(file)", source: "migrate"))
+        }
+
+        if (try? hasPendingMigrations()) == true {
+            status = .needsMigration
+        } else {
+            status = .running
+        }
     }
 
     /// Fetches document counts mapped by source slug.
@@ -612,7 +770,7 @@ final class PostgresService: ObservableObject {
     }
 
     private func requireRunning() throws {
-        guard status == .running else {
+        guard status == .running || status == .needsMigration else {
             throw PostgresError.other("Postgres must be running to manage the database")
         }
     }

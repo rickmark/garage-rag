@@ -25,6 +25,7 @@ from mcp.server import MCPServer
 from pydantic import BeforeValidator, Field
 from sqlalchemy import func
 
+from garage_rag.config import get_settings
 from garage_rag.db.emb_tables import count_vectors, list_models
 from garage_rag.db.engine import session_scope
 from garage_rag.db.models import (
@@ -491,6 +492,8 @@ def is_loopback(host: str) -> bool:
 
 
 def _log_startup() -> None:
+    settings = get_settings()
+    log.info("database connection: %s", settings.database_url)
     with session_scope() as session:
         count = session.query(Source).count()
     log.info("%d sources registered", count)
@@ -514,8 +517,6 @@ def serve(
     corpus — so the ``Host`` and ``Origin`` allowlists are the only thing
     standing between "local only" and "any website you visit".
     """
-    from garage_rag.config import get_settings
-
     settings = get_settings()
     log.info("garage-rag MCP server starting (transport=%s)", transport)
     _log_startup()

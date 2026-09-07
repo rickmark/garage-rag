@@ -229,6 +229,10 @@ struct SourcesView: View {
 
                         badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
 
+                        if source.expectedElements > 0 {
+                            badgeText("EXPECTED: \(source.expectedElements)", bg: Color.orange.opacity(0.15), fg: .orange)
+                        }
+
                         if !source.enabled {
                             badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
                         }
@@ -263,7 +267,8 @@ struct SourcesView: View {
                         }
                     }
 
-                    Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust) • Documents: \(source.documentCount)")
+                    let expectedDetails = source.expectedElements > 0 ? " • Expected: \(source.expectedElements)" : ""
+                    Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust) • Documents: \(source.documentCount)\(expectedDetails)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

@@ -113,7 +113,9 @@ final class AppState: ObservableObject {
     func startPostgres() async {
         do {
             try await postgres.start()
-            try await mcp.start()
+            if postgres.status == .running {
+                try await mcp.start()
+            }
             await fetchRegisteredModels()
             await fetchRegisteredSources()
             await fetchCorpusStats()
@@ -169,7 +171,8 @@ final class AppState: ObservableObject {
                     enabled: ds.enabled,
                     includeCode: existing.includeCode,
                     origin: .both,
-                    documentCount: ds.documentCount
+                    documentCount: ds.documentCount,
+                    expectedElements: ds.expectedElements
                 )
             } else {
                 merged[ds.slug] = ds
@@ -446,6 +449,7 @@ final class AppState: ObservableObject {
         case .starting: "Starting…"
         case .running: "Running on port \(postgres.port)"
         case .stopping: "Stopping…"
+        case .needsMigration: "Needs Migration"
         case .failed(let message): "Failed: \(message)"
         }
     }
@@ -453,7 +457,7 @@ final class AppState: ObservableObject {
     var statusColor: Color {
         switch postgres.status {
         case .running: .green
-        case .starting, .stopping: .yellow
+        case .starting, .stopping, .needsMigration: .yellow
         case .stopped: .secondary
         case .failed: .red
         }

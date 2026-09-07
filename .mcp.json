@@ -1,11 +1,8 @@
 {
   "mcpServers": {
     "garage-rag": {
-      "command": "garage",
-      "args": [
-        "mcp-serve",
-        "--stdio"
-      ]
+      "type": "http",
+      "url": "http://127.0.0.1:8787/mcp"
     }
   }
 }

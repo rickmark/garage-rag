@@ -96,11 +96,13 @@ final class PostgresServiceTests: XCTestCase {
     func testPostgresStatusEquality() {
         XCTAssertEqual(PostgresStatus.stopped, PostgresStatus.stopped)
         XCTAssertEqual(PostgresStatus.starting, PostgresStatus.starting)
+        XCTAssertEqual(PostgresStatus.needsMigration, PostgresStatus.needsMigration)
         XCTAssertEqual(PostgresStatus.running, PostgresStatus.running)
         XCTAssertEqual(PostgresStatus.stopping, PostgresStatus.stopping)
         XCTAssertEqual(PostgresStatus.failed("test"), PostgresStatus.failed("test"))
         XCTAssertNotEqual(PostgresStatus.failed("a"), PostgresStatus.failed("b"))
         XCTAssertNotEqual(PostgresStatus.stopped, PostgresStatus.running)
+        XCTAssertNotEqual(PostgresStatus.needsMigration, PostgresStatus.running)
     }
 
     func testPostgresErrorDescriptions() {

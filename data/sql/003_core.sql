@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS sources (
     -- Egress guard, level 3. Defaults false; stays false for messages/mail.
     allow_cloud_enrichment  boolean     NOT NULL DEFAULT false,
     enabled                 boolean     NOT NULL DEFAULT true,
+    expected_elements       bigint      NOT NULL DEFAULT 0,
+    expected_items          bigint      NOT NULL DEFAULT 0,
     config                  jsonb       NOT NULL DEFAULT '{}'::jsonb,
     created_at              timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sources_kind_check

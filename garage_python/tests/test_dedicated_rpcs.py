@@ -75,6 +75,19 @@ def test_dedicated_rpc_mcp_install_dry_run():
     assert res.dry_run_json
     data = json.loads(res.dry_run_json)
     assert "mcpServers" in data
+    assert data["mcpServers"]["test-server"]["type"] == "http"
+    assert data["mcpServers"]["test-server"]["url"] == "http://127.0.0.1:8787/mcp"
+
+    req_stdio = McpInstallRequest(
+        target="project",
+        name="test-server-stdio",
+        dry_run=True,
+        stdio=True,
+    )
+    res_stdio = client.mcp_install(req_stdio)
+    assert res_stdio.success is True
+    data_stdio = json.loads(res_stdio.dry_run_json)
+    assert "command" in data_stdio["mcpServers"]["test-server-stdio"]
 
 
 def test_model_info_proto_model_id():

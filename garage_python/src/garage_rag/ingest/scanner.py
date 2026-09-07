@@ -530,3 +530,17 @@ def scan_source(
                 include_code=include_code,
                 exclude_prefixes=prefixes,
             )
+
+
+def persist_scan_result(session: Any, scan_result: SourceScanResult) -> None:
+    """Persist expected element counts and metadata from scan to the source row."""
+    source = session.query(Source).filter_by(slug=scan_result.source_slug).one_or_none()
+    if source is not None:
+        source.expected_elements = scan_result.item_count
+        source.expected_items = scan_result.item_count
+        cfg = dict(source.config or {})
+        cfg["expected_items"] = scan_result.item_count
+        cfg["item_type"] = scan_result.item_type
+        cfg["scan_details"] = scan_result.details
+        cfg["scanned_at"] = time.time()
+        source.config = cfg

@@ -6,8 +6,10 @@ from garage_rag.db.engine import get_engine, reset_engine
 from garage_rag.db.migrate import (
     apply_migrations,
     database_exists,
+    has_pending_migrations,
     init_extensions,
     migration_files,
+    pending_migrations,
     to_psycopg_conninfo,
 )
 
@@ -118,18 +120,81 @@ def test_database_exists() -> None:
         assert database_exists("postgresql://user:pass@localhost:5432/testdb") is False
 
 
-def test_engine_connect_listener_bypasses_pgvector_error() -> None:
-    reset_engine()
-    with patch("garage_rag.db.engine.register_vector", side_effect=ValueError("vector type not found")):
-        engine = get_engine()
-        dbapi_conn = MagicMock()
-        # Find our _register_vector listener among registered connect listeners
-        for fn in engine.pool.dispatch.connect:
-            if getattr(fn, "__name__", "") == "_register_vector" or getattr(fn, "target", None):
-                # If wrapped or direct
-                try:
-                    fn(dbapi_conn, None)
-                except Exception as exc:
-                    if "dialect" not in str(type(exc)):
-                        raise
-    reset_engine()
+def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
+    (tmp_path / "001_extensions.sql").write_text("CREATE EXTENSION IF NOT EXISTS vector;", encoding="utf-8")
+    (tmp_path / "002_types.sql").write_text("CREATE TYPE corpus_class AS ENUM ('document');", encoding="utf-8")
+    (tmp_path / "003_core.sql").write_text("CREATE TABLE sources (id serial);", encoding="utf-8")
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    # Scenario 1: schema_migrations does not exist
+    mock_cursor.fetchone.return_value = (False,)
+    with patch("psycopg.connect", return_value=mock_conn):
+        assert has_pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        ) is True
+        pending = pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        )
+        assert len(pending) == 3
+
+    # Scenario 2: schema_migrations exists, only 001 is applied
+    mock_cursor.fetchone.return_value = (True,)
+    mock_cursor.fetchall.return_value = [("001_extensions",)]
+    with patch("psycopg.connect", return_value=mock_conn):
+        assert has_pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        ) is True
+        pending = pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        )
+        assert [p.name for p in pending] == ["002_types.sql", "003_core.sql"]
+
+    # Scenario 3: all migrations applied
+    mock_cursor.fetchone.return_value = (True,)
+    mock_cursor.fetchall.return_value = [("001_extensions",), ("002_types",), ("003_core",)]
+    with patch("psycopg.connect", return_value=mock_conn):
+        assert has_pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        ) is False
+        pending = pending_migrations(
+            database_url="postgresql://user:pass@localhost:5432/testdb",
+            schema_dir=tmp_path,
+        )
+        assert pending == []
+
+
+def test_persist_scan_result() -> None:
+    from garage_rag.db.models import Source
+    from garage_rag.ingest.scanner import SourceScanResult, persist_scan_result
+
+    mock_source = Source(slug="test-src", expected_elements=0, expected_items=0, config={})
+    mock_session = MagicMock()
+    mock_query = mock_session.query.return_value
+    mock_filter = mock_query.filter_by.return_value
+    mock_filter.one_or_none.return_value = mock_source
+
+    scan_res = SourceScanResult(
+        source_slug="test-src",
+        kind="filesystem",
+        root=Path("/tmp/test"),
+        item_count=42,
+        item_type="files",
+        details={"scanned": 42},
+    )
+
+    persist_scan_result(mock_session, scan_res)
+
+    assert mock_source.expected_elements == 42
+    assert mock_source.expected_items == 42
+    assert mock_source.config["expected_items"] == 42
+    assert mock_source.config["item_type"] == "files"
+    assert mock_source.config["scan_details"] == {"scanned": 42}

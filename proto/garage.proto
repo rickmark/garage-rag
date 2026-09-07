@@ -173,6 +173,7 @@ message SourceInfo {
     bool enabled = 6;
     string root = 7;
     int64 document_count = 8;
+    int64 expected_elements = 9;
 }
 
 message ListSourcesRequest {}
@@ -443,6 +444,7 @@ message McpInstallRequest {
     string route = 7;
     bool force = 8;
     bool dry_run = 9;
+    bool stdio = 10;
 }
 
 message McpInstallResponse {

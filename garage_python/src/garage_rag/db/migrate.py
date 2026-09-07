@@ -68,15 +68,32 @@ def init_extensions(database_url: str | None = None, schema_dir: Path | None = N
 
     with psycopg.connect(url, autocommit=True) as conn:
         with conn.cursor() as cur:
+            # Ensure schema_migrations table exists
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version text PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
             if extension_files:
                 for path in extension_files:
                     log.info("applying extension migration outside sqlalchemy: %s", path.name)
                     cur.execute(path.read_text(encoding="utf-8"))
+                    cur.execute(
+                        "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
+                        (path.stem,),
+                    )
                     applied.append(path.name)
             else:
                 log.info("creating default extensions outside sqlalchemy")
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+                cur.execute(
+                    "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
+                    ("001_extensions",),
+                )
                 applied.append("default_extensions")
     return applied
 
@@ -114,6 +131,9 @@ def apply_migrations(
             # dollar-quoted DO blocks, which SQLAlchemy's text() would try to parse
             # for bind parameters.
             session.connection().exec_driver_sql(path.read_text(encoding="utf-8"))
+            session.connection().exec_driver_sql(
+                f"INSERT INTO schema_migrations (version) VALUES ('{path.stem}') ON CONFLICT (version) DO NOTHING;"
+            )
             applied.append(path.name)
     else:
         if remaining_files:
@@ -123,10 +143,57 @@ def apply_migrations(
                     for path in remaining_files:
                         log.info("applying %s", path.name)
                         cur.execute(path.read_text(encoding="utf-8"))
+                        cur.execute(
+                            "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
+                            (path.stem,),
+                        )
                         applied.append(path.name)
         reset_engine()
 
     return applied
+
+
+def pending_migrations(
+    database_url: str | None = None,
+    schema_dir: Path | None = None,
+) -> list[Path]:
+    """Return list of migration files that have not yet been applied to the database."""
+    raw_url = database_url or get_settings().database_url
+    url = to_psycopg_conninfo(raw_url)
+    try:
+        files = migration_files(schema_dir)
+    except FileNotFoundError:
+        return []
+
+    try:
+        with psycopg.connect(url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations');"
+                )
+                row = cur.fetchone()
+                exists = bool(row and row[0])
+                if not exists:
+                    return files
+
+                cur.execute("SELECT version FROM schema_migrations;")
+                applied = {r[0] for r in cur.fetchall()}
+
+                pending: list[Path] = []
+                for f in files:
+                    if f.stem not in applied and f.name not in applied:
+                        pending.append(f)
+                return pending
+    except Exception:
+        return files
+
+
+def has_pending_migrations(
+    database_url: str | None = None,
+    schema_dir: Path | None = None,
+) -> bool:
+    """Check whether there are unapplied database migrations."""
+    return len(pending_migrations(database_url=database_url, schema_dir=schema_dir)) > 0
 
 
 def schema_summary(session: Session) -> dict[str, int]:

@@ -14,6 +14,7 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
     public let includeCode: Bool
     public let origin: SourceOrigin
     public var documentCount: Int
+    public var expectedElements: Int
 
     public enum SourceOrigin: String, Sendable, Codable {
         case config = "Config File"
@@ -31,7 +32,8 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         enabled: Bool = true,
         includeCode: Bool = false,
         origin: SourceOrigin = .config,
-        documentCount: Int = 0
+        documentCount: Int = 0,
+        expectedElements: Int = 0
     ) {
         self.slug = slug
         self.kind = kind
@@ -43,6 +45,7 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         self.includeCode = includeCode
         self.origin = origin
         self.documentCount = documentCount
+        self.expectedElements = expectedElements
     }
 
     /// Expanded filesystem path, expanding '~' if present.

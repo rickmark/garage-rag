@@ -98,6 +98,8 @@ class Source(Base):
     # Egress guard, level 3: false for messages/mail and never flipped by code.
     allow_cloud_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    expected_elements: Mapped[int] = mapped_column(BigInteger, default=0)
+    expected_items: Mapped[int] = mapped_column(BigInteger, default=0)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

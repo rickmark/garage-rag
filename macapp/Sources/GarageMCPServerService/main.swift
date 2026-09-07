@@ -43,6 +43,13 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         initializePythonIfNeeded()
         #if canImport(PythonKit)
         do {
+            let os = Python.import("os")
+            for (key, value) in options {
+                os.environ[key] = PythonObject(value)
+            }
+            if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(dbURL)
+            }
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server")
             reply(true, "MCP server module loaded successfully: \(mcpModule)")
         } catch {

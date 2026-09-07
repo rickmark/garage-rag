@@ -347,6 +347,7 @@ class TestServerLifecycle:
 
             with caplog.at_level(logging.INFO):
                 _log_startup()
+                assert "database connection: postgresql+psycopg:///rag" in caplog.text
                 assert "7 sources registered" in caplog.text
 
     def test_serve_stdio(self) -> None:

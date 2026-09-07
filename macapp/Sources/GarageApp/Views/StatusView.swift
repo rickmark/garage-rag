@@ -490,6 +490,21 @@ struct StatusView: View {
             headline = "Database Stopping…"
             details = "PostgreSQL server is shutting down."
             quickAction = nil
+        case .needsMigration:
+            severity = .warning
+            headline = "Database Pending Migrations"
+            details = "PostgreSQL cluster is running on port \(appState.postgres.port), but has unapplied schema migrations."
+            quickAction = PageStatusItem.QuickAction(label: "Apply Migrations") {
+                Task {
+                    try? await appState.postgres.applyMigrations()
+                    await appState.fetchRegisteredModels()
+                    await appState.fetchRegisteredSources()
+                    await appState.fetchCorpusStats()
+                    if appState.postgres.status == .running && appState.mcp.status == .stopped {
+                        try? await appState.mcp.start()
+                    }
+                }
+            }
         case .running:
             severity = .healthy
             headline = "Database Running"
