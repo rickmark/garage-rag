@@ -26,6 +26,7 @@ service GarageService {
     rpc RemoveSource (RemoveSourceRequest) returns (RemoveSourceResponse);
 
     // --- Ingestion & Pipeline ---
+    rpc Scan (ScanRequest) returns (ScanResponse);
     rpc Ingest (IngestRequest) returns (stream IngestStatus);
     rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
     rpc Reconcile (ReconcileRequest) returns (ReconcileResponse);
@@ -213,6 +214,27 @@ message RemoveSourceResponse {
 // Ingest, Backfill, Reconcile
 // ---------------------------------------------------------------------------
 
+message ScanRequest {
+    string source = 1;
+    bool include_code = 2;
+}
+
+message SourceScanStatus {
+    string source = 1;
+    string kind = 2;
+    string root = 3;
+    int64 item_count = 4;
+    string item_type = 5;
+    string error = 6;
+    map<string, string> details = 7;
+}
+
+message ScanResponse {
+    repeated SourceScanStatus sources = 1;
+    int64 total_items = 2;
+    string formatted_output = 3;
+}
+
 message IngestRequest {
     string source = 1;
     bool include_code = 2;
@@ -237,6 +259,8 @@ message IngestStatus {
     string error_message = 14;
     repeated string sample_errors = 15;
     string formatted_output = 16;
+    int64 total_items = 17;
+    string phase = 18;
 }
 
 message BackfillRequest {

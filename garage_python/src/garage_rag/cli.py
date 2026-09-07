@@ -587,8 +587,73 @@ def list_sources() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ingest
+# scan & ingest
 # ---------------------------------------------------------------------------
+@app.command()
+def scan(
+    source: Annotated[str, typer.Option("--source", "-s", help="Source slug to scan, or '*' for all.")] = "*",
+    include_code: Annotated[
+        bool,
+        typer.Option("--include-code", help="Also include source code files in count."),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
+) -> None:
+    """Scan sources and count items by source type before ingesting."""
+    import json
+    from garage_rag.db.engine import get_session_factory
+    from garage_rag.ingest.scanner import scan_source
+
+    factory = get_session_factory()
+    with factory() as session:
+        if source == "*":
+            sources = list(session.query(Source).order_by(Source.id).all())
+        else:
+            s = session.query(Source).filter_by(slug=source).one_or_none()
+            if s is None:
+                console.print(f"[red]no such source:[/red] {source}")
+                raise typer.Exit(code=1)
+            sources = [s]
+
+    if not sources:
+        console.print("[yellow]no sources registered to scan[/yellow]")
+        return
+
+    results = []
+    for src in sources:
+        res = scan_source(src, include_code=include_code)
+        results.append(res)
+
+    if json_output:
+        console.print_json(json.dumps([r.to_dict() for r in results]))
+        return
+
+    table = Table(title="source scan")
+    table.add_column("slug")
+    table.add_column("kind")
+    table.add_column("items", justify="right")
+    table.add_column("item type")
+    table.add_column("time", justify="right")
+    table.add_column("root")
+    table.add_column("status")
+
+    total_items = 0
+    for r in results:
+        total_items += r.item_count
+        status_str = f"[red]error: {r.error}[/red]" if r.error else "[green]ok[/green]"
+        table.add_row(
+            r.source_slug,
+            r.kind,
+            f"{r.item_count:,}",
+            r.item_type,
+            f"{r.duration_seconds:.2f}s",
+            str(r.root),
+            status_str,
+        )
+
+    console.print(table)
+    console.print(f"[dim]Total across {len(results)} source(s): {total_items:,} items[/dim]")
+
+
 @app.command()
 def ingest(
     source: Annotated[str, typer.Option("--source", "-s", help="Source slug to walk.")],
@@ -611,14 +676,26 @@ def ingest(
         sources = [source]
 
     for source in sources:
-        with console.status(f"ingesting {source}...") as status:
+        with console.status(f"scanning {source}...") as status:
             # slug bound as a default: the closure outlives this loop iteration.
-            def on_progress(progress_counters, progress_budget, slug=source) -> None:
+            def on_progress(
+                progress_counters,
+                progress_budget,
+                total_items=0,
+                phase="ingest",
+                scan_result=None,
+                slug=source,
+            ) -> None:
                 note = ""
                 if progress_budget.files_done or progress_budget.deferred:
                     note = f" | downloaded {progress_budget.files_done:,} deferred {progress_budget.deferred:,}"
+                if phase == "scan":
+                    item_type = scan_result.item_type if scan_result else "items"
+                    status.update(f"scanned {slug}: found {total_items:,} {item_type}")
+                    return
+                pct_str = f" [{(progress_counters.seen / total_items * 100):.1f}%]" if total_items > 0 else ""
                 status.update(
-                    f"{slug}: seen {progress_counters.seen:,} indexed {progress_counters.indexed:,} "
+                    f"{slug}:{pct_str} seen {progress_counters.seen:,}/{total_items:,} indexed {progress_counters.indexed:,} "
                     f"skipped {progress_counters.skipped:,} failed {progress_counters.failed:,}{note}"
                 )
 
@@ -635,6 +712,7 @@ def ingest(
         table.add_column("metric")
         table.add_column("count", justify="right")
         for label, value in (
+            (f"scanned items ({counters.item_type})", counters.total_items),
             ("candidates seen", counters.seen),
             ("indexed", counters.indexed),
             ("skipped (unchanged)", counters.skipped),

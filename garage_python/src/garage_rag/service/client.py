@@ -53,6 +53,8 @@ from garage_rag.proto.garage_pb2 import (
     RegisterModelResponse,
     RemoveSourceRequest,
     RemoveSourceResponse,
+    ScanRequest,
+    ScanResponse,
     SearchRequest,
     SearchResponse,
     SetDefaultModelRequest,
@@ -181,6 +183,9 @@ class GarageClient:
     def remove_source(self, slug: str, force: bool = False) -> RemoveSourceResponse:
         req = RemoveSourceRequest(slug=slug, force=force)
         return self._invoke_unary("RemoveSource", req, RemoveSourceResponse)
+
+    def scan(self, request: ScanRequest) -> ScanResponse:
+        return self._invoke_unary("Scan", request, ScanResponse)
 
     def ingest(self, request: IngestRequest) -> Iterator[IngestStatus]:
         return self._invoke_stream("Ingest", request, IngestStatus)

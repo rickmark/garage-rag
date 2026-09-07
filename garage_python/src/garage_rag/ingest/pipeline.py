@@ -53,6 +53,7 @@ from garage_rag.extract.quality import assess
 from garage_rag.ingest.chunking import TextChunk, chunk_text
 from garage_rag.ingest.classify import classify
 from garage_rag.ingest.materialize import MaterializationBudget, ensure_local
+from garage_rag.ingest.scanner import SourceScanResult, scan_source
 from garage_rag.ingest.walker import Candidate, WalkStats, default_exclude_prefixes, walk
 
 log = logging.getLogger(__name__)
@@ -67,6 +68,8 @@ class IngestCounters:
     placeholders: int = 0
     rejected: int = 0
     chunks_written: int = 0
+    total_items: int = 0
+    item_type: str = "items"
     errors: list[str] = field(default_factory=list)
 
     def note_error(self, message: str) -> None:
@@ -348,6 +351,30 @@ def ingest_source(
     prefixes = default_exclude_prefixes(source_class, root)
     completed = False
 
+    # --- Step 0: Scan Phase ---
+    scan_result = scan_source(source, include_code=include_code)
+    counters.total_items = scan_result.item_count
+    counters.item_type = scan_result.item_type
+
+    def _call_progress(phase: str) -> None:
+        if progress is None:
+            return
+        try:
+            progress(
+                counters,
+                budget,
+                total_items=counters.total_items,
+                phase=phase,
+                scan_result=scan_result,
+            )
+        except TypeError:
+            try:
+                progress(counters, budget, total_items=counters.total_items, phase=phase)
+            except TypeError:
+                progress(counters, budget)
+
+    _call_progress(phase="scan")
+
     try:
         for candidate in walk(
             root,
@@ -382,8 +409,7 @@ def ingest_source(
                     counters.note_error(f"{candidate.path.name}: {exc}")
                     log.debug("ingest failed for %s", candidate.path, exc_info=True)
 
-            if progress is not None:
-                progress(counters, budget)
+            _call_progress(phase="ingest")
             if limit is not None and counters.seen >= limit:
                 break
         else:

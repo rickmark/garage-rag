@@ -114,7 +114,10 @@ class TestCommunicationSourcesStayLocal:
     """Level 3, at the schema level rather than in Python."""
 
     def test_schema_defaults_cloud_enrichment_off(self) -> None:
-        sql = (SRC.parent.parent / "sql" / "003_core.sql").read_text()
+        sql_path = SRC.parent.parent / "sql" / "003_core.sql"
+        if not sql_path.exists():
+            sql_path = SRC.parent.parent.parent / "data" / "sql" / "003_core.sql"
+        sql = sql_path.read_text()
         assert "allow_cloud_enrichment  boolean     NOT NULL DEFAULT false" in sql, (
             "sources.allow_cloud_enrichment must default to false"
         )

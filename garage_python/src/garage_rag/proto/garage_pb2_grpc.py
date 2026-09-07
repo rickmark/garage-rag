@@ -79,6 +79,11 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.RemoveSourceRequest.SerializeToString,
                 response_deserializer=garage__pb2.RemoveSourceResponse.FromString,
                 _registered_method=True)
+        self.Scan = channel.unary_unary(
+                '/garage.GarageService/Scan',
+                request_serializer=garage__pb2.ScanRequest.SerializeToString,
+                response_deserializer=garage__pb2.ScanResponse.FromString,
+                _registered_method=True)
         self.Ingest = channel.unary_stream(
                 '/garage.GarageService/Ingest',
                 request_serializer=garage__pb2.IngestRequest.SerializeToString,
@@ -245,9 +250,15 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Ingest(self, request, context):
+    def Scan(self, request, context):
         """--- Ingestion & Pipeline ---
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Ingest(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -419,6 +430,11 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.RemoveSource,
                     request_deserializer=garage__pb2.RemoveSourceRequest.FromString,
                     response_serializer=garage__pb2.RemoveSourceResponse.SerializeToString,
+            ),
+            'Scan': grpc.unary_unary_rpc_method_handler(
+                    servicer.Scan,
+                    request_deserializer=garage__pb2.ScanRequest.FromString,
+                    response_serializer=garage__pb2.ScanResponse.SerializeToString,
             ),
             'Ingest': grpc.unary_stream_rpc_method_handler(
                     servicer.Ingest,
@@ -744,6 +760,33 @@ class GarageService:
             '/garage.GarageService/RemoveSource',
             garage__pb2.RemoveSourceRequest.SerializeToString,
             garage__pb2.RemoveSourceResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Scan(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/Scan',
+            garage__pb2.ScanRequest.SerializeToString,
+            garage__pb2.ScanResponse.FromString,
             options,
             channel_credentials,
             insecure,

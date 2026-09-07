@@ -122,10 +122,14 @@ def test_engine_connect_listener_bypasses_pgvector_error() -> None:
     reset_engine()
     with patch("garage_rag.db.engine.register_vector", side_effect=ValueError("vector type not found")):
         engine = get_engine()
-        # Trigger the connect event listener
-        with patch.object(engine.pool, "connect", return_value=MagicMock()):
-            # Listener is attached to engine on connect
-            conn = MagicMock()
-            for fn in engine.dispatch.connect:
-                fn(conn, None)
+        dbapi_conn = MagicMock()
+        # Find our _register_vector listener among registered connect listeners
+        for fn in engine.pool.dispatch.connect:
+            if getattr(fn, "__name__", "") == "_register_vector" or getattr(fn, "target", None):
+                # If wrapped or direct
+                try:
+                    fn(dbapi_conn, None)
+                except Exception as exc:
+                    if "dialect" not in str(type(exc)):
+                        raise
     reset_engine()

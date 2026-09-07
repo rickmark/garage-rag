@@ -63,12 +63,15 @@ from garage_rag.proto.garage_pb2 import (
     RegisterModelResponse,
     RemoveSourceRequest,
     RemoveSourceResponse,
+    ScanRequest,
+    ScanResponse,
     SearchHit,
     SearchRequest,
     SearchResponse,
     SetDefaultModelRequest,
     SetDefaultModelResponse,
     SourceInfo,
+    SourceScanStatus,
     StatsRequest,
     StatsResponse,
     StatusRequest,
@@ -311,6 +314,50 @@ class GarageRpcServicer(GarageServiceServicer):
     # Ingest, Backfill, Reconcile
     # -----------------------------------------------------------------------
 
+    def Scan(self, request: ScanRequest, context: grpc.ServicerContext) -> ScanResponse:
+        """Scan source(s) to count items based on their source type."""
+        from garage_rag.db.engine import get_session_factory
+        from garage_rag.db.models import Source
+        from garage_rag.ingest.scanner import scan_source
+
+        factory = get_session_factory()
+        target_sources = []
+        with factory() as session:
+            if request.source == "*" or not request.source:
+                target_sources = list(session.query(Source).order_by(Source.id).all())
+            else:
+                s = session.query(Source).filter_by(slug=request.source).one_or_none()
+                if s is None:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source}")
+                target_sources = [s]
+
+        results = []
+        total_items = 0
+        for src in target_sources:
+            res = scan_source(src, include_code=request.include_code)
+            total_items += res.item_count
+            results.append(
+                SourceScanStatus(
+                    source=res.source_slug,
+                    kind=res.kind,
+                    root=str(res.root),
+                    item_count=res.item_count,
+                    item_type=res.item_type,
+                    error=res.error or "",
+                    details={str(k): str(v) for k, v in res.details.items()},
+                )
+            )
+
+        formatted = "\n".join(
+            f"{r.source} ({r.kind}): {r.item_count:,} {r.item_type}" + (f" [error: {r.error}]" if r.error else "")
+            for r in results
+        )
+        return ScanResponse(
+            sources=results,
+            total_items=total_items,
+            formatted_output=formatted,
+        )
+
     def Ingest(self, request: IngestRequest, context: grpc.ServicerContext) -> Iterator[IngestStatus]:
         """Walk a source and index it, streaming IngestStatus events."""
         from garage_rag.db.engine import get_session_factory
@@ -329,11 +376,9 @@ class GarageRpcServicer(GarageServiceServicer):
                 source=source_slug,
                 is_complete=False,
                 progress=0.0,
-                progress_message=f"Ingesting source {source_slug}...",
+                progress_message=f"Scanning source {source_slug}...",
+                phase="scan",
             )
-
-            def on_progress(counters, budget, slug=source_slug) -> None:
-                pass
 
             counters, walk_stats, budget = ingest_source(
                 factory,
@@ -341,12 +386,11 @@ class GarageRpcServicer(GarageServiceServicer):
                 include_code=request.include_code,
                 limit=request.limit or None,
                 force=request.force,
-                progress=on_progress,
             )
 
             summary = (
-                f"Ingested {source_slug}: seen {counters.seen:,}, indexed {counters.indexed:,}, "
-                f"skipped {counters.skipped:,}, failed {counters.failed:,}, chunks {counters.chunks_written:,}"
+                f"Ingested {source_slug}: seen {counters.seen:,}/{counters.total_items:,} {counters.item_type}, "
+                f"indexed {counters.indexed:,}, skipped {counters.skipped:,}, failed {counters.failed:,}, chunks {counters.chunks_written:,}"
             )
             yield IngestStatus(
                 source=source_slug,
@@ -364,6 +408,8 @@ class GarageRpcServicer(GarageServiceServicer):
                 progress_message=summary,
                 sample_errors=counters.errors[:5] if counters.errors else [],
                 formatted_output=summary,
+                total_items=counters.total_items,
+                phase="complete",
             )
 
     def Backfill(self, request: BackfillRequest, context: grpc.ServicerContext) -> Iterator[BackfillStatus]:
