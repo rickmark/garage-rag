@@ -107,6 +107,14 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testPresetModelsInitialization() {
+        let state = AppState()
+        XCTAssertFalse(state.presetModels.isEmpty)
+        XCTAssertTrue(state.presetModels.contains { $0.slug == "bge-m3" })
+        XCTAssertTrue(state.presetModels.contains { $0.slug == "nomic-embed-text" })
+    }
+
+    @MainActor
     func testVolumeAccessPassesSourcePaths() {
         let mockStore = MockVolumeBookmarkStore()
         let mockFS = MockFileSystemAccessor()

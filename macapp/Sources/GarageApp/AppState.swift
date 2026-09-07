@@ -23,6 +23,7 @@ final class AppState: ObservableObject {
     @Published var lastCommandSucceeded: Bool?
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
+    @Published private(set) var presetModels: [ModelPresetEntry] = []
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published private(set) var registeredSources: [RegisteredSource] = []
@@ -87,10 +88,13 @@ final class AppState: ObservableObject {
             lastCommandSucceeded = false
             lastCommandOutput = error.localizedDescription
         }
+
+        fetchPresetModels()
     }
 
     func launch() {
         hasLaunched = true
+        fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
         Task { await fetchRegisteredSources() }
         configureScheduledMaintenance()
@@ -111,7 +115,12 @@ final class AppState: ObservableObject {
         }
     }
 
+    func fetchPresetModels() {
+        self.presetModels = GarageConfigLoader.loadModelPresets()
+    }
+
     func fetchRegisteredModels() async {
+        fetchPresetModels()
         guard postgres.status == .running else { return }
         isFetchingModels = true
         defer { isFetchingModels = false }
