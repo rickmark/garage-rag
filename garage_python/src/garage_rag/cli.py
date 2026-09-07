@@ -11,7 +11,7 @@ from typing import Annotated, cast
 import typer
 from rich.console import Console
 from rich.table import Table
-from sqlalchemy import text
+from sqlalchemy import func
 
 from garage_rag.config import (
     CONFIG_FILENAME,
@@ -30,6 +30,7 @@ from garage_rag.config import (
     set_settings,
 )
 from garage_rag.db.emb_tables import (
+    count_vectors,
     drop_model,
     get_model,
     list_models,
@@ -39,7 +40,7 @@ from garage_rag.db.emb_tables import (
 )
 from garage_rag.db.engine import reset_engine, session_scope
 from garage_rag.db.migrate import apply_migrations, schema_summary
-from garage_rag.db.models import CorpusClass, Source, TrustTier
+from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
 
 app = typer.Typer(
     add_completion=False,
@@ -286,11 +287,11 @@ def sync(
         # first element as an ORM object.
         undeclared = [
             (slug, int(count))
-            for slug, count in session.execute(
-                text(
-                    "SELECT s.slug, count(d.id) FROM sources s "
-                    "LEFT JOIN documents d ON d.source_id = s.id GROUP BY s.slug"
-                )
+            for slug, count in (
+                session.query(Source.slug, func.count(Document.id))
+                .outerjoin(Document, Document.source_id == Source.id)
+                .group_by(Source.slug)
+                .all()
             )
             if slug not in declared
         ]
@@ -340,7 +341,7 @@ def stats() -> None:
                 f"{m.storage_kind}({m.stored_dims})",
                 m.index_kind,
                 "yes" if m.is_default else "",
-                f"{session.execute(text(f'SELECT count(*) FROM {m.table_name}')).scalar_one():,}",
+                f"{count_vectors(session, m):,}",
             )
             for m in models
         ]
@@ -551,10 +552,12 @@ def remove_source(
         if source is None:
             console.print(f"[yellow]no such source[/yellow]: {slug}")
             raise typer.Exit(code=1)
-        count = session.execute(
-            text("SELECT count(*) FROM documents WHERE source_id = :sid"),
-            {"sid": source.id},
-        ).scalar_one()
+        count = (
+            session.query(func.count(Document.id))
+            .filter(Document.source_id == source.id)
+            .scalar()
+            or 0
+        )
         if not yes:
             typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
         # Cascades through chunks into every per-model embedding table.
@@ -568,9 +571,9 @@ def list_sources() -> None:
     with session_scope() as session:
         sources = session.query(Source).order_by(Source.id).all()
         doc_counts = dict(
-            session.execute(
-                text("SELECT source_id, count(*) FROM documents GROUP BY source_id")
-            ).all()
+            session.query(Document.source_id, func.count(Document.id))
+            .group_by(Document.source_id)
+            .all()
         )
     if not sources:
         console.print("[yellow]no sources registered[/yellow]")
@@ -862,13 +865,17 @@ def mcp_install(
         typer.Option(
             "--target",
             "-t",
-            help="project | claude-desktop | lmstudio | cursor | vscode",
+            help="project | claude-desktop | claude-code-user | lmstudio | cursor | vscode | windsurf | zed | all | any",
         ),
     ] = "project",
     path: Annotated[
         Path | None,
         typer.Option("--path", help="Write to this config file instead of a known target."),
     ] = None,
+    all_configs: Annotated[
+        bool,
+        typer.Option("--all", "-a", help="Install into all detected/found client configurations."),
+    ] = False,
     name: Annotated[str, typer.Option("--name", help="Server name in the config.")] = "garage-rag",
     http: Annotated[
         bool,
@@ -892,23 +899,32 @@ def mcp_install(
     from garage_rag.mcp_server.install import (
         ClientTarget,
         client_targets,
+        find_existing_configs,
         http_url,
         install,
         server_command,
     )
 
     targets = client_targets()
-    if path is not None:
-        chosen = ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())
+    is_multi_install = all_configs or target in ("all", "any", "found", "all-found")
+
+    chosen_list: list[ClientTarget] = []
+    if is_multi_install:
+        found = find_existing_configs()
+        if found:
+            chosen_list = list(found.values())
+        else:
+            console.print("[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]")
+            chosen_list = [targets["project"], targets["claude-desktop"]]
+    elif path is not None:
+        chosen_list = [ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())]
     else:
         if target not in targets:
             raise typer.BadParameter(
-                f"unknown target {target!r}; choose from {', '.join(targets)}",
+                f"unknown target {target!r}; choose from {', '.join(targets)} or 'all'",
                 param_hint="--target",
             )
-        chosen = targets[target]
-
-    console.print(f"[bold]{chosen.label}[/bold] -> {chosen.path}")
+        chosen_list = [targets[target]]
 
     url: str | None = None
     config_file: Path | None = None
@@ -922,14 +938,10 @@ def mcp_install(
             path_route or settings.mcp_http_path,
         )
         console.print(f"  url     : {url}")
-        # The client only connects; keeping the process alive is someone else's
-        # job, so say so rather than letting it look like a spawned server.
         console.print(
             "  [dim]the client connects to this URL; run `garage mcp-serve --http` yourself to keep it up[/dim]"
         )
     else:
-        # Point the server at this configuration explicitly: a client launches it
-        # from an arbitrary cwd, where the config search order finds nothing.
         settings = get_settings()
         config_file = settings.config_path
         if config_file is None:
@@ -942,56 +954,64 @@ def mcp_install(
         if database_url := os.environ.get("GARAGE_DATABASE_URL"):
             database_environment = {"GARAGE_DATABASE_URL": database_url}
 
-    if chosen.note:
-        console.print(f"  [dim]{chosen.note}[/dim]")
-    if chosen.project_scoped and not http:
-        console.print(
-            "  [yellow]note[/yellow]: project-scoped config records an absolute "
-            "path to this virtualenv, which will not resolve on another machine"
-        )
+    for chosen in chosen_list:
+        console.print(f"\n[bold]{chosen.label}[/bold] -> {chosen.path}")
+        if chosen.note:
+            console.print(f"  [dim]{chosen.note}[/dim]")
+        if chosen.project_scoped and not http:
+            console.print(
+                "  [yellow]note[/yellow]: project-scoped config records an absolute "
+                "path to this virtualenv, which will not resolve on another machine"
+            )
 
-    try:
-        preview = install(
+        try:
+            preview = install(
+                chosen,
+                server_name=name,
+                config_path=config_file,
+                extra_env=database_environment,
+                url=url,
+                force=force,
+                dry_run=True,
+            )
+        except FileExistsError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            if not is_multi_install:
+                raise typer.Exit(code=1) from None
+            continue
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            if not is_multi_install:
+                raise typer.Exit(code=1) from None
+            continue
+
+        if preview.other_servers:
+            console.print(f"  preserving: {', '.join(preview.other_servers)}")
+
+        if dry_run:
+            console.print("\n[cyan]would write[/cyan]:")
+            console.print(json.dumps({"mcpServers": {name: preview.entry}}, indent=2))
+            continue
+
+        action = "Replace" if preview.replaced_entry else "Add"
+        if not yes:
+            typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
+
+        result = install(
             chosen,
             server_name=name,
             config_path=config_file,
             extra_env=database_environment,
             url=url,
             force=force,
-            dry_run=True,
         )
-    except FileExistsError as exc:
-        console.print(f"[yellow]{exc}[/yellow]")
-        raise typer.Exit(code=1) from None
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from None
+        verb = "created" if result.created_file else "updated"
+        console.print(f"[green]{verb}[/green] {result.path}")
+        if result.backup:
+            console.print(f"  backup: {result.backup.name}")
 
-    if preview.other_servers:
-        console.print(f"  preserving: {', '.join(preview.other_servers)}")
-
-    if dry_run:
-        console.print("\n[cyan]would write[/cyan]:")
-        console.print(json.dumps({"mcpServers": {name: preview.entry}}, indent=2))
-        return
-
-    action = "Replace" if preview.replaced_entry else "Add"
-    if not yes:
-        typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
-
-    result = install(
-        chosen,
-        server_name=name,
-        config_path=config_file,
-        extra_env=database_environment,
-        url=url,
-        force=force,
-    )
-    verb = "created" if result.created_file else "updated"
-    console.print(f"[green]{verb}[/green] {result.path}")
-    if result.backup:
-        console.print(f"  backup: {result.backup.name}")
-    console.print("\nRestart the client, then try: [cyan]what does my reference material say about secure boot?[/cyan]")
+    if not dry_run:
+        console.print("\nRestart client(s), then try asking: [cyan]what does my reference material say about secure boot?[/cyan]")
 
 
 @app.command("mcp-uninstall")
@@ -1037,6 +1057,115 @@ def mcp_status() -> None:
             state = "[dim]no config[/dim]"
         table.add_row(key, chosen.label, state, str(chosen.path).replace(str(Path.home()), "~"))
     console.print(table)
+
+
+@app.command("mcp-test")
+def mcp_test(
+    url: Annotated[str | None, typer.Option("--url", help="HTTP endpoint URL to test.")] = None,
+    host: Annotated[str | None, typer.Option(help="HTTP host to test.")] = None,
+    port: Annotated[int | None, typer.Option("--port", "-p", help="HTTP port to test.")] = None,
+    path_route: Annotated[str | None, typer.Option("--path", help="HTTP route to test. Default /mcp.")] = None,
+    query: Annotated[str, typer.Option("--query", help="Query string for search test.")] = "test search",
+) -> None:
+    """Test the MCP server and tool execution."""
+    import time
+    from garage_rag.config import get_settings
+    from garage_rag.mcp_server.server import (
+        rag_get_document,
+        rag_list_authors,
+        rag_list_sources,
+        rag_search,
+        rag_stats,
+    )
+
+    settings = get_settings()
+    target_host = host or settings.mcp_host
+    target_port = port or settings.mcp_port
+    route = path_route or settings.mcp_http_path
+    target_url = url or f"http://{target_host}:{target_port}{route}"
+
+    console.print(f"[bold]Testing MCP Server & Tools[/bold]\n")
+
+    # 1. Local tool execution test
+    console.print("[cyan]Testing local MCP tool handlers:[/cyan]")
+    tool_results = []
+
+    # rag_stats
+    t0 = time.perf_counter()
+    try:
+        stats = rag_stats()
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_stats", "PASS", f"{dt:.1f}ms", f"{stats.documents:,} docs, {stats.chunks:,} chunks"))
+    except Exception as exc:
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_stats", "FAIL", f"{dt:.1f}ms", str(exc)))
+
+    # rag_list_sources
+    t0 = time.perf_counter()
+    try:
+        sources = rag_list_sources()
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_list_sources", "PASS", f"{dt:.1f}ms", f"{len(sources.sources)} sources"))
+    except Exception as exc:
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_list_sources", "FAIL", f"{dt:.1f}ms", str(exc)))
+
+    # rag_list_authors
+    t0 = time.perf_counter()
+    try:
+        authors = rag_list_authors()
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_list_authors", "PASS", f"{dt:.1f}ms", f"{len(authors.authors)} authors"))
+    except Exception as exc:
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_list_authors", "FAIL", f"{dt:.1f}ms", str(exc)))
+
+    # rag_search
+    t0 = time.perf_counter()
+    try:
+        search_res = rag_search(query=query, limit=3)
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_search", "PASS", f"{dt:.1f}ms", f"{len(search_res.hits)} hits for {query!r}"))
+    except Exception as exc:
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_search", "FAIL", f"{dt:.1f}ms", str(exc)))
+
+    table = Table()
+    for col in ("tool", "status", "latency", "details"):
+        table.add_column(col)
+    for row in tool_results:
+        status_style = "[green]PASS[/green]" if row[1] == "PASS" else "[red]FAIL[/red]"
+        table.add_row(row[0], status_style, row[2], row[3])
+    console.print(table)
+
+    # 2. HTTP Endpoint test if available
+    import json
+    import urllib.request
+
+    console.print(f"\n[cyan]Testing HTTP endpoint:[/cyan] {target_url}")
+    try:
+        req = urllib.request.Request(
+            target_url,
+            data=json.dumps({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "garage-cli-test", "version": "1.0"},
+                },
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        )
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            http_latency = (time.perf_counter() - t0) * 1000
+            status_code = resp.getcode()
+            console.print(f"  [green]HTTP {status_code}[/green] ({http_latency:.1f}ms) - MCP server endpoint reachable and responding")
+    except Exception as exc:
+        console.print(f"  [yellow]HTTP endpoint not active[/yellow]: {exc}")
+        console.print("  [dim]Start the MCP server with `garage mcp-serve --http` or from the macOS app.[/dim]")
 
 
 @app.command("mcp-serve")

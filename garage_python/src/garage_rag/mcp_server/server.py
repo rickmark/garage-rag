@@ -23,11 +23,19 @@ from typing import Annotated, Literal
 
 from mcp.server import MCPServer
 from pydantic import BeforeValidator, Field
-from sqlalchemy import text
+from sqlalchemy import func
 
-from garage_rag.db.emb_tables import list_models
+from garage_rag.db.emb_tables import count_vectors, list_models
 from garage_rag.db.engine import session_scope
-from garage_rag.db.models import Source
+from garage_rag.db.models import (
+    Author,
+    AuthorIdentity,
+    Chunk,
+    Document,
+    DocumentAuthor,
+    IngestState,
+    Source,
+)
 from garage_rag.search.hybrid import corpus_overview
 from garage_rag.search.hybrid import search as run_search
 
@@ -288,50 +296,42 @@ def rag_get_document(
 
     with session_scope() as session:
         if document_id is not None:
-            row = (
-                session.execute(text("SELECT * FROM documents WHERE id = :i"), {"i": document_id})
-                .mappings()
-                .one_or_none()
-            )
+            doc = session.query(Document).filter(Document.id == document_id).one_or_none()
         else:
             expanded = (location or "").replace("~", _HOME)
-            row = (
-                session.execute(text("SELECT * FROM documents WHERE uri = :u"), {"u": expanded})
-                .mappings()
-                .one_or_none()
-            )
+            doc = session.query(Document).filter(Document.uri == expanded).one_or_none()
 
-        if row is None:
+        if doc is None:
             raise ValueError(f"no such document: {document_id or location}")
 
         authors = [
             r[0]
-            for r in session.execute(
-                text(
-                    "SELECT a.display_name FROM document_authors da "
-                    "JOIN authors a ON a.id = da.author_id WHERE da.document_id = :d "
-                    "ORDER BY da.confidence DESC"
-                ),
-                {"d": row["id"]},
+            for r in (
+                session.query(Author.display_name)
+                .join(DocumentAuthor, DocumentAuthor.author_id == Author.id)
+                .filter(DocumentAuthor.document_id == doc.id)
+                .order_by(DocumentAuthor.confidence.desc())
+                .all()
             )
         ]
-        chunk_count = int(
-            session.execute(
-                text("SELECT count(*) FROM chunks WHERE document_id = :d"), {"d": row["id"]}
-            ).scalar_one()
+        chunk_count = (
+            session.query(func.count(Chunk.id))
+            .filter(Chunk.document_id == doc.id)
+            .scalar()
+            or 0
         )
 
-    content = row["content"] or ""
+    content = doc.content or ""
     truncated = len(content) > max_chars
     return DocumentResult(
-        document_id=row["id"],
-        location=_tidy(row["uri"]),
-        title=row["title"],
-        corpus_class=str(row["corpus_class"]),
-        trust_tier=str(row["trust_tier"]),
+        document_id=doc.id,
+        location=_tidy(doc.uri),
+        title=doc.title,
+        corpus_class=str(doc.corpus_class),
+        trust_tier=str(doc.trust_tier),
         authors=authors,
-        extractor=row["extractor"],
-        byte_size=row["byte_size"],
+        extractor=doc.extractor,
+        byte_size=doc.byte_size,
         chunk_count=chunk_count,
         truncated=truncated,
         content=content[:max_chars],
@@ -343,34 +343,41 @@ def rag_list_sources() -> SourceList:
     """List indexed sources with their document and chunk counts."""
     with session_scope() as session:
         rows = (
-            session.execute(
-                text(
-                    """
-                SELECT s.slug, s.kind, s.default_class::text AS cls,
-                       s.default_trust::text AS trust, s.root,
-                       count(DISTINCT d.id) AS documents,
-                       count(c.id)          AS chunks
-                FROM sources s
-                LEFT JOIN documents d ON d.source_id = s.id AND d.state = 'ok'
-                LEFT JOIN chunks c    ON c.document_id = d.id
-                GROUP BY s.id, s.slug, s.kind, s.default_class, s.default_trust, s.root
-                ORDER BY documents DESC
-                """
-                )
+            session.query(
+                Source.slug,
+                Source.kind,
+                Source.default_class.label("cls"),
+                Source.default_trust.label("trust"),
+                Source.root,
+                func.count(func.distinct(Document.id)).label("documents"),
+                func.count(Chunk.id).label("chunks"),
             )
-            .mappings()
+            .outerjoin(
+                Document,
+                (Document.source_id == Source.id) & (Document.state == IngestState.OK),
+            )
+            .outerjoin(Chunk, Chunk.document_id == Document.id)
+            .group_by(
+                Source.id,
+                Source.slug,
+                Source.kind,
+                Source.default_class,
+                Source.default_trust,
+                Source.root,
+            )
+            .order_by(func.count(func.distinct(Document.id)).desc())
             .all()
         )
 
     sources = [
         SourceInfo(
-            slug=r["slug"],
-            kind=r["kind"],
-            corpus_class=r["cls"],
-            trust_tier=r["trust"],
-            root=_tidy(r["root"]),
-            documents=int(r["documents"]),
-            chunks=int(r["chunks"]),
+            slug=r.slug,
+            kind=r.kind,
+            corpus_class=str(r.cls),
+            trust_tier=str(r.trust),
+            root=_tidy(r.root),
+            documents=int(r.documents),
+            chunks=int(r.chunks),
         )
         for r in rows
     ]
@@ -383,34 +390,33 @@ def rag_list_authors(
 ) -> AuthorList:
     """List authors in the corpus, most-documented first."""
     with session_scope() as session:
+        identity_expr = AuthorIdentity.kind + ":" + AuthorIdentity.value
         rows = (
-            session.execute(
-                text(
-                    """
-                SELECT a.display_name, a.is_self,
-                       count(DISTINCT da.document_id) AS documents,
-                       COALESCE(array_agg(DISTINCT i.kind || ':' || i.value)
-                                FILTER (WHERE i.id IS NOT NULL), '{}') AS identities
-                FROM authors a
-                LEFT JOIN document_authors da ON da.author_id = a.id
-                LEFT JOIN author_identities i  ON i.author_id = a.id
-                GROUP BY a.id, a.display_name, a.is_self
-                ORDER BY documents DESC, a.display_name
-                LIMIT :limit
-                """
-                ),
-                {"limit": limit},
+            session.query(
+                Author.display_name,
+                Author.is_self,
+                func.count(func.distinct(DocumentAuthor.document_id)).label("documents"),
+                func.array_agg(func.distinct(identity_expr))
+                .filter(AuthorIdentity.id.is_not(None))
+                .label("identities"),
             )
-            .mappings()
+            .outerjoin(DocumentAuthor, DocumentAuthor.author_id == Author.id)
+            .outerjoin(AuthorIdentity, AuthorIdentity.author_id == Author.id)
+            .group_by(Author.id, Author.display_name, Author.is_self)
+            .order_by(
+                func.count(func.distinct(DocumentAuthor.document_id)).desc(),
+                Author.display_name,
+            )
+            .limit(limit)
             .all()
         )
 
     authors = [
         AuthorInfo(
-            name=r["display_name"],
-            is_self=bool(r["is_self"]),
-            documents=int(r["documents"]),
-            identities=list(r["identities"] or []),
+            name=r.display_name,
+            is_self=bool(r.is_self),
+            documents=int(r.documents),
+            identities=list(r.identities or []),
         )
         for r in rows
     ]
@@ -426,20 +432,24 @@ def rag_stats() -> CorpusStats:
     """
     with session_scope() as session:
         documents = int(
-            session.execute(text("SELECT count(*) FROM documents WHERE state = 'ok'")).scalar_one()
+            session.query(func.count(Document.id))
+            .filter(Document.state == IngestState.OK)
+            .scalar()
+            or 0
         )
-        chunks = int(session.execute(text("SELECT count(*) FROM chunks")).scalar_one())
-        authors = int(session.execute(text("SELECT count(*) FROM authors")).scalar_one())
+        chunks = int(session.query(func.count(Chunk.id)).scalar() or 0)
+        authors = int(session.query(func.count(Author.id)).scalar() or 0)
         pending = int(
-            session.execute(
-                text("SELECT count(*) FROM documents WHERE state = 'placeholder'")
-            ).scalar_one()
+            session.query(func.count(Document.id))
+            .filter(Document.state == IngestState.PLACEHOLDER)
+            .scalar()
+            or 0
         )
         overview = corpus_overview(session)
 
         models: list[ModelInfo] = []
         for m in list_models(session):
-            have = int(session.execute(text(f"SELECT count(*) FROM {m.table_name}")).scalar_one())
+            have = count_vectors(session, m)
             models.append(
                 ModelInfo(
                     slug=m.slug,

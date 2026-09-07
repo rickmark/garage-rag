@@ -20,12 +20,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
-
-from sqlalchemy import CursorResult, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from garage_rag.db.models import IngestRun, Source
+from garage_rag.db.models import Document, IngestRun, IngestSeen, Source
 
 log = logging.getLogger(__name__)
 
@@ -82,23 +80,24 @@ def reconcile_source(
         )
         return result
 
-    result.total_documents = session.execute(
-        text("SELECT count(*) FROM documents WHERE source_id = :sid"),
-        {"sid": source.id},
-    ).scalar_one()
-
-    missing_sql = text(
-        """
-        SELECT d.id
-        FROM documents d
-        WHERE d.source_id = :sid
-          AND NOT EXISTS (
-              SELECT 1 FROM ingest_seen s
-              WHERE s.run_id = :rid AND s.uri = d.uri
-          )
-        """
+    result.total_documents = (
+        session.query(func.count(Document.id))
+        .filter(Document.source_id == source.id)
+        .scalar()
+        or 0
     )
-    ids = [row[0] for row in session.execute(missing_sql, {"sid": source.id, "rid": run.id})]
+
+    ids = [
+        row[0]
+        for row in session.query(Document.id)
+        .filter(
+            Document.source_id == source.id,
+            ~session.query(IngestSeen.uri)
+            .filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri)
+            .exists(),
+        )
+        .all()
+    ]
     result.candidates = len(ids)
 
     if not ids:
@@ -117,7 +116,7 @@ def reconcile_source(
         return result
 
     # Cascades through chunks into every per-model embedding table.
-    session.execute(text("DELETE FROM documents WHERE id = ANY(:ids)"), {"ids": ids})
+    session.query(Document).filter(Document.id.in_(ids)).delete(synchronize_session=False)
     result.deleted = len(ids)
     log.info("reconcile %s: deleted %d documents", slug, result.deleted)
     return result
@@ -129,24 +128,26 @@ def prune_old_runs(session: Session, *, keep: int = 10) -> int:
     ``ingest_seen`` holds one row per file per run, so unbounded history would
     grow faster than the corpus itself.
     """
-    deleted = cast(
-        CursorResult[Any],
-        session.execute(
-            text(
-                """
-                DELETE FROM ingest_runs
-                WHERE id IN (
-                    SELECT id FROM (
-                        SELECT id, row_number() OVER (
-                            PARTITION BY source_id ORDER BY started_at DESC
-                        ) AS rn
-                        FROM ingest_runs
-                    ) ranked
-                    WHERE rn > :keep
-                )
-                """
-            ),
-            {"keep": keep},
-        ),
-    ).rowcount
+    ranked = (
+        session.query(
+            IngestRun.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=IngestRun.source_id,
+                order_by=IngestRun.started_at.desc(),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    ids_to_delete = (
+        session.query(ranked.c.id)
+        .filter(ranked.c.rn > keep)
+        .scalar_subquery()
+    )
+    deleted = (
+        session.query(IngestRun)
+        .filter(IngestRun.id.in_(ids_to_delete))
+        .delete(synchronize_session=False)
+    )
     return int(deleted or 0)

@@ -539,10 +539,31 @@ struct StatusView: View {
             details = "Stopping garage-mcp service…"
             quickAction = nil
         case .running:
-            severity = .healthy
-            headline = "MCP Server Running"
-            details = "Active and listening on \(appState.mcp.endpoint.absoluteString)."
-            quickAction = nil
+            if let testRes = appState.mcp.lastTestResult {
+                if testRes.isSuccess {
+                    severity = .healthy
+                    headline = "MCP Server Running"
+                    let latencyStr = String(format: "%.1f ms", testRes.latencyMs)
+                    details = "Active on \(appState.mcp.endpoint.absoluteString) (\(testRes.tools.count) tools verified, \(latencyStr))."
+                    quickAction = PageStatusItem.QuickAction(label: "Test") {
+                        Task { await appState.mcp.testServerConnection() }
+                    }
+                } else {
+                    severity = .warning
+                    headline = "MCP Diagnostics Failed"
+                    details = testRes.errorMessage ?? "Test failed"
+                    quickAction = PageStatusItem.QuickAction(label: "Retest") {
+                        Task { await appState.mcp.testServerConnection() }
+                    }
+                }
+            } else {
+                severity = .healthy
+                headline = "MCP Server Running"
+                details = "Active and listening on \(appState.mcp.endpoint.absoluteString)."
+                quickAction = PageStatusItem.QuickAction(label: "Test") {
+                    Task { await appState.mcp.testServerConnection() }
+                }
+            }
         }
 
         return PageStatusItem(

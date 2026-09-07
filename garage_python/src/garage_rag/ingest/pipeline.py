@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import text as sql_text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from garage_rag.attribute.resolver import (
@@ -43,6 +43,7 @@ from garage_rag.db.models import (
     Document,
     DocumentAuthor,
     IngestRun,
+    IngestSeen,
     IngestState,
     Source,
 )
@@ -397,11 +398,9 @@ def ingest_source(
                         force=force,
                     )
                     session.execute(
-                        sql_text(
-                            "INSERT INTO ingest_seen (run_id, uri) VALUES (:r, :u) "
-                            "ON CONFLICT DO NOTHING"
-                        ),
-                        {"r": run_id, "u": candidate.uri},
+                        pg_insert(IngestSeen)
+                        .values(run_id=run_id, uri=candidate.uri)
+                        .on_conflict_do_nothing()
                     )
                     session.commit()
                 except Exception as exc:  # noqa: BLE001 - one file must not end the run

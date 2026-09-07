@@ -2,23 +2,60 @@ import AppKit
 
 /// Keeps the app running in the menu bar after the main window closes (this
 /// is a menu-bar-resident app, not a document-based one), and makes sure the
-/// Postgres child process is signaled to stop on every quit path — Cmd+Q,
-/// Dock > Quit, or the menu bar's own Quit item — not just the one button
+/// Postgres child process is signaled and stopped on every quit path — Cmd+Q,
+/// Dock > Quit, system shutdown, or the menu bar's own Quit item — not just the one button
 /// that calls AppState.stopPostgres() directly.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var appState: AppState?
+    var appState: AppState? {
+        get { _appState ?? AppState.shared }
+        set { _appState = newValue }
+    }
+    private var _appState: AppState?
+    private var isTerminating = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else {
+            return .terminateLater
+        }
+        isTerminating = true
+
+        let state = self.appState
+
+        Task { @MainActor in
+            let shutdownTask = Task { @MainActor in
+                if let state = state {
+                    await state.stopPostgres()
+                } else {
+                    PostgresService.stopAnyRunningInstance()
+                }
+            }
+
+            let timeoutTask = Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                shutdownTask.cancel()
+            }
+
+            _ = await shutdownTask.result
+            timeoutTask.cancel()
+
+            state?.mcp.terminateImmediately()
+            state?.postgres.terminateImmediately()
+            PostgresService.stopAnyRunningInstance()
+
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // No async/await here: the process may be torn down before an
-        // awaited Task completes. terminate() just sends SIGTERM and
-        // returns immediately, which is enough — postgres handles its own
-        // shutdown from there, orphaned but signaled.
         appState?.mcp.terminateImmediately()
         appState?.postgres.terminateImmediately()
+        PostgresService.stopAnyRunningInstance()
     }
 }

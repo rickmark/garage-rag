@@ -18,7 +18,9 @@ from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
     ClientTarget,
     client_targets,
+    find_existing_configs,
     install,
+    install_all,
     installed_in,
     server_command,
     server_entry,
@@ -330,3 +332,80 @@ class TestArgumentOrder:
         cfg.write_text("{}")
         _command, args = server_command(cfg)
         assert args.index("--config") < args.index("mcp-serve")
+
+
+class TestFindExistingConfigsAndInstallAll:
+    def test_find_existing_configs_filters_existing_files_only(self, tmp_path: Path) -> None:
+        proj_mcp = tmp_path / ".mcp.json"
+        proj_mcp.write_text("{}")
+        found = find_existing_configs(project_dir=tmp_path)
+        assert "project" in found
+        assert found["project"].path == proj_mcp
+
+    def test_install_all_populates_multiple_targets(self, tmp_path: Path) -> None:
+        t1 = ClientTarget(key="t1", label="Target 1", path=tmp_path / "t1" / "mcp.json")
+        t2 = ClientTarget(key="t2", label="Target 2", path=tmp_path / "t2" / "mcp.json")
+        results = install_all(targets=[t1, t2])
+        assert len(results) == 2
+        assert t1.path.is_file()
+        assert t2.path.is_file()
+        assert _read(t1.path)["mcpServers"]["garage-rag"]
+        assert _read(t2.path)["mcpServers"]["garage-rag"]
+
+    def test_cli_mcp_install_all_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        mcp1 = tmp_path / ".mcp.json"
+        mcp1.write_text(json.dumps({"mcpServers": {}}))
+        mcp2 = tmp_path / ".vscode" / "mcp.json"
+        mcp2.parent.mkdir(parents=True, exist_ok=True)
+        mcp2.write_text(json.dumps({"mcpServers": {}}))
+
+        monkeypatch.setattr(
+            "garage_rag.mcp_server.install.find_existing_configs",
+            lambda project_dir=None: {
+                "project": ClientTarget(key="project", label="Project", path=mcp1),
+                "vscode": ClientTarget(key="vscode", label="VS Code", path=mcp2),
+            },
+        )
+
+        result = CliRunner().invoke(app, ["mcp-install", "--all", "--yes"])
+        assert result.exit_code == 0
+        assert "garage-rag" in _read(mcp1)["mcpServers"]
+        assert "garage-rag" in _read(mcp2)["mcpServers"]
+
+
+class TestCliMcpTest:
+    def test_cli_mcp_test_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from dataclasses import dataclass
+
+        @dataclass
+        class DummyStats:
+            documents: int = 42
+            chunks: int = 100
+
+        @dataclass
+        class DummySources:
+            sources: list = None
+            def __post_init__(self):
+                self.sources = ["docs", "code"]
+
+        @dataclass
+        class DummyAuthors:
+            authors: list = None
+            def __post_init__(self):
+                self.authors = ["author1"]
+
+        @dataclass
+        class DummySearch:
+            hits: list = None
+            def __post_init__(self):
+                self.hits = []
+
+        monkeypatch.setattr("garage_rag.mcp_server.server.rag_stats", lambda: DummyStats())
+        monkeypatch.setattr("garage_rag.mcp_server.server.rag_list_sources", lambda: DummySources())
+        monkeypatch.setattr("garage_rag.mcp_server.server.rag_list_authors", lambda: DummyAuthors())
+        monkeypatch.setattr("garage_rag.mcp_server.server.rag_search", lambda query, limit=3: DummySearch())
+
+        result = CliRunner().invoke(app, ["mcp-test"])
+        assert result.exit_code == 0
+        assert "rag_stats" in result.output
+        assert "PASS" in result.output

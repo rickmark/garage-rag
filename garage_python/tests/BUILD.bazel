@@ -68,6 +68,17 @@ py_test(
 )
 
 py_test(
+    name = "test_mcp_server",
+    srcs = ["test_mcp_server.py"],
+    deps = [
+        "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/mcp_server",
+        "@pypi//pytest",
+        "@pypi//typer",
+    ],
+)
+
+py_test(
     name = "test_registry_dims",
     srcs = ["test_registry_dims.py"],
     deps = [
@@ -160,6 +171,7 @@ test_suite(
         ":test_llama_xpc",
         ":test_lmstudio",
         ":test_mcp_install",
+        ":test_mcp_server",
         ":test_migrate",
         ":test_registry_dims",
         ":test_xpc_service",

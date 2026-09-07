@@ -46,10 +46,7 @@ struct MenuBarView: View {
             Divider()
 
             Button("Quit Garage") {
-                Task {
-                    await appState.stopPostgres()
-                    NSApp.terminate(nil)
-                }
+                NSApp.terminate(nil)
             }
         }
         .padding(12)

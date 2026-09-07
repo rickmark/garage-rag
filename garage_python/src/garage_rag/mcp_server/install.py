@@ -72,6 +72,12 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
             note="restart Claude Desktop to pick up changes",
         ),
         ClientTarget(
+            key="claude-code-user",
+            label="Claude Code (global user config)",
+            path=home / ".claude.json",
+            note="user-wide configuration for Claude Code",
+        ),
+        ClientTarget(
             key="lmstudio",
             label="LM Studio",
             path=home / ".lmstudio" / "mcp.json",
@@ -82,13 +88,85 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
             path=home / ".cursor" / "mcp.json",
         ),
         ClientTarget(
+            key="cursor-global",
+            label="Cursor (global extension settings)",
+            path=support / "Cursor" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+        ),
+        ClientTarget(
             key="vscode",
             label="VS Code (this project)",
             path=project / ".vscode" / "mcp.json",
             project_scoped=True,
         ),
+        ClientTarget(
+            key="vscode-global",
+            label="VS Code (global extension settings)",
+            path=support / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+        ),
+        ClientTarget(
+            key="windsurf",
+            label="Windsurf",
+            path=home / ".codeium" / "windsurf" / "mcp_config.json",
+        ),
+        ClientTarget(
+            key="zed",
+            label="Zed",
+            path=home / ".config" / "zed" / "settings.json",
+        ),
     ]
     return {t.key: t for t in targets}
+
+
+def find_existing_configs(project_dir: Path | None = None) -> dict[str, ClientTarget]:
+    """Return only the client targets whose configuration files currently exist on disk."""
+    targets = client_targets(project_dir=project_dir)
+    return {key: target for key, target in targets.items() if target.path.is_file()}
+
+
+def install_all(
+    targets: list[ClientTarget] | None = None,
+    *,
+    project_dir: Path | None = None,
+    found_only: bool = True,
+    server_name: str = DEFAULT_SERVER_NAME,
+    config_path: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+    url: str | None = None,
+    transport: str = "http",
+    force: bool = False,
+    dry_run: bool = False,
+) -> list[InstallResult]:
+    """Install the MCP server into multiple client configurations.
+
+    If ``targets`` is omitted and ``found_only`` is True, installs into all detected
+    existing client configs on disk. If no configs exist on disk and ``found_only`` is True,
+    falls back to installing the default targets ('project' and 'claude-desktop').
+    """
+    if targets is None:
+        if found_only:
+            found = find_existing_configs(project_dir=project_dir)
+            if found:
+                targets = list(found.values())
+            else:
+                all_targets = client_targets(project_dir=project_dir)
+                targets = [all_targets["project"], all_targets["claude-desktop"]]
+        else:
+            targets = list(client_targets(project_dir=project_dir).values())
+
+    results: list[InstallResult] = []
+    for target in targets:
+        result = install(
+            target,
+            server_name=server_name,
+            config_path=config_path,
+            extra_env=extra_env,
+            url=url,
+            transport=transport,
+            force=force,
+            dry_run=dry_run,
+        )
+        results.append(result)
+    return results
 
 
 def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:

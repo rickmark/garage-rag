@@ -117,6 +117,11 @@ final class ProcessRunner {
         process.terminate()
     }
 
+    func forceKill() {
+        guard let process, process.isRunning else { return }
+        kill(process.processIdentifier, SIGKILL)
+    }
+
     var isRunning: Bool {
         process?.isRunning ?? false
     }

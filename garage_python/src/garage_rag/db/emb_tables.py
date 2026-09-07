@@ -182,11 +182,19 @@ def set_default_model(session: Session, slug: str) -> None:
     Two statements rather than one, because a partial unique index enforces at
     most one default and a single UPDATE could transiently violate it.
     """
-    session.execute(text("UPDATE embedding_models SET is_default = false WHERE is_default"))
-    session.execute(
-        text("UPDATE embedding_models SET is_default = true WHERE slug = :slug"),
-        {"slug": slug},
+    session.query(EmbeddingModel).filter(EmbeddingModel.is_default.is_(True)).update(
+        {"is_default": False}, synchronize_session=False
     )
+    session.query(EmbeddingModel).filter(EmbeddingModel.slug == slug).update(
+        {"is_default": True}, synchronize_session=False
+    )
+
+
+def count_vectors(session: Session, model: EmbeddingModel | str) -> int:
+    """Count vectors stored in a model's embedding table."""
+    table_name = model.table_name if isinstance(model, EmbeddingModel) else model
+    table = assert_safe_table(table_name)
+    return int(session.execute(text(f"SELECT count(*) FROM {table}")).scalar_one())
 
 
 def get_model(session: Session, slug: str | None = None) -> EmbeddingModel:

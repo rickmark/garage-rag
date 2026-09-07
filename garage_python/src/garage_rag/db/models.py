@@ -243,3 +243,10 @@ class IngestRun(Base):
     materialized_count: Mapped[int] = mapped_column(Integer, default=0)
     materialized_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class IngestSeen(Base):
+    __tablename__ = "ingest_seen"
+
+    run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("ingest_runs.id", ondelete="CASCADE"), primary_key=True)
+    uri: Mapped[str] = mapped_column(Text, primary_key=True)

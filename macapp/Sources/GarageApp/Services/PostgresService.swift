@@ -257,17 +257,63 @@ final class PostgresService: ObservableObject {
     /// (see AppDelegate.applicationWillTerminate). Prefer stop() elsewhere.
     func terminateImmediately() {
         runner.terminate()
+        Self.stopAnyRunningInstance()
     }
 
     func stop() async {
-        guard status == .running || status == .starting else { return }
+        guard status == .running || status == .starting || runner.isRunning else {
+            Self.stopAnyRunningInstance()
+            return
+        }
         status = .stopping
         runner.terminate()
         // Poll briefly for the process to actually exit rather than assuming.
         for _ in 0..<50 where runner.isRunning {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
+        if runner.isRunning {
+            runner.forceKill()
+        }
+        Self.stopAnyRunningInstance()
         status = .stopped
+    }
+
+    /// Stops any active Postgres server running against the app's pgdata directory,
+    /// even if started by an earlier app instance or process.
+    static func stopAnyRunningInstance() {
+        let pidFile = Paths.pgDataDir.appendingPathComponent("postmaster.pid")
+        guard FileManager.default.fileExists(atPath: pidFile.path) else { return }
+
+        let pgCtl = Paths.postgresTool("pg_ctl")
+        if FileManager.default.isExecutableFile(atPath: pgCtl.path) {
+            _ = ProcessRunner.runSync(
+                executable: pgCtl,
+                arguments: ["stop", "-D", Paths.pgDataDir.path, "-m", "fast", "-s"]
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: pidFile.path),
+              let content = try? String(contentsOf: pidFile, encoding: .utf8),
+              let firstLine = content.split(separator: "\n").first,
+              let pid = Int32(firstLine.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0 else {
+            return
+        }
+
+        if kill(pid, 0) == 0 {
+            kill(pid, SIGTERM)
+            var exited = false
+            for _ in 0..<20 {
+                usleep(50_000)
+                if kill(pid, 0) != 0 {
+                    exited = true
+                    break
+                }
+            }
+            if !exited && kill(pid, 0) == 0 {
+                kill(pid, SIGKILL)
+            }
+        }
     }
 
     /// Drops and recreates the app's private database when running, or

@@ -83,5 +83,66 @@ final class GarageMCPServiceTests: XCTestCase {
 
         let launchError = GarageMCPError.launchFailed("permission denied")
         XCTAssertTrue(launchError.localizedDescription.contains("permission denied"))
+
+        let notRunningError = GarageMCPError.serverNotRunning
+        XCTAssertTrue(notRunningError.localizedDescription.contains("MCP server is not running"))
+
+        let invalidResp = GarageMCPError.invalidResponse("malformed json")
+        XCTAssertTrue(invalidResp.localizedDescription.contains("malformed json"))
+    }
+
+    @MainActor
+    func testDetectClientConfigs() {
+        let postgres = PostgresService()
+        let mcp = GarageMCPService(postgres: postgres)
+
+        let configs = mcp.detectClientConfigs()
+        XCTAssertFalse(configs.isEmpty)
+        let ids = configs.map(\.id)
+        XCTAssertTrue(ids.contains("project"))
+        XCTAssertTrue(ids.contains("claude-desktop"))
+        XCTAssertTrue(ids.contains("lmstudio"))
+        XCTAssertTrue(ids.contains("cursor"))
+        XCTAssertTrue(ids.contains("vscode"))
+        XCTAssertTrue(ids.contains("windsurf"))
+        XCTAssertTrue(ids.contains("zed"))
+    }
+
+    @MainActor
+    func testMCPToolInfoAndTestResultModels() {
+        let tool = MCPToolInfo(name: "rag_stats", description: "Corpus stats", inputSchemaJson: "{}")
+        XCTAssertEqual(tool.id, "rag_stats")
+        XCTAssertEqual(tool.name, "rag_stats")
+        XCTAssertEqual(tool.description, "Corpus stats")
+        XCTAssertEqual(tool.inputSchemaJson, "{}")
+
+        let result = MCPTestResult(
+            isSuccess: true,
+            latencyMs: 15.5,
+            httpStatusCode: 200,
+            tools: [tool],
+            testedToolName: "rag_stats",
+            toolOutput: "42 docs",
+            errorMessage: nil
+        )
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(result.latencyMs, 15.5)
+        XCTAssertEqual(result.httpStatusCode, 200)
+        XCTAssertEqual(result.tools.count, 1)
+        XCTAssertEqual(result.testedToolName, "rag_stats")
+        XCTAssertEqual(result.toolOutput, "42 docs")
+        XCTAssertNil(result.errorMessage)
+    }
+
+    @MainActor
+    func testServerConnectionWhenStopped() async {
+        let postgres = PostgresService()
+        let mcp = GarageMCPService(postgres: postgres)
+
+        XCTAssertEqual(mcp.status, .stopped)
+        let result = await mcp.testServerConnection()
+        XCTAssertFalse(result.isSuccess)
+        XCTAssertTrue(result.errorMessage?.contains("not running") == true)
+        XCTAssertEqual(mcp.lastTestResult, result)
     }
 }

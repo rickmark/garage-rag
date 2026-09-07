@@ -4,6 +4,7 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
+    static weak var shared: AppState?
     private static let scheduledMaintenanceEnabledKey = "scheduledMaintenanceEnabled"
     private static let scheduledMaintenanceIntervalKey = "scheduledMaintenanceInterval"
 
@@ -93,6 +94,7 @@ final class AppState: ObservableObject {
         }
 
         fetchPresetModels()
+        Self.shared = self
     }
 
     func launch() {
@@ -212,6 +214,8 @@ final class AppState: ObservableObject {
     }
 
     func stopPostgres() async {
+        scheduledMaintenanceTask?.cancel()
+        scheduledMaintenanceTask = nil
         await mcp.stop()
         await postgres.stop()
     }

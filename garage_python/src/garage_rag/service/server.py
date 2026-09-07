@@ -211,17 +211,17 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def ListSources(self, request: ListSourcesRequest, context: grpc.ServicerContext) -> ListSourcesResponse:
         """List registered sources."""
-        from sqlalchemy import text
+        from sqlalchemy import func
 
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Source
+        from garage_rag.db.models import Document, Source
 
         with session_scope() as session:
             sources = session.query(Source).order_by(Source.id).all()
             doc_counts = dict(
-                session.execute(
-                    text("SELECT source_id, count(*) FROM documents GROUP BY source_id")
-                ).all()
+                session.query(Document.source_id, func.count(Document.id))
+                .group_by(Document.source_id)
+                .all()
             )
             proto_sources: list[SourceInfo] = [
                 SourceInfo(
@@ -294,20 +294,22 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def RemoveSource(self, request: RemoveSourceRequest, context: grpc.ServicerContext) -> RemoveSourceResponse:
         """Deregister a source and cascade delete its documents, chunks, and vectors."""
-        from sqlalchemy import text
+        from sqlalchemy import func
 
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Source
+        from garage_rag.db.models import Document, Source
 
         with session_scope() as session:
             source = session.query(Source).filter_by(slug=request.slug).one_or_none()
             if source is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.slug}")
 
-            count = session.execute(
-                text("SELECT count(*) FROM documents WHERE source_id = :sid"),
-                {"sid": source.id},
-            ).scalar_one()
+            count = (
+                session.query(func.count(Document.id))
+                .filter(Document.source_id == source.id)
+                .scalar()
+                or 0
+            )
 
             session.delete(source)
 
@@ -632,15 +634,15 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetStats(self, request: StatsRequest, context: grpc.ServicerContext) -> StatsResponse:
         """Retrieve corpus and database stats."""
-        from sqlalchemy import func, select
+        from sqlalchemy import func
 
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Document, DocumentChunk, Source
+        from garage_rag.db.models import Chunk, Document, Source
 
         with session_scope() as session:
-            doc_count = session.scalar(select(func.count(Document.id))) or 0
-            chunk_count = session.scalar(select(func.count(DocumentChunk.id))) or 0
-            source_count = session.scalar(select(func.count(Source.id))) or 0
+            doc_count = session.query(func.count(Document.id)).scalar() or 0
+            chunk_count = session.query(func.count(Chunk.id)).scalar() or 0
+            source_count = session.query(func.count(Source.id)).scalar() or 0
 
         return StatsResponse(
             documents=doc_count,
@@ -762,24 +764,33 @@ class GarageRpcServicer(GarageServiceServicer):
         from garage_rag.mcp_server.install import (
             ClientTarget,
             client_targets,
+            find_existing_configs,
             http_url,
             install,
         )
 
         targets = client_targets()
-        if request.path:
-            chosen = ClientTarget(
-                key="custom",
-                label="custom path",
-                path=Path(request.path).expanduser().resolve(),
-            )
+        is_multi = request.target in ("all", "any", "found", "all-found")
+        chosen_list: list[ClientTarget] = []
+
+        if is_multi:
+            found = find_existing_configs()
+            chosen_list = list(found.values()) if found else [targets["project"], targets["claude-desktop"]]
+        elif request.path:
+            chosen_list = [
+                ClientTarget(
+                    key="custom",
+                    label="custom path",
+                    path=Path(request.path).expanduser().resolve(),
+                )
+            ]
         else:
             if request.target not in targets:
                 context.abort(
                     grpc.StatusCode.INVALID_ARGUMENT,
-                    f"unknown target {request.target!r}; choose from {', '.join(targets)}",
+                    f"unknown target {request.target!r}; choose from {', '.join(targets)} or 'all'",
                 )
-            chosen = targets[request.target]
+            chosen_list = [targets[request.target]]
 
         url: str | None = None
         config_file: Path | None = None
@@ -800,8 +811,9 @@ class GarageRpcServicer(GarageServiceServicer):
 
         name = request.name or "garage-rag"
         if request.dry_run:
+            first_chosen = chosen_list[0]
             preview = install(
-                chosen,
+                first_chosen,
                 server_name=name,
                 config_path=config_file,
                 extra_env=db_env,
@@ -811,28 +823,38 @@ class GarageRpcServicer(GarageServiceServicer):
             )
             return McpInstallResponse(
                 success=True,
-                target=chosen.key,
-                path=str(chosen.path),
+                target=first_chosen.key,
+                path=str(first_chosen.path),
                 dry_run_json=json.dumps({"mcpServers": {name: preview.entry}}, indent=2),
-                formatted_output=f"Dry run preview generated for {chosen.label}",
+                formatted_output=f"Dry run preview generated for {first_chosen.label}",
             )
 
-        result = install(
-            chosen,
-            server_name=name,
-            config_path=config_file,
-            extra_env=db_env,
-            url=url,
-            force=request.force,
-        )
-        verb = "created" if result.created_file else "updated"
+        messages: list[str] = []
+        last_path = ""
+        last_backup = ""
+        for chosen in chosen_list:
+            result = install(
+                chosen,
+                server_name=name,
+                config_path=config_file,
+                extra_env=db_env,
+                url=url,
+                force=request.force,
+            )
+            verb = "created" if result.created_file else "updated"
+            messages.append(f"{verb} {result.path}")
+            last_path = str(result.path)
+            if result.backup:
+                last_backup = str(result.backup)
+
+        combined_msg = "; ".join(messages)
         return McpInstallResponse(
             success=True,
-            target=chosen.key,
-            path=str(result.path),
-            backup_path=str(result.backup) if result.backup else "",
-            message=f"{verb} {result.path}",
-            formatted_output=f"{verb} {result.path}",
+            target=chosen_list[0].key if len(chosen_list) == 1 else "all",
+            path=last_path,
+            backup_path=last_backup,
+            message=combined_msg,
+            formatted_output=combined_msg,
         )
 
     def McpUninstall(self, request: McpUninstallRequest, context: grpc.ServicerContext) -> McpUninstallResponse:

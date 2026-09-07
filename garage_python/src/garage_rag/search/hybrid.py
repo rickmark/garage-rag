@@ -24,7 +24,7 @@ from typing import Literal
 
 from pgvector import HalfVector
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
 from garage_rag.db.emb_tables import assert_safe_table, get_model
@@ -285,23 +285,27 @@ def search(
 
 def corpus_overview(session: Session) -> list[dict]:
     """Counts by (corpus_class, trust_tier), for `stats` and the MCP server."""
+    from garage_rag.db.models import Chunk, Document, IngestState
+
     rows = (
-        session.execute(
-            text(
-                """
-            SELECT d.corpus_class::text AS corpus_class,
-                   d.trust_tier::text   AS trust_tier,
-                   count(DISTINCT d.id)  AS documents,
-                   count(c.id)           AS chunks
-            FROM documents d
-            LEFT JOIN chunks c ON c.document_id = d.id
-            WHERE d.state = 'ok'
-            GROUP BY 1, 2
-            ORDER BY documents DESC
-            """
-            )
+        session.query(
+            Document.corpus_class,
+            Document.trust_tier,
+            func.count(func.distinct(Document.id)).label("documents"),
+            func.count(Chunk.id).label("chunks"),
         )
-        .mappings()
+        .outerjoin(Chunk, Chunk.document_id == Document.id)
+        .filter(Document.state == IngestState.OK)
+        .group_by(Document.corpus_class, Document.trust_tier)
+        .order_by(func.count(func.distinct(Document.id)).desc())
         .all()
     )
-    return [dict(row) for row in rows]
+    return [
+        {
+            "corpus_class": str(r.corpus_class),
+            "trust_tier": str(r.trust_tier),
+            "documents": int(r.documents),
+            "chunks": int(r.chunks),
+        }
+        for r in rows
+    ]
