@@ -41,7 +41,9 @@
     "provider": "llama_xpc",
     "native_dims": 768,
     "default_dims": 768,
-    "context_size": 8192
+    "context_size": 8192,
+    "download_model_id": "unsloth/embeddinggemma-300m-GGUF",
+    "download_file": "embeddinggemma-300m.Q8_0.gguf"
   },
   {
     "name": "Snowflake Arctic Embed 2",

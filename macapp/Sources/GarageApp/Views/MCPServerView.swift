@@ -123,7 +123,30 @@ struct MCPServerView: View {
             VStack(alignment: .leading, spacing: 10) {
                 LabeledContent("Endpoint URL", value: appState.mcp.endpoint.absoluteString)
                 LabeledContent("Host", value: appState.mcp.host)
-                LabeledContent("Port", value: String(appState.mcp.port))
+                LabeledContent("Port") {
+                    HStack(spacing: 8) {
+                        TextField(
+                            "Port",
+                            value: Binding(
+                                get: { appState.mcp.port },
+                                set: { newPort in
+                                    if (1...65535).contains(newPort) {
+                                        appState.mcp.port = newPort
+                                    }
+                                }
+                            ),
+                            format: .number
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                        .disabled(appState.mcp.status == .running || appState.mcp.status == .starting || busy)
+
+                        Button("Random") {
+                            appState.mcp.selectRandomPort()
+                        }
+                        .disabled(appState.mcp.status == .running || appState.mcp.status == .starting || busy)
+                    }
+                }
                 LabeledContent("Path", value: appState.mcp.path)
                 LabeledContent("Transport", value: "HTTP (Loopback) & Stdio (CLI)")
                 LabeledContent("Database Dependency", value: appState.postgres.status == .running ? "PostgreSQL Connected (Port \(appState.postgres.port))" : "PostgreSQL Disconnected")
