@@ -688,6 +688,10 @@ final class GarageMCPService: ObservableObject {
         }
     }
 
+    func clearLogs() {
+        logs.removeAll()
+    }
+
     private func environment() throws -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()

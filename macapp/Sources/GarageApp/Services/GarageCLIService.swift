@@ -31,6 +31,10 @@ final class GarageCLIService: ObservableObject {
         }
     }
 
+    func clearLogs() {
+        logs.removeAll()
+    }
+
     var cliAvailable: Bool {
         FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path)
     }

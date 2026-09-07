@@ -1,13 +1,95 @@
 import Foundation
 
+/// Severity level for log entries, supporting filtering and priority ordering.
+public enum LogLevel: String, CaseIterable, Identifiable, Comparable, Sendable {
+    case debug = "Debug"
+    case info = "Info"
+    case warning = "Warning"
+    case error = "Error"
+
+    public var id: String { rawValue }
+
+    public var priority: Int {
+        switch self {
+        case .debug: return 0
+        case .info: return 1
+        case .warning: return 2
+        case .error: return 3
+        }
+    }
+
+    public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+        lhs.priority < rhs.priority
+    }
+}
+
 /// A line of output captured from a subprocess, for the log viewer.
-struct LogLine: Identifiable {
-    enum Stream { case stdout, stderr }
-    let id = UUID()
-    let date = Date()
-    let stream: Stream
-    let text: String
-    let source: String
+public struct LogLine: Identifiable, Hashable, Sendable {
+    public enum Stream: String, CaseIterable, Identifiable, Comparable, Sendable {
+        case stdout = "stdout"
+        case stderr = "stderr"
+
+        public var id: String { rawValue }
+
+        public static func < (lhs: Stream, rhs: Stream) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    public let id: UUID
+    public let date: Date
+    public let stream: Stream
+    public let text: String
+    public let source: String
+    public let level: LogLevel
+
+    public init(
+        id: UUID = UUID(),
+        date: Date = Date(),
+        stream: Stream,
+        text: String,
+        source: String,
+        level: LogLevel? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.stream = stream
+        self.text = text
+        self.source = source
+        self.level = level ?? Self.inferLevel(stream: stream, text: text)
+    }
+
+    public static func inferLevel(stream: Stream, text: String) -> LogLevel {
+        let lower = text.lowercased()
+        if lower.contains("[error]") || lower.contains("error:") || lower.contains("[fatal]")
+            || lower.contains("fatal:") || lower.contains("panic:") || lower.contains("level=error")
+            || lower.contains("\"level\":\"error\"") || lower.contains("\"level\": \"error\"")
+            || lower.contains("traceback (most recent call last):") {
+            return .error
+        }
+        if lower.contains("[warn]") || lower.contains("[warning]") || lower.contains("warning:")
+            || lower.contains("warn:") || lower.contains("level=warn") || lower.contains("level=warning")
+            || lower.contains("\"level\":\"warning\"") || lower.contains("\"level\": \"warning\"") {
+            return .warning
+        }
+        if lower.contains("[debug]") || lower.contains("[trace]") || lower.contains("debug:")
+            || lower.contains("trace:") || lower.contains("level=debug") || lower.contains("level=trace")
+            || lower.contains("\"level\":\"debug\"") || lower.contains("\"level\": \"debug\"") {
+            return .debug
+        }
+        if stream == .stderr {
+            return .error
+        }
+        return .info
+    }
+
+    public func matches(searchText: String) -> Bool {
+        guard !searchText.isEmpty else { return true }
+        return text.localizedCaseInsensitiveContains(searchText)
+            || source.localizedCaseInsensitiveContains(searchText)
+            || stream.rawValue.localizedCaseInsensitiveContains(searchText)
+            || level.rawValue.localizedCaseInsensitiveContains(searchText)
+    }
 }
 
 /// Thin wrapper around Process that streams stdout/stderr line-by-line to a

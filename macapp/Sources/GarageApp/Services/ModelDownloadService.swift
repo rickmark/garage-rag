@@ -35,6 +35,10 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
+    func clearLogs() {
+        logs.removeAll()
+    }
+
     func clearMessages() {
         lastError = nil
         lastSuccess = nil

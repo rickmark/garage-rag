@@ -174,6 +174,10 @@ final class PostgresService: ObservableObject {
         }
     }
 
+    func clearLogs() {
+        logs.removeAll()
+    }
+
     private var isInitialized: Bool {
         FileManager.default.fileExists(atPath: Paths.pgDataDir.appendingPathComponent("PG_VERSION").path)
     }
@@ -595,7 +599,7 @@ final class PostgresService: ObservableObject {
         }
 
         let appliedSql = "SELECT version FROM schema_migrations;"
-        let (appliedStatus, appliedOutput) = ProcessRunner.runSync(
+        let (_, appliedOutput) = ProcessRunner.runSync(
             executable: Paths.postgresTool("psql"),
             arguments: [
                 "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,

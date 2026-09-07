@@ -46,6 +46,10 @@ final class LlamaService: ObservableObject {
         }
     }
 
+    func clearLogs() {
+        logs.removeAll()
+    }
+
     func clearMessages() {
         lastError = nil
         lastSuccess = nil
