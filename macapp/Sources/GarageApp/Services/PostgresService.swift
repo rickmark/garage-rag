@@ -41,6 +41,73 @@ public struct RegisteredModel: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct CorpusStats: Equatable, Sendable {
+    public var sourcesCount: Int
+    public var documentsCount: Int
+    public var documentsOkCount: Int
+    public var documentsFailedCount: Int
+    public var totalChunks: Int
+    public var embeddedChunks: Int
+    public var totalSeenFiles: Int
+    public var totalIndexedFiles: Int
+    public var modelStats: [ModelEmbeddingStats]
+    public var lastUpdated: Date?
+
+    public init(
+        sourcesCount: Int = 0,
+        documentsCount: Int = 0,
+        documentsOkCount: Int = 0,
+        documentsFailedCount: Int = 0,
+        totalChunks: Int = 0,
+        embeddedChunks: Int = 0,
+        totalSeenFiles: Int = 0,
+        totalIndexedFiles: Int = 0,
+        modelStats: [ModelEmbeddingStats] = [],
+        lastUpdated: Date? = nil
+    ) {
+        self.sourcesCount = sourcesCount
+        self.documentsCount = documentsCount
+        self.documentsOkCount = documentsOkCount
+        self.documentsFailedCount = documentsFailedCount
+        self.totalChunks = totalChunks
+        self.embeddedChunks = embeddedChunks
+        self.totalSeenFiles = totalSeenFiles
+        self.totalIndexedFiles = totalIndexedFiles
+        self.modelStats = modelStats
+        self.lastUpdated = lastUpdated
+    }
+
+    public struct ModelEmbeddingStats: Identifiable, Hashable, Sendable {
+        public var id: String { slug }
+        public let slug: String
+        public let tableName: String
+        public let isDefault: Bool
+        public let embeddedCount: Int
+
+        public init(slug: String, tableName: String, isDefault: Bool, embeddedCount: Int) {
+            self.slug = slug
+            self.tableName = tableName
+            self.isDefault = isDefault
+            self.embeddedCount = embeddedCount
+        }
+    }
+
+    public var ingestionProgressFraction: Double {
+        if totalSeenFiles > 0 {
+            return min(1.0, max(0.0, Double(totalIndexedFiles) / Double(totalSeenFiles)))
+        }
+        if documentsCount > 0 {
+            return 1.0
+        }
+        return 0.0
+    }
+
+    public var embeddingProgressFraction: Double {
+        guard totalChunks > 0 else { return 0.0 }
+        return min(1.0, max(0.0, Double(embeddedChunks) / Double(totalChunks)))
+    }
+}
+
 enum PostgresStatus: Equatable {
     case stopped
     case starting
@@ -365,6 +432,95 @@ final class PostgresService: ObservableObject {
             ))
         }
         return sources
+    }
+
+    /// Queries the Postgres database for overall corpus, ingestion, and embedding statistics.
+    func fetchCorpusStats() throws -> CorpusStats {
+        try requireRunning()
+        let password = try postgresPassword()
+
+        let coreSql = """
+        SELECT
+            (SELECT count(*) FROM sources),
+            (SELECT count(*) FROM documents),
+            (SELECT count(*) FROM documents WHERE state = 'ok'),
+            (SELECT count(*) FROM documents WHERE state <> 'ok'),
+            (SELECT count(*) FROM chunks),
+            (SELECT coalesce(sum(seen_count), 0) FROM (SELECT DISTINCT ON (source_id) seen_count FROM ingest_runs ORDER BY source_id, started_at DESC) r),
+            (SELECT coalesce(sum(indexed_count), 0) FROM (SELECT DISTINCT ON (source_id) indexed_count FROM ingest_runs ORDER BY source_id, started_at DESC) r);
+        """
+
+        let (status, output) = ProcessRunner.runSync(
+            executable: Paths.postgresTool("psql"),
+            arguments: [
+                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                "-tAF\t", "-c", coreSql,
+            ],
+            environment: runtimeEnvironment(password: password)
+        )
+        guard status == 0 else {
+            throw PostgresError.other("psql query failed: \(output)")
+        }
+
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.components(separatedBy: "\t")
+        guard parts.count >= 7 else {
+            throw PostgresError.other("unexpected stats output: \(output)")
+        }
+
+        let sourcesCount = Int(parts[0]) ?? 0
+        let docsCount = Int(parts[1]) ?? 0
+        let docsOkCount = Int(parts[2]) ?? 0
+        let docsFailedCount = Int(parts[3]) ?? 0
+        let chunksCount = Int(parts[4]) ?? 0
+        let seenCount = Int(parts[5]) ?? 0
+        let indexedCount = Int(parts[6]) ?? 0
+
+        let models = (try? listRegisteredModels()) ?? []
+        var modelStats: [CorpusStats.ModelEmbeddingStats] = []
+        var totalEmbedded = 0
+        var foundDefault = false
+
+        for model in models {
+            guard model.tableName.range(of: "^emb_[a-z0-9_]+$", options: .regularExpression) != nil else { continue }
+            let countSql = "SELECT count(*) FROM \(model.tableName);"
+            let (mStatus, mOutput) = ProcessRunner.runSync(
+                executable: Paths.postgresTool("psql"),
+                arguments: [
+                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
+                    "-tAF\t", "-c", countSql,
+                ],
+                environment: runtimeEnvironment(password: password)
+            )
+            let count = (mStatus == 0) ? (Int(mOutput.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) : 0
+            modelStats.append(CorpusStats.ModelEmbeddingStats(
+                slug: model.slug,
+                tableName: model.tableName,
+                isDefault: model.isDefault,
+                embeddedCount: count
+            ))
+            if model.isDefault {
+                totalEmbedded = count
+                foundDefault = true
+            }
+        }
+
+        if !foundDefault, let first = modelStats.first {
+            totalEmbedded = first.embeddedCount
+        }
+
+        return CorpusStats(
+            sourcesCount: sourcesCount,
+            documentsCount: docsCount,
+            documentsOkCount: docsOkCount,
+            documentsFailedCount: docsFailedCount,
+            totalChunks: chunksCount,
+            embeddedChunks: totalEmbedded,
+            totalSeenFiles: seenCount,
+            totalIndexedFiles: indexedCount,
+            modelStats: modelStats,
+            lastUpdated: Date()
+        )
     }
 
     private var isFailed: Bool {

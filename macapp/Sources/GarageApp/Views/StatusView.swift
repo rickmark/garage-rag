@@ -10,7 +10,7 @@ struct StatusView: View {
         self._selection = selection
     }
 
-    enum PageStatusSeverity: Int, Comparable {
+    enum PageStatusSeverity: Int, Comparable, Equatable {
         case critical = 0   // Failure / Error (Red)
         case warning = 1    // Attention needed / Degraded / Stopped (Orange/Yellow)
         case info = 2       // In progress / Transitioning (Blue)
@@ -21,7 +21,7 @@ struct StatusView: View {
         }
     }
 
-    struct PageStatusItem: Identifiable {
+    struct PageStatusItem: Identifiable, Equatable {
         let section: AppSection
         let title: String
         let severity: PageStatusSeverity
@@ -31,16 +31,29 @@ struct StatusView: View {
 
         var id: String { section.id }
 
+        static func == (lhs: PageStatusItem, rhs: PageStatusItem) -> Bool {
+            lhs.section == rhs.section &&
+            lhs.title == rhs.title &&
+            lhs.severity == rhs.severity &&
+            lhs.statusHeadline == rhs.statusHeadline &&
+            lhs.statusDetails == rhs.statusDetails &&
+            lhs.quickAction?.label == rhs.quickAction?.label
+        }
+
         struct QuickAction {
             let label: String
             let action: () -> Void
         }
     }
 
+    @State private var refreshTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 systemHealthHeader
+
+                corpusOverviewSection
 
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(sortedStatusItems) { item in
@@ -64,6 +77,206 @@ struct StatusView: View {
             .padding(20)
         }
         .navigationTitle("Status")
+        .onAppear {
+            Task {
+                await appState.fetchCorpusStats()
+            }
+        }
+        .onReceive(refreshTimer) { _ in
+            Task {
+                await appState.fetchCorpusStats()
+            }
+        }
+    }
+
+    // MARK: - Corpus & Progress Overview
+
+    private var corpusOverviewSection: some View {
+        GroupBox("Corpus & Pipeline Overview") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    sourcesMetricCard
+                    Divider()
+                    ingestionMetricCard
+                    Divider()
+                    chunkEmbeddingMetricCard
+                }
+                .padding(.vertical, 4)
+
+                HStack {
+                    if let lastUpdated = appState.corpusStats.lastUpdated {
+                        Text("Updated \(lastUpdated, style: .time)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await appState.fetchCorpusStats() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption2)
+                            Text("Refresh")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .disabled(appState.isFetchingStats)
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private var effectiveSourcesCount: Int {
+        max(appState.registeredSources.count, appState.corpusStats.sourcesCount)
+    }
+
+    private var sourcesMetricCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder.badge.gear")
+                    .foregroundStyle(.blue)
+                Text("Sources")
+                    .font(.subheadline.bold())
+            }
+
+            Text("\(effectiveSourcesCount)")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+
+            if effectiveSourcesCount == 0 {
+                Text("No sources configured")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("\(effectiveSourcesCount) source\(effectiveSourcesCount == 1 ? "" : "s") registered")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                selection = .sources
+            } label: {
+                Text("Manage Sources")
+                    .font(.caption)
+            }
+            .buttonStyle(.link)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var ingestionMetricCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text.fill")
+                    .foregroundStyle(.green)
+                Text("Ingestion Progress")
+                    .font(.subheadline.bold())
+                if appState.ingest.isRunning {
+                    ProgressView().controlSize(.small)
+                }
+            }
+
+            let stats = appState.corpusStats
+            if appState.ingest.isRunning {
+                Text("Ingesting…")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.blue)
+            } else if stats.totalSeenFiles > 0 {
+                let percent = Int(stats.ingestionProgressFraction * 100)
+                Text("\(percent)%")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+            } else if stats.documentsCount > 0 {
+                Text("\(stats.documentsCount)")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+            } else {
+                Text("0")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+            }
+
+            ProgressView(value: stats.ingestionProgressFraction)
+                .progressViewStyle(.linear)
+
+            if stats.totalSeenFiles > 0 {
+                Text("\(stats.totalIndexedFiles) of \(stats.totalSeenFiles) files indexed")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if stats.documentsCount > 0 {
+                Text("\(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") indexed\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("No documents indexed yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                selection = .sources
+            } label: {
+                Text("View Ingest")
+                    .font(.caption)
+            }
+            .buttonStyle(.link)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var chunkEmbeddingMetricCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu.fill")
+                    .foregroundStyle(.purple)
+                Text("Chunk Embedding")
+                    .font(.subheadline.bold())
+                if appState.backfill.isRunning {
+                    ProgressView().controlSize(.small)
+                }
+            }
+
+            let stats = appState.corpusStats
+            if appState.backfill.isRunning {
+                Text("Embedding…")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.blue)
+            } else if stats.totalChunks > 0 {
+                let percent = Int(stats.embeddingProgressFraction * 100)
+                Text("\(percent)%")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+            } else {
+                Text("0%")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+            }
+
+            ProgressView(value: stats.embeddingProgressFraction)
+                .progressViewStyle(.linear)
+
+            if stats.totalChunks > 0 {
+                Text("\(stats.embeddedChunks) of \(stats.totalChunks) chunks embedded")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("No chunks generated yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                selection = .models
+            } label: {
+                Text("View Models")
+                    .font(.caption)
+            }
+            .buttonStyle(.link)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - System Health Header
@@ -168,19 +381,51 @@ struct StatusView: View {
 
     // MARK: - Page Status Computation & Sorting
 
-    private var statusItems: [PageStatusItem] {
+    var statusItems: [PageStatusItem] {
+        Self.statusItems(for: appState)
+    }
+
+    var sortedStatusItems: [PageStatusItem] {
+        Self.sortedStatusItems(for: appState)
+    }
+
+    var databaseStatusItem: PageStatusItem {
+        Self.databaseStatusItem(for: appState)
+    }
+
+    var mcpStatusItem: PageStatusItem {
+        Self.mcpStatusItem(for: appState)
+    }
+
+    var sourcesStatusItem: PageStatusItem {
+        Self.sourcesStatusItem(for: appState)
+    }
+
+    var modelsStatusItem: PageStatusItem {
+        Self.modelsStatusItem(for: appState)
+    }
+
+    var searchStatusItem: PageStatusItem {
+        Self.searchStatusItem(for: appState)
+    }
+
+    var logsStatusItem: PageStatusItem {
+        Self.logsStatusItem(for: appState)
+    }
+
+    static func statusItems(for appState: AppState) -> [PageStatusItem] {
         [
-            databaseStatusItem,
-            mcpStatusItem,
-            sourcesStatusItem,
-            modelsStatusItem,
-            searchStatusItem,
-            logsStatusItem
+            databaseStatusItem(for: appState),
+            mcpStatusItem(for: appState),
+            sourcesStatusItem(for: appState),
+            modelsStatusItem(for: appState),
+            searchStatusItem(for: appState),
+            logsStatusItem(for: appState)
         ]
     }
 
-    private var sortedStatusItems: [PageStatusItem] {
-        statusItems.sorted { (lhs, rhs) -> Bool in
+    static func sortedStatusItems(for appState: AppState) -> [PageStatusItem] {
+        statusItems(for: appState).sorted { (lhs, rhs) -> Bool in
             if lhs.severity != rhs.severity {
                 return lhs.severity < rhs.severity // Failing / Critical at the top
             }
@@ -190,7 +435,7 @@ struct StatusView: View {
 
     // MARK: - Individual Page Status Evaluators
 
-    private var databaseStatusItem: PageStatusItem {
+    static func databaseStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String
@@ -238,7 +483,7 @@ struct StatusView: View {
         )
     }
 
-    private var mcpStatusItem: PageStatusItem {
+    static func mcpStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String
@@ -286,7 +531,7 @@ struct StatusView: View {
         )
     }
 
-    private var sourcesStatusItem: PageStatusItem {
+    static func sourcesStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String
@@ -368,7 +613,7 @@ struct StatusView: View {
         )
     }
 
-    private var modelsStatusItem: PageStatusItem {
+    static func modelsStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String
@@ -395,6 +640,11 @@ struct StatusView: View {
             headline = "Model Downloading"
             details = "Downloading model weights in background."
             quickAction = nil
+        } else if appState.backfill.isRunning {
+            severity = .info
+            headline = "Embedding in Progress"
+            details = "Embedder is processing document chunks."
+            quickAction = nil
         } else if appState.llama.isConnected {
             severity = .healthy
             headline = "Models & Llama Ready"
@@ -417,7 +667,7 @@ struct StatusView: View {
         )
     }
 
-    private var searchStatusItem: PageStatusItem {
+    static func searchStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String
@@ -442,7 +692,7 @@ struct StatusView: View {
         )
     }
 
-    private var logsStatusItem: PageStatusItem {
+    static func logsStatusItem(for appState: AppState) -> PageStatusItem {
         let severity: PageStatusSeverity
         let headline: String
         let details: String

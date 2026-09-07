@@ -13,7 +13,7 @@ struct GarageCommandResult {
 @MainActor
 final class GarageCLIService: ObservableObject {
     @Published private(set) var logs: [LogLine] = []
-    @Published private(set) var isRunning = false
+    @Published var isRunning = false
 
     private let postgres: PostgresService
     private let commandLabel: String

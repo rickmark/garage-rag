@@ -28,6 +28,8 @@ final class AppState: ObservableObject {
     @Published private(set) var isFetchingModels = false
     @Published private(set) var registeredSources: [RegisteredSource] = []
     @Published private(set) var isFetchingSources = false
+    @Published private(set) var corpusStats = CorpusStats()
+    @Published private(set) var isFetchingStats = false
     @Published var scheduledMaintenanceEnabled: Bool {
         didSet {
             UserDefaults.standard.set(
@@ -98,6 +100,7 @@ final class AppState: ObservableObject {
         fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
         Task { await fetchRegisteredSources() }
+        Task { await fetchCorpusStats() }
         configureScheduledMaintenance()
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
@@ -111,6 +114,7 @@ final class AppState: ObservableObject {
             try await mcp.start()
             await fetchRegisteredModels()
             await fetchRegisteredSources()
+            await fetchCorpusStats()
         } catch {
             // Status already reflects .failed(...); nothing else to do here.
         }
@@ -172,6 +176,31 @@ final class AppState: ObservableObject {
         self.registeredSources = Array(merged.values).sorted { $0.slug < $1.slug }
     }
 
+    func fetchCorpusStats() async {
+        guard postgres.status == .running else {
+            var stats = CorpusStats()
+            stats.sourcesCount = registeredSources.count
+            self.corpusStats = stats
+            return
+        }
+        isFetchingStats = true
+        defer { isFetchingStats = false }
+        do {
+            var stats = try postgres.fetchCorpusStats()
+            if stats.sourcesCount == 0 && !registeredSources.isEmpty {
+                stats.sourcesCount = registeredSources.count
+            }
+            self.corpusStats = stats
+        } catch {
+            var fallback = self.corpusStats
+            if fallback.sourcesCount == 0 {
+                fallback.sourcesCount = registeredSources.count
+            }
+            fallback.lastUpdated = Date()
+            self.corpusStats = fallback
+        }
+    }
+
     func stopPostgres() async {
         await mcp.stop()
         await postgres.stop()
@@ -184,6 +213,7 @@ final class AppState: ObservableObject {
                 try? await mcp.start()
                 await fetchRegisteredModels()
                 await fetchRegisteredSources()
+                await fetchCorpusStats()
             }
             lastCommandSucceeded = true
             lastCommandOutput = "Database reset successfully."
