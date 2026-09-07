@@ -596,18 +596,12 @@ struct SourcesView: View {
         Group {
             if !appState.ingest.logs.isEmpty {
                 GroupBox("Ingest output") {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(appState.ingest.logs) { line in
-                                Text(line.text)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(line.stream == .stderr ? .red : .primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 320)
-                    .padding(8)
+                    LogTableView(
+                        lines: appState.ingest.logs,
+                        sourceName: "Ingest",
+                        onClear: { appState.ingest.clearLogs() }
+                    )
+                    .frame(minHeight: 200, maxHeight: 350)
                 }
             }
         }

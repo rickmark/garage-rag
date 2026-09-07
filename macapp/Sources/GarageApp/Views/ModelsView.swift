@@ -1036,18 +1036,12 @@ struct ModelsView: View {
 
             if !appState.backfill.logs.isEmpty {
                 GroupBox("Backfill output") {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(appState.backfill.logs) { line in
-                                Text(line.text)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(line.stream == .stderr ? .red : .primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 240)
-                    .padding(8)
+                    LogTableView(
+                        lines: appState.backfill.logs,
+                        sourceName: "Backfill",
+                        onClear: { appState.backfill.clearLogs() }
+                    )
+                    .frame(minHeight: 180, maxHeight: 280)
                 }
             }
         }
