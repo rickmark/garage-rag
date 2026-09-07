@@ -288,6 +288,19 @@ public struct LogTableView: View {
             }
             .width(min: 85, ideal: 95, max: 115)
 
+            TableColumn("PID") { line in
+                if let pid = line.pid {
+                    Text("\(pid)")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("-")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .width(min: 45, ideal: 55, max: 75)
+
             TableColumn("Level", value: \.level) { line in
                 LogLevelBadge(level: line.level)
             }
@@ -309,7 +322,7 @@ public struct LogTableView: View {
             TableColumn("Message", value: \.text) { line in
                 Text(line.text)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(line.level == .error || line.stream == .stderr ? .red : (line.level == .warning ? .orange : .primary))
+                    .foregroundStyle(line.level == .error ? .red : (line.level == .warning ? .orange : (line.level == .debug ? .secondary : .primary)))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -340,6 +353,13 @@ public struct LogTableView: View {
                 HStack(spacing: 8) {
                     LogLevelBadge(level: line.level)
                     LogStreamBadge(stream: line.stream)
+                    if let pid = line.pid {
+                        Text("PID: \(pid)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text("•")
+                            .foregroundStyle(.secondary)
+                    }
                     Text("Source: \(line.source)")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
@@ -352,7 +372,7 @@ public struct LogTableView: View {
                 Spacer()
                 Button("Copy Text") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(line.text, forType: .string)
+                    NSPasteboard.general.setString(line.rawText ?? line.text, forType: .string)
                 }
                 .controlSize(.small)
 
@@ -364,12 +384,24 @@ public struct LogTableView: View {
             }
 
             ScrollView {
-                Text(line.text)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(line.level == .error || line.stream == .stderr ? .red : (line.level == .warning ? .orange : .primary))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(8)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(line.text)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(line.level == .error ? .red : (line.level == .warning ? .orange : (line.level == .debug ? .secondary : .primary)))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+
+                    if let raw = line.rawText, raw != line.text {
+                        Divider()
+                            .padding(.vertical, 2)
+                        Text("Raw: \(raw)")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(8)
             }
             .frame(maxHeight: 140)
             .background(Color.primary.opacity(0.04))
@@ -432,7 +464,8 @@ public struct LogTableView: View {
     }
 
     private func formatLogLineForExport(_ line: LogLine) -> String {
-        "[\(Self.timestampFormatter.string(from: line.date))] [\(line.level.rawValue.uppercased())] [\(line.source)/\(line.stream.rawValue)] \(line.text)"
+        let pidStr = line.pid.map { " [pid:\($0)]" } ?? ""
+        return "[\(Self.timestampFormatter.string(from: line.date))] [\(line.level.rawValue.uppercased())] [\(line.source)/\(line.stream.rawValue)]\(pidStr) \(line.text)"
     }
 
     private func emptyStateView(icon: String, title: String, subtitle: String) -> some View {

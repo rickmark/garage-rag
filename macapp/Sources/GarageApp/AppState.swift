@@ -13,6 +13,7 @@ final class AppState: ObservableObject {
     let ingest: GarageCLIService
     let backfill: GarageCLIService
     let mcp: GarageMCPService
+    let grpc: GarageGRPCService
     let llama: LlamaService
     let modelDownload: ModelDownloadService
     let volumeAccess: VolumeAccessService
@@ -68,6 +69,7 @@ final class AppState: ObservableObject {
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
         mcp = GarageMCPService(postgres: postgres)
+        grpc = GarageGRPCService(postgres: postgres)
 
         scheduledMaintenanceEnabled = UserDefaults.standard.bool(
             forKey: Self.scheduledMaintenanceEnabledKey
@@ -82,6 +84,7 @@ final class AppState: ObservableObject {
         llama.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         postgres.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         mcp.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        grpc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -116,6 +119,7 @@ final class AppState: ObservableObject {
             try await postgres.start()
             if postgres.status == .running {
                 try await mcp.start()
+                try? await grpc.start()
             }
             await fetchRegisteredModels()
             await fetchRegisteredSources()
@@ -221,6 +225,7 @@ final class AppState: ObservableObject {
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil
         await mcp.stop()
+        await grpc.stop()
         await postgres.stop()
     }
 
@@ -436,10 +441,37 @@ final class AppState: ObservableObject {
         case "Ingest": ingest.clearLogs()
         case "Backfill": backfill.clearLogs()
         case "MCP Server": mcp.clearLogs()
+        case "gRPC Server": grpc.clearLogs()
         case "Llama Service": llama.clearLogs()
         case "Model Downloader": modelDownload.clearLogs()
         default: break
         }
+    }
+
+    /// Performs search using the gRPC server endpoint.
+    func search(
+        query: String,
+        mode: String = "hybrid",
+        model: String? = nil,
+        limit: Int = 10,
+        corpusClasses: [String] = [],
+        trustTiers: [String] = [],
+        sources: [String] = [],
+        author: String? = nil,
+        full: Bool = false
+    ) async throws -> [SearchResultItem] {
+        let response = try await grpc.search(
+            query: query,
+            mode: mode,
+            model: model,
+            limit: limit,
+            corpusClasses: corpusClasses,
+            trustTiers: trustTiers,
+            sources: sources,
+            author: author,
+            full: full
+        )
+        return response.hits.map { SearchResultItem(hit: $0) }
     }
 
     private func configureScheduledMaintenance() {

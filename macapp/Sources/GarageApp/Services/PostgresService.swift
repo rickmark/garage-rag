@@ -210,7 +210,7 @@ final class PostgresService: ObservableObject {
             environment: runtimeEnvironment(password: password)
         )
         for rawLine in output.split(separator: "\n") {
-            appendLog(LogLine(stream: .stdout, text: String(rawLine), source: "initdb"))
+            appendLog(PostgresLogParser.parse(rawText: String(rawLine), stream: .stdout, source: "initdb"))
         }
         guard status == 0 else {
             throw PostgresError.initFailed(output)
@@ -238,11 +238,13 @@ final class PostgresService: ObservableObject {
                     "-c", "listen_addresses=localhost",
                     "-c", "unix_socket_directories=",
                     "-c", "logging_collector=off",
+                    "-c", "log_line_prefix=%m [%p] ",
                 ],
                 environment: runtimeEnvironment(),
                 source: "postgres"
             ) { [weak self] line in
-                self?.appendLog(line)
+                let parsed = PostgresLogParser.parse(line: line)
+                self?.appendLog(parsed)
             }
         } catch {
             status = .failed("failed to launch postgres: \(error.localizedDescription)")

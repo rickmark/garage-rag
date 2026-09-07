@@ -42,6 +42,8 @@ public struct LogLine: Identifiable, Hashable, Sendable {
     public let text: String
     public let source: String
     public let level: LogLevel
+    public let pid: Int32?
+    public let rawText: String?
 
     public init(
         id: UUID = UUID(),
@@ -49,7 +51,9 @@ public struct LogLine: Identifiable, Hashable, Sendable {
         stream: Stream,
         text: String,
         source: String,
-        level: LogLevel? = nil
+        level: LogLevel? = nil,
+        pid: Int32? = nil,
+        rawText: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -57,6 +61,8 @@ public struct LogLine: Identifiable, Hashable, Sendable {
         self.text = text
         self.source = source
         self.level = level ?? Self.inferLevel(stream: stream, text: text)
+        self.pid = pid
+        self.rawText = rawText
     }
 
     public static func inferLevel(stream: Stream, text: String) -> LogLevel {
@@ -77,6 +83,12 @@ public struct LogLine: Identifiable, Hashable, Sendable {
             || lower.contains("\"level\":\"debug\"") || lower.contains("\"level\": \"debug\"") {
             return .debug
         }
+        if lower.contains("[info]") || lower.contains("info:") || lower.contains("log:")
+            || lower.contains("notice:") || lower.contains("level=info")
+            || lower.contains("\"level\":\"info\"") || lower.contains("\"level\": \"info\"")
+            || lower.contains("detail:") || lower.contains("hint:") {
+            return .info
+        }
         if stream == .stderr {
             return .error
         }
@@ -85,6 +97,12 @@ public struct LogLine: Identifiable, Hashable, Sendable {
 
     public func matches(searchText: String) -> Bool {
         guard !searchText.isEmpty else { return true }
+        if let pid, String(pid).localizedCaseInsensitiveContains(searchText) {
+            return true
+        }
+        if let rawText, rawText.localizedCaseInsensitiveContains(searchText) {
+            return true
+        }
         return text.localizedCaseInsensitiveContains(searchText)
             || source.localizedCaseInsensitiveContains(searchText)
             || stream.rawValue.localizedCaseInsensitiveContains(searchText)
