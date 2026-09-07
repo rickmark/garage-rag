@@ -33,6 +33,16 @@ final class GarageViewTests: XCTestCase {
     }
 
     @MainActor
+    func testDatabaseViewHostingWithPendingMigrations() {
+        let appState = AppState()
+        appState.postgres.setPendingMigrationsForTesting(["001_extensions.sql", "002_types.sql", "003_hybrid_search.sql"])
+        let databaseView = DatabaseView()
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: databaseView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
     func testSourcesViewHosting() {
         let appState = AppState()
         let sourcesView = SourcesView()

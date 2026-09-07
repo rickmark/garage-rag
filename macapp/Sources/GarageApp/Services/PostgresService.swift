@@ -124,6 +124,7 @@ enum PostgresStatus: Equatable {
 final class PostgresService: ObservableObject {
     @Published private(set) var status: PostgresStatus = .stopped
     @Published private(set) var logs: [LogLine] = []
+    @Published private(set) var pendingMigrations: [String] = []
 
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
     let port = 14824
@@ -255,7 +256,9 @@ final class PostgresService: ObservableObject {
         }
 
         try await ensureDatabaseExists(password: try postgresPassword())
-        if (try? hasPendingMigrations()) == true {
+        let pending = (try? fetchPendingMigrations()) ?? []
+        self.pendingMigrations = pending
+        if !pending.isEmpty {
             status = .needsMigration
         } else {
             status = .running
@@ -284,6 +287,7 @@ final class PostgresService: ObservableObject {
             runner.forceKill()
         }
         Self.stopAnyRunningInstance()
+        pendingMigrations = []
         status = .stopped
     }
 
@@ -334,7 +338,9 @@ final class PostgresService: ObservableObject {
             try dropDatabase(password: password)
             try createDatabase(password: password)
             appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
-            if (try? hasPendingMigrations()) == true {
+            let pending = (try? fetchPendingMigrations()) ?? []
+            self.pendingMigrations = pending
+            if !pending.isEmpty {
                 status = .needsMigration
             } else {
                 status = .running
@@ -504,9 +510,18 @@ final class PostgresService: ObservableObject {
         return sources
     }
 
-    /// Checks if there are unapplied migration SQL files in the schema directory.
-    func hasPendingMigrations() throws -> Bool {
+    /// Returns the list of unapplied migration SQL file names from Paths.schemaDir.
+    func fetchPendingMigrations() throws -> [String] {
         let password = try postgresPassword()
+        let schemaDir = Paths.schemaDir
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
+            return []
+        }
+        let sqlFiles = files.filter { $0.hasSuffix(".sql") }.sorted()
+        if sqlFiles.isEmpty {
+            return []
+        }
+
         let sql = """
         SELECT EXISTS (
             SELECT 1 FROM information_schema.tables
@@ -527,16 +542,7 @@ final class PostgresService: ObservableObject {
 
         let trimmedCheck = checkOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedCheck != "t" && trimmedCheck != "true" {
-            return true
-        }
-
-        let schemaDir = Paths.schemaDir
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
-            return false
-        }
-        let sqlFiles = files.filter { $0.hasSuffix(".sql") }.sorted()
-        if sqlFiles.isEmpty {
-            return false
+            return sqlFiles
         }
 
         let appliedSql = "SELECT version FROM schema_migrations;"
@@ -558,15 +564,39 @@ final class PostgresService: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         )
 
-        for file in sqlFiles {
+        return sqlFiles.filter { file in
             let version = (file as NSString).deletingPathExtension
-            if !appliedVersions.contains(version) && !appliedVersions.contains(file) {
-                return true
-            }
+            return !appliedVersions.contains(version) && !appliedVersions.contains(file)
         }
-
-        return false
     }
+
+    /// Checks if there are unapplied migration SQL files in the schema directory.
+    func hasPendingMigrations() throws -> Bool {
+        return try !fetchPendingMigrations().isEmpty
+    }
+
+    /// Refreshes the pendingMigrations list and returns it.
+    @discardableResult
+    func refreshPendingMigrations() -> [String] {
+        guard status == .running || status == .needsMigration else {
+            pendingMigrations = []
+            return []
+        }
+        let list = (try? fetchPendingMigrations()) ?? []
+        self.pendingMigrations = list
+        if !list.isEmpty {
+            status = .needsMigration
+        } else if status == .needsMigration {
+            status = .running
+        }
+        return list
+    }
+
+    #if DEBUG
+    func setPendingMigrationsForTesting(_ migrations: [String]) {
+        self.pendingMigrations = migrations
+    }
+    #endif
 
     /// Applies all pending schema migrations and updates the database status.
     func applyMigrations() async throws {
@@ -643,7 +673,9 @@ final class PostgresService: ObservableObject {
             appendLog(LogLine(stream: .stdout, text: "applied migration: \(file)", source: "migrate"))
         }
 
-        if (try? hasPendingMigrations()) == true {
+        let pending = (try? fetchPendingMigrations()) ?? []
+        self.pendingMigrations = pending
+        if !pending.isEmpty {
             status = .needsMigration
         } else {
             status = .running

@@ -8,6 +8,10 @@ struct DatabaseView: View {
     @State private var statsRunning = false
     @State private var showResetConfirmation = false
 
+    var isPostgresActive: Bool {
+        appState.postgres.status == .running || appState.postgres.status == .needsMigration
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -18,9 +22,9 @@ struct DatabaseView: View {
                             Text(appState.statusSummary)
                             Spacer()
                             Button("Start") { Task { await appState.startPostgres() } }
-                                .disabled(appState.postgres.status == .running || appState.postgres.status == .starting)
+                                .disabled(isPostgresActive || appState.postgres.status == .starting)
                             Button("Stop") { Task { await appState.stopPostgres() } }
-                                .disabled(appState.postgres.status != .running)
+                                .disabled(!isPostgresActive)
                         }
                         LabeledContent("Data directory", value: Paths.pgDataDir.path)
                         LabeledContent("Port", value: String(appState.postgres.port))
@@ -50,26 +54,96 @@ struct DatabaseView: View {
                     .padding(8)
                 }
 
-                GroupBox("Database management") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Backups use PostgreSQL's portable custom dump format.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Button("Back Up…") { chooseBackupDestination() }
-                                .disabled(appState.postgres.status != .running)
-                            Button("Restore…") { chooseBackupSource() }
-                                .disabled(appState.postgres.status != .running)
-                            Button("Reset Database…") { showResetConfirmation = true }
-                                .tint(.red)
-                                .disabled(appState.postgres.status == .starting || appState.postgres.status == .stopping)
-                        }
-                    }
-                    .padding(8)
-                }
+                GroupBox("Schema & Migrations") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .center) {
+                            if !appState.postgres.pendingMigrations.isEmpty {
+                                Label {
+                                    Text("\(appState.postgres.pendingMigrations.count) missing migration(s)")
+                                        .font(.headline)
+                                } icon: {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                }
+                            } else if appState.postgres.status == .running {
+                                Label {
+                                    Text("Schema up to date")
+                                        .font(.headline)
+                                } icon: {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                }
+                            } else {
+                                Label {
+                                    Text("Migrations")
+                                        .font(.headline)
+                                } icon: {
+                                    Image(systemName: "cylinder.split.1x2")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
 
-                GroupBox("Schema & Statistics") {
-                    VStack(alignment: .leading, spacing: 10) {
+                            Spacer()
+
+                            Button("Check Migrations") {
+                                appState.checkPendingMigrations()
+                            }
+                            .disabled(!isPostgresActive)
+
+                            Button("Apply Migrations") {
+                                Task {
+                                    await appState.applyMigrations()
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!isPostgresActive || appState.isApplyingMigrations)
+
+                            if appState.isApplyingMigrations {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+
+                        if !appState.postgres.pendingMigrations.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("The following migrations have not been applied to the database:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(appState.postgres.pendingMigrations, id: \.self) { migration in
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "doc.text.fill")
+                                                .foregroundStyle(.secondary)
+                                            Text(migration)
+                                                .font(.system(.caption, design: .monospaced))
+                                                .fontWeight(.medium)
+                                            Spacer()
+                                            Text("Missing")
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.orange.opacity(0.15))
+                                                .foregroundStyle(.orange)
+                                                .clipShape(Capsule())
+                                        }
+                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 8)
+                                        .background(Color(NSColor.controlBackgroundColor))
+                                        .cornerRadius(4)
+                                    }
+                                }
+                                .padding(8)
+                                .background(Color(NSColor.textBackgroundColor))
+                                .cornerRadius(6)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                                )
+                            }
+                        }
+
+                        Divider()
+
                         HStack {
                             Button("Initialize schema (garage init-db)") {
                                 Task {
@@ -99,6 +173,24 @@ struct DatabaseView: View {
                     .padding(8)
                 }
 
+                GroupBox("Database management") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Backups use PostgreSQL's portable custom dump format.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Back Up…") { chooseBackupDestination() }
+                                .disabled(!isPostgresActive)
+                            Button("Restore…") { chooseBackupSource() }
+                                .disabled(!isPostgresActive)
+                            Button("Reset Database…") { showResetConfirmation = true }
+                                .tint(.red)
+                                .disabled(appState.postgres.status == .starting || appState.postgres.status == .stopping)
+                        }
+                    }
+                    .padding(8)
+                }
+
                 if !appState.lastCommandOutput.isEmpty {
                     GroupBox("Last command output") {
                         ScrollView {
@@ -115,6 +207,9 @@ struct DatabaseView: View {
             .padding(20)
         }
         .navigationTitle("Database")
+        .onAppear {
+            appState.checkPendingMigrations()
+        }
         .alert("Reset Garage database?", isPresented: $showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Reset Database", role: .destructive) {

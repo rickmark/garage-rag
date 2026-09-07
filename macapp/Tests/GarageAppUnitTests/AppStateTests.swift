@@ -173,4 +173,18 @@ final class AppStateTests: XCTestCase {
         state.openPrivacySettings(for: .mail)
         state.openPrivacySettings(for: .fullDiskAccess)
     }
+
+    @MainActor
+    func testMigrationInitialStateAndMethods() async {
+        let state = AppState()
+        XCTAssertFalse(state.isApplyingMigrations)
+        XCTAssertTrue(state.postgres.pendingMigrations.isEmpty)
+
+        state.checkPendingMigrations()
+        XCTAssertTrue(state.postgres.pendingMigrations.isEmpty)
+
+        // Calling applyMigrations when postgres is stopped should return early without hanging or crashing
+        await state.applyMigrations()
+        XCTAssertFalse(state.isApplyingMigrations)
+    }
 }

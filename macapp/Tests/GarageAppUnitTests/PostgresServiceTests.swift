@@ -128,4 +128,25 @@ final class PostgresServiceTests: XCTestCase {
             XCTAssertNotNil(error)
         }
     }
+
+    @MainActor
+    func testInitialPendingMigrationsIsEmpty() {
+        let service = PostgresService()
+        XCTAssertTrue(service.pendingMigrations.isEmpty)
+    }
+
+    @MainActor
+    func testSetPendingMigrationsForTesting() {
+        let service = PostgresService()
+        service.setPendingMigrationsForTesting(["001_extensions.sql", "002_types.sql"])
+        XCTAssertEqual(service.pendingMigrations, ["001_extensions.sql", "002_types.sql"])
+    }
+
+    @MainActor
+    func testRefreshPendingMigrationsWhenStoppedReturnsEmpty() {
+        let service = PostgresService()
+        let result = service.refreshPendingMigrations()
+        XCTAssertTrue(result.isEmpty)
+        XCTAssertTrue(service.pendingMigrations.isEmpty)
+    }
 }

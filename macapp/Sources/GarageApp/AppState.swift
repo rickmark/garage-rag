@@ -31,6 +31,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isFetchingSources = false
     @Published private(set) var corpusStats = CorpusStats()
     @Published private(set) var isFetchingStats = false
+    @Published private(set) var isApplyingMigrations = false
     @Published var scheduledMaintenanceEnabled: Bool {
         didSet {
             UserDefaults.standard.set(
@@ -238,6 +239,30 @@ final class AppState: ObservableObject {
             lastCommandSucceeded = false
             lastCommandOutput = "Failed to reset database: \(error.localizedDescription)"
         }
+    }
+
+    func applyMigrations() async {
+        guard postgres.status == .running || postgres.status == .needsMigration else { return }
+        isApplyingMigrations = true
+        defer { isApplyingMigrations = false }
+        do {
+            try await postgres.applyMigrations()
+            await fetchRegisteredModels()
+            await fetchRegisteredSources()
+            await fetchCorpusStats()
+            if postgres.status == .running && mcp.status == .stopped {
+                try? await mcp.start()
+            }
+            lastCommandSucceeded = true
+            lastCommandOutput = "Applied schema migrations successfully."
+        } catch {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Failed to apply migrations: \(error.localizedDescription)"
+        }
+    }
+
+    func checkPendingMigrations() {
+        postgres.refreshPendingMigrations()
     }
 
     @discardableResult
