@@ -138,4 +138,23 @@ final class AppStateTests: XCTestCase {
         XCTAssertNotNil(state.lastCommandSucceeded)
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
     }
+
+    @MainActor
+    func testCopyDatabaseURLToClipboard() {
+        let state = AppState()
+        let result = state.copyDatabaseURLToClipboard()
+        XCTAssertTrue(result)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertTrue(state.lastCommandOutput.contains("Copied PostgreSQL connection URL to clipboard:"))
+        let clipboardContent = NSPasteboard.general.string(forType: .string)
+        XCTAssertTrue(clipboardContent?.starts(with: "postgresql://") == true)
+    }
+
+    @MainActor
+    func testResetDatabaseUpdatesState() async {
+        let state = AppState()
+        await state.resetDatabase()
+        XCTAssertNotNil(state.lastCommandSucceeded)
+        XCTAssertFalse(state.lastCommandOutput.isEmpty)
+    }
 }

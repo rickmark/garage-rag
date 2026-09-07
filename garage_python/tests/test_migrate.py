@@ -59,7 +59,7 @@ def test_init_extensions_executes_outside_sqlalchemy(tmp_path: Path) -> None:
 
 def test_apply_migrations_without_session(tmp_path: Path) -> None:
     (tmp_path / "001_extensions.sql").write_text("CREATE EXTENSION IF NOT EXISTS vector;", encoding="utf-8")
-    (tmp_path / "002_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
+    (tmp_path / "003_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
 
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
@@ -75,13 +75,13 @@ def test_apply_migrations_without_session(tmp_path: Path) -> None:
 
             assert mock_connect.call_count == 2
             mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
-            assert applied == ["001_extensions.sql", "002_core.sql"]
+            assert applied == ["001_extensions.sql", "003_core.sql"]
             mock_reset.assert_called_once()
 
 
 def test_apply_migrations_with_session(tmp_path: Path) -> None:
     (tmp_path / "001_extensions.sql").write_text("CREATE EXTENSION IF NOT EXISTS vector;", encoding="utf-8")
-    (tmp_path / "002_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
+    (tmp_path / "003_core.sql").write_text("CREATE TABLE test_table (id int);", encoding="utf-8")
 
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
@@ -102,7 +102,7 @@ def test_apply_migrations_with_session(tmp_path: Path) -> None:
         mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
         assert mock_cursor.execute.call_count == 1
         mock_driver.exec_driver_sql.assert_called_once_with("CREATE TABLE test_table (id int);")
-        assert applied == ["001_extensions.sql", "002_core.sql"]
+        assert applied == ["001_extensions.sql", "003_core.sql"]
 
 
 def test_database_exists() -> None:

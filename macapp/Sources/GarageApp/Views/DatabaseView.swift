@@ -34,6 +34,9 @@ struct DatabaseView: View {
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                         .textSelection(.enabled)
+                                    Button("Copy") {
+                                        appState.copyDatabaseURLToClipboard()
+                                    }
                                     Button("Open with Registered Handler") {
                                         appState.openDatabaseInHandler()
                                     }
@@ -54,11 +57,13 @@ struct DatabaseView: View {
                             .foregroundStyle(.secondary)
                         HStack {
                             Button("Back Up…") { chooseBackupDestination() }
+                                .disabled(appState.postgres.status != .running)
                             Button("Restore…") { chooseBackupSource() }
+                                .disabled(appState.postgres.status != .running)
                             Button("Reset Database…") { showResetConfirmation = true }
                                 .tint(.red)
+                                .disabled(appState.postgres.status == .starting || appState.postgres.status == .stopping)
                         }
-                        .disabled(appState.postgres.status != .running)
                     }
                     .padding(8)
                 }
@@ -113,7 +118,9 @@ struct DatabaseView: View {
         .alert("Reset Garage database?", isPresented: $showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Reset Database", role: .destructive) {
-                appState.resetDatabase()
+                Task {
+                    await appState.resetDatabase()
+                }
             }
         } message: {
             Text("This permanently deletes all Garage schemas, sources, and indexed data. The Postgres cluster and its Keychain password are kept.")

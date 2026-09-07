@@ -176,8 +176,34 @@ final class AppState: ObservableObject {
         await postgres.stop()
     }
 
-    func resetDatabase() {
-        performDatabaseOperation { try postgres.resetDatabase() }
+    func resetDatabase() async {
+        do {
+            try await postgres.resetDatabase()
+            if postgres.status == .running {
+                try? await mcp.start()
+                await fetchRegisteredModels()
+                await fetchRegisteredSources()
+            }
+            lastCommandSucceeded = true
+            lastCommandOutput = "Database reset successfully."
+        } catch {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Failed to reset database: \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    func copyDatabaseURLToClipboard() -> Bool {
+        do {
+            let urlString = try postgres.copyStandardConnectionURLToClipboard()
+            lastCommandSucceeded = true
+            lastCommandOutput = "Copied PostgreSQL connection URL to clipboard: \(urlString)"
+            return true
+        } catch {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Failed to copy database connection URL: \(error.localizedDescription)"
+            return false
+        }
     }
 
     @discardableResult

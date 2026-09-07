@@ -86,6 +86,14 @@ final class PostgresService: ObservableObject {
     }
 
     @discardableResult
+    func copyStandardConnectionURLToClipboard() throws -> String {
+        let urlString = try standardConnectionURLString()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(urlString, forType: .string)
+        return urlString
+    }
+
+    @discardableResult
     func openInRegisteredHandler() throws -> Bool {
         let url = try standardConnectionURL()
         return NSWorkspace.shared.open(url)
@@ -195,14 +203,27 @@ final class PostgresService: ObservableObject {
         status = .stopped
     }
 
-    /// Drops and recreates the app's private database, preserving the cluster
-    /// and its Keychain-managed superuser credential.
-    func resetDatabase() throws {
-        try requireRunning()
-        let password = try postgresPassword()
-        try dropDatabase(password: password)
-        try createDatabase(password: password)
-        appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
+    /// Drops and recreates the app's private database when running, or
+    /// re-initializes the database cluster from scratch if stopped or failed.
+    /// Preserves the Keychain-managed superuser credential.
+    func resetDatabase() async throws {
+        if status == .running {
+            let password = try postgresPassword()
+            try dropDatabase(password: password)
+            try createDatabase(password: password)
+            appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
+        } else {
+            runner.terminate()
+            for _ in 0..<20 where runner.isRunning {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if FileManager.default.fileExists(atPath: Paths.pgDataDir.path) {
+                try FileManager.default.removeItem(at: Paths.pgDataDir)
+            }
+            status = .stopped
+            try await start()
+            appendLog(LogLine(stream: .stdout, text: "re-initialized and reset database cluster \(databaseName)", source: "postgres"))
+        }
     }
 
     /// Writes a portable PostgreSQL custom-format dump of the app's database.

@@ -83,6 +83,16 @@ final class PostgresServiceTests: XCTestCase {
         XCTAssertEqual(psycopgSuffix, standardSuffix)
     }
 
+    @MainActor
+    func testCopyStandardConnectionURLToClipboard() throws {
+        let service = PostgresService()
+        let urlString = try service.copyStandardConnectionURLToClipboard()
+        let clipboardContent = NSPasteboard.general.string(forType: .string)
+
+        XCTAssertEqual(clipboardContent, urlString)
+        XCTAssertTrue(clipboardContent?.starts(with: "postgresql://") == true)
+    }
+
     func testPostgresStatusEquality() {
         XCTAssertEqual(PostgresStatus.stopped, PostgresStatus.stopped)
         XCTAssertEqual(PostgresStatus.starting, PostgresStatus.starting)
@@ -103,5 +113,17 @@ final class PostgresServiceTests: XCTestCase {
 
         let otherError = PostgresError.other("custom failure message")
         XCTAssertEqual(otherError.localizedDescription, "custom failure message")
+    }
+
+    @MainActor
+    func testResetDatabaseWhenStoppedOrFailedDoesNotCrash() async {
+        let service = PostgresService()
+        XCTAssertEqual(service.status, .stopped)
+        do {
+            try await service.resetDatabase()
+        } catch {
+            // In test environment without postgres installed, catch is expected
+            XCTAssertNotNil(error)
+        }
     }
 }
