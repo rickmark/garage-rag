@@ -52,6 +52,20 @@ final class GarageViewTests: XCTestCase {
     }
 
     @MainActor
+    func testSourcesViewHostingWithRegisteredSources() {
+        let appState = AppState()
+        appState.setRegisteredSourcesForTesting([
+            RegisteredSource(slug: "docs", root: "~/Documents", includeCode: true, documentCount: 25, expectedElements: 30),
+            RegisteredSource(slug: "notes", root: "~/Notes", documentCount: 5, expectedElements: 0)
+        ])
+
+        let sourcesView = SourcesView()
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: sourcesView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
     func testModelsViewHosting() {
         let appState = AppState()
         let modelsView = ModelsView()

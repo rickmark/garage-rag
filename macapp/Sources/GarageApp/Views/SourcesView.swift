@@ -13,11 +13,6 @@ struct SourcesView: View {
     @State private var allowCloud = false
     @State private var includeCodeInSource = false
 
-    @State private var ingestSelection = "*"
-    @State private var customIngestSlug = ""
-    @State private var includeCode = false
-    @State private var forceReindex = false
-
     @State private var busy = false
 
     private let kinds = ["filesystem", "git", "sqlite", "maildir", "feed"]
@@ -43,20 +38,12 @@ struct SourcesView: View {
         SourcePreset(id: "desktop", title: "Desktop", slug: "desktop", root: "~/Desktop", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false)
     ]
 
-    var effectiveIngestSlug: String {
-        if ingestSelection == "custom" {
-            return customIngestSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return ingestSelection
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 diskAccessSection
                 configuredSourcesSection
                 addOrUpdateSourceSection
-                ingestSection
                 scheduledMaintenanceSection
                 ingestOutputSection
             }
@@ -112,39 +99,22 @@ struct SourcesView: View {
 
                 if let testResult = appState.volumeAccess.lastTestResult {
                     Divider()
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Test Result:")
-                                .font(.caption.bold())
-                            Text(testResult.isAccessible ? "Passed" : "Attention Needed")
-                                .font(.caption.bold())
-                                .foregroundStyle(testResult.isAccessible ? .green : .red)
-                        }
-
-                        Text(testResult.message)
+                    HStack(spacing: 8) {
+                        Image(systemName: testResult.isAccessible ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(testResult.isAccessible ? Color.green : Color.orange)
                             .font(.caption)
-
-                        if !testResult.sourcePathResults.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Ingest Source Paths:")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.secondary)
-
-                                ForEach(testResult.sourcePathResults) { res in
-                                    sourcePathResultRow(res)
-                                }
-                            }
-                            .padding(6)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        } else if !testResult.accessibleSubpaths.isEmpty {
-                            Text("Accessible root directories: \(testResult.accessibleSubpaths.joined(separator: ", "))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("Overall Disk Access:")
+                            .font(.caption.bold())
+                        Text(testResult.isAccessible ? "All Paths Accessible" : "Attention Needed")
+                            .font(.caption.bold())
+                            .foregroundStyle(testResult.isAccessible ? .green : .orange)
+                        Spacer()
+                        Text(testResult.message)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(8)
-                    .background(Color.primary.opacity(0.04))
+                    .padding(6)
+                    .background(Color.primary.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
@@ -157,17 +127,23 @@ struct SourcesView: View {
     private var configuredSourcesSection: some View {
         GroupBox("Configured Ingest Sources") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
+                HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(appState.registeredSources.count) source\(appState.registeredSources.count == 1 ? "" : "s") configured across config files and database.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Refresh Sources") {
-                        refreshSourcesAndTestDisk()
+
+                    Button("Scan All Sources") {
+                        scanAllSources()
                     }
-                    .disabled(appState.isFetchingSources)
+                    .disabled(appState.registeredSources.isEmpty || notReady)
+
+                    Button("Ingest All Sources") {
+                        ingestAllSources()
+                    }
+                    .disabled(appState.registeredSources.isEmpty || notReady)
 
                     Button("Sync Config → DB") {
                         run(["sync"])
@@ -179,10 +155,10 @@ struct SourcesView: View {
                     }
                     .disabled(notReady)
 
-                    Button("List Sources (CLI)") {
-                        run(["list-sources"])
+                    Button("Refresh Sources") {
+                        refreshSourcesAndTestDisk()
                     }
-                    .disabled(notReady)
+                    .disabled(appState.isFetchingSources)
                 }
 
                 if appState.registeredSources.isEmpty {
@@ -202,7 +178,7 @@ struct SourcesView: View {
                     .background(Color.primary.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 10) {
                         ForEach(appState.registeredSources) { source in
                             sourceCard(for: source)
                         }
@@ -218,64 +194,44 @@ struct SourcesView: View {
             $0.slug == source.slug || $0.rawPath == source.root
         }
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(source.slug)
-                            .font(.headline)
+        return VStack(alignment: .leading, spacing: 8) {
+            // Header Row: Slug, Badges, and Per-Source Ingest/Scan Actions
+            HStack(alignment: .center, spacing: 6) {
+                Text(source.slug)
+                    .font(.headline)
 
-                        originBadge(for: source.origin)
+                originBadge(for: source.origin)
 
-                        badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
-
-                        if source.expectedElements > 0 {
-                            badgeText("EXPECTED: \(source.expectedElements)", bg: Color.orange.opacity(0.15), fg: .orange)
-                        }
-
-                        if !source.enabled {
-                            badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
-                        }
-
-                        if source.allowCloudEnrichment {
-                            badgeText("CLOUD OCR", bg: Color.blue.opacity(0.15), fg: .blue)
-                        }
-
-                        if source.includeCode {
-                            badgeText("CODE", bg: Color.purple.opacity(0.15), fg: .purple)
-                        }
-
-                        if let access = accessResult {
-                            if access.isAccessible {
-                                badgeText("DISK OK", bg: Color.green.opacity(0.15), fg: .green)
-                            } else {
-                                badgeText("DISK INACCESSIBLE", bg: Color.red.opacity(0.15), fg: .red)
-                            }
-                        }
+                if source.expectedElements > 0 {
+                    if source.documentCount >= source.expectedElements {
+                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", bg: Color.green.opacity(0.15), fg: .green)
+                    } else {
+                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS", bg: Color.blue.opacity(0.15), fg: .blue)
+                        badgeText("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", bg: Color.orange.opacity(0.15), fg: .orange)
                     }
+                } else {
+                    badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
+                }
 
-                    HStack(spacing: 4) {
-                        Text("Path:")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        Text(source.root)
-                            .font(.caption.monospaced())
-                        if source.root.hasPrefix("~") {
-                            Text("(\(source.expandedRootPath))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                if !source.enabled {
+                    badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
+                }
 
-                    let expectedDetails = source.expectedElements > 0 ? " • Expected: \(source.expectedElements)" : ""
-                    Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust) • Documents: \(source.documentCount)\(expectedDetails)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if source.allowCloudEnrichment {
+                    badgeText("CLOUD OCR", bg: Color.blue.opacity(0.15), fg: .blue)
+                }
 
-                    if let access = accessResult, !access.isAccessible {
-                        Text("Disk Access Status: \(access.statusDescription)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(access.requiresTCCPermission ? .orange : .red)
+                if source.includeCode {
+                    badgeText("CODE", bg: Color.purple.opacity(0.15), fg: .purple)
+                }
+
+                if let access = accessResult {
+                    if access.isAccessible {
+                        badgeText("DISK OK", bg: Color.green.opacity(0.15), fg: .green)
+                    } else if access.requiresTCCPermission || access.tccCategory != nil {
+                        badgeText("PERMISSIONS NEEDED", bg: Color.orange.opacity(0.15), fg: .orange)
+                    } else {
+                        badgeText("DISK INACCESSIBLE", bg: Color.red.opacity(0.15), fg: .red)
                     }
                 }
 
@@ -283,21 +239,43 @@ struct SourcesView: View {
 
                 HStack(spacing: 8) {
                     Button("Ingest") {
-                        ingestSelection = source.slug
-                        includeCode = source.includeCode
-                        var args = ["ingest", "--source", source.slug]
-                        if source.includeCode { args.append("--include-code") }
-                        runIngest(args)
+                        ingestSource(slug: source.slug, includeCode: source.includeCode)
                     }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                     .disabled(notReady)
 
+                    Button("Scan") {
+                        scanSource(slug: source.slug, includeCode: source.includeCode)
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(notReady)
+
                     Menu {
-                        Button("Select in Ingest Form") {
-                            ingestSelection = source.slug
-                            includeCode = source.includeCode
+                        Button("Ingest (Include Code)") {
+                            ingestSource(slug: source.slug, includeCode: true)
                         }
+
+                        Button("Ingest (Force Re-index)") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
+                        }
+
+                        Button("Scan Source") {
+                            scanSource(slug: source.slug, includeCode: source.includeCode)
+                        }
+
+                        Button("Reconcile (Dry Run)") {
+                            run(["reconcile", "--source", source.slug])
+                        }
+                        .disabled(notReady)
+
+                        Button("Reconcile (Apply Deletions)", role: .destructive) {
+                            run(["reconcile", "--source", source.slug, "--apply"])
+                        }
+                        .disabled(notReady)
+
+                        Divider()
 
                         Button("Populate Form for Editing") {
                             populateForm(from: source)
@@ -319,16 +297,6 @@ struct SourcesView: View {
                             }
                         }
 
-                        Button("Reconcile (Dry Run)") {
-                            run(["reconcile", "--source", source.slug])
-                        }
-                        .disabled(notReady)
-
-                        Button("Reconcile (Apply Deletions)", role: .destructive) {
-                            run(["reconcile", "--source", source.slug, "--apply"])
-                        }
-                        .disabled(notReady)
-
                         Divider()
 
                         Button("Remove Source", role: .destructive) {
@@ -343,46 +311,117 @@ struct SourcesView: View {
                 }
             }
 
-            if let access = accessResult, !access.isAccessible {
-                let isTCC = access.requiresTCCPermission || access.tccCategory != nil
-                let cat = access.tccCategory ?? TCCPermissionCategory.detect(slug: source.slug, path: source.root)
-                VStack(alignment: .leading, spacing: 6) {
+            // Path and configuration metadata
+            HStack(spacing: 4) {
+                Text("Path:")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Text(source.root)
+                    .font(.caption.monospaced())
+                if source.root.hasPrefix("~") {
+                    Text("(\(source.expandedRootPath))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // Ingest Results & Progress Per Source
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Ingest Status:")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+
+                    if source.expectedElements > 0 {
+                        let uningested = max(0, source.expectedElements - source.documentCount)
+                        Text("\(source.documentCount) of \(source.expectedElements) documents ingested (\(uningested) uningested)")
+                            .font(.caption)
+                    } else {
+                        Text("\(source.documentCount) document\(source.documentCount == 1 ? "" : "s") indexed in database")
+                            .font(.caption)
+                    }
+                    Spacer()
+                }
+
+                if source.expectedElements > 0 {
+                    ProgressView(
+                        value: Double(source.documentCount),
+                        total: Double(max(source.documentCount, source.expectedElements))
+                    )
+                    .progressViewStyle(.linear)
+                }
+            }
+            .padding(6)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            // Test Results & Disk Access Per Source
+            if let access = accessResult {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Image(systemName: isTCC ? (cat?.iconName ?? "lock.shield.fill") : "exclamationmark.triangle.fill")
-                            .foregroundStyle(isTCC ? Color.orange : Color.red)
-                        Text(isTCC ? "Permissions Required: \(cat?.displayName ?? "macOS TCC")" : "Access Denied")
+                        Image(systemName: access.isAccessible ? "checkmark.circle.fill" : (access.requiresTCCPermission ? "lock.shield.fill" : "xmark.circle.fill"))
+                            .foregroundStyle(access.isAccessible ? Color.green : (access.requiresTCCPermission ? Color.orange : Color.red))
+                            .font(.caption)
+
+                        Text("Disk Access Test:")
                             .font(.caption.bold())
-                            .foregroundStyle(isTCC ? Color.orange : Color.red)
+
+                        Text(access.statusDescription)
+                            .font(.caption)
+                            .foregroundStyle(access.isAccessible ? Color.secondary : (access.requiresTCCPermission ? Color.orange : Color.red))
+
+                        if let count = access.itemCount, count > 0 {
+                            Text("(\(count) item\(count == 1 ? "" : "s") found)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if access.rawPath != access.resolvedPath {
+                            Text("• Resolved: \(access.resolvedPath)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Spacer()
                     }
 
-                    if let help = access.tccHelpMessage ?? cat?.helpMessage {
-                        Text(help)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                    if !access.isAccessible {
+                        let cat = access.tccCategory ?? TCCPermissionCategory.detect(slug: source.slug, path: source.root)
 
-                    HStack(spacing: 8) {
-                        Button("Grant Folder Access…") {
-                            appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                        if let help = access.tccHelpMessage ?? cat?.helpMessage {
+                            Text(help)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
 
-                        if let cat = cat {
-                            Button("TCC Prompt…") {
-                                appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
+                        HStack(spacing: 8) {
+                            Button("Grant Folder Access…") {
+                                appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
                             }
                             .controlSize(.small)
+                            .buttonStyle(.borderedProminent)
 
-                            Button("Open Privacy Settings…") {
-                                appState.openPrivacySettings(for: cat)
+                            if let cat = cat {
+                                Button("TCC Prompt…") {
+                                    appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
+                                }
+                                .controlSize(.small)
+
+                                Button("Open Privacy Settings…") {
+                                    appState.openPrivacySettings(for: cat)
+                                }
+                                .controlSize(.small)
                             }
-                            .controlSize(.small)
                         }
+                        .padding(.top, 2)
                     }
                 }
-                .padding(8)
-                .background((isTCC ? Color.orange : Color.red).opacity(0.08))
+                .padding(6)
+                .background((access.isAccessible ? Color.primary.opacity(0.03) : (access.requiresTCCPermission ? Color.orange : Color.red).opacity(0.08)))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
@@ -495,82 +534,6 @@ struct SourcesView: View {
         }
     }
 
-    // MARK: - Ingest Section
-
-    private var ingestSection: some View {
-        GroupBox("Ingest Corpus") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Source to Ingest") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picker("", selection: $ingestSelection) {
-                            Text("All Sources (*) — \(appState.corpusStats.documentsCount) total doc\(appState.corpusStats.documentsCount == 1 ? "" : "s")").tag("*")
-                            ForEach(appState.registeredSources) { src in
-                                Text("\(src.slug) (\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s"), \(src.root))").tag(src.slug)
-                            }
-                            Text("Custom Slug…").tag("custom")
-                        }
-                        .labelsHidden()
-
-                        if ingestSelection == "custom" {
-                            TextField("Enter source slug", text: $customIngestSlug)
-                                .textFieldStyle(.roundedBorder)
-                        } else if let selectedSource = appState.registeredSources.first(where: { $0.slug == ingestSelection }) {
-                            HStack(spacing: 8) {
-                                Text("\(selectedSource.documentCount) doc\(selectedSource.documentCount == 1 ? "" : "s") ingested • Path: \(selectedSource.root)")
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-
-                                if let access = appState.volumeAccess.lastTestResult?.sourcePathResults.first(where: { $0.slug == selectedSource.slug }) {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: access.isAccessible ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                            .foregroundStyle(access.isAccessible ? Color.green : Color.red)
-                                        Text(access.statusDescription)
-                                            .foregroundStyle(access.isAccessible ? Color.secondary : Color.red)
-                                    }
-                                    .font(.caption2)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Toggle("Include code files", isOn: $includeCode)
-                Toggle("Force re-extract & re-chunk", isOn: $forceReindex)
-
-                HStack {
-                    Button("Scan sources") {
-                        busy = true
-                        Task {
-                            await appState.scanSources(source: effectiveIngestSlug, includeCode: includeCode)
-                            busy = false
-                        }
-                    }
-                    .disabled(effectiveIngestSlug.isEmpty || notReady)
-
-                    Button("Ingest now") {
-                        var args = ["ingest", "--source", effectiveIngestSlug]
-                        if includeCode { args.append("--include-code") }
-                        if forceReindex { args.append("--force") }
-                        runIngest(args)
-                    }
-                    .disabled(effectiveIngestSlug.isEmpty || notReady)
-
-                    Button("Reconcile (dry run)") {
-                        run(["reconcile", "--source", effectiveIngestSlug])
-                    }
-                    .disabled(effectiveIngestSlug.isEmpty || notReady)
-
-                    if busy { ProgressView().controlSize(.small) }
-                }
-
-                Text("Ingest walks files from the selected source(s), chunks and extracts metadata into Postgres.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(8)
-        }
-    }
-
     // MARK: - Scheduled Maintenance Section
 
     private var scheduledMaintenanceSection: some View {
@@ -654,58 +617,6 @@ struct SourcesView: View {
         }
     }
 
-    private func sourcePathResultRow(_ res: SourcePathAccessResult) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 6) {
-                Image(systemName: res.isAccessible ? "checkmark.circle.fill" : (res.requiresTCCPermission ? "lock.shield.fill" : "xmark.circle.fill"))
-                    .foregroundStyle(res.isAccessible ? Color.green : (res.requiresTCCPermission ? Color.orange : Color.red))
-                    .font(.caption)
-
-                Text(res.slug.isEmpty ? res.rawPath : res.slug)
-                    .font(.caption.bold().monospaced())
-
-                Text(res.rawPath)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(Color.secondary)
-
-                if res.rawPath != res.resolvedPath {
-                    Text("(\(res.resolvedPath))")
-                        .font(.caption2)
-                        .foregroundStyle(Color.secondary)
-                }
-
-                Spacer()
-
-                Text(res.statusDescription)
-                    .font(.caption2)
-                    .foregroundStyle(res.isAccessible ? Color.secondary : (res.requiresTCCPermission ? Color.orange : Color.red))
-            }
-
-            if !res.isAccessible {
-                HStack(spacing: 8) {
-                    Button("Grant Access…") {
-                        appState.promptAndSelectSourceDirectory(slug: res.slug, suggestedPath: res.rawPath)
-                    }
-                    .controlSize(.mini)
-
-                    if let cat = res.tccCategory {
-                        Button("Prompt…") {
-                            appState.promptTCCPermission(category: cat, sourceSlug: res.slug, sourcePath: res.rawPath)
-                        }
-                        .controlSize(.mini)
-
-                        Button("Settings…") {
-                            appState.openPrivacySettings(for: cat)
-                        }
-                        .controlSize(.mini)
-                    }
-                }
-                .padding(.leading, 18)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
     private func chooseRoot() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -739,6 +650,33 @@ struct SourcesView: View {
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
         }
+    }
+
+    private func scanSource(slug: String, includeCode: Bool = false) {
+        busy = true
+        Task {
+            await appState.scanSources(source: slug, includeCode: includeCode)
+            busy = false
+        }
+    }
+
+    private func scanAllSources() {
+        busy = true
+        Task {
+            await appState.scanSources(source: "*")
+            busy = false
+        }
+    }
+
+    private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
+        var args = ["ingest", "--source", slug]
+        if includeCode { args.append("--include-code") }
+        if force { args.append("--force") }
+        runIngest(args)
+    }
+
+    private func ingestAllSources() {
+        runIngest(["ingest", "--source", "*"])
     }
 
     private func addOrUpdateSource() {
