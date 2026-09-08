@@ -37,13 +37,9 @@ struct ModelsView: View {
     @State private var customConfigJson: String = "{}"
     @State private var showUnloadConfirmation: Bool = false
 
-    // Backfill state
-    @State private var backfillSelection: String = "*"
-    @State private var customBackfillSlug: String = ""
-
     // Testing Playground state
+    @State private var selectedTestModelSlug: String = ""
     @State private var testPrompt: String = "Garage provides local retrieval-augmented generation for personal archives."
-    @State private var testMaxTokens: Int = 64
     @State private var testEmbeddingDimensions: String = ""
     @State private var showCopiedAlert: Bool = false
     @State private var searchText: String = ""
@@ -185,13 +181,6 @@ struct ModelsView: View {
         unifiedModels.filter { $0.isRegistered && $0.provider == .llamaXPC && !isModelFileDownloaded(item: $0) }
     }
 
-    var effectiveBackfillSlug: String {
-        if backfillSelection == "custom" {
-            return customBackfillSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return backfillSelection
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -208,21 +197,18 @@ struct ModelsView: View {
                     linkLlamaModelSection
                 }
 
-                // Section 4: Backfill Embeddings (Single Model or All)
-                backfillSection
-
-                // Section 5: Non-Truncated Embedding Testing & Inspection
+                // Section 4: Non-Truncated Embedding Testing & Inspection
                 embeddingInspectionSection
 
-                // Section 6: LM Studio API Token
+                // Section 5: LM Studio API Token
                 if provider == .lmStudio || appState.lmStudioTokenConfigured {
                     lmStudioTokenSection
                 }
 
-                // Section 7: Llama XPC Service Status & Verification Playground
+                // Section 6: Llama XPC Service Status
                 llamaServiceSection
 
-                // Section 8: Output / Feedback
+                // Section 7: Output / Feedback
                 outputSection
             }
             .padding(20)
@@ -231,6 +217,7 @@ struct ModelsView: View {
         .task {
             appState.fetchPresetModels()
             await appState.fetchRegisteredModels()
+            await appState.fetchCorpusStats()
             await modelDownload.refresh()
             if !llama.isConnected {
                 await llama.refreshStatus()
@@ -267,12 +254,6 @@ struct ModelsView: View {
                         refreshAll()
                     }
                     .disabled(busy || appState.isFetchingModels)
-
-                    Button("Backfill All Models") {
-                        runBackfill(["backfill"])
-                    }
-                    .disabled(notReady || unifiedModels.isEmpty)
-                    .buttonStyle(.borderedProminent)
                 }
 
                 if filteredModels.isEmpty {
@@ -308,6 +289,8 @@ struct ModelsView: View {
         let isDownloading = isModelDownloading(item: item)
         let activeTask = getActiveDownloadTask(item: item)
         let isActiveInLlama = isModelActiveInLlama(item: item)
+        let stats = appState.corpusStats.modelStats.first { $0.slug == item.slug }
+        let totalChunks = appState.corpusStats.totalChunks
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
@@ -439,14 +422,6 @@ struct ModelsView: View {
                         }
                     }
 
-                    // Backfill button
-                    Button("Backfill") {
-                        backfillSelection = item.slug
-                        runBackfill(["backfill", "--model", item.slug])
-                    }
-                    .controlSize(.small)
-                    .disabled(notReady)
-
                     // Test Embeddings button
                     Button("Test") {
                         selectForTesting(item: item)
@@ -497,6 +472,48 @@ struct ModelsView: View {
                     .menuStyle(.borderlessButton)
                     .frame(width: 20)
                 }
+            }
+
+            // Embedding progress details for model
+            if item.isRegistered {
+                let embeddedCount = stats?.embeddedCount ?? 0
+                let remaining = max(0, totalChunks - embeddedCount)
+                let progressFraction = totalChunks > 0 ? min(1.0, max(0.0, Double(embeddedCount) / Double(totalChunks))) : 0.0
+                let percentText = totalChunks > 0 ? String(format: "%.1f%%", progressFraction * 100) : "0%"
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "circle.hexagongrid.fill")
+                            .foregroundStyle(.purple)
+                            .font(.caption)
+                        Text("Embedding Progress:")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+
+                        if totalChunks == 0 {
+                            Text("No document chunks in corpus")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if remaining == 0 {
+                            Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText))")
+                                .font(.caption.monospaced())
+                            badgeText("100% EMBEDDED", bg: Color.green.opacity(0.18), fg: .green)
+                        } else {
+                            Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText)) • \(remaining) remaining")
+                                .font(.caption.monospaced())
+                            badgeText("\(remaining) PENDING", bg: Color.orange.opacity(0.18), fg: .orange)
+                        }
+                        Spacer()
+                    }
+
+                    if totalChunks > 0 {
+                        ProgressView(value: progressFraction)
+                            .progressViewStyle(.linear)
+                    }
+                }
+                .padding(6)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(10)
@@ -738,60 +755,7 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 4: Backfill Section
-
-    private var backfillSection: some View {
-        GroupBox("Backfill Embeddings") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Embeds chunks that a model has no vectors for yet. You can backfill any one of the models or all of them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Model to Backfill") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picker("", selection: $backfillSelection) {
-                            Text("All Registered Models (*)").tag("*")
-                            ForEach(unifiedModels) { m in
-                                Text("\(m.name) (\(m.slug))").tag(m.slug)
-                            }
-                            Text("Custom Model Slug…").tag("custom")
-                        }
-                        .labelsHidden()
-
-                        if backfillSelection == "custom" {
-                            TextField("Enter model slug", text: $customBackfillSlug)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                    }
-                }
-
-                HStack {
-                    Button("Backfill \(effectiveBackfillSlug == "*" ? "All Models" : effectiveBackfillSlug)") {
-                        if effectiveBackfillSlug == "*" {
-                            runBackfill(["backfill"])
-                        } else {
-                            runBackfill(["backfill", "--model", effectiveBackfillSlug])
-                        }
-                    }
-                    .disabled(notReady || effectiveBackfillSlug.isEmpty)
-                    .buttonStyle(.borderedProminent)
-
-                    Button("Backfill All Models") {
-                        backfillSelection = "*"
-                        runBackfill(["backfill"])
-                    }
-                    .disabled(notReady)
-
-                    if appState.backfill.isRunning {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    // MARK: - Section 5: Embeddings Inspection & Testing (No Truncation)
+    // MARK: - Section 4: Non-Truncated Embedding Testing & Inspection
 
     private var embeddingInspectionSection: some View {
         GroupBox("Embeddings Inspection & Testing (Full Vector)") {
@@ -799,6 +763,27 @@ struct ModelsView: View {
                 Text("Test and inspect the complete embedding vector of any model without truncation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                LabeledContent("Model") {
+                    Picker("Model", selection: $selectedTestModelSlug) {
+                        Text("Active / Default Model").tag("")
+                        ForEach(unifiedModels) { m in
+                            Text("\(m.name) (\(m.slug))").tag(m.slug)
+                        }
+                    }
+                    .labelsHidden()
+                    .onChange(of: selectedTestModelSlug) { _, newSlug in
+                        if !newSlug.isEmpty, let matched = unifiedModels.first(where: { $0.slug == newSlug }) {
+                            if let dimsVal = matched.dims {
+                                testEmbeddingDimensions = "\(dimsVal)"
+                            }
+                            if let dl = getDownloadedInfo(item: matched) {
+                                modelPath = dl.path
+                                modelAlias = matched.slug
+                            }
+                        }
+                    }
+                }
 
                 LabeledContent("Input Text to Embed") {
                     TextEditor(text: $testPrompt)
@@ -818,11 +803,16 @@ struct ModelsView: View {
 
                     Button("Generate Embedding Vector") {
                         let parsedDims = Int(testEmbeddingDimensions.trimmingCharacters(in: .whitespacesAndNewlines))
+                        let targetModel = selectedTestModelSlug.trimmingCharacters(in: .whitespacesAndNewlines)
                         Task {
-                            await llama.testEmbedding(text: testPrompt, dimensions: parsedDims)
+                            await llama.testEmbedding(
+                                text: testPrompt,
+                                model: targetModel.isEmpty ? nil : targetModel,
+                                dimensions: parsedDims
+                            )
                         }
                     }
-                    .disabled(llama.isBusy || llama.health?.status == "no_model_loaded" || testPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(llama.isBusy || (llama.health?.status == "no_model_loaded" && selectedTestModelSlug.isEmpty) || testPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .buttonStyle(.borderedProminent)
 
                     if llama.isBusy {
@@ -837,6 +827,9 @@ struct ModelsView: View {
                         HStack {
                             Text("Embedding Vector Details")
                                 .font(.headline)
+                            if !selectedTestModelSlug.isEmpty {
+                                badgeText(selectedTestModelSlug.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                            }
                             badgeText("\(stats.count) DIMENSIONS", bg: Color.green.opacity(0.18), fg: .green)
                             badgeText("NO TRUNCATION", bg: Color.blue.opacity(0.15), fg: .blue)
                             Spacer()
@@ -940,10 +933,10 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 7: Llama Service & Playground Section
+    // MARK: - Section 6: Llama Service Status Section
 
     private var llamaServiceSection: some View {
-        GroupBox("Llama XPC Service Status & Completion Playground") {
+        GroupBox("Llama XPC Service Status") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Circle()
@@ -971,37 +964,12 @@ struct ModelsView: View {
                         LabeledContent("Slots State", value: "\(idle) idle, \(proc) processing")
                     }
                 }
-
-                Divider()
-                Text("Text Completion Verification")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-
-                LabeledContent("Prompt") {
-                    TextField("Enter test prompt…", text: $testPrompt)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                HStack {
-                    LabeledContent("Max Tokens") {
-                        TextField("64", value: $testMaxTokens, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 80)
-                    }
-                    Spacer()
-                    Button("Generate Completion") {
-                        Task {
-                            await llama.testCompletion(prompt: testPrompt, maxTokens: testMaxTokens)
-                        }
-                    }
-                    .disabled(llama.isBusy || llama.health?.status == "no_model_loaded" || testPrompt.isEmpty)
-                }
             }
             .padding(8)
         }
     }
 
-    // MARK: - Section 8: Output Section
+    // MARK: - Section 7: Output Section
 
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1031,17 +999,6 @@ struct ModelsView: View {
                         }
                     }
                     .padding(8)
-                }
-            }
-
-            if !appState.backfill.logs.isEmpty {
-                GroupBox("Backfill output") {
-                    LogTableView(
-                        lines: appState.backfill.logs,
-                        sourceName: "Backfill",
-                        onClear: { appState.backfill.clearLogs() }
-                    )
-                    .frame(minHeight: 180, maxHeight: 280)
                 }
             }
         }
@@ -1078,6 +1035,7 @@ struct ModelsView: View {
         Task {
             appState.fetchPresetModels()
             await appState.fetchRegisteredModels()
+            await appState.fetchCorpusStats()
             await modelDownload.refresh()
             await llama.refreshStatus()
         }
@@ -1151,6 +1109,7 @@ struct ModelsView: View {
     }
 
     private func selectForTesting(item: UnifiedModelItem) {
+        selectedTestModelSlug = item.slug
         if let dl = getDownloadedInfo(item: item) {
             modelPath = dl.path
             modelAlias = item.slug
@@ -1209,14 +1168,6 @@ struct ModelsView: View {
         Task {
             await appState.runGarage(args)
             await appState.fetchRegisteredModels()
-            busy = false
-        }
-    }
-
-    private func runBackfill(_ args: [String]) {
-        busy = true
-        Task {
-            await appState.runBackfill(args)
             busy = false
         }
     }

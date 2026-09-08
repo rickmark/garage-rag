@@ -248,12 +248,12 @@ final class LlamaService: ObservableObject {
     }
 
     @discardableResult
-    func embed(texts: [String], dimensions: Int? = nil) async throws -> [[Float]] {
-        return try await client.embed(texts: texts, model: activeModelId, dimensions: dimensions)
+    func embed(texts: [String], model: String? = nil, dimensions: Int? = nil) async throws -> [[Float]] {
+        return try await client.embed(texts: texts, model: model ?? activeModelId, dimensions: dimensions)
     }
 
     @discardableResult
-    func testEmbedding(text: String, dimensions: Int? = nil) async -> Bool {
+    func testEmbedding(text: String, model: String? = nil, dimensions: Int? = nil) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             lastError = "Text to embed cannot be empty."
@@ -267,17 +267,20 @@ final class LlamaService: ObservableObject {
         lastEmbeddingVector = nil
 
         do {
-            appendLog("Generating embeddings for text: \"\(trimmed)\"...")
-            let vectors = try await client.embed(texts: [trimmed], model: activeModelId, dimensions: dimensions)
+            let targetModel = (model != nil && !model!.isEmpty) ? model : activeModelId
+            let modelSuffix = (model != nil && !model!.isEmpty) ? " (model: \(model!))" : ""
+            appendLog("Generating embeddings for text: \"\(trimmed)\"\(modelSuffix)...")
+            let vectors = try await client.embed(texts: [trimmed], model: targetModel, dimensions: dimensions)
             guard let firstVec = vectors.first else {
                 lastError = "No embedding returned."
                 return false
             }
             self.lastEmbeddingVector = firstVec
             let formattedValues = firstVec.map { String(format: "%.6f", $0) }.joined(separator: ", ")
-            testOutput = "Embedding vector (\(firstVec.count) dimensions):\n[\(formattedValues)]"
-            lastSuccess = "Embedding generated (\(firstVec.count) dims)."
-            appendLog("Embedding finished with \(firstVec.count) dimensions")
+            let modelOutputLabel = (model != nil && !model!.isEmpty) ? ", model: \(model!)" : ""
+            testOutput = "Embedding vector (\(firstVec.count) dimensions\(modelOutputLabel)):\n[\(formattedValues)]"
+            lastSuccess = "Embedding generated (\(firstVec.count) dims\(modelOutputLabel))."
+            appendLog("Embedding finished with \(firstVec.count) dimensions\(modelSuffix)")
             return true
         } catch {
             lastError = error.localizedDescription

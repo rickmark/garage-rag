@@ -150,6 +150,13 @@ final class LlamaServiceTests: XCTestCase {
         XCTAssertTrue(service.testOutput?.contains("1024 dimensions") == true)
         XCTAssertEqual(service.lastSuccess, "Embedding generated (1024 dims).")
 
+        // 3b. Test embedding with explicit model selection
+        let embedExplicitModelSuccess = await service.testEmbedding(text: "BGE-M3 model explicit", model: "bge-m3")
+        XCTAssertTrue(embedExplicitModelSuccess)
+        XCTAssertNotNil(service.testOutput)
+        XCTAssertTrue(service.testOutput?.contains("model: bge-m3") == true)
+        XCTAssertEqual(service.lastSuccess, "Embedding generated (1024 dims, model: bge-m3).")
+
         // 4. Test programmatic batch embedding via service.embed
         let texts = [
             "What is the airspeed velocity of an unladen swallow?",
