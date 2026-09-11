@@ -1,0 +1,240 @@
+import Foundation
+
+/// Structured progress update from an ingest run.
+public struct IngestProgressUpdate: Codable, Sendable, Equatable {
+    public let source: String
+    public let phase: String
+    public let seen: Int
+    public let totalItems: Int
+    public let indexed: Int
+    public let skipped: Int
+    public let failed: Int
+    public let progress: Double
+    public let message: String
+    public let error: String?
+
+    public init(
+        source: String,
+        phase: String = "ingest",
+        seen: Int = 0,
+        totalItems: Int = 0,
+        indexed: Int = 0,
+        skipped: Int = 0,
+        failed: Int = 0,
+        progress: Double = 0.0,
+        message: String = "",
+        error: String? = nil
+    ) {
+        self.source = source
+        self.phase = phase
+        self.seen = seen
+        self.totalItems = totalItems
+        self.indexed = indexed
+        self.skipped = skipped
+        self.failed = failed
+        self.progress = progress
+        self.message = message
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case phase
+        case seen
+        case totalItems = "total_items"
+        case indexed
+        case skipped
+        case failed
+        case progress
+        case message
+        case error
+    }
+}
+
+/// Options configuring an ingest run.
+public struct IngestOptions: Codable, Sendable, Equatable {
+    public let includeCode: Bool
+    public let limit: Int?
+    public let force: Bool
+
+    public init(includeCode: Bool = false, limit: Int? = nil, force: Bool = false) {
+        self.includeCode = includeCode
+        self.limit = limit
+        self.force = force
+    }
+
+    public static let `default` = IngestOptions()
+
+    enum CodingKeys: String, CodingKey {
+        case includeCode = "include_code"
+        case limit
+        case force
+    }
+}
+
+/// Result returned from an ingest request.
+public struct IngestResult: Codable, Sendable, Equatable {
+    public let succeeded: Bool
+    public let message: String?
+
+    public init(succeeded: Bool, message: String? = nil) {
+        self.succeeded = succeeded
+        self.message = message
+    }
+}
+
+/// Description of an ingest source to test access for.
+public struct SourcePathTestItem: Codable, Sendable, Equatable {
+    public let slug: String
+    public let root: String
+
+    public init(slug: String, root: String) {
+        self.slug = slug
+        self.root = root
+    }
+}
+
+/// Request sent to the XPC service to perform volume and source access testing inside the sandbox.
+public struct VolumeAccessTestRequest: Codable, Sendable, Equatable {
+    public let rootBookmarkData: Data?
+    public let sourceBookmarks: [String: Data]?
+    public let sourcePaths: [SourcePathTestItem]
+
+    public init(
+        rootBookmarkData: Data? = nil,
+        sourceBookmarks: [String: Data]? = nil,
+        sourcePaths: [SourcePathTestItem] = []
+    ) {
+        self.rootBookmarkData = rootBookmarkData
+        self.sourceBookmarks = sourceBookmarks
+        self.sourcePaths = sourcePaths
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case rootBookmarkData = "root_bookmark_data"
+        case sourceBookmarks = "source_bookmarks"
+        case sourcePaths = "source_paths"
+    }
+}
+
+/// Result of testing access to an individual source path inside the XPC sandbox.
+public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { slug.isEmpty ? rawPath : "\(slug):\(rawPath)" }
+    public let slug: String
+    public let rawPath: String
+    public let resolvedPath: String
+    public let exists: Bool
+    public let isReadable: Bool
+    public let isDirectory: Bool
+    public let itemCount: Int?
+    public let errorMessage: String?
+    public let tccCategory: String?
+    public let requiresTCCPermission: Bool
+    public let tccHelpMessage: String?
+
+    public init(
+        slug: String,
+        rawPath: String,
+        resolvedPath: String,
+        exists: Bool,
+        isReadable: Bool,
+        isDirectory: Bool,
+        itemCount: Int?,
+        errorMessage: String? = nil,
+        tccCategory: String? = nil,
+        requiresTCCPermission: Bool = false,
+        tccHelpMessage: String? = nil
+    ) {
+        self.slug = slug
+        self.rawPath = rawPath
+        self.resolvedPath = resolvedPath
+        self.exists = exists
+        self.isReadable = isReadable
+        self.isDirectory = isDirectory
+        self.itemCount = itemCount
+        self.errorMessage = errorMessage
+        self.tccCategory = tccCategory
+        self.requiresTCCPermission = requiresTCCPermission
+        self.tccHelpMessage = tccHelpMessage
+    }
+
+    public var isAccessible: Bool {
+        exists && isReadable && errorMessage == nil
+    }
+
+    public var statusDescription: String {
+        if !exists {
+            return "Path does not exist"
+        }
+        if !isReadable {
+            if let cat = tccCategory {
+                return "TCC permission required (\(cat))"
+            }
+            return "Permission denied / not readable"
+        }
+        if let error = errorMessage {
+            return "Error: \(error)"
+        }
+        if let count = itemCount {
+            return "Accessible (\(count) \(count == 1 ? "item" : "items"))"
+        }
+        return "Accessible"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case slug
+        case rawPath = "raw_path"
+        case resolvedPath = "resolved_path"
+        case exists
+        case isReadable = "is_readable"
+        case isDirectory = "is_directory"
+        case itemCount = "item_count"
+        case errorMessage = "error_message"
+        case tccCategory = "tcc_category"
+        case requiresTCCPermission = "requires_tcc_permission"
+        case tccHelpMessage = "tcc_help_message"
+    }
+}
+
+/// Overall result of volume and source access testing inside the XPC sandbox.
+public struct IngestVolumeAccessTestResult: Codable, Sendable, Equatable {
+    public let isAccessible: Bool
+    public let testedPath: String
+    public let rootItemsCount: Int
+    public let accessibleSubpaths: [String]
+    public let inaccessibleSubpaths: [String]
+    public let sourcePathResults: [IngestSourcePathAccessResult]
+    public let message: String
+    public let isSecurityScoped: Bool
+
+    public init(
+        isAccessible: Bool,
+        testedPath: String,
+        rootItemsCount: Int,
+        accessibleSubpaths: [String],
+        inaccessibleSubpaths: [String],
+        sourcePathResults: [IngestSourcePathAccessResult],
+        message: String,
+        isSecurityScoped: Bool
+    ) {
+        self.isAccessible = isAccessible
+        self.testedPath = testedPath
+        self.rootItemsCount = rootItemsCount
+        self.accessibleSubpaths = accessibleSubpaths
+        self.inaccessibleSubpaths = inaccessibleSubpaths
+        self.sourcePathResults = sourcePathResults
+        self.message = message
+        self.isSecurityScoped = isSecurityScoped
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case isAccessible = "is_accessible"
+        case testedPath = "tested_path"
+        case rootItemsCount = "root_items_count"
+        case accessibleSubpaths = "accessible_subpaths"
+        case inaccessibleSubpaths = "inaccessible_subpaths"
+        case sourcePathResults = "source_path_results"
+        case message
+        case isSecurityScoped = "is_security_scoped"
+    }
+}

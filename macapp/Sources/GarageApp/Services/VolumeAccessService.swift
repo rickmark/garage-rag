@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import IngestClient
 
 /// Represents categories of TCC (Transparency, Consent, and Control) permissions in macOS.
 public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
@@ -351,14 +352,17 @@ public final class VolumeAccessService: ObservableObject {
 
     private let bookmarkStore: VolumeBookmarkStoring
     private let fileSystem: FileSystemAccessing
+    private let ingestClient: IngestClient?
     private var isAccessingSecurityScope = false
 
     public init(
         bookmarkStore: VolumeBookmarkStoring = UserDefaultsVolumeBookmarkStore(),
-        fileSystem: FileSystemAccessing = DefaultFileSystemAccessor()
+        fileSystem: FileSystemAccessing = DefaultFileSystemAccessor(),
+        ingestClient: IngestClient? = nil
     ) {
         self.bookmarkStore = bookmarkStore
         self.fileSystem = fileSystem
+        self.ingestClient = ingestClient
     }
 
     deinit {
@@ -533,6 +537,12 @@ public final class VolumeAccessService: ObservableObject {
             )
         }
         bookmarkStore.saveBookmarkData(bookmarkData, forPath: resolvedPath)
+        _ = IngestEngine.shared.setSourceBookmark(path: resolvedPath, bookmarkData: bookmarkData)
+        if let client = ingestClient {
+            Task {
+                _ = try? await client.setSourceBookmark(path: resolvedPath, bookmarkData: bookmarkData)
+            }
+        }
         #endif
 
         _ = testFullVolumeAccess()
@@ -593,6 +603,15 @@ public final class VolumeAccessService: ObservableObject {
         try persistSecurityScopedBookmark(for: url)
         status = .accessGranted(url: url, isSecurityScoped: started)
 
+        if let bookmarkData = bookmarkStore.loadBookmarkData() {
+            _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
+            if let client = ingestClient {
+                Task {
+                    _ = try? await client.setRootVolumeBookmark(bookmarkData)
+                }
+            }
+        }
+
         _ = testFullVolumeAccess()
     }
 
@@ -604,11 +623,67 @@ public final class VolumeAccessService: ObservableObject {
         activeRootURL = nil
         lastTestResult = nil
         status = .notConfigured
+        IngestEngine.shared.revokeAccess()
+        if let client = ingestClient {
+            Task {
+                _ = try? await client.revokeAccess()
+            }
+        }
     }
 
     /// Runs a verification test against the root hard drive / volume and each registered ingest source path.
     @discardableResult
     public func testFullVolumeAccess(sourcePaths: [(slug: String, root: String)] = []) -> VolumeAccessTestResult {
+        let rootData = bookmarkStore.loadBookmarkData()
+        let sourceBookmarks = bookmarkStore.loadAllSourceBookmarks()
+        let request = VolumeAccessTestRequest(
+            rootBookmarkData: rootData,
+            sourceBookmarks: sourceBookmarks,
+            sourcePaths: sourcePaths.map { SourcePathTestItem(slug: $0.slug, root: $0.root) }
+        )
+
+        if fileSystem is DefaultFileSystemAccessor {
+            let ingestResult = IngestEngine.shared.testVolumeAccess(request: request)
+            let targetURL = activeRootURL ?? URL(fileURLWithPath: ingestResult.testedPath)
+            let sourceResults = ingestResult.sourcePathResults.map { res in
+                SourcePathAccessResult(
+                    slug: res.slug,
+                    rawPath: res.rawPath,
+                    resolvedPath: res.resolvedPath,
+                    exists: res.exists,
+                    isReadable: res.isReadable,
+                    isDirectory: res.isDirectory,
+                    itemCount: res.itemCount,
+                    errorMessage: res.errorMessage,
+                    tccCategory: res.tccCategory.flatMap { TCCPermissionCategory(rawValue: $0) },
+                    requiresTCCPermission: res.requiresTCCPermission,
+                    tccHelpMessage: res.tccHelpMessage
+                )
+            }
+
+            let result = VolumeAccessTestResult(
+                isAccessible: ingestResult.isAccessible,
+                testedURL: targetURL,
+                rootItemsCount: ingestResult.rootItemsCount,
+                accessibleSubpaths: ingestResult.accessibleSubpaths,
+                inaccessibleSubpaths: ingestResult.inaccessibleSubpaths,
+                sourcePathResults: sourceResults,
+                message: ingestResult.message,
+                isSecurityScoped: ingestResult.isSecurityScoped
+            )
+
+            self.lastTestResult = result
+            if ingestResult.rootItemsCount > 0 || !ingestResult.accessibleSubpaths.isEmpty || fileSystem.isReadableFile(atPath: targetURL.path) {
+                self.status = .accessGranted(url: targetURL, isSecurityScoped: ingestResult.isSecurityScoped)
+            } else if ingestResult.isAccessible {
+                self.status = .accessGranted(url: targetURL, isSecurityScoped: ingestResult.isSecurityScoped)
+            } else {
+                self.status = .accessDenied(reason: ingestResult.message)
+            }
+
+            return result
+        }
+
         let targetURL = activeRootURL ?? URL(fileURLWithPath: "/")
         var isSecurityScoped = false
 
@@ -744,6 +819,58 @@ public final class VolumeAccessService: ObservableObject {
             self.status = .accessGranted(url: targetURL, isSecurityScoped: isSecurityScoped)
         } else {
             self.status = .accessDenied(reason: message)
+        }
+
+        return result
+    }
+
+    /// Asynchronously runs the full volume access test directly across the XPC boundary inside the XPC process.
+    public func testFullVolumeAccessViaXPC(sourcePaths: [(slug: String, root: String)] = []) async throws -> VolumeAccessTestResult {
+        let client = ingestClient ?? IngestClient()
+        let rootData = bookmarkStore.loadBookmarkData()
+        let sourceBookmarks = bookmarkStore.loadAllSourceBookmarks()
+        let request = VolumeAccessTestRequest(
+            rootBookmarkData: rootData,
+            sourceBookmarks: sourceBookmarks,
+            sourcePaths: sourcePaths.map { SourcePathTestItem(slug: $0.slug, root: $0.root) }
+        )
+
+        let ingestResult = try await client.testVolumeAccess(request: request)
+        let targetURL = activeRootURL ?? URL(fileURLWithPath: ingestResult.testedPath)
+        let sourceResults = ingestResult.sourcePathResults.map { res in
+            SourcePathAccessResult(
+                slug: res.slug,
+                rawPath: res.rawPath,
+                resolvedPath: res.resolvedPath,
+                exists: res.exists,
+                isReadable: res.isReadable,
+                isDirectory: res.isDirectory,
+                itemCount: res.itemCount,
+                errorMessage: res.errorMessage,
+                tccCategory: res.tccCategory.flatMap { TCCPermissionCategory(rawValue: $0) },
+                requiresTCCPermission: res.requiresTCCPermission,
+                tccHelpMessage: res.tccHelpMessage
+            )
+        }
+
+        let result = VolumeAccessTestResult(
+            isAccessible: ingestResult.isAccessible,
+            testedURL: targetURL,
+            rootItemsCount: ingestResult.rootItemsCount,
+            accessibleSubpaths: ingestResult.accessibleSubpaths,
+            inaccessibleSubpaths: ingestResult.inaccessibleSubpaths,
+            sourcePathResults: sourceResults,
+            message: ingestResult.message,
+            isSecurityScoped: ingestResult.isSecurityScoped
+        )
+
+        self.lastTestResult = result
+        if ingestResult.rootItemsCount > 0 || !ingestResult.accessibleSubpaths.isEmpty || fileSystem.isReadableFile(atPath: targetURL.path) {
+            self.status = .accessGranted(url: targetURL, isSecurityScoped: ingestResult.isSecurityScoped)
+        } else if ingestResult.isAccessible {
+            self.status = .accessGranted(url: targetURL, isSecurityScoped: ingestResult.isSecurityScoped)
+        } else {
+            self.status = .accessDenied(reason: ingestResult.message)
         }
 
         return result

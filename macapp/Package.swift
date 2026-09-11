@@ -13,6 +13,10 @@ let package = Package(
             name: "ModelDownloadClient",
             targets: ["ModelDownloadClient"]
         ),
+        .library(
+            name: "IngestClient",
+            targets: ["IngestClient"]
+        ),
     ],
     targets: [
         .target(
@@ -23,9 +27,13 @@ let package = Package(
             name: "ModelDownloadClient",
             path: "Sources/ModelDownloadClient"
         ),
+        .target(
+            name: "IngestClient",
+            path: "Sources/IngestClient"
+        ),
         .executableTarget(
             name: "GarageApp",
-            dependencies: ["LlamaClient", "ModelDownloadClient"],
+            dependencies: ["LlamaClient", "ModelDownloadClient", "IngestClient"],
             path: "Sources/GarageApp"
         ),
         .executableTarget(
@@ -48,6 +56,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "GarageIngestXPCService",
+            dependencies: ["IngestClient"],
             path: "Sources/GarageIngestXPCService"
         ),
         .executableTarget(
@@ -56,7 +65,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GarageAppUnitTests",
-            dependencies: ["GarageApp", "LlamaClient", "ModelDownloadClient"],
+            dependencies: ["GarageApp", "LlamaClient", "ModelDownloadClient", "IngestClient"],
             path: "Tests/GarageAppUnitTests"
         ),
         .testTarget(

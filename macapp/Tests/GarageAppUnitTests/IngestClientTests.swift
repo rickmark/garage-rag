@@ -1,0 +1,143 @@
+import XCTest
+@testable import GarageApp
+import IngestClient
+
+final class IngestClientTests: XCTestCase {
+
+    func testIngestProgressUpdateModel() throws {
+        let update = IngestProgressUpdate(
+            source: "documents",
+            phase: "ingest",
+            seen: 50,
+            totalItems: 100,
+            indexed: 45,
+            skipped: 5,
+            failed: 0,
+            progress: 0.5,
+            message: "Halfway done",
+            error: nil
+        )
+
+        let engine = IngestEngine.shared
+        guard let json = engine.serialize(update) else {
+            XCTFail("Failed to serialize IngestProgressUpdate")
+            return
+        }
+
+        let decoded = try engine.deserialize(IngestProgressUpdate.self, from: json)
+        XCTAssertEqual(decoded.source, "documents")
+        XCTAssertEqual(decoded.phase, "ingest")
+        XCTAssertEqual(decoded.seen, 50)
+        XCTAssertEqual(decoded.totalItems, 100)
+        XCTAssertEqual(decoded.indexed, 45)
+        XCTAssertEqual(decoded.progress, 0.5)
+        XCTAssertEqual(decoded.message, "Halfway done")
+        XCTAssertNil(decoded.error)
+    }
+
+    func testIngestOptionsModel() throws {
+        let options = IngestOptions(includeCode: true, limit: 25, force: true)
+        let engine = IngestEngine.shared
+        guard let json = engine.serialize(options) else {
+            XCTFail("Failed to serialize IngestOptions")
+            return
+        }
+
+        let decoded = try engine.deserialize(IngestOptions.self, from: json)
+        XCTAssertTrue(decoded.includeCode)
+        XCTAssertEqual(decoded.limit, 25)
+        XCTAssertTrue(decoded.force)
+    }
+
+    func testVolumeAccessTestRequestAndResult() throws {
+        let req = VolumeAccessTestRequest(
+            rootBookmarkData: nil,
+            sourceBookmarks: ["/tmp/test": Data("bm".utf8)],
+            sourcePaths: [SourcePathTestItem(slug: "test-slug", root: "/tmp/test")]
+        )
+
+        let engine = IngestEngine.shared
+        guard let json = engine.serialize(req) else {
+            XCTFail("Failed to serialize VolumeAccessTestRequest")
+            return
+        }
+
+        let decodedReq = try engine.deserialize(VolumeAccessTestRequest.self, from: json)
+        XCTAssertEqual(decodedReq.sourcePaths.count, 1)
+        XCTAssertEqual(decodedReq.sourcePaths[0].slug, "test-slug")
+
+        let result = engine.testVolumeAccess(request: decodedReq)
+        XCTAssertFalse(result.testedPath.isEmpty)
+
+        guard let resultJson = engine.serialize(result) else {
+            XCTFail("Failed to serialize IngestVolumeAccessTestResult")
+            return
+        }
+
+        let decodedResult = try engine.deserialize(IngestVolumeAccessTestResult.self, from: resultJson)
+        XCTAssertEqual(decodedResult.testedPath, result.testedPath)
+        XCTAssertEqual(decodedResult.sourcePathResults.count, 1)
+    }
+
+    func testIngestEngineBookmarkLifecycle() {
+        let engine = IngestEngine()
+        let fakeBookmarkData = Data("sample_bookmark_data".utf8)
+
+        // Setting an invalid mock bookmark in unit test returns false safely
+        let rootRes = engine.setRootVolumeBookmark(fakeBookmarkData)
+        XCTAssertFalse(rootRes.success)
+
+        let srcRes = engine.setSourceBookmark(path: "/tmp/source", bookmarkData: fakeBookmarkData)
+        XCTAssertFalse(srcRes.success)
+
+        engine.revokeAccess()
+    }
+
+    func testIngestClientWithInProcessEngine() async throws {
+        let engine = IngestEngine()
+        let client = IngestClient(inProcessEngine: engine)
+
+        let pingResult = try await client.ping()
+        XCTAssertTrue(pingResult.contains("in-process"))
+
+        let revokeResult = try await client.revokeAccess()
+        XCTAssertTrue(revokeResult)
+
+        let tempDir = NSTemporaryDirectory()
+        let request = VolumeAccessTestRequest(
+            rootBookmarkData: nil,
+            sourceBookmarks: nil,
+            sourcePaths: [SourcePathTestItem(slug: "temp", root: tempDir)]
+        )
+
+        let testResult = try await client.testVolumeAccess(request: request)
+        XCTAssertTrue(testResult.isAccessible)
+        XCTAssertEqual(testResult.sourcePathResults.count, 1)
+        XCTAssertTrue(testResult.sourcePathResults[0].isAccessible)
+        XCTAssertEqual(testResult.sourcePathResults[0].slug, "temp")
+    }
+
+    @MainActor
+    func testVolumeAccessServiceViaXPC() async throws {
+        let mockStore = MockVolumeBookmarkStore()
+        let tempDir = NSTemporaryDirectory()
+        let engine = IngestEngine()
+        let client = IngestClient(inProcessEngine: engine)
+
+        let service = VolumeAccessService(
+            bookmarkStore: mockStore,
+            fileSystem: DefaultFileSystemAccessor(),
+            ingestClient: client
+        )
+
+        let result = try await service.testFullVolumeAccessViaXPC(sourcePaths: [
+            (slug: "temp", root: tempDir)
+        ])
+
+        XCTAssertTrue(result.isAccessible)
+        XCTAssertEqual(result.sourcePathResults.count, 1)
+        XCTAssertTrue(result.sourcePathResults[0].isAccessible)
+        XCTAssertEqual(result.sourcePathResults[0].slug, "temp")
+        XCTAssertTrue(result.message.contains("XPC process"))
+    }
+}

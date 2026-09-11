@@ -113,6 +113,13 @@ swift_library(
 )
 
 swift_library(
+    name = "IngestClient_lib",
+    srcs = glob(["Sources/IngestClient/**/*.swift"]),
+    module_name = "IngestClient",
+    visibility = ["//visibility:public"],
+)
+
+swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/GarageApp/**/*.swift"]),
     data = [
@@ -127,6 +134,7 @@ swift_library(
     module_name = "GarageApp",
     visibility = ["//visibility:public"],
     deps = [
+        ":IngestClient_lib",
         ":LlamaClient_lib",
         ":ModelDownloadClient_lib",
         "//proto:garage_proto_swift",
@@ -225,6 +233,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":GarageApp_lib",
+        ":IngestClient_lib",
         ":LlamaClient_lib",
         ":ModelDownloadClient_lib",
     ],

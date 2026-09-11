@@ -156,6 +156,15 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_ingest_xpc",
+    srcs = ["test_ingest_xpc.py"],
+    deps = [
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
@@ -167,6 +176,7 @@ test_suite(
         ":test_egress_block",
         ":test_grpc_serialization",
         ":test_grpc_server",
+        ":test_ingest_xpc",
         ":test_llama_embedder",
         ":test_llama_xpc",
         ":test_lmstudio",
