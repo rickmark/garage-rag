@@ -54,7 +54,7 @@ from garage_rag.extract.quality import assess
 from garage_rag.ingest.chunking import TextChunk, chunk_text
 from garage_rag.ingest.classify import classify
 from garage_rag.ingest.materialize import MaterializationBudget, ensure_local
-from garage_rag.ingest.scanner import SourceScanResult, persist_scan_result, scan_source
+from garage_rag.ingest.scanner import persist_scan_result, scan_source
 from garage_rag.ingest.walker import Candidate, WalkStats, default_exclude_prefixes, walk
 
 log = logging.getLogger(__name__)

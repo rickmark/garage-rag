@@ -165,7 +165,7 @@ def backfill_model(
         texts = [txt for _, txt in batch]
         try:
             vectors = embedder.embed(texts)
-        except EmbeddingError as exc:
+        except (EmbeddingError, Exception) as exc:
             log.error("batch failed (%d chunks): %s", len(batch), exc)
             state.failed += len(batch)
             # A backend that is down will fail every subsequent batch too.

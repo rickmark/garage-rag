@@ -208,7 +208,10 @@ struct ModelsView: View {
                 // Section 6: Llama XPC Service Status
                 llamaServiceSection
 
-                // Section 7: Output / Feedback
+                // Section 7: Backfill Output
+                backfillOutputSection
+
+                // Section 8: Output / Feedback
                 outputSection
             }
             .padding(20)
@@ -249,6 +252,11 @@ struct ModelsView: View {
                     TextField("Filter registered models…", text: $searchText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 170)
+
+                    Button("Backfill All (*)") {
+                        backfillAllModels()
+                    }
+                    .disabled(appState.registeredModels.isEmpty || notReady || appState.backfill.isRunning)
 
                     Button("Refresh") {
                         refreshAll()
@@ -422,6 +430,15 @@ struct ModelsView: View {
                         }
                     }
 
+                    // Backfill Embeddings button
+                    if item.isRegistered {
+                        Button("Backfill") {
+                            backfillModel(slug: item.slug)
+                        }
+                        .controlSize(.small)
+                        .disabled(notReady || appState.backfill.isRunning)
+                    }
+
                     // Test Embeddings button
                     Button("Test") {
                         selectForTesting(item: item)
@@ -446,6 +463,11 @@ struct ModelsView: View {
                             }
                             .disabled(notReady)
                         } else {
+                            Button("Backfill Embeddings") {
+                                backfillModel(slug: item.slug)
+                            }
+                            .disabled(notReady || appState.backfill.isRunning)
+
                             Button("Set as Default Model") {
                                 run(["set-default-model", item.slug])
                             }
@@ -969,7 +991,24 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 7: Output Section
+    // MARK: - Section 7: Backfill Output Section
+
+    private var backfillOutputSection: some View {
+        Group {
+            if !appState.backfill.logs.isEmpty {
+                GroupBox("Embedding Backfill Output") {
+                    LogTableView(
+                        lines: appState.backfill.logs,
+                        sourceName: "Backfill",
+                        onClear: { appState.backfill.clearLogs() }
+                    )
+                    .frame(minHeight: 180, maxHeight: 300)
+                }
+            }
+        }
+    }
+
+    // MARK: - Section 8: Output Section
 
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1167,6 +1206,26 @@ struct ModelsView: View {
         busy = true
         Task {
             await appState.runGarage(args)
+            await appState.fetchRegisteredModels()
+            busy = false
+        }
+    }
+
+    private func backfillModel(slug: String) {
+        busy = true
+        Task {
+            await appState.runBackfill(["backfill", "--model", slug])
+            await appState.fetchCorpusStats()
+            await appState.fetchRegisteredModels()
+            busy = false
+        }
+    }
+
+    private func backfillAllModels() {
+        busy = true
+        Task {
+            await appState.runBackfill(["backfill", "--model", "*"])
+            await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
             busy = false
         }

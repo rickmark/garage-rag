@@ -465,7 +465,7 @@ class GarageRpcServicer(GarageServiceServicer):
         )
 
         with session_scope() as session:
-            targets = [get_model(session, request.model)] if request.model else list_models(session)
+            targets = [get_model(session, request.model)] if request.model and request.model != "*" else list_models(session)
             if not targets:
                 context.abort(grpc.StatusCode.NOT_FOUND, "no models registered")
 

@@ -449,6 +449,8 @@ final class AppState: ObservableObject {
     @discardableResult
     func runBackfill(_ arguments: [String]) async -> Bool {
         let result = await backfill.run(arguments)
+        await fetchCorpusStats()
+        await fetchRegisteredModels()
         return result.succeeded
     }
 

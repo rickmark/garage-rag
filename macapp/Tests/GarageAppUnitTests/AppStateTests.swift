@@ -187,4 +187,19 @@ final class AppStateTests: XCTestCase {
         await state.applyMigrations()
         XCTAssertFalse(state.isApplyingMigrations)
     }
+
+    @MainActor
+    func testBackfillExecutionAndLogs() async {
+        let state = AppState()
+        XCTAssertFalse(state.backfill.isRunning)
+        XCTAssertTrue(state.backfill.logs.isEmpty)
+
+        // Running backfill when CLI is not running
+        _ = await state.runBackfill(["backfill", "--model", "test-model"])
+        XCTAssertFalse(state.backfill.isRunning)
+
+        // Clear logs for backfill
+        state.clearLogs(for: "Backfill")
+        XCTAssertTrue(state.backfill.logs.isEmpty)
+    }
 }

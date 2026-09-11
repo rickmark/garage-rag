@@ -39,11 +39,12 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         reply("pong from GarageIngestXPCService")
     }
 
-    func ingestPath(_ path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
+    func ingestPath(_ source: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         initializePythonIfNeeded()
         #if canImport(PythonKit)
         do {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
+            ingestModule.ingest_xpc(source)
             reply(true, "Ingest module loaded successfully: \(ingestModule)")
         } catch {
             reply(false, "Failed to load ingest module: \(error)")

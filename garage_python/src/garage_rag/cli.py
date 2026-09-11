@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
+
 import json
 import logging
 import os
@@ -778,7 +780,7 @@ def backfill(
     )
 
     with session_scope() as session:
-        targets = [get_model(session, model)] if model else list_models(session)
+        targets = [get_model(session, model)] if model and model != "*" else list_models(session)
         if not targets:
             console.print("[yellow]no models registered[/yellow]")
             raise typer.Exit(code=1)
