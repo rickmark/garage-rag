@@ -84,6 +84,15 @@ final class ModelDownloadXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Mo
             reply(false, error)
         }
     }
+
+    func verifyModelFile(filePath: String, expectedSha256: String?, with reply: @escaping (Bool, String?, Error?) -> Void) {
+        do {
+            let result = try engine.verifyModelFile(filePath: filePath, expectedSha256: expectedSha256)
+            reply(result.isValid, result.computedSha256, nil)
+        } catch {
+            reply(false, nil, error)
+        }
+    }
 }
 
 let delegate = ModelDownloadXPCServiceDelegate()

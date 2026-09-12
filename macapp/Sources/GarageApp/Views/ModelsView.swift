@@ -23,6 +23,7 @@ struct ModelsView: View {
     @State private var dims: String = "1024"
     @State private var modelRef: String = "bge-m3"
     @State private var provider: ModelProvider = .llamaXPC
+    @State private var customSha256: String = ""
     @State private var makeDefault: Bool = false
     @State private var busy: Bool = false
     @State private var lmStudioToken: String = ""
@@ -94,6 +95,7 @@ struct ModelsView: View {
         let isRegistered: Bool
         let downloadModelId: String?
         let downloadFile: String?
+        let sha256: String?
         let catalogItem: ModelCatalogItem?
         let registeredModel: RegisteredModel?
         let presetEntry: ModelPresetEntry?
@@ -126,6 +128,10 @@ struct ModelsView: View {
             }
             return catalogItem?.filename
         }
+
+        var effectiveSha256: String? {
+            sha256 ?? presetEntry?.sha256 ?? catalogItem?.sha256
+        }
     }
 
     private var unifiedModels: [UnifiedModelItem] {
@@ -149,6 +155,7 @@ struct ModelsView: View {
                     isRegistered: true,
                     downloadModelId: preset?.downloadModelId,
                     downloadFile: preset?.downloadFile,
+                    sha256: preset?.sha256 ?? catItem?.sha256,
                     catalogItem: catItem,
                     registeredModel: reg,
                     presetEntry: preset
@@ -253,6 +260,14 @@ struct ModelsView: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 170)
 
+                    if !modelDownload.downloadedModels.isEmpty {
+                        Button("Verify All SHA-256") {
+                            verifyAllDownloadedModels()
+                        }
+                        .controlSize(.small)
+                        .disabled(modelDownload.isBusy)
+                    }
+
                     Button("Backfill All (*)") {
                         backfillAllModels()
                     }
@@ -299,6 +314,8 @@ struct ModelsView: View {
         let isActiveInLlama = isModelActiveInLlama(item: item)
         let stats = appState.corpusStats.modelStats.first { $0.slug == item.slug }
         let totalChunks = appState.corpusStats.totalChunks
+        let verification = downloadedInfo != nil ? modelDownload.verificationResult(for: downloadedInfo!.path) : nil
+        let isVerifying = downloadedInfo != nil ? modelDownload.isVerifying(path: downloadedInfo!.path) : false
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
@@ -325,6 +342,18 @@ struct ModelsView: View {
 
                         if isDownloaded {
                             badgeText("DOWNLOADED (GGUF)", bg: Color.teal.opacity(0.15), fg: .teal)
+
+                            if isVerifying {
+                                badgeText("VERIFYING SHA-256…", bg: Color.blue.opacity(0.18), fg: .blue)
+                            } else if let v = verification {
+                                if v.isValid {
+                                    badgeText("SHA-256 VERIFIED", bg: Color.green.opacity(0.18), fg: .green)
+                                } else {
+                                    badgeText("SHA-256 MISMATCH", bg: Color.red.opacity(0.18), fg: .red)
+                                }
+                            } else if item.effectiveSha256 != nil {
+                                badgeText("SHA-256 UNVERIFIED", bg: Color.secondary.opacity(0.15), fg: .secondary)
+                            }
                         } else if isDownloading {
                             badgeText("DOWNLOADING", bg: Color.yellow.opacity(0.2), fg: .orange)
                         }
@@ -362,6 +391,46 @@ struct ModelsView: View {
                         Text("GGUF target: \(filename)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
+                    }
+
+                    if let expectedSha = item.effectiveSha256 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.shield")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("Expected SHA-256: \(expectedSha)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Button {
+                                modelDownload.copyToClipboard(text: expectedSha)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Copy expected SHA-256 hash")
+                        }
+                    }
+
+                    if let v = verification {
+                        HStack(spacing: 4) {
+                            Image(systemName: v.isValid ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(v.isValid ? .green : .red)
+                            Text("Computed SHA-256: \(v.computedSha256)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(v.isValid ? .green : .red)
+                                .textSelection(.enabled)
+                            Button {
+                                modelDownload.copyToClipboard(text: v.computedSha256)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Copy computed SHA-256 hash")
+                        }
                     }
 
                     if let task = activeTask {
@@ -411,7 +480,7 @@ struct ModelsView: View {
                     }
 
                     // Load Model into Llama XPC
-                    if isDownloaded {
+                    if isDownloaded, let dl = downloadedInfo {
                         if isActiveInLlama {
                             Button("Unload") {
                                 showUnloadConfirmation = true
@@ -421,13 +490,29 @@ struct ModelsView: View {
                             .disabled(llama.isBusy)
                         } else {
                             Button("Load Model") {
-                                loadDownloadedModel(item: item, dlInfo: downloadedInfo)
+                                loadDownloadedModel(item: item, dlInfo: dl)
                             }
                             .controlSize(.small)
                             .buttonStyle(.borderedProminent)
                             .tint(.purple)
                             .disabled(llama.isBusy)
                         }
+
+                        // Verify SHA-256 button for downloaded file
+                        Button {
+                            Task {
+                                await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256)
+                            }
+                        } label: {
+                            if isVerifying {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Label("Verify SHA-256", systemImage: "checkmark.shield")
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled(isVerifying)
+                        .help("Verify file SHA-256 checksum against preset specification")
                     }
 
                     // Backfill Embeddings button
@@ -449,6 +534,12 @@ struct ModelsView: View {
                     Menu {
                         Button("Use in Configuration Form") {
                             populateForm(from: item)
+                        }
+
+                        if let expectedSha = item.effectiveSha256 {
+                            Button("Copy Expected SHA-256") {
+                                modelDownload.copyToClipboard(text: expectedSha)
+                            }
                         }
 
                         if item.isRegistered && item.provider == .llamaXPC && !isDownloaded {
@@ -481,6 +572,9 @@ struct ModelsView: View {
 
                         if isDownloaded, let dl = downloadedInfo {
                             Divider()
+                            Button("Verify SHA-256 Checksum") {
+                                Task { await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256) }
+                            }
                             Button("Reveal in Finder") {
                                 modelDownload.revealInFinder(path: dl.path)
                             }
@@ -585,6 +679,30 @@ struct ModelsView: View {
                             Spacer()
                         }
                         .padding(.vertical, 2)
+
+                        if let currentPreset = appState.presetModels.first(where: { $0.slug == selectedPresetSlug }), let sha = currentPreset.sha256 {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .foregroundStyle(.blue)
+                                    .font(.caption)
+                                Text("Expected SHA-256:")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                                Text(sha)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                                Button {
+                                    modelDownload.copyToClipboard(text: sha)
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Copy SHA-256 hash")
+                                Spacer()
+                            }
+                            .padding(.vertical, 2)
+                        }
                     }
 
                     Toggle("Advanced Settings", isOn: $showAdvancedSettings)
@@ -613,6 +731,11 @@ struct ModelsView: View {
 
                     LabeledContent("Model Ref (optional)") {
                         TextField("Provider-side name if different (e.g. BAAI/bge-m3)", text: $modelRef)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    LabeledContent("SHA-256 Hash (optional)") {
+                        TextField("Expected SHA-256 hex digest for file verification", text: $customSha256)
                             .textFieldStyle(.roundedBorder)
                     }
 
@@ -716,6 +839,42 @@ struct ModelsView: View {
                         Button("Browse…") {
                             chooseModelFile()
                         }
+                    }
+                }
+
+                if !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let targetSha = unlinkedRegisteredLlamaModels.first(where: { $0.slug == modelAlias })?.effectiveSha256
+                        ?? appState.presetModels.first(where: { $0.slug == modelAlias })?.sha256
+                    let isVerifyingFile = modelDownload.isVerifying(path: modelPath)
+                    let fileVerification = modelDownload.verificationResult(for: modelPath)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            Task {
+                                await modelDownload.verifyModelFile(path: modelPath, expectedSha256: targetSha)
+                            }
+                        } label: {
+                            if isVerifyingFile {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Label("Verify File SHA-256", systemImage: "checkmark.shield")
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled(isVerifyingFile)
+
+                        if let res = fileVerification {
+                            if res.isValid {
+                                Label(targetSha != nil ? "SHA-256 Verified (\(res.computedSha256.prefix(12))...)" : "SHA-256: \(res.computedSha256.prefix(16))...", systemImage: "checkmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            } else {
+                                Label("Checksum Mismatch: \(res.errorMessage ?? "Invalid")", systemImage: "xmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        Spacer()
                     }
                 }
 
@@ -1127,8 +1286,20 @@ struct ModelsView: View {
             await modelDownload.startDownload(
                 url: url,
                 filename: item.effectiveFilename,
-                modelId: item.slug
+                modelId: item.slug,
+                sha256: item.effectiveSha256
             )
+        }
+    }
+
+    private func verifyAllDownloadedModels() {
+        Task {
+            for dl in modelDownload.downloadedModels {
+                let expectedSha = unifiedModels.first(where: { $0.effectiveFilename == dl.filename })?.effectiveSha256
+                    ?? appState.presetModels.first(where: { $0.effectiveFilename == dl.filename })?.sha256
+                    ?? ModelPresetCatalog.items.first(where: { $0.filename == dl.filename })?.sha256
+                await modelDownload.verifyModelFile(path: dl.path, expectedSha256: expectedSha)
+            }
         }
     }
 

@@ -1,4 +1,6 @@
 import XCTest
+import CryptoKit
+import ModelDownloadClient
 @testable import GarageApp
 
 final class GarageConfigLoaderTests: XCTestCase {
@@ -118,16 +120,89 @@ final class GarageConfigLoaderTests: XCTestCase {
             nativeDims: 1024,
             defaultDims: 1024,
             contextSize: 8192,
-            downloadModelId: "CompendiumLabs/bge-m3-GGUF",
-            downloadFile: "bge-m3-Q8_0.gguf"
+            downloadModelId: "gpustack/bge-m3-GGUF",
+            downloadFile: "bge-m3-Q8_0.gguf",
+            sha256: "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
         )
 
         XCTAssertEqual(preset.id, "bge-m3")
         XCTAssertEqual(preset.slug, "bge-m3")
         XCTAssertEqual(preset.effectiveDims, 1024)
         XCTAssertTrue(preset.isEmbeddingModel)
-        XCTAssertEqual(preset.effectiveFilename, "bge-m3-Q8_0.gguf")
-        XCTAssertEqual(preset.downloadURLString, "https://huggingface.co/CompendiumLabs/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf")
+        XCTAssertEqual(preset.downloadFile, "bge-m3-Q8_0.gguf")
+        XCTAssertEqual(preset.sha256, "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167")
+        XCTAssertEqual(preset.downloadURLString, "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf")
+    }
+
+    func testLoadModelPresetsFromJSONWithSha256() throws {
+        let json = """
+        [
+            {
+                "name": "BGE-M3 (Embeddings)",
+                "model_id": "BAAI/bge-m3",
+                "slug": "bge-m3",
+                "model_ref": "bge-m3",
+                "provider": "llama_xpc",
+                "native_dims": 1024,
+                "default_dims": 1024,
+                "context_size": 8192,
+                "download_model_id": "gpustack/bge-m3-GGUF",
+                "download_file": "bge-m3-Q8_0.gguf",
+                "sha256": "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
+            },
+            {
+                "name": "Nomic Embed Text",
+                "model_id": "nomic-ai/nomic-embed-text-v1.5",
+                "slug": "nomic-embed-text",
+                "model_ref": "nomic-embed-text",
+                "provider": "llama_xpc",
+                "native_dims": 768,
+                "default_dims": 768,
+                "context_size": 8192,
+                "download_model_id": "nomic-ai/nomic-embed-text-v1.5-GGUF",
+                "download_file": "nomic-embed-text-v1.5.Q8_0.gguf",
+                "sha256": "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
+            }
+        ]
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_models_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let presets = GarageConfigLoader.loadModelPresets(fileURL: tempURL)
+        XCTAssertEqual(presets.count, 2)
+        XCTAssertEqual(presets[0].slug, "bge-m3")
+        XCTAssertEqual(presets[0].sha256, "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167")
+        XCTAssertEqual(presets[1].slug, "nomic-embed-text")
+        XCTAssertEqual(presets[1].sha256, "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7")
+    }
+
+    func testModelDownloaderEngineComputeAndVerifySHA256() throws {
+        let engine = ModelDownloaderEngine()
+        let tempFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_verify_\(UUID().uuidString).bin")
+        let testData = "Hello Garage Model Verification".data(using: .utf8)!
+        try testData.write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        let expectedHash = "4fb397ad3a219e785b1e9c197787c2a4c96d4a998478467718a253c875be8018"
+        let computed = try engine.computeSHA256(of: tempFile)
+        XCTAssertEqual(computed.lowercased(), expectedHash)
+
+        // Matching expected hash
+        let validResult = try engine.verifyModelFile(filePath: tempFile.path, expectedSha256: expectedHash)
+        XCTAssertTrue(validResult.isValid)
+        XCTAssertEqual(validResult.computedSha256, expectedHash)
+
+        // Mismatched expected hash
+        let invalidResult = try engine.verifyModelFile(filePath: tempFile.path, expectedSha256: "0000000000000000000000000000000000000000000000000000000000000000")
+        XCTAssertFalse(invalidResult.isValid)
+        XCTAssertEqual(invalidResult.computedSha256, expectedHash)
+
+        // Nil expected hash returns computed hash
+        let noExpectedResult = try engine.verifyModelFile(filePath: tempFile.path, expectedSha256: nil)
+        XCTAssertTrue(noExpectedResult.isValid)
+        XCTAssertEqual(noExpectedResult.computedSha256, expectedHash)
     }
 
     func testLoadModelPresetsFromJSON() throws {

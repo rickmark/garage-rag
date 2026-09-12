@@ -60,6 +60,8 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
     public var estimatedTimeRemaining: TimeInterval?
     public var errorMessage: String?
     public var modelId: String?
+    public var expectedSha256: String?
+    public var computedSha256: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -76,6 +78,8 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
         estimatedTimeRemaining: TimeInterval? = nil,
         errorMessage: String? = nil,
         modelId: String? = nil,
+        expectedSha256: String? = nil,
+        computedSha256: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -91,6 +95,8 @@ public struct DownloadTaskInfo: Codable, Identifiable, Sendable {
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.errorMessage = errorMessage
         self.modelId = modelId
+        self.expectedSha256 = expectedSha256
+        self.computedSha256 = computedSha256
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -132,6 +138,7 @@ public struct DownloadedModelInfo: Codable, Identifiable, Sendable {
     public var formattedSize: String
     public var modifiedAt: Date
     public var format: String
+    public var sha256: String?
 
     public init(
         name: String,
@@ -139,7 +146,8 @@ public struct DownloadedModelInfo: Codable, Identifiable, Sendable {
         path: String,
         size: Int64,
         modifiedAt: Date = Date(),
-        format: String = "gguf"
+        format: String = "gguf",
+        sha256: String? = nil
     ) {
         self.name = name
         self.filename = filename
@@ -148,6 +156,7 @@ public struct DownloadedModelInfo: Codable, Identifiable, Sendable {
         self.formattedSize = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
         self.modifiedAt = modifiedAt
         self.format = format
+        self.sha256 = sha256
     }
 }
 
@@ -175,6 +184,7 @@ public struct ModelCatalogItem: Codable, Identifiable, Sendable {
     public var quantization: String
     public var contextLength: Int
     public var defaultGpuLayers: Int
+    public var sha256: String?
 
     public init(
         id: String,
@@ -187,7 +197,8 @@ public struct ModelCatalogItem: Codable, Identifiable, Sendable {
         parameterSize: String,
         quantization: String,
         contextLength: Int = 4096,
-        defaultGpuLayers: Int = 33
+        defaultGpuLayers: Int = 33,
+        sha256: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -201,6 +212,7 @@ public struct ModelCatalogItem: Codable, Identifiable, Sendable {
         self.quantization = quantization
         self.contextLength = contextLength
         self.defaultGpuLayers = defaultGpuLayers
+        self.sha256 = sha256
     }
 }
 
@@ -218,7 +230,8 @@ public struct ModelPresetCatalog {
             parameterSize: "1.23B",
             quantization: "Q4_K_M",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83"
         ),
         ModelCatalogItem(
             id: "llama-3.2-3b-instruct",
@@ -231,7 +244,8 @@ public struct ModelPresetCatalog {
             parameterSize: "3.21B",
             quantization: "Q4_K_M",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff"
         ),
         ModelCatalogItem(
             id: "qwen-2.5-coder-7b",
@@ -244,7 +258,8 @@ public struct ModelPresetCatalog {
             parameterSize: "7.61B",
             quantization: "Q4_K_M",
             contextLength: 16384,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "1664fccab734674a50763490a8c6931b70e3f2f8ec10031b54806d30e5f956b6"
         ),
         ModelCatalogItem(
             id: "mistral-7b-instruct-v0.3",
@@ -257,7 +272,8 @@ public struct ModelPresetCatalog {
             parameterSize: "7.25B",
             quantization: "Q4_K_M",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6"
         ),
         ModelCatalogItem(
             id: "deepseek-r1-distill-qwen-7b",
@@ -270,20 +286,22 @@ public struct ModelPresetCatalog {
             parameterSize: "7.61B",
             quantization: "Q4_K_M",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "731ece8d06dc7eda6f6572997feb9ee1258db0784827e642909d9b565641937b"
         ),
         ModelCatalogItem(
             id: "bge-m3-gguf",
             name: "BGE-M3 Embeddings (GGUF)",
             description: "Multi-lingual, multi-functionality (dense, sparse, multi-vector) high quality embedding model.",
             category: .embedding,
-            downloadUrl: "https://huggingface.co/CompendiumLabs/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf",
+            downloadUrl: "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf",
             filename: "bge-m3-Q8_0.gguf",
             sizeBytes: 605_000_000,
             parameterSize: "567M",
             quantization: "Q8_0",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
         ),
         ModelCatalogItem(
             id: "nomic-embed-text-v1.5",
@@ -296,20 +314,36 @@ public struct ModelPresetCatalog {
             parameterSize: "137M",
             quantization: "Q8_0",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
         ),
         ModelCatalogItem(
             id: "snowflake-arctic-embed-m",
             name: "Snowflake Arctic Embed M (GGUF)",
             description: "Optimized retrieval embedding model tuned for high performance search pipelines.",
             category: .embedding,
-            downloadUrl: "https://huggingface.co/ChristianAzinn/snowflake-arctic-embed-m-gguf/resolve/main/snowflake-arctic-embed-m.Q8_0.gguf",
-            filename: "snowflake-arctic-embed-m.Q8_0.gguf",
+            downloadUrl: "https://huggingface.co/ChristianAzinn/snowflake-arctic-embed-m-gguf/resolve/main/snowflake-arctic-embed-m-Q8_0.GGUF",
+            filename: "snowflake-arctic-embed-m-Q8_0.GGUF",
             sizeBytes: 120_000_000,
             parameterSize: "110M",
             quantization: "Q8_0",
             contextLength: 8192,
-            defaultGpuLayers: 33
+            defaultGpuLayers: 33,
+            sha256: "670a415c5b42b1b317eb7116a154c08e7b7a69550d088f3b46520d8b3d0741a8"
+        ),
+        ModelCatalogItem(
+            id: "llama-embed-nemotron-8b",
+            name: "NVIDIA Llama-Embed-Nemotron-8B (GGUF)",
+            description: "8B parameter embedding model by NVIDIA based on Llama 3 architecture with 8192 context.",
+            category: .embedding,
+            downloadUrl: "https://huggingface.co/mradermacher/llama-embed-nemotron-8b-GGUF/resolve/main/llama-embed-nemotron-8b.Q8_0.gguf",
+            filename: "llama-embed-nemotron-8b.Q8_0.gguf",
+            sizeBytes: 8_500_000_000,
+            parameterSize: "8B",
+            quantization: "Q8_0",
+            contextLength: 8192,
+            defaultGpuLayers: 33,
+            sha256: "951f506d4d8c93c02abe586520076e61b4b8e5501f63bcda05cde610c102cf42"
         ),
     ]
 

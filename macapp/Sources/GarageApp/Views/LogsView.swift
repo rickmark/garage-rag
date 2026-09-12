@@ -8,6 +8,7 @@ struct LogsView: View {
         case postgres = "Postgres"
         case garage = "garage CLI"
         case ingest = "Ingest"
+        case ingestXPC = "Ingest XPC"
         case backfill = "Backfill"
         case mcp = "MCP Server"
         case grpc = "gRPC Server"
@@ -44,6 +45,7 @@ struct LogsView: View {
         case .postgres: appState.postgres.logs
         case .garage: appState.garage.logs
         case .ingest: appState.ingest.logs
+        case .ingestXPC: appState.ingestService.logs
         case .backfill: appState.backfill.logs
         case .mcp: appState.mcp.logs
         case .grpc: appState.grpc.logs

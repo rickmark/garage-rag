@@ -9,9 +9,13 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
     public let indexed: Int
     public let skipped: Int
     public let failed: Int
+    public let placeholders: Int
+    public let chunksWritten: Int
+    public let itemType: String
     public let progress: Double
     public let message: String
     public let error: String?
+    public let currentItem: String?
 
     public init(
         source: String,
@@ -21,9 +25,13 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
         indexed: Int = 0,
         skipped: Int = 0,
         failed: Int = 0,
+        placeholders: Int = 0,
+        chunksWritten: Int = 0,
+        itemType: String = "items",
         progress: Double = 0.0,
         message: String = "",
-        error: String? = nil
+        error: String? = nil,
+        currentItem: String? = nil
     ) {
         self.source = source
         self.phase = phase
@@ -32,9 +40,13 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
         self.indexed = indexed
         self.skipped = skipped
         self.failed = failed
+        self.placeholders = placeholders
+        self.chunksWritten = chunksWritten
+        self.itemType = itemType
         self.progress = progress
         self.message = message
         self.error = error
+        self.currentItem = currentItem
     }
 
     enum CodingKeys: String, CodingKey {
@@ -45,9 +57,43 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
         case indexed
         case skipped
         case failed
+        case placeholders
+        case chunksWritten = "chunks_written"
+        case itemType = "item_type"
         case progress
         case message
         case error
+        case currentItem = "current_item"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+        self.phase = try container.decodeIfPresent(String.self, forKey: .phase) ?? "ingest"
+        self.seen = try container.decodeIfPresent(Int.self, forKey: .seen) ?? 0
+        self.totalItems = try container.decodeIfPresent(Int.self, forKey: .totalItems) ?? 0
+        self.indexed = try container.decodeIfPresent(Int.self, forKey: .indexed) ?? 0
+        self.skipped = try container.decodeIfPresent(Int.self, forKey: .skipped) ?? 0
+        self.failed = try container.decodeIfPresent(Int.self, forKey: .failed) ?? 0
+        self.placeholders = try container.decodeIfPresent(Int.self, forKey: .placeholders) ?? 0
+        self.chunksWritten = try container.decodeIfPresent(Int.self, forKey: .chunksWritten) ?? 0
+        self.itemType = try container.decodeIfPresent(String.self, forKey: .itemType) ?? "items"
+        self.progress = try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
+        self.message = try container.decodeIfPresent(String.self, forKey: .message) ?? ""
+        self.error = try container.decodeIfPresent(String.self, forKey: .error)
+        self.currentItem = try container.decodeIfPresent(String.self, forKey: .currentItem)
+    }
+
+    public var isComplete: Bool {
+        phase == "complete"
+    }
+
+    public var isError: Bool {
+        phase == "error" || error != nil
+    }
+
+    public var formattedPercent: String {
+        String(format: "%.0f%%", min(100.0, max(0.0, progress * 100.0)))
     }
 }
 

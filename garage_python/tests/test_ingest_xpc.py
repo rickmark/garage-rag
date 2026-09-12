@@ -17,15 +17,26 @@ def test_ingest_progress_model():
         indexed=4,
         skipped=1,
         failed=0,
+        placeholders=1,
+        chunks_written=12,
+        item_type="documents",
         progress=0.5,
         message="Halfway there",
+        current_item="note.md",
     )
     assert p.source == "test-source"
     assert p.progress == 0.5
+    assert p.placeholders == 1
+    assert p.chunks_written == 12
+    assert p.item_type == "documents"
+    assert p.current_item == "note.md"
     d = p.to_dict()
     assert d["source"] == "test-source"
     assert d["seen"] == 5
     assert d["total_items"] == 10
+    assert d["placeholders"] == 1
+    assert d["chunks_written"] == 12
+    assert d["current_item"] == "note.md"
 
 
 def test_ingest_xpc_async_progress():
@@ -36,6 +47,8 @@ def test_ingest_xpc_async_progress():
         mock_counters.indexed = 8
         mock_counters.skipped = 2
         mock_counters.failed = 0
+        mock_counters.placeholders = 1
+        mock_counters.chunks_written = 24
 
         mock_walk_stats = WalkStats()
         mock_budget = MaterializationBudget()
@@ -49,7 +62,7 @@ def test_ingest_xpc_async_progress():
             progress_fn = kwargs.get("progress")
             if progress_fn:
                 progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
-                progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest")
+                progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
             return mock_counters, mock_walk_stats, mock_budget
 
         with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
@@ -60,10 +73,16 @@ def test_ingest_xpc_async_progress():
                 session_factory=mock_factory,
             )
 
-        assert len(progress_events) >= 2
+        assert len(progress_events) >= 3
+        # Check scan event
+        assert progress_events[0].phase == "scan"
+        # Check ingest event with current_item
+        assert any(e.current_item == "file1.txt" for e in progress_events)
+        # Check completion event
         assert progress_events[-1].phase == "complete"
         assert progress_events[-1].source == "my-source"
         assert progress_events[-1].progress == 1.0
+        assert progress_events[-1].chunks_written == 24
 
     asyncio.run(_run())
 

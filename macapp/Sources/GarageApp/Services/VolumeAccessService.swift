@@ -352,7 +352,7 @@ public final class VolumeAccessService: ObservableObject {
 
     private let bookmarkStore: VolumeBookmarkStoring
     private let fileSystem: FileSystemAccessing
-    private let ingestClient: IngestClient?
+    public let ingestClient: IngestClient?
     private var isAccessingSecurityScope = false
 
     public init(

@@ -72,6 +72,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     public let contextSize: Int?
     public let downloadModelId: String?
     public let downloadFile: String?
+    public let sha256: String?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -84,6 +85,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         case contextSize = "context_size"
         case downloadModelId = "download_model_id"
         case downloadFile = "download_file"
+        case sha256
     }
 
     public init(
@@ -96,7 +98,8 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         defaultDims: Int? = nil,
         contextSize: Int? = 8192,
         downloadModelId: String? = nil,
-        downloadFile: String? = nil
+        downloadFile: String? = nil,
+        sha256: String? = nil
     ) {
         self.name = name
         self.modelId = modelId
@@ -108,6 +111,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         self.contextSize = contextSize
         self.downloadModelId = downloadModelId
         self.downloadFile = downloadFile
+        self.sha256 = sha256
     }
 
     public var effectiveDims: Int {
@@ -226,8 +230,9 @@ public enum GarageConfigLoader {
             nativeDims: 1024,
             defaultDims: 1024,
             contextSize: 8192,
-            downloadModelId: "CompendiumLabs/bge-m3-GGUF",
-            downloadFile: "bge-m3-Q8_0.gguf"
+            downloadModelId: "gpustack/bge-m3-GGUF",
+            downloadFile: "bge-m3-Q8_0.gguf",
+            sha256: "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
         ),
         ModelPresetEntry(
             name: "Nomic Embed Text",
@@ -239,7 +244,8 @@ public enum GarageConfigLoader {
             defaultDims: 768,
             contextSize: 8192,
             downloadModelId: "nomic-ai/nomic-embed-text-v1.5-GGUF",
-            downloadFile: "nomic-embed-text-v1.5.Q8_0.gguf"
+            downloadFile: "nomic-embed-text-v1.5.Q8_0.gguf",
+            sha256: "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
         ),
         ModelPresetEntry(
             name: "mxbai Embed Large",
@@ -259,7 +265,10 @@ public enum GarageConfigLoader {
             provider: "llama_xpc",
             nativeDims: 768,
             defaultDims: 768,
-            contextSize: 8192
+            contextSize: 8192,
+            downloadModelId: "unsloth/embeddinggemma-300m-GGUF",
+            downloadFile: "embeddinggemma-300M-Q8_0.gguf",
+            sha256: "a0f7b4e13c397a6e1b32c2de75b1f65a14c92ec524d5f674d94a4290a1c4969b"
         ),
         ModelPresetEntry(
             name: "Snowflake Arctic Embed 2",
@@ -271,7 +280,8 @@ public enum GarageConfigLoader {
             defaultDims: 1024,
             contextSize: 8192,
             downloadModelId: "ChristianAzinn/snowflake-arctic-embed-m-gguf",
-            downloadFile: "snowflake-arctic-embed-m.Q8_0.gguf"
+            downloadFile: "snowflake-arctic-embed-m-Q8_0.GGUF",
+            sha256: "670a415c5b42b1b317eb7116a154c08e7b7a69550d088f3b46520d8b3d0741a8"
         ),
         ModelPresetEntry(
             name: "Qwen 3 Embedding 0.6B",
@@ -313,7 +323,8 @@ public enum GarageConfigLoader {
             defaultDims: nil,
             contextSize: 8192,
             downloadModelId: "bartowski/Llama-3.2-1B-Instruct-GGUF",
-            downloadFile: "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+            downloadFile: "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            sha256: "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83"
         ),
         ModelPresetEntry(
             name: "Llama 3.2 3B (Instruct)",
@@ -325,7 +336,8 @@ public enum GarageConfigLoader {
             defaultDims: nil,
             contextSize: 8192,
             downloadModelId: "bartowski/Llama-3.2-3B-Instruct-GGUF",
-            downloadFile: "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+            downloadFile: "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            sha256: "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff"
         ),
         ModelPresetEntry(
             name: "Qwen 2.5 7B (Coder)",
@@ -337,7 +349,8 @@ public enum GarageConfigLoader {
             defaultDims: nil,
             contextSize: 16384,
             downloadModelId: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-            downloadFile: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+            downloadFile: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+            sha256: "1664fccab734674a50763490a8c6931b70e3f2f8ec10031b54806d30e5f956b6"
         ),
         ModelPresetEntry(
             name: "Mistral 7B (Instruct)",
@@ -349,7 +362,21 @@ public enum GarageConfigLoader {
             defaultDims: nil,
             contextSize: 8192,
             downloadModelId: "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
-            downloadFile: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+            downloadFile: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+            sha256: "1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6"
+        ),
+        ModelPresetEntry(
+            name: "DeepSeek R1 Distill Qwen 7B",
+            modelId: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            slug: "deepseek-r1-distill-qwen-7b",
+            modelRef: "deepseek-r1-distill-qwen-7b",
+            provider: "llama_xpc",
+            nativeDims: nil,
+            defaultDims: nil,
+            contextSize: 8192,
+            downloadModelId: "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+            downloadFile: "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+            sha256: "731ece8d06dc7eda6f6572997feb9ee1258db0784827e642909d9b565641937b"
         ),
         ModelPresetEntry(
             name: "NVIDIA Llama-Embed-Nemotron-8B",
@@ -361,7 +388,8 @@ public enum GarageConfigLoader {
             defaultDims: 4096,
             contextSize: 8192,
             downloadModelId: "mradermacher/llama-embed-nemotron-8b-GGUF",
-            downloadFile: "llama-embed-nemotron-8b.Q8_0.gguf"
+            downloadFile: "llama-embed-nemotron-8b.Q8_0.gguf",
+            sha256: "951f506d4d8c93c02abe586520076e61b4b8e5501f63bcda05cde610c102cf42"
         ),
         ModelPresetEntry(
             name: "Microsoft Harrier-oss-v1-0.6b",

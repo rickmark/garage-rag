@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Core engine managing model downloads, file system storage, and task tracking.
 public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
@@ -105,6 +106,7 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
             bytesPerSecond: 0.0,
             errorMessage: nil,
             modelId: request.modelId,
+            expectedSha256: request.sha256,
             createdAt: Date(),
             updatedAt: Date()
         )
@@ -237,6 +239,38 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
         return true
     }
 
+    // MARK: - SHA256 Checksum Calculation & Verification
+
+    /// Computes the SHA256 checksum hex string for a given file on disk using streaming chunks.
+    public func computeSHA256(of fileUrl: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: fileUrl)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        let bufferSize = 1024 * 1024 // 1 MB chunk
+        while autoreleasepool(invoking: {
+            let chunk = handle.readData(ofLength: bufferSize)
+            if chunk.isEmpty { return false }
+            hasher.update(data: chunk)
+            return true
+        }) {}
+        let digest = hasher.finalize()
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Verifies the SHA256 checksum of a model file against an expected hash, or returns computed hash if expected is nil.
+    public func verifyModelFile(filePath: String, expectedSha256: String? = nil) throws -> (isValid: Bool, computedSha256: String) {
+        let fileUrl = URL(fileURLWithPath: filePath)
+        guard FileManager.default.fileExists(atPath: fileUrl.path) else {
+            throw NSError(domain: "ModelDownloaderEngine", code: 404, userInfo: [NSLocalizedDescriptionKey: "File not found at \(filePath)"])
+        }
+        let computed = try computeSHA256(of: fileUrl)
+        if let expected = expectedSha256?.trimmingCharacters(in: .whitespacesAndNewlines), !expected.isEmpty {
+            let isValid = (computed.caseInsensitiveCompare(expected) == .orderedSame)
+            return (isValid, computed)
+        }
+        return (true, computed)
+    }
+
     // MARK: - JSON Helpers for XPC
 
     public func serialize<T: Encodable>(_ value: T) -> String? {
@@ -310,6 +344,25 @@ extension ModelDownloaderEngine: URLSessionDownloadDelegate {
             try FileManager.default.moveItem(at: location, to: destUrl)
 
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: destUrl.path)[.size] as? Int64) ?? info.bytesDownloaded
+
+            // Calculate SHA-256 checksum and verify if expected hash is provided
+            let computedHash = try? computeSHA256(of: destUrl)
+            info.computedSha256 = computedHash
+
+            if let expected = info.expectedSha256?.trimmingCharacters(in: .whitespacesAndNewlines), !expected.isEmpty {
+                guard let computed = computedHash, computed.caseInsensitiveCompare(expected) == .orderedSame else {
+                    try? FileManager.default.removeItem(at: destUrl)
+                    lock.lock()
+                    info.status = .failed
+                    info.errorMessage = "SHA-256 checksum mismatch (expected: \(expected), computed: \(computedHash ?? "none"))"
+                    info.updatedAt = Date()
+                    tasks[taskId] = info
+                    urlTasks.removeValue(forKey: taskId)
+                    lastBytesWritten.removeValue(forKey: taskId)
+                    lock.unlock()
+                    return
+                }
+            }
 
             lock.lock()
             info.status = .completed

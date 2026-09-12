@@ -15,6 +15,34 @@ final class ModelDownloadService: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var lastSuccess: String?
     @Published private(set) var logs: [LogLine] = []
+    @Published private(set) var verificationResults: [String: VerificationResult] = [:]
+    @Published private(set) var verifyingPaths: Set<String> = []
+
+    public struct VerificationResult: Identifiable, Sendable {
+        public var id: String { path }
+        public let path: String
+        public let isValid: Bool
+        public let computedSha256: String
+        public let expectedSha256: String?
+        public let verifiedAt: Date
+        public let errorMessage: String?
+
+        public init(
+            path: String,
+            isValid: Bool,
+            computedSha256: String,
+            expectedSha256: String?,
+            verifiedAt: Date = Date(),
+            errorMessage: String? = nil
+        ) {
+            self.path = path
+            self.isValid = isValid
+            self.computedSha256 = computedSha256
+            self.expectedSha256 = expectedSha256
+            self.verifiedAt = verifiedAt
+            self.errorMessage = errorMessage
+        }
+    }
 
     let client: ModelDownloadClient
     private let maxLogLines = 2000
@@ -135,6 +163,7 @@ final class ModelDownloadService: ObservableObject {
             filename: item.filename,
             modelId: item.id,
             expectedSize: item.sizeBytes,
+            sha256: item.sha256,
             authToken: authToken
         )
     }
@@ -145,6 +174,7 @@ final class ModelDownloadService: ObservableObject {
         filename: String? = nil,
         modelId: String? = nil,
         expectedSize: Int64? = nil,
+        sha256: String? = nil,
         authToken: String? = nil
     ) async -> Bool {
         let trimmedUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,6 +193,7 @@ final class ModelDownloadService: ObservableObject {
             filename: filename?.trimmingCharacters(in: .whitespacesAndNewlines),
             modelId: modelId,
             expectedSize: expectedSize,
+            sha256: sha256?.trimmingCharacters(in: .whitespacesAndNewlines),
             authToken: authToken
         )
 
@@ -275,6 +306,61 @@ final class ModelDownloadService: ObservableObject {
     func revealInFinder(path: String) {
         let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+    }
+
+    func isVerifying(path: String) -> Bool {
+        verifyingPaths.contains(path)
+    }
+
+    func verificationResult(for path: String) -> VerificationResult? {
+        verificationResults[path]
+    }
+
+    @discardableResult
+    func verifyModelFile(path: String, expectedSha256: String? = nil) async -> VerificationResult {
+        verifyingPaths.insert(path)
+        defer { verifyingPaths.remove(path) }
+
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        appendLog("Calculating SHA-256 checksum for \(fileName)...")
+        do {
+            let (isValid, hash) = try await client.verifyModelFile(at: path, expectedSha256: expectedSha256)
+            let result = VerificationResult(
+                path: path,
+                isValid: isValid,
+                computedSha256: hash,
+                expectedSha256: expectedSha256,
+                verifiedAt: Date(),
+                errorMessage: isValid ? nil : "Checksum mismatch (expected: \(expectedSha256 ?? ""), computed: \(hash))"
+            )
+            verificationResults[path] = result
+            if isValid {
+                if let exp = expectedSha256, !exp.isEmpty {
+                    lastSuccess = "SHA-256 verified: \(hash.prefix(12))..."
+                    appendLog("SHA-256 verified successfully for \(fileName): \(hash)")
+                } else {
+                    lastSuccess = "Computed SHA-256: \(hash.prefix(12))..."
+                    appendLog("Computed SHA-256 for \(fileName): \(hash)")
+                }
+            } else {
+                lastError = "SHA-256 mismatch for \(fileName)"
+                appendLog("SHA-256 mismatch for \(fileName): expected \(expectedSha256 ?? ""), got \(hash)", stream: .stderr)
+            }
+            return result
+        } catch {
+            let result = VerificationResult(
+                path: path,
+                isValid: false,
+                computedSha256: "",
+                expectedSha256: expectedSha256,
+                verifiedAt: Date(),
+                errorMessage: error.localizedDescription
+            )
+            verificationResults[path] = result
+            lastError = "Verification failed: \(error.localizedDescription)"
+            appendLog("Verification failed for \(fileName): \(error.localizedDescription)", stream: .stderr)
+            return result
+        }
     }
 
     func copyToClipboard(text: String) {

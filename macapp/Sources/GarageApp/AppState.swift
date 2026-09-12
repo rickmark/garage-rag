@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import IngestClient
 
 @MainActor
 final class AppState: ObservableObject {
@@ -17,6 +18,7 @@ final class AppState: ObservableObject {
     let llama: LlamaService
     let modelDownload: ModelDownloadService
     let volumeAccess: VolumeAccessService
+    let ingestService: IngestService
     private var cancellables = Set<AnyCancellable>()
 
     /// Output of the most recent manual or scheduled `garage` command,
@@ -65,6 +67,7 @@ final class AppState: ObservableObject {
         self.volumeAccess = volumeAccess ?? VolumeAccessService()
         let downloadService = modelDownload ?? ModelDownloadService()
         self.modelDownload = downloadService
+        self.ingestService = IngestService(client: self.volumeAccess.ingestClient ?? IngestClient())
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
@@ -89,6 +92,7 @@ final class AppState: ObservableObject {
         ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
 
         do {
             lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil
@@ -445,6 +449,17 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
+    /// Runs ingestion through the XPC service streaming real-time progress to the UI.
+    @discardableResult
+    func ingestViaXPC(slug: String, options: IngestOptions = .default) async -> Bool {
+        let result = await ingestService.ingest(slug: slug, options: options)
+        await fetchRegisteredSources()
+        await fetchCorpusStats()
+        lastCommandSucceeded = result.succeeded
+        lastCommandOutput = result.message ?? (result.succeeded ? "Ingestion completed" : "Ingestion failed")
+        return result.succeeded
+    }
+
     /// Runs embedding backfill in an independent process and log stream.
     @discardableResult
     func runBackfill(_ arguments: [String]) async -> Bool {
@@ -459,6 +474,7 @@ final class AppState: ObservableObject {
         case "Postgres": postgres.clearLogs()
         case "garage CLI": garage.clearLogs()
         case "Ingest": ingest.clearLogs()
+        case "Ingest XPC": ingestService.clearLogs()
         case "Backfill": backfill.clearLogs()
         case "MCP Server": mcp.clearLogs()
         case "gRPC Server": grpc.clearLogs()

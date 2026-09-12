@@ -119,3 +119,18 @@ alias(
     name = "xcodeproj",
     actual = "//macapp:xcodeproj",
 )
+
+alias(
+    name = "website",
+    actual = "//docs:site",
+)
+
+alias(
+    name = "site",
+    actual = "//docs:site",
+)
+
+alias(
+    name = "docs",
+    actual = "//docs:site",
+)

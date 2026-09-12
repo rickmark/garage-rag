@@ -361,7 +361,7 @@ def ingest_source(
         persist_scan_result(session, scan_result)
         session.commit()
 
-    def _call_progress(phase: str) -> None:
+    def _call_progress(phase: str, current_item: str | None = None) -> None:
         if progress is None:
             return
         try:
@@ -371,12 +371,16 @@ def ingest_source(
                 total_items=counters.total_items,
                 phase=phase,
                 scan_result=scan_result,
+                current_item=current_item,
             )
         except TypeError:
             try:
-                progress(counters, budget, total_items=counters.total_items, phase=phase)
+                progress(counters, budget, total_items=counters.total_items, phase=phase, current_item=current_item)
             except TypeError:
-                progress(counters, budget)
+                try:
+                    progress(counters, budget, total_items=counters.total_items, phase=phase)
+                except TypeError:
+                    progress(counters, budget)
 
     _call_progress(phase="scan")
 
@@ -412,7 +416,7 @@ def ingest_source(
                     counters.note_error(f"{candidate.path.name}: {exc}")
                     log.debug("ingest failed for %s", candidate.path, exc_info=True)
 
-            _call_progress(phase="ingest")
+            _call_progress(phase="ingest", current_item=candidate.path.name)
             if limit is not None and counters.seen >= limit:
                 break
         else:

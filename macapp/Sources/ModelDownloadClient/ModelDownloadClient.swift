@@ -349,4 +349,33 @@ public final class ModelDownloadClient: Sendable {
             }
         }
     }
+
+    public func verifyModelFile(at path: String, expectedSha256: String? = nil) async throws -> (isValid: Bool, sha256: String) {
+        if let engine = inProcessEngine {
+            let res = try engine.verifyModelFile(filePath: path, expectedSha256: expectedSha256)
+            return (res.isValid, res.computedSha256)
+        }
+
+        let connection = makeConnection()
+        defer { connection.invalidate() }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                continuation.resume(throwing: error)
+            }) as? ModelDownloadXPCServiceProtocol else {
+                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
+                return
+            }
+
+            proxy.verifyModelFile(filePath: path, expectedSha256: expectedSha256) { isValid, computedHash, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let computedHash = computedHash {
+                    continuation.resume(returning: (isValid, computedHash))
+                } else {
+                    continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty checksum verification reply"]))
+                }
+            }
+        }
+    }
 }

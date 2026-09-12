@@ -22,9 +22,13 @@ class IngestProgress:
     indexed: int = 0
     skipped: int = 0
     failed: int = 0
+    placeholders: int = 0
+    chunks_written: int = 0
+    item_type: str = "items"
     progress: float = 0.0
     message: str = ""
     error: Optional[str] = None
+    current_item: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,25 +72,43 @@ async def ingest_xpc(
     else:
         sources = [source]
 
+    loop = asyncio.get_running_loop()
+
+    async def _emit_progress(prog: IngestProgress) -> None:
+        _notify_c_progress(prog)
+        if progress_callback is None:
+            return
+        if inspect.iscoroutinefunction(progress_callback):
+            await progress_callback(prog)
+        else:
+            progress_callback(prog)
+
     for current_source in sources:
-        async def _emit_progress(prog: IngestProgress) -> None:
-            _notify_c_progress(prog)
-            if progress_callback is None:
-                return
-            if inspect.iscoroutinefunction(progress_callback):
-                await progress_callback(prog)
-            else:
-                progress_callback(prog)
+        start_prog = IngestProgress(
+            source=current_source,
+            phase="scan",
+            seen=0,
+            total_items=0,
+            progress=0.0,
+            message=f"Starting ingestion for {current_source}...",
+        )
+        await _emit_progress(start_prog)
 
         def _handle_pipeline_progress(*args: Any, **kwargs: Any) -> None:
             counters = args[0] if len(args) > 0 else None
             phase = kwargs.get("phase", "ingest")
             total_items = kwargs.get("total_items", getattr(counters, "total_items", 0))
+            current_item = kwargs.get("current_item", getattr(counters, "current_item", None))
 
             seen = getattr(counters, "seen", 0)
             indexed = getattr(counters, "indexed", 0)
             skipped = getattr(counters, "skipped", 0)
             failed = getattr(counters, "failed", 0)
+            placeholders = getattr(counters, "placeholders", 0)
+            chunks_written = getattr(counters, "chunks_written", 0)
+            item_type = getattr(counters, "item_type", "items")
+            errors = getattr(counters, "errors", [])
+            last_error = errors[-1] if errors else None
 
             if total_items and total_items > 0:
                 prog_val = min(1.0, max(0.0, float(seen) / float(total_items)))
@@ -94,12 +116,14 @@ async def ingest_xpc(
                 prog_val = 0.0
 
             if phase == "scan":
-                msg = f"Scanning {current_source}: found {total_items} items"
+                msg = f"Scanning {current_source}: found {total_items} {item_type}"
             elif phase == "complete":
                 prog_val = 1.0
                 msg = f"Ingested {current_source}: {indexed} indexed, {skipped} skipped, {failed} failed"
+            elif current_item:
+                msg = f"Ingesting {current_source} ({seen}/{total_items}): {current_item}"
             else:
-                msg = f"Ingesting {current_source}: {seen}/{total_items} items ({indexed} indexed)"
+                msg = f"Ingesting {current_source}: {seen}/{total_items} {item_type} ({indexed} indexed, {skipped} skipped, {failed} failed)"
 
             prog = IngestProgress(
                 source=current_source,
@@ -109,30 +133,47 @@ async def ingest_xpc(
                 indexed=indexed,
                 skipped=skipped,
                 failed=failed,
+                placeholders=placeholders,
+                chunks_written=chunks_written,
+                item_type=item_type,
                 progress=prog_val,
                 message=msg,
+                error=last_error,
+                current_item=current_item,
             )
 
             _notify_c_progress(prog)
 
             if progress_callback is not None:
                 if inspect.iscoroutinefunction(progress_callback):
+                    fut = asyncio.run_coroutine_threadsafe(progress_callback(prog), loop)
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(progress_callback(prog))
-                    except RuntimeError:
-                        asyncio.run(progress_callback(prog))
+                        fut.result(timeout=10)
+                    except Exception:
+                        pass
                 else:
                     progress_callback(prog)
 
-        counters, walk_stats, budget = ingest_source(
-            factory,
-            current_source,
-            include_code=include_code,
-            limit=limit,
-            force=force,
-            progress=_handle_pipeline_progress,
-        )
+        try:
+            counters, walk_stats, budget = await asyncio.to_thread(
+                ingest_source,
+                factory,
+                current_source,
+                include_code=include_code,
+                limit=limit,
+                force=force,
+                progress=_handle_pipeline_progress,
+            )
+        except Exception as exc:
+            err_prog = IngestProgress(
+                source=current_source,
+                phase="error",
+                error=str(exc),
+                message=f"Error ingesting {current_source}: {exc}",
+                progress=0.0,
+            )
+            await _emit_progress(err_prog)
+            raise
 
         final_prog = IngestProgress(
             source=current_source,
@@ -142,6 +183,9 @@ async def ingest_xpc(
             indexed=counters.indexed,
             skipped=counters.skipped,
             failed=counters.failed,
+            placeholders=counters.placeholders,
+            chunks_written=counters.chunks_written,
+            item_type=counters.item_type,
             progress=1.0,
             message=(
                 f"Ingested {current_source}: seen {counters.seen}/{counters.total_items}, "

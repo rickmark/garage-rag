@@ -9,8 +9,7 @@ private typealias ProgressCFunction = @convention(c) (UnsafePointer<CChar>?) -> 
 private let globalProgressCallback: ProgressCFunction = { cStr in
     guard let cStr = cStr else { return }
     let jsonString = String(cString: cStr)
-    GarageIngestXPCServiceDelegate.sharedActiveConnection?.remoteObjectProxyWithErrorHandler { _ in }
-    if let receiver = GarageIngestXPCServiceDelegate.sharedActiveConnection?.remoteObjectProxy as? GarageIngestProgressReceiverProtocol {
+    if let receiver = GarageIngestXPCServiceDelegate.sharedActiveConnection?.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageIngestProgressReceiverProtocol {
         receiver.didUpdateProgress(progressJson: jsonString)
     }
 }
@@ -108,11 +107,37 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         #if canImport(PythonKit)
         do {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
+
+            GarageIngestXPCServiceDelegate.sharedActiveConnection = self.connection
+
+            // Register C callback function pointer with Python
+            let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
+            ingestModule.set_c_progress_callback(cFuncPtr)
+            defer {
+                ingestModule.set_c_progress_callback(0)
+                GarageIngestXPCServiceDelegate.sharedActiveConnection = nil
+            }
+
+            let includeCode = options["include_code"] == "true" || options["includeCode"] == "true"
+            let force = options["force"] == "true"
+            let limitVal = options["limit"].flatMap { Int($0) }
+            let limitObj: PythonObject = limitVal != nil ? PythonObject(limitVal!) : Python.None
+
             if ingestModule.run_ingest_xpc != Python.None {
-                ingestModule.run_ingest_xpc(source)
+                ingestModule.run_ingest_xpc(
+                    source,
+                    include_code: includeCode,
+                    limit: limitObj,
+                    force: force
+                )
             } else {
                 let asyncio = Python.import("asyncio")
-                let coro = ingestModule.ingest_xpc(source)
+                let coro = ingestModule.ingest_xpc(
+                    source,
+                    include_code: includeCode,
+                    limit: limitObj,
+                    force: force
+                )
                 asyncio.run(coro)
             }
             reply(true, "Ingest completed successfully for: \(source)")

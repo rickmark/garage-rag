@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/docs.iml" filepath="$PROJECT_DIR$/.idea/modules/docs.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/garage_rag.iml" filepath="$PROJECT_DIR$/.idea/garage_rag.iml" />
     </modules>
   </component>

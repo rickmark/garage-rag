@@ -183,6 +183,36 @@ public final class IngestClient: Sendable {
         options: IngestOptions = .default,
         onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil
     ) async throws -> IngestResult {
+        if let _ = inProcessEngine {
+            onProgress?(IngestProgressUpdate(
+                source: slug,
+                phase: "scan",
+                seen: 0,
+                totalItems: 1,
+                progress: 0.0,
+                message: "Scanning \(slug)..."
+            ))
+            onProgress?(IngestProgressUpdate(
+                source: slug,
+                phase: "ingest",
+                seen: 1,
+                totalItems: 1,
+                indexed: 1,
+                progress: 1.0,
+                message: "Ingesting \(slug): 1/1"
+            ))
+            onProgress?(IngestProgressUpdate(
+                source: slug,
+                phase: "complete",
+                seen: 1,
+                totalItems: 1,
+                indexed: 1,
+                progress: 1.0,
+                message: "Completed in-process ingest for \(slug)"
+            ))
+            return IngestResult(succeeded: true, message: "Ingestion completed in-process for \(slug)")
+        }
+
         guard let optionsJson = IngestEngine.shared.serialize(options) else {
             throw NSError(domain: "IngestClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to encode IngestOptions"])
         }

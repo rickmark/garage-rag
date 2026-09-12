@@ -27,3 +27,5 @@ exclude:
   - Gemfile.lock
   - node_modules
   - vendor
+  - BUILD.bazel
+  - BUILD

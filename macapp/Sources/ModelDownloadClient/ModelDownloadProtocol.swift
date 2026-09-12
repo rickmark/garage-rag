@@ -35,4 +35,7 @@ public protocol ModelDownloadXPCServiceProtocol {
 
     /// Set a custom models directory path.
     func setModelsDirectory(path: String, with reply: @escaping (Bool, Error?) -> Void)
+
+    /// Verify the SHA256 checksum of a model file on disk.
+    func verifyModelFile(filePath: String, expectedSha256: String?, with reply: @escaping (Bool, String?, Error?) -> Void)
 }

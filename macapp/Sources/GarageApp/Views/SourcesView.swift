@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import IngestClient
 
 @MainActor
 struct SourcesView: View {
@@ -42,6 +43,7 @@ struct SourcesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 diskAccessSection
+                ingestProgressSection
                 configuredSourcesSection
                 addOrUpdateSourceSection
                 scheduledMaintenanceSection
@@ -119,6 +121,101 @@ struct SourcesView: View {
                 }
             }
             .padding(8)
+        }
+    }
+
+    // MARK: - Ingest Progress Section
+
+    private var ingestProgressSection: some View {
+        Group {
+            if appState.ingestService.isRunning || appState.ingestService.latestProgress != nil {
+                GroupBox("Live Ingest Progress") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let progress = appState.ingestService.latestProgress {
+                            HStack(alignment: .center, spacing: 8) {
+                                if appState.ingestService.isRunning {
+                                    ProgressView().controlSize(.small)
+                                } else if progress.isError {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.red)
+                                } else {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                }
+
+                                Text(progress.source.isEmpty ? "Ingestion" : progress.source)
+                                    .font(.headline)
+
+                                badgeText(progress.phase.uppercased(), bg: Color.blue.opacity(0.15), fg: .blue)
+
+                                Spacer()
+
+                                Text(progress.formattedPercent)
+                                    .font(.headline.monospaced())
+                                    .foregroundStyle(.primary)
+
+                                if !appState.ingestService.isRunning {
+                                    Button("Dismiss") {
+                                        appState.ingestService.clearMessages()
+                                    }
+                                    .controlSize(.small)
+                                }
+                            }
+
+                            ProgressView(value: progress.progress)
+                                .progressViewStyle(.linear)
+
+                            HStack(spacing: 12) {
+                                Text("\(progress.seen)/\(progress.totalItems) \(progress.itemType)")
+                                    .font(.caption.monospaced())
+                                Text("•")
+                                    .foregroundStyle(.secondary)
+                                Text("\(progress.indexed) indexed")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                                Text("\(progress.skipped) skipped")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if progress.failed > 0 {
+                                    Text("\(progress.failed) failed")
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                }
+                                if progress.chunksWritten > 0 {
+                                    Text("• \(progress.chunksWritten) chunks")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+
+                            if let cur = progress.currentItem, !cur.isEmpty {
+                                HStack(spacing: 4) {
+                                    Text("Current:")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.secondary)
+                                    Text(cur)
+                                        .font(.caption.monospaced())
+                                        .lineLimit(1)
+                                }
+                            }
+
+                            if !progress.message.isEmpty {
+                                Text(progress.message)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if let err = progress.error {
+                                Text("Last Error: \(err)")
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+            }
         }
     }
 
@@ -331,28 +428,78 @@ struct SourcesView: View {
 
             // Ingest Results & Progress Per Source
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Ingest Status:")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                if appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug,
+                   let progress = appState.ingestService.latestProgress {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Ingesting (\(progress.phase)): \(progress.formattedPercent)")
+                            .font(.caption.bold())
+                            .foregroundStyle(.blue)
+                        Spacer()
+                        Text("\(progress.seen) / \(progress.totalItems) \(progress.itemType)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: progress.progress)
+                        .progressViewStyle(.linear)
+                        .tint(.blue)
+
+                    if let cur = progress.currentItem, !cur.isEmpty {
+                        Text("Current: \(cur)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if !progress.message.isEmpty {
+                        Text(progress.message)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let progress = appState.ingestService.progressBySource[source.slug] {
+                    HStack {
+                        Image(systemName: progress.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                            .foregroundStyle(progress.isError ? Color.red : Color.green)
+                            .font(.caption)
+                        Text("Last Ingest (\(progress.phase)): \(progress.indexed) indexed, \(progress.skipped) skipped, \(progress.failed) failed")
+                            .font(.caption)
+                        Spacer()
+                        if progress.totalItems > 0 {
+                            Text("\(progress.seen)/\(progress.totalItems)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if source.expectedElements > 0 {
+                        ProgressView(
+                            value: Double(source.documentCount),
+                            total: Double(max(source.documentCount, source.expectedElements))
+                        )
+                        .progressViewStyle(.linear)
+                    }
+                } else {
+                    HStack {
+                        Text("Ingest Status:")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+
+                        if source.expectedElements > 0 {
+                            let uningested = max(0, source.expectedElements - source.documentCount)
+                            Text("\(source.documentCount) of \(source.expectedElements) documents ingested (\(uningested) uningested)")
+                                .font(.caption)
+                        } else {
+                            Text("\(source.documentCount) document\(source.documentCount == 1 ? "" : "s") indexed in database")
+                                .font(.caption)
+                        }
+                        Spacer()
+                    }
 
                     if source.expectedElements > 0 {
-                        let uningested = max(0, source.expectedElements - source.documentCount)
-                        Text("\(source.documentCount) of \(source.expectedElements) documents ingested (\(uningested) uningested)")
-                            .font(.caption)
-                    } else {
-                        Text("\(source.documentCount) document\(source.documentCount == 1 ? "" : "s") indexed in database")
-                            .font(.caption)
+                        ProgressView(
+                            value: Double(source.documentCount),
+                            total: Double(max(source.documentCount, source.expectedElements))
+                        )
+                        .progressViewStyle(.linear)
                     }
-                    Spacer()
-                }
-
-                if source.expectedElements > 0 {
-                    ProgressView(
-                        value: Double(source.documentCount),
-                        total: Double(max(source.documentCount, source.expectedElements))
-                    )
-                    .progressViewStyle(.linear)
                 }
             }
             .padding(6)
@@ -559,12 +706,17 @@ struct SourcesView: View {
 
     private var ingestOutputSection: some View {
         Group {
-            if !appState.ingest.logs.isEmpty {
+            let hasXPCLogs = !appState.ingestService.logs.isEmpty
+            let hasCLILogs = !appState.ingest.logs.isEmpty
+            if hasXPCLogs || hasCLILogs {
                 GroupBox("Ingest output") {
                     LogTableView(
-                        lines: appState.ingest.logs,
-                        sourceName: "Ingest",
-                        onClear: { appState.ingest.clearLogs() }
+                        lines: hasXPCLogs ? appState.ingestService.logs : appState.ingest.logs,
+                        sourceName: hasXPCLogs ? "Ingest XPC" : "Ingest",
+                        onClear: {
+                            appState.ingestService.clearLogs()
+                            appState.ingest.clearLogs()
+                        }
                     )
                     .frame(minHeight: 200, maxHeight: 350)
                 }
@@ -669,14 +821,23 @@ struct SourcesView: View {
     }
 
     private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
-        var args = ["ingest", "--source", slug]
-        if includeCode { args.append("--include-code") }
-        if force { args.append("--force") }
-        runIngest(args)
+        busy = true
+        Task {
+            let options = IngestOptions(includeCode: includeCode, force: force)
+            _ = await appState.ingestViaXPC(slug: slug, options: options)
+            busy = false
+        }
     }
 
     private func ingestAllSources() {
-        runIngest(["ingest", "--source", "*"])
+        busy = true
+        Task {
+            for src in appState.registeredSources {
+                let options = IngestOptions(includeCode: src.includeCode)
+                _ = await appState.ingestViaXPC(slug: src.slug, options: options)
+            }
+            busy = false
+        }
     }
 
     private func addOrUpdateSource() {
