@@ -2,36 +2,17 @@ import Foundation
 import Security
 
 enum LMStudioTokenStore {
-    private static let service = "dev.rickmark.garage.lmstudio"
+    private static let service = "me.rickmark.garage-rag.lmstudio"
     private static let account = "api-token"
 
-    private static func openLoginKeychain() -> SecKeychain? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidatePaths = [
-            "\(home)/Library/Keychains/login.keychain-db",
-            "\(home)/Library/Keychains/login.keychain",
-        ]
-        for path in candidatePaths {
-            var keychain: SecKeychain?
-            let status = SecKeychainOpen(path, &keychain)
-            if status == errSecSuccess, let keychain {
-                return keychain
-            }
-        }
-        return nil
-    }
-
     static func load() throws -> String? {
-        var query: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
         ]
-        if let keychain = openLoginKeychain() {
-            query[kSecUseKeychain] = keychain
-            query[kSecMatchSearchList] = [keychain] as CFArray
-        }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound {
@@ -44,15 +25,11 @@ enum LMStudioTokenStore {
     }
 
     static func save(_ token: String) throws {
-        var query: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
         ]
-        let keychain = openLoginKeychain()
-        if let keychain {
-            query[kSecUseKeychain] = keychain
-        }
         let attributes: [CFString: Any] = [
             kSecValueData: Data(token.utf8),
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked,
@@ -76,15 +53,11 @@ enum LMStudioTokenStore {
     }
 
     static func remove() throws {
-        var query: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
         ]
-        let keychain = openLoginKeychain()
-        if let keychain {
-            query[kSecUseKeychain] = keychain
-        }
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw LMStudioTokenError.keychainDelete(status)

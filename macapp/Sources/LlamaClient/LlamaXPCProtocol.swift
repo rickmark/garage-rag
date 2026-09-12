@@ -53,6 +53,6 @@ public protocol LlamaXPCServiceProtocol {
 }
 
 public enum LlamaXPCConstants {
-    public static let serviceName = "me.rickmark.garage.llama-xpc"
-    public static let machServiceName = "me.rickmark.garage.llama-xpc"
+    public static let serviceName = "me.rickmark.garage-rag.llama-xpc"
+    public static let machServiceName = "me.rickmark.garage-rag.llama-xpc"
 }

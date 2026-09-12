@@ -313,7 +313,7 @@ pkgbuild = rule(
             doc = "Compression format.",
         ),
         "identifier": attr.string(
-            doc = "Package identifier (e.g. me.rickmark.garage.pkg).",
+            doc = "Package identifier (e.g. me.rickmark.garage-rag.pkg).",
         ),
         "install_location": attr.string(
             default = "/Applications",

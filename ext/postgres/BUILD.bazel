@@ -27,6 +27,7 @@ configure_make(
         "initdb",
         "createdb",
         "pg_config",
+        "pg_dump",
         "psql",
         "postgres",
         "pg_isready",

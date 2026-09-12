@@ -13,7 +13,7 @@ swift_library(
 
 macos_xpc_service(
     name = "ModelDownloadXPCService",
-    bundle_id = "me.rickmark.garage.model-download-xpc",
+    bundle_id = "me.rickmark.garage-rag.model-download-xpc",
     bundle_name = "ModelDownloadXPCService",
     codesignopts = [
         "--options=runtime",

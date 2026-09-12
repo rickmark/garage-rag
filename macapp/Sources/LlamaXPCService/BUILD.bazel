@@ -13,7 +13,7 @@ swift_library(
 
 macos_xpc_service(
     name = "LlamaXPCService",
-    bundle_id = "me.rickmark.garage.llama-xpc",
+    bundle_id = "me.rickmark.garage-rag.llama-xpc",
     bundle_name = "LlamaXPCService",
     codesignopts = [
         "--options=runtime",

@@ -18,7 +18,7 @@ swift_library(
 
 macos_xpc_service(
     name = "GarageIngestXPCService",
-    bundle_id = "me.rickmark.garage.ingest-xpc",
+    bundle_id = "me.rickmark.garage-rag.ingest-xpc",
     bundle_name = "GarageIngestXPCService",
     codesignopts = [
         "--options=runtime",

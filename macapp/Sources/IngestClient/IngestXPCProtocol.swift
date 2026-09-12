@@ -33,6 +33,6 @@ public protocol GarageIngestXPCServiceProtocol {
 }
 
 public enum IngestXPCConstants {
-    public static let serviceName = "me.rickmark.garage.ingest-xpc"
-    public static let machServiceName = "me.rickmark.garage.ingest-xpc"
+    public static let serviceName = "me.rickmark.garage-rag.ingest-xpc"
+    public static let machServiceName = "me.rickmark.garage-rag.ingest-xpc"
 }

@@ -2,7 +2,7 @@ import Foundation
 
 /// High-level Swift client for communicating with `ModelDownloadXPCService`.
 public final class ModelDownloadClient: Sendable {
-    public static let serviceName = "me.rickmark.garage.model-download-xpc"
+    public static let serviceName = "me.rickmark.garage-rag.model-download-xpc"
 
     private let inProcessEngine: ModelDownloaderEngine?
     private let customServiceName: String?

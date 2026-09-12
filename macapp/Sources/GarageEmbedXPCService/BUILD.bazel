@@ -17,7 +17,7 @@ swift_library(
 
 macos_xpc_service(
     name = "GarageEmbedXPCService",
-    bundle_id = "me.rickmark.garage.embed-xpc",
+    bundle_id = "me.rickmark.garage-rag.embed-xpc",
     bundle_name = "GarageEmbedXPCService",
     codesignopts = [
         "--options=runtime",

@@ -972,33 +972,14 @@ private enum KeychainPostgresPassword {
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
-    private static func openLoginKeychain() -> SecKeychain? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidatePaths = [
-            "\(home)/Library/Keychains/login.keychain-db",
-            "\(home)/Library/Keychains/login.keychain",
-        ]
-        for path in candidatePaths {
-            var keychain: SecKeychain?
-            let status = SecKeychainOpen(path, &keychain)
-            if status == errSecSuccess, let keychain {
-                return keychain
-            }
-        }
-        return nil
-    }
-
     static func load() throws -> String? {
-        var query: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
         ]
-        if let keychain = openLoginKeychain() {
-            query[kSecUseKeychain] = keychain
-            query[kSecMatchSearchList] = [keychain] as CFArray
-        }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound {
@@ -1011,16 +992,26 @@ private enum KeychainPostgresPassword {
     }
 
     static func save(_ password: String) throws {
-        var newItem: [CFString: Any] = [
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
+        ]
+        let attributes: [CFString: Any] = [
             kSecValueData: Data(password.utf8),
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked,
         ]
-        let keychain = openLoginKeychain()
-        if let keychain {
-            newItem[kSecUseKeychain] = keychain
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(updateStatus))")
+        }
+
+        var newItem = query
+        for (key, value) in attributes {
+            newItem[key] = value
         }
         let addStatus = SecItemAdd(newItem as CFDictionary, nil)
         guard addStatus == errSecSuccess else {

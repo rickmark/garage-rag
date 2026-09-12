@@ -1,45 +1,16 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
 configure_make(
-    name = "python_3_13",
-    args = [
-        "-e",
-    ],
-    configure_options = [
-        "--enable-framework=$$INSTALLDIR$$/Frameworks",
-        "--without-ensurepip",
-    ],
-    copts = [
-        "-U__DATE__",
-        "-U__TIME__",
-        "-U__TIMESTAMP__",
-    ],
-    env = {
-        "AR": "/usr/bin/ar",
-        "ARFLAGS": "crs",
-        "PYTHONAPPSDIR": "$$INSTALLDIR$$/Applications",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
-    },
-    lib_source = "@python_3_13_framework//:python_source",
-    out_binaries = [
-        "python3",
-        "python3.13",
-        "python3-config",
-        "python3.13-config",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-configure_make(
     name = "python_3_14",
     args = [
         "-e",
     ],
+    configure_in_place = True,
     configure_options = [
         "--enable-framework=$$INSTALLDIR$$/Frameworks",
         "--without-ensurepip",
+        "--with-static-libpython",
+        "--with-universal-archs",
     ],
     copts = [
         "-U__DATE__",
@@ -50,21 +21,15 @@ configure_make(
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/Applications",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@python_3_14_framework//:python_source",
     out_binaries = [
         "python3",
         "python3-config",
     ],
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "python_3_13_framework",
-    actual = ":python_3_13",
+    out_static_libs = [
+        "libpython3.14.a",
+    ],
     visibility = ["//visibility:public"],
 )
 
