@@ -155,10 +155,10 @@ if [ "$kind" = "dir" ]; then
     mkdir -p "$output"
     for input_path in "${inputs[@]}"; do
         if [ -d "$input_path" ]; then
-            cp -pRL "$input_path/." "$output/"
+            cp -pPR "$input_path/." "$output/"
         else
             mkdir -p "$output/$(dirname "$input_path")"
-            cp -pL "$input_path" "$output/$input_path"
+            cp -pP "$input_path" "$output/$input_path"
         fi
     done
     chmod -R u+w "$output" 2>/dev/null || true
