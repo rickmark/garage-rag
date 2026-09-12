@@ -1,3 +1,9 @@
+---
+layout: default
+title: Database Schema Reference
+description: PostgreSQL schema layout, cascade rules, and HNSW vector indexing.
+---
+
 # Schema reference
 
 DDL lives in `../src/data/sql/00*.sql`, which is the source of truth (it holds the CHECK

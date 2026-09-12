@@ -11,17 +11,19 @@ make(
         "pkglibdir": "$$INSTALLDIR/lib",
         "datadir": "$$INSTALLDIR/share",
         "pkgincludedir": "$$INSTALLDIR/include",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
         "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@pgvector//:pgvector_source",
     out_data_dirs = [
         "share",
+        "lib/vector.dylib.dSYM",
     ],
     out_shared_libs = [
         "vector.dylib",
     ],
+    postfix_script = "dsymutil $$INSTALLDIR/lib/vector.dylib -o $$INSTALLDIR/lib/vector.dylib.dSYM",
     visibility = ["//visibility:public"],
     deps = [
         "//ext:postgres",

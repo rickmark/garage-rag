@@ -8,6 +8,7 @@ cmake(
     ],
     cache_entries = {
         "BUILD_SHARED_LIBS": "OFF",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
         "LLAMA_BUILD_APP": "OFF",
         "LLAMA_BUILD_COMMON": "OFF",
@@ -19,8 +20,8 @@ cmake(
     },
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
         "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@llama_cpp_framework//:llama_cpp_source",

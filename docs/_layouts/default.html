@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% if page.title %}{{ page.title }} | Garage Support{% else %}Garage Support & Help Center{% endif %}</title>
+  <meta name="description" content="{% if page.description %}{{ page.description }}{% else %}Official support pages and documentation for Garage — local-first RAG and knowledge indexing for macOS.{% endif %}">
+  <link rel="icon" type="image/png" href="{{ '/assets/favicon.png' | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/style.css' | relative_url }}">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a href="{{ '/' | relative_url }}" class="site-branding">
+        <img src="{{ '/assets/favicon.png' | relative_url }}" alt="Garage Logo" class="site-logo">
+        <span>Garage Support</span>
+      </a>
+      <nav class="site-nav">
+        <a href="{{ '/' | relative_url }}" class="nav-link {% if page.url == '/' or page.url == '/index.html' %}active{% endif %}">Overview</a>
+        <a href="{{ '/support.html' | relative_url }}" class="nav-link {% if page.url contains 'support' %}active{% endif %}">Support Guide</a>
+        <a href="{{ '/troubleshooting.html' | relative_url }}" class="nav-link {% if page.url contains 'troubleshooting' %}active{% endif %}">Troubleshooting</a>
+        <a href="{{ '/faq.html' | relative_url }}" class="nav-link {% if page.url contains 'faq' %}active{% endif %}">FAQ</a>
+        <a href="{{ '/privacy-policy.html' | relative_url }}" class="nav-link {% if page.url contains 'privacy' %}active{% endif %}">Privacy Policy</a>
+        <a href="{{ '/contact.html' | relative_url }}" class="nav-link {% if page.url contains 'contact' %}active{% endif %}">Contact</a>
+        <a href="https://github.com/rickmark/garage" class="nav-link" target="_blank" rel="noopener">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="site-main">
+    <div class="prose">
+      {{ content }}
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div>
+        <strong>Garage</strong> — Local-First Personal RAG & Knowledge Indexing.
+        <br>
+        <small>Designed for macOS with PostgreSQL, pgvector, and Model Context Protocol (MCP).</small>
+      </div>
+      <div class="footer-links">
+        <a href="{{ '/' | relative_url }}">Home</a>
+        <a href="{{ '/support.html' | relative_url }}">Support Guide</a>
+        <a href="{{ '/troubleshooting.html' | relative_url }}">Troubleshooting</a>
+        <a href="{{ '/faq.html' | relative_url }}">FAQ</a>
+        <a href="{{ '/privacy-policy.html' | relative_url }}">Privacy Policy</a>
+        <a href="{{ '/contact.html' | relative_url }}">Contact & Issues</a>
+        <a href="https://github.com/rickmark/garage" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Quick search filter for cards and FAQs if input present
+    document.addEventListener('DOMContentLoaded', function() {
+      const searchInput = document.getElementById('support-search');
+      if (searchInput) {
+        searchInput.addEventListener('input', function(e) {
+          const q = e.target.value.toLowerCase().trim();
+          const items = document.querySelectorAll('.searchable-item, details, .card');
+          items.forEach(function(item) {
+            const text = item.textContent.toLowerCase();
+            if (!q || text.includes(q)) {
+              item.style.display = '';
+            } else {
+              item.style.display = 'none';
+            }
+          });
+        });
+      }
+    });
+  </script>
+</body>
+</html>

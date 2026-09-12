@@ -7,7 +7,7 @@ configure_make(
     ],
     configure_in_place = True,
     configure_options = [
-        "--enable-framework=$$INSTALLDIR$$/Frameworks",
+        "--enable-framework=$$INSTALLDIR$$/",
         "--without-ensurepip",
         "--with-static-libpython",
         "--with-universal-archs",
@@ -20,7 +20,51 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
-        "PYTHONAPPSDIR": "$$INSTALLDIR$$/Applications",
+        "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
+    },
+    lib_source = "@python_3_14_framework//:python_source",
+    out_binaries = [
+        "python3",
+        "python3-config",
+    ],
+    out_data_dirs = [
+        "Python.framework",
+        "bin/python3.dSYM",
+    ],
+    postfix_script = """
+for f in $$INSTALLDIR/bin/*; do
+    if [ -f "$$f" ] && [ -x "$$f" ]; then
+        dsymutil "$$f" -o "$$f.dSYM" || true
+    fi
+done
+find $$INSTALLDIR/Python.framework -type f \\( -perm -111 -o -name "*.dylib" -o -name "*.so" \\) 2>/dev/null | while IFS= read -r f; do
+    if file -b "$$f" | grep -q "Mach-O"; then
+        dsymutil "$$f" -o "$$f.dSYM" || true
+    fi
+done
+""",
+    visibility = ["//visibility:public"],
+)
+
+configure_make(
+    name = "python_3_14_static",
+    args = [
+        "-e",
+    ],
+    configure_in_place = True,
+    configure_options = [
+        "--without-ensurepip",
+        "--with-static-libpython",
+        "--with-universal-archs",
+    ],
+    copts = [
+        "-U__DATE__",
+        "-U__TIME__",
+        "-U__TIMESTAMP__",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+        "ARFLAGS": "crs",
     },
     lib_source = "@python_3_14_framework//:python_source",
     out_binaries = [

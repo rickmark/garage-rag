@@ -49,7 +49,7 @@ done
 
 find "$output/lib" -type f 2>/dev/null | while IFS= read -r library; do
     case "$library" in
-        *.a) continue ;;
+        *.a|*.dSYM/*) continue ;;
     esac
     if file -b "$library" | grep -q "ar archive"; then
         continue
@@ -61,7 +61,7 @@ done
 
 find "$output" -type f | while IFS= read -r binary; do
     case "$binary" in
-        *.a) continue ;;
+        *.a|*.dSYM/*) continue ;;
     esac
     if file -b "$binary" | grep -q "ar archive"; then
         continue

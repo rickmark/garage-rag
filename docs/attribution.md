@@ -1,3 +1,9 @@
+---
+layout: default
+title: Attribution & Identity
+description: Git-aware author detection, trust tiers, and evidence logging in Garage.
+---
+
 # Attribution
 
 How the pipeline decides who wrote something and how much to trust it. Every

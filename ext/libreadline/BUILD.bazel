@@ -9,8 +9,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
         "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@libreadline//:libreadline_source",

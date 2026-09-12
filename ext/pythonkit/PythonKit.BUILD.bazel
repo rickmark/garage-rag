@@ -6,6 +6,6 @@ swift_library(
     module_name = "PythonKit",
     visibility = ["//visibility:public"],
     deps = [
-        "@//ext:python",
+        "@//ext:python_static",
     ],
 )

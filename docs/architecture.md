@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture Guide
+description: Ingestion pipeline, extractors, quality filtering, and concurrency model.
+---
+
 # Architecture
 
 ```

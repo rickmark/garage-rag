@@ -165,7 +165,7 @@ if [ "$kind" = "dir" ]; then
 
     find "$output" -type f | while IFS= read -r file; do
         case "$file" in
-            *.a) continue ;;
+            *.a|*.dSYM/*) continue ;;
         esac
         if [ "$dylibs_only" = "1" ]; then
             filename="$(basename "$file")"

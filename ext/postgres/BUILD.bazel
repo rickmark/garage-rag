@@ -18,8 +18,8 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
-        "CFLAGS": "-arch arm64 -arch x86_64",
-        "CXXFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
         "LDFLAGS": "-arch arm64 -arch x86_64",
     },
     lib_source = "@postgres//:postgres_source",
@@ -37,6 +37,26 @@ configure_make(
         "dropuser",
     ],
     out_data_dirs = [
+        "bin/createdb.dSYM",
+        "bin/dropdb.dSYM",
+        "bin/dropuser.dSYM",
+        "bin/initdb.dSYM",
+        "bin/pg_config.dSYM",
+        "bin/pg_ctl.dSYM",
+        "bin/pg_dump.dSYM",
+        "bin/pg_isready.dSYM",
+        "bin/pg_restore.dSYM",
+        "bin/postgres.dSYM",
+        "bin/psql.dSYM",
+        "lib/dict_snowball.dylib.dSYM",
+        "lib/libecpg.dylib.dSYM",
+        "lib/libpgtypes.3.dylib.dSYM",
+        "lib/libpgtypes.dylib.dSYM",
+        "lib/libpq.5.dylib.dSYM",
+        "lib/libpq.dylib.dSYM",
+        "lib/pgoutput.dylib.dSYM",
+        "lib/pg_trgm.dylib.dSYM",
+        "lib/plpgsql.dylib.dSYM",
         "share",
     ],
     out_data_files = [
@@ -60,6 +80,18 @@ configure_make(
         "libpgtypes.a",
         "libpgcommon.a",
     ],
+    postfix_script = """
+for f in $$INSTALLDIR/bin/*; do
+    if [ -f "$$f" ] && [ -x "$$f" ]; then
+        dsymutil "$$f" -o "$$f.dSYM" || true
+    fi
+done
+for f in $$INSTALLDIR/lib/*.dylib; do
+    if [ -f "$$f" ]; then
+        dsymutil "$$f" -o "$$f.dSYM" || true
+    fi
+done
+""",
     targets = [
         "world-bin",
         "install-world-bin",

@@ -1,0 +1,29 @@
+title: Garage Support & Documentation
+description: Official support pages, troubleshooting guides, FAQ, and privacy documentation for Garage — the local-first personal RAG and knowledge indexing system.
+url: "https://rickmark.github.io"
+baseurl: "/garage"
+
+# Build settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# Navigation
+header_pages:
+  - index.md
+  - support.md
+  - troubleshooting.md
+  - faq.md
+  - privacy-policy.md
+  - contact.md
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Privacy and macOS Permissions
+description: Multi-tier egress guards and macOS TCC security model.
+---
+
 # Privacy and macOS permissions
 
 ## The guarantee
