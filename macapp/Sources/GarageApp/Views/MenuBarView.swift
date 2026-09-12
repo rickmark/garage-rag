@@ -38,10 +38,42 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Ingest now") {
-                Task { await appState.runIngest(["ingest", "--source", "*"]) }
+            if appState.ingestService.isRunning, let progress = appState.ingestService.latestProgress {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(progress.source.isEmpty ? "Ingesting…" : "Ingesting \(progress.source)")
+                            .font(.system(size: 11, weight: .semibold))
+                        Spacer()
+                        Text(progress.formattedPercent)
+                            .font(.system(size: 11, weight: .bold).monospaced())
+                            .foregroundStyle(.blue)
+                    }
+                    if let cur = progress.currentItem, !cur.isEmpty {
+                        Text(cur)
+                            .font(.system(size: 10).monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(6)
+                .background(Color.blue.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Button(appState.ingestService.isCancelling ? "Cancelling ingest…" : "Cancel ingestion") {
+                    Task { await appState.cancelIngest() }
+                }
+                .disabled(appState.ingestService.isCancelling)
+            } else if appState.isScanning {
+                Button("Cancel scan") {
+                    appState.cancelScan()
+                }
+            } else {
+                Button("Ingest now") {
+                    Task { await appState.ingestViaXPC(slug: "*") }
+                }
+                .disabled(appState.postgres.status != .running || appState.isIngesting || appState.isScanning)
             }
-            .disabled(appState.postgres.status != .running || appState.ingest.isRunning)
 
             Divider()
 

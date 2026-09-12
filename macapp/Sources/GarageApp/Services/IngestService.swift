@@ -6,16 +6,19 @@ import IngestClient
 @MainActor
 public final class IngestService: ObservableObject {
     @Published public private(set) var isRunning: Bool = false
+    @Published public private(set) var isCancelling: Bool = false
     @Published public private(set) var currentSource: String? = nil
     @Published public private(set) var latestProgress: IngestProgressUpdate? = nil
     @Published public private(set) var progressBySource: [String: IngestProgressUpdate] = [:]
     @Published public private(set) var lastError: String? = nil
     @Published public private(set) var lastSuccess: String? = nil
     @Published public private(set) var logs: [LogLine] = []
+    @Published public private(set) var startedAt: Date? = nil
 
     public let client: IngestClient
     private let commandLabel: String = "Ingest XPC"
     private let maxLogLines = 4000
+    private var activeActivity: NSObjectProtocol? = nil
 
     public init(client: IngestClient = IngestClient()) {
         self.client = client
@@ -40,6 +43,9 @@ public final class IngestService: ObservableObject {
     public func handleProgress(_ progress: IngestProgressUpdate) {
         self.latestProgress = progress
         self.progressBySource[progress.source] = progress
+        if self.currentSource == nil || self.currentSource == "*" {
+            self.currentSource = progress.source
+        }
 
         if !progress.message.isEmpty {
             let stream: LogLine.Stream = progress.isError ? .stderr : .stdout
@@ -49,6 +55,29 @@ public final class IngestService: ObservableObject {
                 source: commandLabel
             )
             appendLog(line)
+        }
+    }
+
+    /// Cancels any active ingestion run.
+    @discardableResult
+    public func cancel() async -> Bool {
+        guard isRunning else { return false }
+        isCancelling = true
+        let line = LogLine(
+            stream: .stderr,
+            text: "Cancelling ingestion for '\(currentSource ?? "source")'...",
+            source: commandLabel
+        )
+        appendLog(line)
+        do {
+            let success = try await client.cancelIngest()
+            return success
+        } catch {
+            let errorMsg = "Failed to send cancel signal: \(error.localizedDescription)"
+            lastError = errorMsg
+            let errLine = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
+            appendLog(errLine)
+            return false
         }
     }
 
@@ -65,8 +94,15 @@ public final class IngestService: ObservableObject {
 
         isRunning = true
         currentSource = slug
+        startedAt = Date()
         lastError = nil
         lastSuccess = nil
+
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
+            reason: "Garage document ingestion for \(slug)"
+        )
+        self.activeActivity = activity
 
         let startLine = LogLine(
             stream: .stdout,
@@ -75,15 +111,23 @@ public final class IngestService: ObservableObject {
         )
         appendLog(startLine)
 
+        defer {
+            isRunning = false
+            isCancelling = false
+            currentSource = nil
+            startedAt = nil
+            if let act = self.activeActivity {
+                ProcessInfo.processInfo.endActivity(act)
+                self.activeActivity = nil
+            }
+        }
+
         do {
             let result = try await client.ingest(slug: slug, options: options) { [weak self] progress in
                 Task { @MainActor in
                     self?.handleProgress(progress)
                 }
             }
-
-            isRunning = false
-            currentSource = nil
 
             if result.succeeded {
                 let successMsg = result.message ?? "Ingestion finished successfully for \(slug)"
@@ -99,8 +143,6 @@ public final class IngestService: ObservableObject {
 
             return result
         } catch {
-            isRunning = false
-            currentSource = nil
             let errorMsg = "Ingestion error for \(slug): \(error.localizedDescription)"
             lastError = errorMsg
             let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)

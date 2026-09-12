@@ -206,54 +206,107 @@ struct StatusView: View {
                     .foregroundStyle(.green)
                 Text("Ingestion Status")
                     .font(.subheadline.bold())
-                if appState.ingest.isRunning {
+                if appState.isIngesting {
                     ProgressView().controlSize(.small)
                 }
             }
 
             let stats = appState.corpusStats
-            if appState.ingest.isRunning {
+            if appState.ingestService.isRunning, let progress = appState.ingestService.latestProgress {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Ingesting…")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(.blue)
+                    Spacer()
+                    Text(progress.formattedPercent)
+                        .font(.system(size: 16, weight: .bold).monospaced())
+                        .foregroundStyle(.blue)
+                }
+
+                ProgressView(value: progress.progress)
+                    .progressViewStyle(.linear)
+
+                if let cur = progress.currentItem, !cur.isEmpty {
+                    Text(cur)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                Text(progress.message.isEmpty ? "\(progress.seen) of \(progress.totalItems) \(progress.itemType) (\(progress.indexed) indexed, \(progress.skipped) skipped)" : progress.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else if appState.ingest.isRunning {
                 Text("Ingesting…")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.blue)
+
+                ProgressView(value: stats.ingestionProgressFraction)
+                    .progressViewStyle(.linear)
+
+                Text("Running CLI ingest in background…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 Text("\(stats.uningestedElements)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-            }
 
-            ProgressView(value: stats.ingestionProgressFraction)
-                .progressViewStyle(.linear)
+                ProgressView(value: stats.ingestionProgressFraction)
+                    .progressViewStyle(.linear)
 
-            if stats.uningestedElements > 0 {
-                let total = max(stats.totalExpectedElements, stats.totalSeenFiles)
-                if total > 0 {
-                    Text("\(stats.uningestedElements) not ingested (\(stats.documentsCount) of \(total) files indexed)")
+                if stats.uningestedElements > 0 {
+                    let total = max(stats.totalExpectedElements, stats.totalSeenFiles)
+                    if total > 0 {
+                        Text("\(stats.uningestedElements) not ingested (\(stats.documentsCount) of \(total) files indexed)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("\(stats.uningestedElements) element(s) not ingested")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if stats.documentsCount > 0 {
+                    Text("All \(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("\(stats.uningestedElements) element(s) not ingested")
+                    Text("No documents indexed yet")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            } else if stats.documentsCount > 0 {
-                Text("All \(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No documents indexed yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Button {
-                selection = .sources
-            } label: {
-                Text("View Ingest")
+            HStack {
+                Button {
+                    selection = .sources
+                } label: {
+                    Text("View Ingest")
+                        .font(.caption)
+                }
+                .buttonStyle(.link)
+
+                Spacer()
+
+                if appState.isIngesting {
+                    Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
+                        Task { await appState.cancelIngest() }
+                    }
                     .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(appState.ingestService.isCancelling)
+                } else if appState.isScanning {
+                    Button("Cancel Scan") {
+                        appState.cancelScan()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
             }
-            .buttonStyle(.link)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -656,11 +709,29 @@ struct StatusView: View {
                         _ = appState.testVolumeAccess()
                     }
                 }
+            } else if appState.ingestService.isRunning {
+                severity = .info
+                let src = appState.ingestService.currentSource ?? "All Sources"
+                let pct = appState.ingestService.latestProgress?.formattedPercent ?? ""
+                headline = "Ingesting \(src)\(pct.isEmpty ? "" : " (\(pct))")"
+                details = appState.ingestService.latestProgress?.message ?? "Currently ingesting files into personal archive."
+                quickAction = PageStatusItem.QuickAction(label: appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
+                    Task { await appState.cancelIngest() }
+                }
+            } else if appState.isScanning {
+                severity = .info
+                headline = "Scanning Sources"
+                details = "Scanning configured sources to calculate element counts."
+                quickAction = PageStatusItem.QuickAction(label: "Cancel Scan") {
+                    appState.cancelScan()
+                }
             } else if appState.ingest.isRunning {
                 severity = .info
                 headline = "Ingestion in Progress"
                 details = "Currently ingesting files into personal archive."
-                quickAction = nil
+                quickAction = PageStatusItem.QuickAction(label: "Cancel Ingest") {
+                    Task { await appState.cancelIngest() }
+                }
             } else if appState.registeredSources.isEmpty {
                 severity = .warning
                 headline = "No Sources Configured"

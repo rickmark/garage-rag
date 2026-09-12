@@ -18,6 +18,8 @@ final class GarageCLIService: ObservableObject {
     private let postgres: PostgresService
     private let commandLabel: String
     private let maxLogLines = 4000
+    private var currentRunner: ProcessRunner?
+    private var currentProcess: Process?
 
     init(postgres: PostgresService, commandLabel: String = "garage CLI") {
         self.postgres = postgres
@@ -33,6 +35,18 @@ final class GarageCLIService: ObservableObject {
 
     func clearLogs() {
         logs.removeAll()
+    }
+
+    func cancel() {
+        guard isRunning else { return }
+        let line = LogLine(
+            stream: .stderr,
+            text: "Cancelling \(commandLabel)...",
+            source: commandLabel
+        )
+        appendLog(line)
+        currentRunner?.terminate()
+        currentProcess?.terminate()
     }
 
     var cliAvailable: Bool {
@@ -64,10 +78,16 @@ final class GarageCLIService: ObservableObject {
         }
 
         isRunning = true
-        defer { isRunning = false }
+        let runner = ProcessRunner()
+        self.currentRunner = runner
+
+        defer {
+            self.currentRunner = nil
+            self.currentProcess = nil
+            self.isRunning = false
+        }
 
         var collected: [LogLine] = []
-        let runner = ProcessRunner()
         let process: Process
         do {
             process = try runner.run(
@@ -80,6 +100,7 @@ final class GarageCLIService: ObservableObject {
                 self?.appendLog(line)
                 collected.append(line)
             }
+            self.currentProcess = process
         } catch {
             let line = LogLine(
                 stream: .stderr,

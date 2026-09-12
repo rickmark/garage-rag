@@ -28,6 +28,9 @@ public protocol GarageIngestXPCServiceProtocol {
     /// Revoke all active security-scoped volume and source access.
     func revokeAccess(with reply: @escaping (Bool) -> Void)
 
+    /// Cancel any active ingestion in progress.
+    func cancelIngest(with reply: @escaping (Bool) -> Void)
+
     /// Run full volume and source access tests inside the sandboxed XPC process.
     func testVolumeAccess(requestJson: String, with reply: @escaping (String?, Error?) -> Void)
 }

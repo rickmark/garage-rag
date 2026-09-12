@@ -141,6 +141,29 @@ public final class IngestClient: Sendable {
         }
     }
 
+    public func cancelIngest() async throws -> Bool {
+        if let engine = inProcessEngine {
+            engine.cancel()
+            return true
+        }
+
+        let connection = makeConnection()
+        defer { connection.invalidate() }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                continuation.resume(throwing: error)
+            }) as? GarageIngestXPCServiceProtocol else {
+                continuation.resume(throwing: NSError(domain: "IngestClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
+                return
+            }
+
+            proxy.cancelIngest { success in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+
     public func testVolumeAccess(request: VolumeAccessTestRequest) async throws -> IngestVolumeAccessTestResult {
         if let engine = inProcessEngine {
             return engine.testVolumeAccess(request: request)

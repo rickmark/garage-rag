@@ -530,11 +530,32 @@ final class AppState: ObservableObject {
         }
     }
 
+    var isIngesting: Bool {
+        ingestService.isRunning || ingest.isRunning
+    }
+
+    var isScanning: Bool {
+        garage.isRunning
+    }
+
+    func cancelScan() {
+        garage.cancel()
+    }
+
+    func cancelIngest() async {
+        if ingestService.isRunning {
+            _ = await ingestService.cancel()
+        }
+        if ingest.isRunning {
+            ingest.cancel()
+        }
+    }
+
     private func runScheduledMaintenance() async {
-        guard postgres.status == .running, !ingest.isRunning, !backfill.isRunning else { return }
+        guard postgres.status == .running, !ingestService.isRunning, !ingest.isRunning, !backfill.isRunning else { return }
 
         _ = await scanSources()
-        let ingestSucceeded = await runIngest(["ingest", "--source", "*"])
+        let ingestSucceeded = await ingestViaXPC(slug: "*")
         let backfillSucceeded = await runBackfill(["backfill"])
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded

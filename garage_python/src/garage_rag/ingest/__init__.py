@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 from garage_rag.db.models import Source
 
 _global_c_callback: Any = None
+_global_cancel_requested: bool = False
 
 
 @dataclass
@@ -32,6 +33,23 @@ class IngestProgress:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def cancel_ingest() -> None:
+    """Request cancellation of any active ingest operation."""
+    global _global_cancel_requested
+    _global_cancel_requested = True
+
+
+def is_ingest_cancelled() -> bool:
+    """Check if cancellation has been requested."""
+    return _global_cancel_requested
+
+
+def reset_ingest_cancel() -> None:
+    """Reset the cancellation flag."""
+    global _global_cancel_requested
+    _global_cancel_requested = False
 
 
 def set_c_progress_callback(callback_address: int) -> None:
@@ -65,6 +83,8 @@ async def ingest_xpc(
     from garage_rag.db.engine import get_session_factory
     from garage_rag.ingest.pipeline import ingest_source
 
+    reset_ingest_cancel()
+
     factory = session_factory or get_session_factory()
     if source == "*":
         with factory() as session:
@@ -84,6 +104,9 @@ async def ingest_xpc(
             progress_callback(prog)
 
     for current_source in sources:
+        if is_ingest_cancelled():
+            break
+
         start_prog = IngestProgress(
             source=current_source,
             phase="scan",
@@ -120,6 +143,8 @@ async def ingest_xpc(
             elif phase == "complete":
                 prog_val = 1.0
                 msg = f"Ingested {current_source}: {indexed} indexed, {skipped} skipped, {failed} failed"
+            elif phase == "cancelled":
+                msg = f"Ingestion cancelled for {current_source}"
             elif current_item:
                 msg = f"Ingesting {current_source} ({seen}/{total_items}): {current_item}"
             else:
@@ -163,6 +188,7 @@ async def ingest_xpc(
                 limit=limit,
                 force=force,
                 progress=_handle_pipeline_progress,
+                is_cancelled=is_ingest_cancelled,
             )
         except Exception as exc:
             err_prog = IngestProgress(
@@ -174,6 +200,24 @@ async def ingest_xpc(
             )
             await _emit_progress(err_prog)
             raise
+
+        if is_ingest_cancelled():
+            cancel_prog = IngestProgress(
+                source=current_source,
+                phase="cancelled",
+                seen=counters.seen,
+                total_items=counters.total_items,
+                indexed=counters.indexed,
+                skipped=counters.skipped,
+                failed=counters.failed,
+                placeholders=counters.placeholders,
+                chunks_written=counters.chunks_written,
+                item_type=counters.item_type,
+                progress=min(1.0, float(counters.seen) / float(counters.total_items)) if counters.total_items else 0.0,
+                message=f"Ingestion cancelled for {current_source}",
+            )
+            await _emit_progress(cancel_prog)
+            break
 
         final_prog = IngestProgress(
             source=current_source,

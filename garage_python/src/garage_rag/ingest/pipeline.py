@@ -328,6 +328,7 @@ def ingest_source(
     limit: int | None = None,
     force: bool = False,
     progress=None,
+    is_cancelled=None,
 ) -> tuple[IngestCounters, WalkStats, MaterializationBudget]:
     """Walk and index one source, recording coverage for reconciliation."""
     counters = IngestCounters()
@@ -391,6 +392,11 @@ def ingest_source(
             exclude_prefixes=prefixes,
             stats=walk_stats,
         ):
+            if is_cancelled is not None and is_cancelled():
+                log.info("Ingest cancelled by user for source %s", source_slug)
+                _call_progress(phase="cancelled", current_item=candidate.path.name)
+                break
+
             counters.seen += 1
             # One transaction per document: a failure isolates to its own file.
             with session_factory() as session:

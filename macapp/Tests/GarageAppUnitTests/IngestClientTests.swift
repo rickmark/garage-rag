@@ -13,9 +13,13 @@ final class IngestClientTests: XCTestCase {
             indexed: 45,
             skipped: 5,
             failed: 0,
+            placeholders: 2,
+            chunksWritten: 90,
+            itemType: "documents",
             progress: 0.5,
             message: "Halfway done",
-            error: nil
+            error: nil,
+            currentItem: "report.docx"
         )
 
         let engine = IngestEngine.shared
@@ -30,9 +34,16 @@ final class IngestClientTests: XCTestCase {
         XCTAssertEqual(decoded.seen, 50)
         XCTAssertEqual(decoded.totalItems, 100)
         XCTAssertEqual(decoded.indexed, 45)
+        XCTAssertEqual(decoded.placeholders, 2)
+        XCTAssertEqual(decoded.chunksWritten, 90)
+        XCTAssertEqual(decoded.itemType, "documents")
         XCTAssertEqual(decoded.progress, 0.5)
         XCTAssertEqual(decoded.message, "Halfway done")
         XCTAssertNil(decoded.error)
+        XCTAssertEqual(decoded.currentItem, "report.docx")
+        XCTAssertEqual(decoded.formattedPercent, "50%")
+        XCTAssertFalse(decoded.isComplete)
+        XCTAssertFalse(decoded.isError)
     }
 
     func testIngestOptionsModel() throws {
@@ -139,5 +150,45 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(result.sourcePathResults[0].isAccessible)
         XCTAssertEqual(result.sourcePathResults[0].slug, "temp")
         XCTAssertTrue(result.message.contains("XPC process"))
+    }
+
+    @MainActor
+    func testIngestServiceProgressHandling() async throws {
+        let engine = IngestEngine()
+        let client = IngestClient(inProcessEngine: engine)
+        let service = IngestService(client: client)
+
+        XCTAssertFalse(service.isRunning)
+        XCTAssertNil(service.currentSource)
+
+        let result = await service.ingest(slug: "my-docs")
+        XCTAssertTrue(result.succeeded)
+        XCTAssertFalse(service.isRunning)
+        XCTAssertNil(service.currentSource)
+        XCTAssertNotNil(service.latestProgress)
+        XCTAssertEqual(service.latestProgress?.source, "my-docs")
+        XCTAssertEqual(service.latestProgress?.phase, "complete")
+        XCTAssertFalse(service.logs.isEmpty)
+    }
+
+    @MainActor
+    func testIngestServiceCancellation() async throws {
+        let engine = IngestEngine()
+        let client = IngestClient(inProcessEngine: engine)
+        let service = IngestService(client: client)
+
+        XCTAssertFalse(service.isRunning)
+        XCTAssertFalse(service.isCancelling)
+
+        // Cancel when not running returns false safely
+        let cancelNotRunning = await service.cancel()
+        XCTAssertFalse(cancelNotRunning)
+
+        let cancelClientResult = try await client.cancelIngest()
+        XCTAssertTrue(cancelClientResult)
+        XCTAssertTrue(engine.isCancelled)
+
+        engine.resetCancel()
+        XCTAssertFalse(engine.isCancelled)
     }
 }

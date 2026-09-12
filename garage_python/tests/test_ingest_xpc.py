@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 import pytest
 
-from garage_rag.ingest import IngestProgress, ingest_xpc, run_ingest_xpc
+from garage_rag.ingest import IngestProgress, cancel_ingest, ingest_xpc, is_ingest_cancelled, run_ingest_xpc
 from garage_rag.ingest.pipeline import IngestCounters, MaterializationBudget, WalkStats
 
 
@@ -118,3 +118,46 @@ def test_run_ingest_xpc_sync():
     assert len(sync_events) >= 1
     assert sync_events[-1].phase == "complete"
     assert sync_events[-1].source == "sync-source"
+
+
+def test_ingest_xpc_cancellation():
+    async def _run():
+        mock_counters = IngestCounters()
+        mock_counters.seen = 5
+        mock_counters.total_items = 10
+        mock_counters.indexed = 5
+
+        mock_walk_stats = WalkStats()
+        mock_budget = MaterializationBudget()
+
+        progress_events: list[IngestProgress] = []
+
+        async def async_progress_handler(prog: IngestProgress):
+            progress_events.append(prog)
+            if prog.phase == "ingest":
+                cancel_ingest()
+
+        def fake_ingest_source(factory, slug, **kwargs):
+            progress_fn = kwargs.get("progress")
+            is_cancelled = kwargs.get("is_cancelled")
+            if progress_fn:
+                progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
+                progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
+            if is_cancelled and is_cancelled():
+                return mock_counters, mock_walk_stats, mock_budget
+            return mock_counters, mock_walk_stats, mock_budget
+
+        with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
+            mock_factory = MagicMock()
+            await ingest_xpc(
+                source="cancel-source",
+                progress_callback=async_progress_handler,
+                session_factory=mock_factory,
+            )
+
+        assert is_ingest_cancelled()
+        assert len(progress_events) >= 2
+        assert progress_events[-1].phase == "cancelled"
+        assert progress_events[-1].source == "cancel-source"
+
+    asyncio.run(_run())

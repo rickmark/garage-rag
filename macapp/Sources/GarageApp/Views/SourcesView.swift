@@ -128,6 +128,22 @@ struct SourcesView: View {
 
     private var ingestProgressSection: some View {
         Group {
+            if appState.isScanning {
+                GroupBox("Scan in Progress") {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Scanning sources to update item counts and expected elements…")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Cancel Scan") {
+                            appState.cancelScan()
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(8)
+                }
+            }
+
             if appState.ingestService.isRunning || appState.ingestService.latestProgress != nil {
                 GroupBox("Live Ingest Progress") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -135,6 +151,9 @@ struct SourcesView: View {
                             HStack(alignment: .center, spacing: 8) {
                                 if appState.ingestService.isRunning {
                                     ProgressView().controlSize(.small)
+                                } else if progress.isCancelled {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.orange)
                                 } else if progress.isError {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundStyle(.red)
@@ -154,7 +173,13 @@ struct SourcesView: View {
                                     .font(.headline.monospaced())
                                     .foregroundStyle(.primary)
 
-                                if !appState.ingestService.isRunning {
+                                if appState.ingestService.isRunning {
+                                    Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
+                                        Task { await appState.cancelIngest() }
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(appState.ingestService.isCancelling)
+                                } else {
                                     Button("Dismiss") {
                                         appState.ingestService.clearMessages()
                                     }
@@ -165,32 +190,27 @@ struct SourcesView: View {
                             ProgressView(value: progress.progress)
                                 .progressViewStyle(.linear)
 
-                            HStack(spacing: 12) {
-                                Text("\(progress.seen)/\(progress.totalItems) \(progress.itemType)")
-                                    .font(.caption.monospaced())
-                                Text("•")
-                                    .foregroundStyle(.secondary)
-                                Text("\(progress.indexed) indexed")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                                Text("\(progress.skipped) skipped")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                badgeText("\(progress.seen)/\(progress.totalItems) \(progress.itemType)", bg: Color.primary.opacity(0.06), fg: .primary)
+                                badgeText("\(progress.indexed) indexed", bg: Color.green.opacity(0.15), fg: .green)
+                                badgeText("\(progress.skipped) skipped", bg: Color.gray.opacity(0.15), fg: .secondary)
                                 if progress.failed > 0 {
-                                    Text("\(progress.failed) failed")
-                                        .font(.caption)
-                                        .foregroundStyle(.red)
+                                    badgeText("\(progress.failed) failed", bg: Color.red.opacity(0.15), fg: .red)
+                                }
+                                if progress.placeholders > 0 {
+                                    badgeText("\(progress.placeholders) placeholders", bg: Color.orange.opacity(0.15), fg: .orange)
                                 }
                                 if progress.chunksWritten > 0 {
-                                    Text("• \(progress.chunksWritten) chunks")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    badgeText("\(progress.chunksWritten) chunks", bg: Color.purple.opacity(0.15), fg: .purple)
                                 }
                                 Spacer()
                             }
 
                             if let cur = progress.currentItem, !cur.isEmpty {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "doc.text")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                     Text("Current:")
                                         .font(.caption.bold())
                                         .foregroundStyle(.secondary)
@@ -232,15 +252,28 @@ struct SourcesView: View {
                     }
                     Spacer()
 
-                    Button("Scan All Sources") {
-                        scanAllSources()
+                    if appState.isScanning {
+                        Button("Cancel Scan") {
+                            appState.cancelScan()
+                        }
+                    } else {
+                        Button("Scan All Sources") {
+                            scanAllSources()
+                        }
+                        .disabled(appState.registeredSources.isEmpty || notReady)
                     }
-                    .disabled(appState.registeredSources.isEmpty || notReady)
 
-                    Button("Ingest All Sources") {
-                        ingestAllSources()
+                    if appState.isIngesting {
+                        Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
+                            Task { await appState.cancelIngest() }
+                        }
+                        .disabled(appState.ingestService.isCancelling)
+                    } else {
+                        Button("Ingest All Sources") {
+                            ingestAllSources()
+                        }
+                        .disabled(appState.registeredSources.isEmpty || notReady)
                     }
-                    .disabled(appState.registeredSources.isEmpty || notReady)
 
                     Button("Sync Config → DB") {
                         run(["sync"])
@@ -290,6 +323,7 @@ struct SourcesView: View {
         let accessResult = appState.volumeAccess.lastTestResult?.sourcePathResults.first {
             $0.slug == source.slug || $0.rawPath == source.root
         }
+        let isCurrentIngest = appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug
 
         return VStack(alignment: .leading, spacing: 8) {
             // Header Row: Slug, Badges, and Per-Source Ingest/Scan Actions
@@ -298,6 +332,10 @@ struct SourcesView: View {
                     .font(.headline)
 
                 originBadge(for: source.origin)
+
+                if isCurrentIngest {
+                    badgeText("INGESTING", bg: Color.blue.opacity(0.15), fg: .blue)
+                }
 
                 if source.expectedElements > 0 {
                     if source.documentCount >= source.expectedElements {
@@ -335,12 +373,22 @@ struct SourcesView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    Button("Ingest") {
-                        ingestSource(slug: source.slug, includeCode: source.includeCode)
+                    if isCurrentIngest {
+                        Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel") {
+                            Task { await appState.cancelIngest() }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .disabled(appState.ingestService.isCancelling)
+                    } else {
+                        Button("Ingest") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode)
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(notReady)
                     }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(notReady)
 
                     Button("Scan") {
                         scanSource(slug: source.slug, includeCode: source.includeCode)
@@ -727,7 +775,7 @@ struct SourcesView: View {
     // MARK: - Helpers
 
     private var notReady: Bool {
-        appState.postgres.status != .running || busy
+        appState.postgres.status != .running || busy || appState.isIngesting || appState.isScanning
     }
 
     private var volumeStatusIcon: String {
@@ -832,10 +880,7 @@ struct SourcesView: View {
     private func ingestAllSources() {
         busy = true
         Task {
-            for src in appState.registeredSources {
-                let options = IngestOptions(includeCode: src.includeCode)
-                _ = await appState.ingestViaXPC(slug: src.slug, options: options)
-            }
+            _ = await appState.ingestViaXPC(slug: "*")
             busy = false
         }
     }

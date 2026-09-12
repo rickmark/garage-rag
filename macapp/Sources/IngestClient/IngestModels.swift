@@ -88,6 +88,10 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
         phase == "complete"
     }
 
+    public var isCancelled: Bool {
+        phase == "cancelled"
+    }
+
     public var isError: Bool {
         phase == "error" || error != nil
     }

@@ -44,6 +44,23 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         reply(true)
     }
 
+    func cancelIngest(with reply: @escaping (Bool) -> Void) {
+        #if canImport(PythonKit)
+        do {
+            let ingestModule = try Python.attemptImport("garage_rag.ingest")
+            if ingestModule.cancel_ingest != Python.None {
+                ingestModule.cancel_ingest()
+            }
+            reply(true)
+        } catch {
+            reply(false)
+        }
+        #else
+        engine.cancel()
+        reply(true)
+        #endif
+    }
+
     func testVolumeAccess(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
         do {
             let request = try engine.deserialize(VolumeAccessTestRequest.self, from: requestJson)
@@ -59,6 +76,11 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         parent.initializePythonIfNeeded()
         let options = (try? engine.deserialize(IngestOptions.self, from: optionsJson)) ?? .default
 
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
+            reason: "Garage document ingestion for \(slug)"
+        )
+
         #if canImport(PythonKit)
         do {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
@@ -71,6 +93,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             defer {
                 ingestModule.set_c_progress_callback(0)
                 GarageIngestXPCServiceDelegate.sharedActiveConnection = nil
+                ProcessInfo.processInfo.endActivity(activity)
             }
 
             if ingestModule.run_ingest_xpc != Python.None {
@@ -98,12 +121,18 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             reply(false, "Failed to run ingestion: \(error)")
         }
         #else
+        ProcessInfo.processInfo.endActivity(activity)
         reply(true, "Ingest completed (stub)")
         #endif
     }
 
     func ingestPath(_ source: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         parent.initializePythonIfNeeded()
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
+            reason: "Garage document ingestion for \(source)"
+        )
+
         #if canImport(PythonKit)
         do {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
@@ -116,6 +145,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             defer {
                 ingestModule.set_c_progress_callback(0)
                 GarageIngestXPCServiceDelegate.sharedActiveConnection = nil
+                ProcessInfo.processInfo.endActivity(activity)
             }
 
             let includeCode = options["include_code"] == "true" || options["includeCode"] == "true"
@@ -145,6 +175,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             reply(false, "Failed to run ingest: \(error)")
         }
         #else
+        ProcessInfo.processInfo.endActivity(activity)
         reply(true, "Ingest completed (stub)")
         #endif
     }
