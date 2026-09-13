@@ -215,6 +215,39 @@ public struct XPCDyldDiagnostics: Sendable {
         return (selectedPath, logs)
     }
 
+    /// Diagnoses candidate Postgres libpq library paths using dynamic linker `dlopen` dry run and `dlerror`.
+    public static func diagnosePostgresLibraryLoading(candidatePaths: [String]) -> (selectedPath: String?, diagnostics: [String]) {
+        var logs: [String] = []
+        var selectedPath: String? = nil
+
+        for path in candidatePaths {
+            guard FileManager.default.fileExists(atPath: path) else {
+                logs.append("Postgres candidate '\(path)': NOT FOUND on disk")
+                continue
+            }
+
+            // Attempt dry-run dlopen to inspect dyld link status
+            let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)
+            if let handle = handle {
+                logs.append("Postgres candidate '\(path)': OK (dlopen succeeded)")
+                if selectedPath == nil {
+                    selectedPath = path
+                }
+                dlclose(handle)
+            } else {
+                let errStr: String
+                if let errCStr = dlerror() {
+                    errStr = String(cString: errCStr)
+                } else {
+                    errStr = "Unknown dlopen failure"
+                }
+                logs.append("Postgres candidate '\(path)': FAILED dyld load -> \(errStr)")
+            }
+        }
+
+        return (selectedPath, logs)
+    }
+
     // MARK: - Private Helpers
 
     private static func locateServiceBundle(bundleId: String, executableName: String) -> (bundleURL: URL?, executableURL: URL?) {
@@ -340,6 +373,7 @@ public struct XPCDyldDiagnostics: Sendable {
         var items: [String] = []
         let trackedKeys = [
             "PYTHON_LIBRARY",
+            "GARAGE_LIBPQ_PATH",
             "DYLD_LIBRARY_PATH",
             "DYLD_FRAMEWORK_PATH",
             "DYLD_FALLBACK_LIBRARY_PATH",

@@ -48,6 +48,16 @@ py_test(
 )
 
 py_test(
+    name = "test_libpq",
+    srcs = ["test_libpq.py"],
+    deps = [
+        "//garage_python/src/garage_rag",
+        "@pypi//psycopg",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_lmstudio",
     srcs = ["test_lmstudio.py"],
     deps = [

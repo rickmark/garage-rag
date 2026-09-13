@@ -5,4 +5,6 @@ reference, and communication distinctions, and exposes the corpus to Claude
 through an MCP server.
 """
 
+from garage_rag import _libpq  # noqa: F401
+
 __version__ = "0.1.0"

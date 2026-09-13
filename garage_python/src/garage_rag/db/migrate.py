@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from garage_rag import _libpq  # noqa: F401
 import psycopg
 from sqlalchemy import text
 from sqlalchemy.engine import make_url

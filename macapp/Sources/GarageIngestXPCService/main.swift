@@ -334,6 +334,45 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         }
     }
 
+    private func setupPostgresEnvironment() {
+        if let envPath = ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"],
+           FileManager.default.fileExists(atPath: envPath) {
+            _ = dlopen(envPath, RTLD_NOW | RTLD_GLOBAL)
+            return
+        }
+
+        var candidatePaths: [String] = []
+        if let resourceURL = Bundle.main.resourceURL {
+            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
+            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
+        }
+
+        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").path)
+
+        let grandParentURL = parentAppURL.deletingLastPathComponent()
+        candidatePaths.append(grandParentURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(grandParentURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
+
+        for path in candidatePaths {
+            if FileManager.default.fileExists(atPath: path) {
+                setenv("GARAGE_LIBPQ_PATH", path, 1)
+                let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
+                setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
+                let handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
+                if handle != nil {
+                    logger.info("Successfully loaded postgres libpq via dyld from: \(path, privacy: .public)")
+                } else if let errCStr = dlerror() {
+                    logger.warning("Failed to dlopen libpq at \(path, privacy: .public): \(String(cString: errCStr), privacy: .public)")
+                }
+                break
+            }
+        }
+    }
+
     private func setupPythonEnvironment() {
         if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
            FileManager.default.fileExists(atPath: envPath) {
@@ -399,6 +438,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         initLock.lock()
         defer { initLock.unlock() }
         guard !isInitialized else { return }
+        setupPostgresEnvironment()
         setupPythonEnvironment()
         let pid = ProcessInfo.processInfo.processIdentifier
         let uid = getuid()

@@ -123,6 +123,10 @@ final class GarageCLIService: ObservableObject {
     private func environment() throws -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
+        let libpqURL = Paths.postgresLibDir.appendingPathComponent("libpq.dylib")
+        if FileManager.default.fileExists(atPath: libpqURL.path) {
+            env["GARAGE_LIBPQ_PATH"] = libpqURL.path
+        }
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
         }

@@ -1,5 +1,15 @@
 load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
 
+py_library(
+    name = "libpq_helper",
+    srcs = ["_libpq.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi//psycopg",
+    ],
+)
+
 py_binary(
     name = "garage",
     srcs = ["cli.py"],
@@ -11,6 +21,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":garage_rag",
+        ":libpq_helper",
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
@@ -29,11 +40,13 @@ py_library(
     name = "garage_rag",
     srcs = [
         "__init__.py",
+        "_libpq.py",
         "cli.py",
     ],
     imports = [".."],
     visibility = ["//visibility:public"],
     deps = [
+        ":libpq_helper",
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
