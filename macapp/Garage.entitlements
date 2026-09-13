@@ -14,5 +14,7 @@
 	<true/>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<key>com.apple.private.tcc.manager.check-by-audit-token</key>
+	<true/>
 </dict>
 </plist>

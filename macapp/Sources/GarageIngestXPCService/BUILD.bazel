@@ -23,10 +23,7 @@ macos_xpc_service(
     codesignopts = [
         "--options=runtime",
     ],
-    entitlements = select({
-        "//bazel:is_store": ":GarageIngestXPCService.entitlements",
-        "//conditions:default": None,
-    }),
+    entitlements = ":GarageIngestXPCService.entitlements",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     version = "//macapp:GarageAppVersion",

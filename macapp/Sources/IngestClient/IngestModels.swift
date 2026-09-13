@@ -106,11 +106,21 @@ public struct IngestOptions: Codable, Sendable, Equatable {
     public let includeCode: Bool
     public let limit: Int?
     public let force: Bool
+    public let grpcHost: String?
+    public let grpcPort: Int?
 
-    public init(includeCode: Bool = false, limit: Int? = nil, force: Bool = false) {
+    public init(
+        includeCode: Bool = false,
+        limit: Int? = nil,
+        force: Bool = false,
+        grpcHost: String? = nil,
+        grpcPort: Int? = nil
+    ) {
         self.includeCode = includeCode
         self.limit = limit
         self.force = force
+        self.grpcHost = grpcHost
+        self.grpcPort = grpcPort
     }
 
     public static let `default` = IngestOptions()
@@ -119,6 +129,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         case includeCode = "include_code"
         case limit
         case force
+        case grpcHost = "grpc_host"
+        case grpcPort = "grpc_port"
     }
 }
 

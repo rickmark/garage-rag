@@ -34,7 +34,13 @@ enum Paths {
     }
 
     private static let postgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
-    private static let devRepoRoot = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("garage"))
+    private static let devRepoRoot: URL = {
+        let candidate1 = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Developer/garage"))
+        if FileManager.default.fileExists(atPath: candidate1.path) {
+            return candidate1
+        }
+        return URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("garage"))
+    }()
 
     static var isPackaged: Bool {
         return true
@@ -93,12 +99,50 @@ enum Paths {
 
     /// The frozen `garage` CLI binary (packaged) or the venv's `garage` script (dev).
     static var garageCLI: URL {
-        return root.appendingPathComponent("garage", isDirectory: false)
+        let bundled = root.appendingPathComponent("garage", isDirectory: false)
+        if FileManager.default.fileExists(atPath: bundled.path) {
+            return bundled
+        }
+        if let res = Bundle.main.url(forResource: "garage", withExtension: nil),
+           FileManager.default.fileExists(atPath: res.path) {
+            return res
+        }
+        let devCandidates = [
+            devRepoRoot.appendingPathComponent(".venv/bin/garage"),
+            devRepoRoot.appendingPathComponent("bazel-bin/garage_python/garage"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/garage"),
+            URL(fileURLWithPath: "/usr/local/bin/garage"),
+        ]
+        for candidate in devCandidates {
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return bundled
     }
 
     /// The frozen `garage-mcp` binary (packaged) or the venv's script (dev).
     static var garageMCP: URL {
-        return root.appendingPathComponent("garage-mcp", isDirectory: false)
+        let bundled = root.appendingPathComponent("garage-mcp", isDirectory: false)
+        if FileManager.default.fileExists(atPath: bundled.path) {
+            return bundled
+        }
+        if let res = Bundle.main.url(forResource: "garage-mcp", withExtension: nil),
+           FileManager.default.fileExists(atPath: res.path) {
+            return res
+        }
+        let devCandidates = [
+            devRepoRoot.appendingPathComponent(".venv/bin/garage-mcp"),
+            devRepoRoot.appendingPathComponent("bazel-bin/garage_python/garage-mcp"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/garage-mcp"),
+            URL(fileURLWithPath: "/usr/local/bin/garage-mcp"),
+        ]
+        for candidate in devCandidates {
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return bundled
     }
 
     /// Working directory for `garage` CLI invocations, and where its `.env`

@@ -20,6 +20,10 @@ from garage_rag.proto.garage_pb2 import (
     AddSourceResponse,
     BackfillRequest,
     BackfillStatus,
+    BeginIngestSessionRequest,
+    BeginIngestSessionResponse,
+    CheckDocumentStatRequest,
+    CheckDocumentStatResponse,
     CommandRequest,
     CommandStatus,
     ConfigImportSourcesRequest,
@@ -32,11 +36,15 @@ from garage_rag.proto.garage_pb2 import (
     ConfigSchemaResponse,
     ConfigShowRequest,
     ConfigShowResponse,
+    DocumentAuthorPayload,
+    DocumentChunkPayload,
     DropModelRequest,
     DropModelResponse,
     ExtractChunk,
     ExtractRequest,
     ExtractResponse,
+    FinalizeIngestSessionRequest,
+    FinalizeIngestSessionResponse,
     IngestRequest,
     IngestStatus,
     InitDbRequest,
@@ -55,6 +63,10 @@ from garage_rag.proto.garage_pb2 import (
     McpUninstallRequest,
     McpUninstallResponse,
     ModelInfo,
+    PersistDocumentRequest,
+    PersistDocumentResponse,
+    PersistScanRequest,
+    PersistScanResponse,
     PingRequest,
     PingResponse,
     ReconcileRequest,
@@ -998,6 +1010,294 @@ class GarageRpcServicer(GarageServiceServicer):
             skipped_count=0,
             formatted_output="Import sources complete",
         )
+
+    # -----------------------------------------------------------------------
+    # Database Facade for Ingest Workers
+    # -----------------------------------------------------------------------
+
+    def BeginIngestSession(
+        self, request: BeginIngestSessionRequest, context: grpc.ServicerContext
+    ) -> BeginIngestSessionResponse:
+        """Initialize an ingest session and return source metadata and run_id."""
+        from garage_rag.attribute.resolver import ensure_self_author
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import IngestRun, Source
+
+        with session_scope() as session:
+            if request.source_slug == "*":
+                sources = session.query(Source).filter_by(enabled=True).order_by(Source.id).all()
+                if not sources:
+                    context.abort(grpc.StatusCode.NOT_FOUND, "no sources registered")
+                source_slugs = [s.slug for s in sources]
+                src = sources[0]
+            else:
+                src = session.query(Source).filter_by(slug=request.source_slug).one_or_none()
+                if src is None:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source_slug}")
+                source_slugs = [src.slug]
+
+            ensure_self_author(session)
+            run = IngestRun(source_id=src.id)
+            session.add(run)
+            session.flush()
+            run_id = run.id
+
+            default_class = (
+                src.default_class.value if hasattr(src.default_class, "value") else str(src.default_class)
+            )
+            default_trust = (
+                src.default_trust.value if hasattr(src.default_trust, "value") else str(src.default_trust)
+            )
+
+            return BeginIngestSessionResponse(
+                source_id=src.id,
+                slug=src.slug,
+                root=src.root,
+                default_class=default_class,
+                default_trust=default_trust,
+                allow_cloud_enrichment=bool(src.allow_cloud_enrichment),
+                run_id=run_id,
+                source_slugs=source_slugs,
+            )
+
+    def PersistScan(self, request: PersistScanRequest, context: grpc.ServicerContext) -> PersistScanResponse:
+        """Persist scanner results for a source."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Source
+        from garage_rag.ingest.scanner import ScanResult, persist_scan_result
+
+        with session_scope() as session:
+            src = session.query(Source).filter_by(slug=request.source_slug).one_or_none()
+            if src is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source_slug}")
+            scan_res = ScanResult(
+                source=request.source_slug,
+                kind=src.kind,
+                item_count=request.item_count,
+                item_type=request.item_type,
+                duration_seconds=request.duration_seconds,
+                details=dict(request.details) if request.details else {},
+                error=request.error or None,
+            )
+            persist_scan_result(session, scan_res)
+            return PersistScanResponse(success=True)
+
+    def CheckDocumentStat(
+        self, request: CheckDocumentStatRequest, context: grpc.ServicerContext
+    ) -> CheckDocumentStatResponse:
+        """Look up existing document stat/hash for change detection."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Document, Source
+
+        with session_scope() as session:
+            src = session.query(Source).filter_by(slug=request.source_slug).one_or_none()
+            if src is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source_slug}")
+            doc = session.query(Document).filter_by(source_id=src.id, uri=request.uri).one_or_none()
+            if doc is None:
+                return CheckDocumentStatResponse(exists=False)
+
+            mtime_ts = doc.mtime.timestamp() if doc.mtime is not None else 0.0
+            source_sha = doc.source_sha256.hex() if doc.source_sha256 else ""
+            content_sha = doc.content_sha256.hex() if doc.content_sha256 else ""
+            state_str = doc.state.value if hasattr(doc.state, "value") else str(doc.state)
+
+            return CheckDocumentStatResponse(
+                exists=True,
+                byte_size=doc.byte_size or 0,
+                mtime=mtime_ts,
+                content_sha256=content_sha,
+                chunker=doc.chunker or "",
+                state=state_str,
+                source_sha256=source_sha,
+            )
+
+    def PersistDocument(
+        self, request: PersistDocumentRequest, context: grpc.ServicerContext
+    ) -> PersistDocumentResponse:
+        """Persist or mutate a document, its authors, chunks, and ingest seen status."""
+        from datetime import UTC, datetime
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from garage_rag.attribute.resolver import get_or_create_author
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import (
+            AuthorRole,
+            Chunk,
+            CorpusClass,
+            Document,
+            DocumentAuthor,
+            IngestSeen,
+            IngestState,
+            Source,
+            TrustTier,
+        )
+
+        with session_scope() as session:
+            src = session.query(Source).filter_by(slug=request.source_slug).one_or_none()
+            if src is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source_slug}")
+
+            doc = session.query(Document).filter_by(source_id=src.id, uri=request.uri).one_or_none()
+            chunks_written = 0
+            action = request.action
+
+            if action == "placeholder":
+                if doc is None:
+                    mtime_dt = datetime.fromtimestamp(request.mtime, tz=UTC) if request.mtime else None
+                    doc = Document(
+                        source_id=src.id,
+                        uri=request.uri,
+                        corpus_class=src.default_class,
+                        trust_tier=src.default_trust,
+                        title=request.title or request.uri,
+                        byte_size=0,
+                        mtime=mtime_dt,
+                        content_sha256=bytes.fromhex(request.content_sha256) if request.content_sha256 else b"",
+                        extractor="none",
+                        state=IngestState.PLACEHOLDER,
+                        error=request.error or "not materialized",
+                    )
+                    session.add(doc)
+                elif doc.state != IngestState.PLACEHOLDER:
+                    doc.state = IngestState.PLACEHOLDER
+                    doc.error = request.error or "not materialized"
+
+            elif action == "extract_failed":
+                if doc is not None:
+                    doc.state = IngestState.EXTRACT_FAILED
+                    doc.error = (request.error or "extraction failed")[:2000]
+
+            elif action == "rejected":
+                if doc is not None:
+                    session.delete(doc)
+
+            elif action == "refresh_metadata":
+                if doc is not None:
+                    doc.byte_size = request.byte_size
+                    if request.mtime:
+                        doc.mtime = datetime.fromtimestamp(request.mtime, tz=UTC)
+                    if request.source_sha256:
+                        doc.source_sha256 = bytes.fromhex(request.source_sha256)
+                    if request.corpus_class:
+                        doc.corpus_class = CorpusClass(request.corpus_class)
+                    if request.trust_tier:
+                        doc.trust_tier = TrustTier(request.trust_tier)
+
+            elif action == "replace":
+                mtime_dt = datetime.fromtimestamp(request.mtime, tz=UTC) if request.mtime else None
+                raw_hash = bytes.fromhex(request.source_sha256) if request.source_sha256 else None
+                content_hash = bytes.fromhex(request.content_sha256) if request.content_sha256 else b""
+                corpus_class = CorpusClass(request.corpus_class) if request.corpus_class else src.default_class
+                trust_tier = TrustTier(request.trust_tier) if request.trust_tier else src.default_trust
+                meta_dict = json.loads(request.meta_json) if request.meta_json else {}
+
+                if doc is None:
+                    doc = Document(source_id=src.id, uri=request.uri)
+                    session.add(doc)
+
+                doc.corpus_class = corpus_class
+                doc.trust_tier = trust_tier
+                doc.title = request.title or None
+                doc.mime = None
+                doc.lang = request.lang or None
+                doc.byte_size = request.byte_size
+                doc.mtime = mtime_dt
+                doc.source_sha256 = raw_hash
+                doc.content_sha256 = content_hash
+                doc.extractor = request.extractor
+                doc.extractor_version = request.extractor_version or "1"
+                doc.chunker = request.chunker or None
+                doc.content = request.content or None
+                doc.meta = meta_dict
+                doc.state = IngestState.OK
+                doc.error = None
+                doc.ingested_at = datetime.now(tz=UTC)
+                session.flush()
+
+                # Apply authors
+                session.query(DocumentAuthor).filter_by(document_id=doc.id).delete()
+                seen_authors: set[tuple[int, str]] = set()
+                for auth_payload in request.authors:
+                    if not auth_payload.name:
+                        continue
+                    ident_dict = dict(auth_payload.identities) if auth_payload.identities else {}
+                    author_obj = get_or_create_author(
+                        session,
+                        auth_payload.name,
+                        identities=ident_dict,
+                        is_self=auth_payload.is_self,
+                    )
+                    role_str = auth_payload.role or "author"
+                    key = (author_obj.id, role_str)
+                    if key in seen_authors:
+                        continue
+                    seen_authors.add(key)
+                    session.add(
+                        DocumentAuthor(
+                            document_id=doc.id,
+                            author_id=author_obj.id,
+                            role=AuthorRole(role_str),
+                            confidence=auth_payload.confidence or 1.0,
+                            evidence=auth_payload.evidence or None,
+                        )
+                    )
+
+                # Write chunks
+                session.query(Chunk).filter_by(document_id=doc.id).delete()
+                session.flush()
+                for c in request.chunks:
+                    chunk_hash = bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b""
+                    session.add(
+                        Chunk(
+                            document_id=doc.id,
+                            ord=c.ord,
+                            text=c.text,
+                            token_count=c.token_count or None,
+                            char_start=c.char_start or None,
+                            char_end=c.char_end or None,
+                            heading_path=c.heading_path or None,
+                            chunk_sha256=chunk_hash,
+                            chunker=c.chunker or doc.chunker or "default",
+                        )
+                    )
+                chunks_written = len(request.chunks)
+
+            # Record seen
+            if request.run_id:
+                session.execute(
+                    pg_insert(IngestSeen)
+                    .values(run_id=request.run_id, uri=request.uri)
+                    .on_conflict_do_nothing()
+                )
+
+            return PersistDocumentResponse(success=True, chunks_written=chunks_written)
+
+    def FinalizeIngestSession(
+        self, request: FinalizeIngestSessionRequest, context: grpc.ServicerContext
+    ) -> FinalizeIngestSessionResponse:
+        """Update IngestRun final metrics and timestamps."""
+        from datetime import UTC, datetime
+
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import IngestRun
+
+        with session_scope() as session:
+            run = session.get(IngestRun, request.run_id)
+            if run is not None:
+                run.finished_at = datetime.now(tz=UTC)
+                run.completed = request.completed
+                run.seen_count = request.seen_count
+                run.indexed_count = request.indexed_count
+                run.skipped_count = request.skipped_count
+                run.failed_count = request.failed_count
+                run.placeholder_count = request.placeholder_count
+                run.materialized_count = request.materialized_count
+                run.materialized_bytes = request.materialized_bytes
+                if request.errors:
+                    run.error = "; ".join(request.errors[:5])[:4000]
+            return FinalizeIngestSessionResponse(success=True)
 
     # -----------------------------------------------------------------------
     # Generic command fallback

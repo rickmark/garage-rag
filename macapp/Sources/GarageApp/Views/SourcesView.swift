@@ -166,6 +166,11 @@ struct SourcesView: View {
                                     .font(.headline)
 
                                 badgeText(progress.phase.uppercased(), bg: Color.blue.opacity(0.15), fg: .blue)
+                                if let mode = appState.ingestService.activeMode {
+                                    badgeText(mode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                } else {
+                                    badgeText(appState.ingestService.executionMode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                }
 
                                 Spacer()
 
@@ -244,6 +249,25 @@ struct SourcesView: View {
     private var configuredSourcesSection: some View {
         GroupBox("Configured Ingest Sources") {
             VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("Ingest Execution Mode:")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Picker("Ingest Mode", selection: $appState.ingestService.executionMode) {
+                        ForEach(IngestExecutionMode.allCases) { mode in
+                            Text(mode.shortTitle).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 240)
+
+                    Text(appState.ingestService.executionMode.modeDescription)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.vertical, 2)
+
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(appState.registeredSources.count) source\(appState.registeredSources.count == 1 ? "" : "s") configured across config files and database.")
@@ -269,7 +293,19 @@ struct SourcesView: View {
                         }
                         .disabled(appState.ingestService.isCancelling)
                     } else {
-                        Button("Ingest All Sources") {
+                        Menu {
+                            Button("Ingest All (\(appState.ingestService.executionMode.shortTitle))") {
+                                ingestAllSources()
+                            }
+                            Button("Ingest All via XPC Helper") {
+                                ingestAllSources(mode: .xpcService)
+                            }
+                            Button("Ingest All via In-Process") {
+                                ingestAllSources(mode: .inProcess)
+                            }
+                        } label: {
+                            Text("Ingest All Sources")
+                        } primaryAction: {
                             ingestAllSources()
                         }
                         .disabled(appState.registeredSources.isEmpty || notReady)
@@ -398,6 +434,20 @@ struct SourcesView: View {
                     .disabled(notReady)
 
                     Menu {
+                        Button("Ingest (\(appState.ingestService.executionMode.shortTitle))") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode)
+                        }
+
+                        Button("Ingest via XPC Helper") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .xpcService)
+                        }
+
+                        Button("Ingest via In-Process") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .inProcess)
+                        }
+
+                        Divider()
+
                         Button("Ingest (Include Code)") {
                             ingestSource(slug: source.slug, includeCode: true)
                         }
@@ -868,19 +918,19 @@ struct SourcesView: View {
         }
     }
 
-    private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
+    private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false, mode: IngestExecutionMode? = nil) {
         busy = true
         Task {
             let options = IngestOptions(includeCode: includeCode, force: force)
-            _ = await appState.ingestViaXPC(slug: slug, options: options)
+            _ = await appState.ingestSource(slug: slug, options: options, mode: mode)
             busy = false
         }
     }
 
-    private func ingestAllSources() {
+    private func ingestAllSources(mode: IngestExecutionMode? = nil) {
         busy = true
         Task {
-            _ = await appState.ingestViaXPC(slug: "*")
+            _ = await appState.ingestSource(slug: "*", mode: mode)
             busy = false
         }
     }

@@ -175,6 +175,14 @@ final class GarageGRPCService: ObservableObject {
         status = .stopped
     }
 
+    /// Fire-and-forget termination for application quit paths.
+    func terminateImmediately() {
+        status = .stopping
+        isStopping = true
+        cleanupChannel()
+        runner.terminate()
+    }
+
     private func cleanupChannel() {
         if let channel = self.channel as? ClientConnection {
             _ = channel.close()

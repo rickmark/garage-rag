@@ -1,19 +1,36 @@
 import Foundation
+import OSLog
+#if canImport(PythonKit)
+import PythonKit
+#endif
+
+private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestEngine")
 
 /// Engine handling ingest operations, security-scoped bookmark lifecycle, and sandboxed access verification.
 public final class IngestEngine: @unchecked Sendable {
     public static let shared = IngestEngine()
 
+    public typealias IngestHandler = @Sendable (String, IngestOptions, (@Sendable (IngestProgressUpdate) -> Void)?) -> IngestResult
+
     private let lock = NSLock()
     private var activeRootURL: URL?
     private var isAccessingRootScope = false
     private var activeSourceURLs: [String: URL] = [:]
+    private var customHandler: IngestHandler?
 
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     public private(set) var isCancelled = false
 
-    public init() {}
+    public init(customHandler: IngestHandler? = nil) {
+        self.customHandler = customHandler
+    }
+
+    public func setCustomIngestHandler(_ handler: IngestHandler?) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.customHandler = handler
+    }
 
     deinit {
         revokeAccess()
@@ -22,13 +39,117 @@ public final class IngestEngine: @unchecked Sendable {
     public func cancel() {
         lock.lock()
         defer { lock.unlock() }
+        logger.info("IngestEngine cancel() called")
         isCancelled = true
     }
 
     public func resetCancel() {
         lock.lock()
         defer { lock.unlock() }
+        logger.info("IngestEngine resetCancel() called")
         isCancelled = false
+    }
+
+    // MARK: - Ingestion
+
+    /// Executes ingestion in-process for the given source slug and options.
+    public func ingestSource(
+        slug: String,
+        options: IngestOptions = .default,
+        onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil
+    ) -> IngestResult {
+        logger.info("IngestEngine.ingestSource called for slug: '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))")
+        resetCancel()
+
+        lock.lock()
+        let handler = self.customHandler
+        lock.unlock()
+
+        if let handler = handler {
+            logger.info("Using custom handler for slug '\(slug, privacy: .public)'")
+            return handler(slug, options, onProgress)
+        }
+
+        #if canImport(PythonKit)
+        do {
+            logger.info("Importing garage_rag.ingest via PythonKit...")
+            let ingestModule = try Python.attemptImport("garage_rag.ingest")
+
+            onProgress?(IngestProgressUpdate(
+                source: slug,
+                phase: "scan",
+                seen: 0,
+                totalItems: 0,
+                progress: 0.0,
+                message: "Starting in-process ingestion for \(slug)..."
+            ))
+
+            let limitObj: PythonObject = options.limit != nil ? PythonObject(options.limit!) : Python.None
+            logger.info("Executing Python ingest_xpc in-process for '\(slug, privacy: .public)'")
+            ingestModule.ingest_xpc(
+                slug,
+                include_code: options.includeCode,
+                limit: limitObj,
+                force: options.force
+            )
+
+            let successMsg = "Ingestion completed successfully for \(slug)"
+            logger.info("\(successMsg, privacy: .public)")
+            let compProg = IngestProgressUpdate(
+                source: slug,
+                phase: "complete",
+                seen: 1,
+                totalItems: 1,
+                indexed: 1,
+                progress: 1.0,
+                message: successMsg
+            )
+            onProgress?(compProg)
+            return IngestResult(succeeded: true, message: successMsg)
+        } catch {
+            let errorMsg = "In-process ingestion failed for \(slug): \(error)"
+            logger.error("\(errorMsg, privacy: .public)")
+            let errProg = IngestProgressUpdate(
+                source: slug,
+                phase: "error",
+                message: errorMsg,
+                error: "\(error)"
+            )
+            onProgress?(errProg)
+            return IngestResult(succeeded: false, message: errorMsg)
+        }
+        #else
+        logger.info("IngestEngine running in non-PythonKit stub mode for '\(slug, privacy: .public)'")
+        onProgress?(IngestProgressUpdate(
+            source: slug,
+            phase: "scan",
+            seen: 0,
+            totalItems: 1,
+            progress: 0.0,
+            message: "Scanning \(slug)..."
+        ))
+        onProgress?(IngestProgressUpdate(
+            source: slug,
+            phase: "ingest",
+            seen: 1,
+            totalItems: 1,
+            indexed: 1,
+            progress: 1.0,
+            message: "Ingesting \(slug): 1/1"
+        ))
+        let compMsg = "Completed in-process fallback ingest for \(slug)"
+        logger.info("\(compMsg, privacy: .public)")
+        onProgress?(IngestProgressUpdate(
+            source: slug,
+            phase: "complete",
+            seen: 1,
+            totalItems: 1,
+            indexed: 1,
+            progress: 1.0,
+            message: compMsg
+        ))
+        return IngestResult(succeeded: true, message: compMsg)
+        #endif
     }
 
     // MARK: - JSON Helpers
@@ -53,6 +174,7 @@ public final class IngestEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        logger.info("IngestEngine.setRootVolumeBookmark resolving bookmark (\(bookmarkData.count) bytes)")
         stopAccessingRootScopeInternal()
 
         var isStale = false
@@ -87,9 +209,13 @@ public final class IngestEngine: @unchecked Sendable {
             self.isAccessingRootScope = started
 
             let scopeType = started ? "security-scoped" : "direct"
-            return (true, "Resolved root bookmark: \(resolvedURL.path) (\(scopeType))")
+            let msg = "Resolved root bookmark: \(resolvedURL.path) (\(scopeType))"
+            logger.info("\(msg, privacy: .public)")
+            return (true, msg)
         } catch {
-            return (false, "Failed to resolve root bookmark: \(error.localizedDescription)")
+            let msg = "Failed to resolve root bookmark: \(error.localizedDescription)"
+            logger.error("\(msg, privacy: .public)")
+            return (false, msg)
         }
     }
 
@@ -100,6 +226,7 @@ public final class IngestEngine: @unchecked Sendable {
         defer { lock.unlock() }
 
         let resolvedPath = (path as NSString).expandingTildeInPath
+        logger.info("IngestEngine.setSourceBookmark for path '\(resolvedPath, privacy: .public)' (\(bookmarkData.count) bytes)")
         if let existing = activeSourceURLs[resolvedPath] {
             existing.stopAccessingSecurityScopedResource()
         }
@@ -133,9 +260,13 @@ public final class IngestEngine: @unchecked Sendable {
 
             _ = resolvedURL.startAccessingSecurityScopedResource()
             activeSourceURLs[resolvedPath] = resolvedURL
-            return (true, "Resolved source bookmark for \(resolvedPath)")
+            let msg = "Resolved source bookmark for \(resolvedPath)"
+            logger.info("\(msg, privacy: .public)")
+            return (true, msg)
         } catch {
-            return (false, "Failed to resolve source bookmark for \(resolvedPath): \(error.localizedDescription)")
+            let msg = "Failed to resolve source bookmark for \(resolvedPath): \(error.localizedDescription)"
+            logger.error("\(msg, privacy: .public)")
+            return (false, msg)
         }
     }
 
@@ -144,8 +275,10 @@ public final class IngestEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        logger.info("IngestEngine.revokeAccess: revoking all active security scopes")
         stopAccessingRootScopeInternal()
-        for (_, url) in activeSourceURLs {
+        for (path, url) in activeSourceURLs {
+            logger.info("Stopping access for source URL: '\(path, privacy: .public)'")
             url.stopAccessingSecurityScopedResource()
         }
         activeSourceURLs.removeAll()

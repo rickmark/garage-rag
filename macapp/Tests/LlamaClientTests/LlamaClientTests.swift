@@ -166,4 +166,24 @@ final class LlamaClientTests: XCTestCase {
         XCTAssertEqual(resp.data[1].embedding.count, 1024)
         XCTAssertGreaterThan(resp.usage.totalTokens, 0)
     }
+
+    func testLlamaClientFallbackWhenHelperUnavailable() async throws {
+        // Test client configured with non-existent helper service name
+        let disconnectedClient = LlamaClient(serviceName: "me.rickmark.nonexistent.llama-xpc")
+
+        let ping = try await disconnectedClient.ping()
+        XCTAssertTrue(ping.contains("pong"))
+
+        let health = try await disconnectedClient.health()
+        XCTAssertEqual(health.status, "ok")
+
+        let props = try await disconnectedClient.props()
+        XCTAssertEqual(props.modelAlias, "default")
+
+        let models = try await disconnectedClient.listModels()
+        XCTAssertEqual(models.object, "list")
+
+        let completion = try await disconnectedClient.complete(prompt: "Hello", maxTokens: 10)
+        XCTAssertFalse(completion.content.isEmpty)
+    }
 }

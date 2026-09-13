@@ -56,6 +56,13 @@ service GarageService {
     rpc ConfigSchema (ConfigSchemaRequest) returns (ConfigSchemaResponse);
     rpc ConfigImportSources (ConfigImportSourcesRequest) returns (ConfigImportSourcesResponse);
 
+    // --- Database Facade for Ingest Workers ---
+    rpc BeginIngestSession (BeginIngestSessionRequest) returns (BeginIngestSessionResponse);
+    rpc PersistScan (PersistScanRequest) returns (PersistScanResponse);
+    rpc CheckDocumentStat (CheckDocumentStatRequest) returns (CheckDocumentStatResponse);
+    rpc PersistDocument (PersistDocumentRequest) returns (PersistDocumentResponse);
+    rpc FinalizeIngestSession (FinalizeIngestSessionRequest) returns (FinalizeIngestSessionResponse);
+
     // --- Legacy / Generic Command Fallback ---
     rpc ExecuteCommand (CommandRequest) returns (stream CommandStatus);
 }
@@ -558,4 +565,118 @@ message ConfigImportSourcesResponse {
     int32 updated_count = 2;
     int32 skipped_count = 3;
     string formatted_output = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Database Facade for Ingest Workers
+// ---------------------------------------------------------------------------
+
+message BeginIngestSessionRequest {
+    string source_slug = 1;
+    bool include_code = 2;
+}
+
+message BeginIngestSessionResponse {
+    int64 source_id = 1;
+    string slug = 2;
+    string root = 3;
+    string default_class = 4;
+    string default_trust = 5;
+    bool allow_cloud_enrichment = 6;
+    int64 run_id = 7;
+    repeated string source_slugs = 8;
+}
+
+message PersistScanRequest {
+    string source_slug = 1;
+    int64 item_count = 2;
+    string item_type = 3;
+    double duration_seconds = 4;
+    map<string, int64> details = 5;
+    string error = 6;
+}
+
+message PersistScanResponse {
+    bool success = 1;
+}
+
+message CheckDocumentStatRequest {
+    string source_slug = 1;
+    string uri = 2;
+}
+
+message CheckDocumentStatResponse {
+    bool exists = 1;
+    int64 byte_size = 2;
+    double mtime = 3;
+    string content_sha256 = 4;
+    string chunker = 5;
+    string state = 6;
+    string source_sha256 = 7;
+}
+
+message DocumentAuthorPayload {
+    string name = 1;
+    string role = 2;
+    float confidence = 3;
+    string evidence = 4;
+    map<string, string> identities = 5;
+    bool is_self = 6;
+}
+
+message DocumentChunkPayload {
+    int32 ord = 1;
+    string text = 2;
+    int32 token_count = 3;
+    int32 char_start = 4;
+    int32 char_end = 5;
+    string heading_path = 6;
+    string chunk_sha256 = 7;
+    string chunker = 8;
+}
+
+message PersistDocumentRequest {
+    int64 run_id = 1;
+    string source_slug = 2;
+    string uri = 3;
+    string action = 4;
+    string title = 5;
+    string lang = 6;
+    int64 byte_size = 7;
+    double mtime = 8;
+    string source_sha256 = 9;
+    string content_sha256 = 10;
+    string extractor = 11;
+    string extractor_version = 12;
+    string chunker = 13;
+    string content = 14;
+    string meta_json = 15;
+    string corpus_class = 16;
+    string trust_tier = 17;
+    string error = 18;
+    repeated DocumentAuthorPayload authors = 19;
+    repeated DocumentChunkPayload chunks = 20;
+}
+
+message PersistDocumentResponse {
+    bool success = 1;
+    int32 chunks_written = 2;
+    string error = 3;
+}
+
+message FinalizeIngestSessionRequest {
+    int64 run_id = 1;
+    bool completed = 2;
+    int64 seen_count = 3;
+    int64 indexed_count = 4;
+    int64 skipped_count = 5;
+    int64 failed_count = 6;
+    int64 placeholder_count = 7;
+    int64 materialized_count = 8;
+    int64 materialized_bytes = 9;
+    repeated string errors = 10;
+}
+
+message FinalizeIngestSessionResponse {
+    bool success = 1;
 }

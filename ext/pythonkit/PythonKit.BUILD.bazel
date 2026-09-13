@@ -5,7 +5,4 @@ swift_library(
     srcs = glob(["PythonKit/*.swift"]),
     module_name = "PythonKit",
     visibility = ["//visibility:public"],
-    deps = [
-        "@//ext:python_static",
-    ],
 )

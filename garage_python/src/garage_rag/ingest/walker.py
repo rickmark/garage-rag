@@ -124,6 +124,7 @@ def walk(
 
         # Whole dependency caches: stop descending entirely.
         if is_dependency_path(dirpath):
+            log.debug("Walker pruning dependency path: %s", dirpath)
             dirnames[:] = []
             tally.skipped_excluded_dir += 1
             continue
@@ -136,6 +137,7 @@ def walk(
                 tally.skipped_excluded_dir += 1
                 continue
             if is_diagnostic_dir(name):
+                log.debug("Walker skipping diagnostic dir: %s", name)
                 # Never descend: a sysdiagnose bundle holds thousands of files
                 # and not one of them is writing.
                 tally.skipped_diagnostic += 1
@@ -149,6 +151,7 @@ def walk(
             except ValueError:
                 relative = ""
             if relative and any(relative.startswith(p) for p in exclude_prefixes):
+                log.debug("Walker skipping excluded prefix: %s", relative)
                 dirnames[:] = []
                 continue
 
@@ -172,16 +175,19 @@ def walk(
 
             try:
                 st = path.stat()
-            except OSError:
+            except OSError as err:
+                log.debug("Walker failed to stat %s: %s", path, err)
                 tally.unreadable += 1
                 continue
 
             stub = is_placeholder(path, st=st)
             if stub:
+                log.debug("Walker found cloud placeholder: %s", path)
                 tally.placeholders += 1
             elif st.st_size == 0:
                 continue
             elif st.st_size > limit:
+                log.debug("Walker skipping oversized file (%d bytes > %d limit): %s", st.st_size, limit, path)
                 tally.skipped_too_large += 1
                 continue
 

@@ -13,6 +13,10 @@ from garage_rag.proto.garage_pb2 import (
     AddSourceResponse,
     BackfillRequest,
     BackfillStatus,
+    BeginIngestSessionRequest,
+    BeginIngestSessionResponse,
+    CheckDocumentStatRequest,
+    CheckDocumentStatResponse,
     CommandRequest,
     CommandStatus,
     ConfigImportSourcesRequest,
@@ -25,10 +29,14 @@ from garage_rag.proto.garage_pb2 import (
     ConfigSchemaResponse,
     ConfigShowRequest,
     ConfigShowResponse,
+    DocumentAuthorPayload,
+    DocumentChunkPayload,
     DropModelRequest,
     DropModelResponse,
     ExtractRequest,
     ExtractResponse,
+    FinalizeIngestSessionRequest,
+    FinalizeIngestSessionResponse,
     IngestRequest,
     IngestStatus,
     InitDbRequest,
@@ -45,6 +53,10 @@ from garage_rag.proto.garage_pb2 import (
     McpStatusResponse,
     McpUninstallRequest,
     McpUninstallResponse,
+    PersistDocumentRequest,
+    PersistDocumentResponse,
+    PersistScanRequest,
+    PersistScanResponse,
     PingRequest,
     PingResponse,
     ReconcileRequest,
@@ -256,6 +268,21 @@ class GarageClient:
     def config_import_sources(self, path: str, dry_run: bool = False) -> ConfigImportSourcesResponse:
         req = ConfigImportSourcesRequest(path=path, dry_run=dry_run)
         return self._invoke_unary("ConfigImportSources", req, ConfigImportSourcesResponse)
+
+    def begin_ingest_session(self, request: BeginIngestSessionRequest) -> BeginIngestSessionResponse:
+        return self._invoke_unary("BeginIngestSession", request, BeginIngestSessionResponse)
+
+    def persist_scan(self, request: PersistScanRequest) -> PersistScanResponse:
+        return self._invoke_unary("PersistScan", request, PersistScanResponse)
+
+    def check_document_stat(self, request: CheckDocumentStatRequest) -> CheckDocumentStatResponse:
+        return self._invoke_unary("CheckDocumentStat", request, CheckDocumentStatResponse)
+
+    def persist_document(self, request: PersistDocumentRequest) -> PersistDocumentResponse:
+        return self._invoke_unary("PersistDocument", request, PersistDocumentResponse)
+
+    def finalize_ingest_session(self, request: FinalizeIngestSessionRequest) -> FinalizeIngestSessionResponse:
+        return self._invoke_unary("FinalizeIngestSession", request, FinalizeIngestSessionResponse)
 
     def execute_command(self, argv: list[str]) -> Iterator[CommandStatus]:
         req = CommandRequest(

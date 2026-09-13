@@ -191,4 +191,48 @@ final class IngestClientTests: XCTestCase {
         engine.resetCancel()
         XCTAssertFalse(engine.isCancelled)
     }
+
+    func testIngestClientFallbackWhenHelperUnavailable() async throws {
+        // Test client configured with non-existent helper service name
+        let client = IngestClient(serviceName: "me.rickmark.nonexistent.helper")
+
+        final class ProgressCollector: @unchecked Sendable {
+            var updates: [IngestProgressUpdate] = []
+            private let lock = NSLock()
+            func add(_ u: IngestProgressUpdate) {
+                lock.lock()
+                defer { lock.unlock() }
+                updates.append(u)
+            }
+        }
+        let collector = ProgressCollector()
+        let ingestResult = try await client.ingest(slug: "fallback-source") { progress in
+            collector.add(progress)
+        }
+        XCTAssertTrue(ingestResult.succeeded)
+        // Verify XPC unavailable warning was logged into progress stream
+        XCTAssertTrue(collector.updates.contains(where: { $0.message.contains("XPC helper unavailable") }))
+    }
+
+    @MainActor
+    func testIngestEngineFailureLoggingAndPropagation() async throws {
+        let engine = IngestEngine { slug, options, onProgress in
+            let errorMsg = "Simulated disk failure during ingest of \(slug)"
+            onProgress?(IngestProgressUpdate(
+                source: slug,
+                phase: "error",
+                message: errorMsg,
+                error: errorMsg
+            ))
+            return IngestResult(succeeded: false, message: errorMsg)
+        }
+        let client = IngestClient(inProcessEngine: engine)
+        let service = IngestService(client: client)
+
+        let result = await service.ingest(slug: "fail-docs")
+        XCTAssertFalse(result.succeeded)
+        XCTAssertEqual(service.lastError, "Simulated disk failure during ingest of fail-docs")
+        XCTAssertTrue(service.logs.contains(where: { $0.stream == .stderr && $0.text.contains("Simulated disk failure") }))
+        XCTAssertTrue(service.latestProgress?.isError ?? false)
+    }
 }

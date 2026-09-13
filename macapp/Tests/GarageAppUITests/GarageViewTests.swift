@@ -130,7 +130,7 @@ final class GarageViewTests: XCTestCase {
 
     func testLogSourceCases() {
         let cases = LogsView.LogSource.allCases
-        XCTAssertEqual(cases.count, 7)
-        XCTAssertEqual(cases.map(\.rawValue), ["Postgres", "garage CLI", "Ingest", "Backfill", "MCP Server", "gRPC Server", "Llama Service"])
+        XCTAssertEqual(cases.count, 8)
+        XCTAssertEqual(cases.map(\.rawValue), ["Postgres", "garage CLI", "Ingest", "Ingest XPC", "Backfill", "MCP Server", "gRPC Server", "Llama Service"])
     }
 }

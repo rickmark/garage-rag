@@ -43,9 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = await shutdownTask.result
             timeoutTask.cancel()
 
-            state?.mcp.terminateImmediately()
-            state?.postgres.terminateImmediately()
-            PostgresService.stopAnyRunningInstance()
+            if let state = state {
+                state.terminateImmediately()
+            } else {
+                XPCServiceManager.stopAnyRunningInstances()
+                PostgresService.stopAnyRunningInstance()
+            }
 
             sender.reply(toApplicationShouldTerminate: true)
         }
@@ -54,8 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        appState?.mcp.terminateImmediately()
-        appState?.postgres.terminateImmediately()
-        PostgresService.stopAnyRunningInstance()
+        if let state = appState {
+            state.terminateImmediately()
+        } else {
+            XPCServiceManager.stopAnyRunningInstances()
+            PostgresService.stopAnyRunningInstance()
+        }
     }
 }

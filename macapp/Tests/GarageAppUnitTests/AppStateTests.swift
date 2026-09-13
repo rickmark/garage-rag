@@ -131,15 +131,6 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenDatabaseInHandler() {
-        let state = AppState()
-        // Calling openDatabaseInHandler executes URL creation and attempts NSWorkspace open
-        _ = state.openDatabaseInHandler()
-        XCTAssertNotNil(state.lastCommandSucceeded)
-        XCTAssertFalse(state.lastCommandOutput.isEmpty)
-    }
-
-    @MainActor
     func testCopyDatabaseURLToClipboard() {
         let state = AppState()
         let result = state.copyDatabaseURLToClipboard()

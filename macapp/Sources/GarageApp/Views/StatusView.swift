@@ -55,6 +55,8 @@ struct StatusView: View {
 
                 corpusOverviewSection
 
+                xpcServicesSection
+
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(sortedStatusItems) { item in
                         pageStatusCard(for: item)
@@ -80,11 +82,13 @@ struct StatusView: View {
         .onAppear {
             Task {
                 await appState.scanSources()
+                await appState.xpcServices.refreshAll()
             }
         }
         .onReceive(refreshTimer) { _ in
             Task {
                 await appState.fetchCorpusStats()
+                await appState.xpcServices.refreshAll()
             }
         }
     }
@@ -408,6 +412,162 @@ struct StatusView: View {
             }
             .padding(10)
         }
+    }
+
+    // MARK: - XPC Helper Services Section
+
+    private var xpcServicesSection: some View {
+        GroupBox("XPC Helper Services & Daemons") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Real-time operational status and control for all macOS sandboxed XPC helper processes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let lastRefreshed = appState.xpcServices.lastRefreshedAt {
+                            Text("Last checked \(lastRefreshed, style: .time)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if appState.xpcServices.isRefreshingAll {
+                        ProgressView().controlSize(.small)
+                    }
+
+                    Button {
+                        Task { await appState.xpcServices.refreshAll() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Refresh All")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(appState.xpcServices.isRefreshingAll || appState.xpcServices.isRestartingAll)
+
+                    Button {
+                        Task { await appState.xpcServices.restartAll() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.counterclockwise.circle")
+                            Text("Restart All")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(appState.xpcServices.isRefreshingAll || appState.xpcServices.isRestartingAll)
+                }
+
+                Divider()
+
+                VStack(spacing: 8) {
+                    ForEach(appState.xpcServices.services) { service in
+                        xpcServiceRow(for: service)
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func xpcServiceRow(for service: XPCServiceInfo) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            // Status Icon
+            Group {
+                switch service.state {
+                case .running:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .checking, .restarting:
+                    ProgressView().controlSize(.small)
+                case .unreachable:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                case .unknown:
+                    Image(systemName: "questionmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.title3)
+            .frame(width: 24)
+
+            // Service Metadata
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(service.name)
+                        .font(.subheadline.bold())
+
+                    Text(service.bundleId)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+
+                    if let pid = service.pid {
+                        badgeText("PID: \(pid)", bg: Color.blue.opacity(0.12), fg: .blue)
+                    }
+
+                    if let latency = service.latencyMs {
+                        badgeText(String(format: "%.1f ms", latency), bg: Color.green.opacity(0.12), fg: .green)
+                    }
+
+                    if service.state == .restarting {
+                        badgeText("RESTARTING", bg: Color.orange.opacity(0.15), fg: .orange)
+                    } else if service.state == .checking {
+                        badgeText("CHECKING", bg: Color.blue.opacity(0.15), fg: .blue)
+                    } else if case .unreachable = service.state {
+                        badgeText("UNREACHABLE", bg: Color.red.opacity(0.15), fg: .red)
+                    }
+                }
+
+                Text(service.serviceDescription)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                if let err = service.errorMessage {
+                    Text("Error: \(err)")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                } else if let resp = service.pingResponse, !resp.isEmpty {
+                    Text("Ping reply: \(resp)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            // Actions
+            HStack(spacing: 6) {
+                Button("Ping") {
+                    Task { await appState.xpcServices.refresh(serviceId: service.id) }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(service.isChecking || appState.xpcServices.isRefreshingAll)
+
+                Button("Restart") {
+                    Task { await appState.xpcServices.restart(serviceId: service.id) }
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .tint(service.isRunning ? .orange : .blue)
+                .disabled(service.isChecking || appState.xpcServices.isRestartingAll)
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(bg)
+            .foregroundStyle(fg)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Page Status Card

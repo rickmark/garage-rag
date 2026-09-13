@@ -1,17 +1,124 @@
 """ingest"""
 from __future__ import annotations
 
-import asyncio
 import ctypes
-import inspect
 import json
+import logging
+import sys
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
 from garage_rag.db.models import Source
 
+log = logging.getLogger(__name__)
+
 _global_c_callback: Any = None
+_global_c_log_callback: Any = None
 _global_cancel_requested: bool = False
+
+
+class OSLogHandler(logging.Handler):
+    """Logging handler that routes Python log records to Swift/OSLog via C callback."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if _global_c_log_callback is not None:
+            try:
+                msg = self.format(record)
+                level = record.levelno
+                _global_c_log_callback(level, msg.encode("utf-8", errors="replace"))
+            except Exception:
+                pass
+
+
+class StreamToLog:
+    """Redirects writes to a stream (stdout/stderr) to OSLog callback."""
+
+    def __init__(self, level: int, original_stream: Any, name: str = "") -> None:
+        self.level = level
+        self.original_stream = original_stream
+        self.name = name
+        self._buf = ""
+
+    def write(self, buf: str) -> None:
+        self._buf += buf
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.strip()
+            if line and _global_c_log_callback is not None:
+                try:
+                    prefix = f"[{self.name}] " if self.name else ""
+                    _global_c_log_callback(self.level, f"{prefix}{line}".encode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+        if self.original_stream and hasattr(self.original_stream, "write"):
+            try:
+                self.original_stream.write(buf)
+            except Exception:
+                pass
+
+    def flush(self) -> None:
+        if self._buf.strip() and _global_c_log_callback is not None:
+            try:
+                prefix = f"[{self.name}] " if self.name else ""
+                _global_c_log_callback(self.level, f"{prefix}{self._buf.strip()}".encode("utf-8", errors="replace"))
+                self._buf = ""
+            except Exception:
+                pass
+        if self.original_stream and hasattr(self.original_stream, "flush"):
+            try:
+                self.original_stream.flush()
+            except Exception:
+                pass
+
+
+def set_c_log_callback(callback_address: int) -> None:
+    """Register a C ABI function pointer (address) for real-time logging to OSLog."""
+    global _global_c_log_callback
+    if not callback_address:
+        _global_c_log_callback = None
+    else:
+        callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
+        _global_c_log_callback = callback_type(callback_address)
+
+        root_logger = logging.getLogger()
+        has_oslog_handler = any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
+        if not has_oslog_handler:
+            handler = OSLogHandler()
+            formatter = logging.Formatter("[%(name)s] %(message)s")
+            handler.setFormatter(formatter)
+            handler.setLevel(logging.DEBUG)
+            root_logger.addHandler(handler)
+            if root_logger.level == logging.NOTSET or root_logger.level > logging.DEBUG:
+                root_logger.setLevel(logging.DEBUG)
+
+        if not isinstance(sys.stdout, StreamToLog):
+            sys.stdout = StreamToLog(20, sys.__stdout__, name="stdout")  # INFO
+        if not isinstance(sys.stderr, StreamToLog):
+            sys.stderr = StreamToLog(40, sys.__stderr__, name="stderr")  # ERROR
+
+        def custom_excepthook(exc_type, exc_value, exc_traceback):
+            import traceback
+
+            tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            if _global_c_log_callback is not None:
+                try:
+                    _global_c_log_callback(40, f"Uncaught Python exception:\n{tb_str}".encode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+            log.critical("Uncaught Python exception: %s\n%s", exc_value, tb_str)
+
+        sys.excepthook = custom_excepthook
+
+
+def _ensure_logging() -> None:
+    """Ensure python logging is configured to output to stderr if not already initialized."""
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+            stream=sys.stderr,
+        )
 
 
 @dataclass
@@ -71,7 +178,7 @@ def _notify_c_progress(prog: IngestProgress) -> None:
             pass
 
 
-async def ingest_xpc(
+def ingest_xpc(
     source: str,
     progress_callback: Optional[Callable[[Any], Any]] = None,
     *,
@@ -79,34 +186,64 @@ async def ingest_xpc(
     limit: Optional[int] = None,
     force: bool = False,
     session_factory: Any = None,
+    gateway: Any = None,
+    grpc_client: Any = None,
+    grpc_host: Optional[str] = None,
+    grpc_port: Optional[int] = None,
 ) -> None:
-    from garage_rag.db.engine import get_session_factory
+    _ensure_logging()
+    log.info(
+        "ingest_xpc called for source=%r (include_code=%s, limit=%s, force=%s, grpc_port=%s)",
+        source,
+        include_code,
+        limit,
+        force,
+        grpc_port,
+    )
+
+    from garage_rag.ingest.gateway import get_storage_gateway
     from garage_rag.ingest.pipeline import ingest_source
 
     reset_ingest_cancel()
 
-    factory = session_factory or get_session_factory()
+    gw = get_storage_gateway(
+        session_factory=session_factory,
+        gateway=gateway,
+        grpc_client=grpc_client,
+        grpc_host=grpc_host,
+        grpc_port=grpc_port,
+    )
+
     if source == "*":
-        with factory() as session:
-            sources = [s.slug for s in session.query(Source).order_by(Source.id).all()]
+        source_ctx = gw.begin_session("*", include_code=include_code)
+        sources = source_ctx.source_slugs
+        log.info("Wildcard source expanded to %d source(s): %s", len(sources), sources)
     else:
         sources = [source]
 
-    loop = asyncio.get_running_loop()
-
-    async def _emit_progress(prog: IngestProgress) -> None:
-        _notify_c_progress(prog)
-        if progress_callback is None:
-            return
-        if inspect.iscoroutinefunction(progress_callback):
-            await progress_callback(prog)
+    def _emit_progress(prog: IngestProgress) -> None:
+        if prog.phase == "error":
+            log.error("[%s] (error) %s: %s", prog.source, prog.message, prog.error)
+        elif prog.phase == "cancelled":
+            log.warning("[%s] (cancelled) %s", prog.source, prog.message)
+        elif prog.phase in ("scan", "complete"):
+            log.info("[%s] (%s) %s", prog.source, prog.phase, prog.message)
         else:
-            progress_callback(prog)
+            log.debug("[%s] (%s %.1f%%) %s", prog.source, prog.phase, prog.progress * 100.0, prog.message)
+
+        _notify_c_progress(prog)
+        if progress_callback is not None:
+            try:
+                progress_callback(prog)
+            except Exception as e:
+                log.warning("progress_callback raised exception: %s", e)
 
     for current_source in sources:
         if is_ingest_cancelled():
+            log.warning("Ingest cancelled before processing source %r", current_source)
             break
 
+        log.info("Initiating ingestion for source %r", current_source)
         start_prog = IngestProgress(
             source=current_source,
             phase="scan",
@@ -115,7 +252,7 @@ async def ingest_xpc(
             progress=0.0,
             message=f"Starting ingestion for {current_source}...",
         )
-        await _emit_progress(start_prog)
+        _emit_progress(start_prog)
 
         def _handle_pipeline_progress(*args: Any, **kwargs: Any) -> None:
             counters = args[0] if len(args) > 0 else None
@@ -142,13 +279,24 @@ async def ingest_xpc(
                 msg = f"Scanning {current_source}: found {total_items} {item_type}"
             elif phase == "complete":
                 prog_val = 1.0
-                msg = f"Ingested {current_source}: {indexed} indexed, {skipped} skipped, {failed} failed"
+                msg = (
+                    f"Ingested {current_source}: {indexed} indexed, {skipped} skipped, "
+                    f"{failed} failed, {chunks_written} chunks written"
+                )
             elif phase == "cancelled":
-                msg = f"Ingestion cancelled for {current_source}"
+                msg = f"Ingestion cancelled for {current_source} after {seen}/{total_items} {item_type}"
             elif current_item:
-                msg = f"Ingesting {current_source} ({seen}/{total_items}): {current_item}"
+                pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
+                msg = (
+                    f"[{seen}/{total_items} {pct}] {current_source}: {current_item} "
+                    f"({indexed} indexed, {skipped} skipped, {failed} failed)"
+                )
             else:
-                msg = f"Ingesting {current_source}: {seen}/{total_items} {item_type} ({indexed} indexed, {skipped} skipped, {failed} failed)"
+                pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
+                msg = (
+                    f"[{seen}/{total_items} {pct}] {current_source}: {seen}/{total_items} {item_type} "
+                    f"({indexed} indexed, {skipped} skipped, {failed} failed, {chunks_written} chunks)"
+                )
 
             prog = IngestProgress(
                 source=current_source,
@@ -167,30 +315,32 @@ async def ingest_xpc(
                 current_item=current_item,
             )
 
-            _notify_c_progress(prog)
-
-            if progress_callback is not None:
-                if inspect.iscoroutinefunction(progress_callback):
-                    fut = asyncio.run_coroutine_threadsafe(progress_callback(prog), loop)
-                    try:
-                        fut.result(timeout=10)
-                    except Exception:
-                        pass
-                else:
-                    progress_callback(prog)
+            _emit_progress(prog)
 
         try:
-            counters, walk_stats, budget = await asyncio.to_thread(
-                ingest_source,
-                factory,
-                current_source,
+            log.info("Running pipeline.ingest_source for %r", current_source)
+            counters, walk_stats, budget = ingest_source(
+                gateway=gw,
+                source_slug=current_source,
                 include_code=include_code,
                 limit=limit,
                 force=force,
                 progress=_handle_pipeline_progress,
                 is_cancelled=is_ingest_cancelled,
             )
+            log.info(
+                "Completed pipeline.ingest_source for %r: seen=%d/%d, indexed=%d, skipped=%d, failed=%d, placeholders=%d, chunks=%d",
+                current_source,
+                counters.seen,
+                counters.total_items,
+                counters.indexed,
+                counters.skipped,
+                counters.failed,
+                counters.placeholders,
+                counters.chunks_written,
+            )
         except Exception as exc:
+            log.exception("Pipeline exception while ingesting %r: %s", current_source, exc)
             err_prog = IngestProgress(
                 source=current_source,
                 phase="error",
@@ -198,10 +348,11 @@ async def ingest_xpc(
                 message=f"Error ingesting {current_source}: {exc}",
                 progress=0.0,
             )
-            await _emit_progress(err_prog)
+            _emit_progress(err_prog)
             raise
 
         if is_ingest_cancelled():
+            log.warning("Ingest run marked cancelled for %r", current_source)
             cancel_prog = IngestProgress(
                 source=current_source,
                 phase="cancelled",
@@ -216,7 +367,7 @@ async def ingest_xpc(
                 progress=min(1.0, float(counters.seen) / float(counters.total_items)) if counters.total_items else 0.0,
                 message=f"Ingestion cancelled for {current_source}",
             )
-            await _emit_progress(cancel_prog)
+            _emit_progress(cancel_prog)
             break
 
         final_prog = IngestProgress(
@@ -233,10 +384,11 @@ async def ingest_xpc(
             progress=1.0,
             message=(
                 f"Ingested {current_source}: seen {counters.seen}/{counters.total_items}, "
-                f"indexed {counters.indexed}, skipped {counters.skipped}, failed {counters.failed}"
+                f"indexed {counters.indexed}, skipped {counters.skipped}, failed {counters.failed}, "
+                f"{counters.chunks_written} chunks written"
             ),
         )
-        await _emit_progress(final_prog)
+        _emit_progress(final_prog)
 
 
 def run_ingest_xpc(
@@ -245,4 +397,4 @@ def run_ingest_xpc(
     **kwargs: Any,
 ) -> None:
     """Synchronous entry point for running ingest_xpc."""
-    asyncio.run(ingest_xpc(source, progress_callback=progress_callback, **kwargs))
+    ingest_xpc(source, progress_callback=progress_callback, **kwargs)

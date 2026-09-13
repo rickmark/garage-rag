@@ -430,10 +430,23 @@ public final class VolumeAccessService: ObservableObject {
                 } else {
                     status = .accessGranted(url: resolvedURL, isSecurityScoped: true)
                 }
+
+                _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
+                if let client = ingestClient {
+                    Task {
+                        _ = try? await client.setRootVolumeBookmark(bookmarkData)
+                    }
+                }
                 return true
             } else if fileSystem.isReadableFile(atPath: resolvedURL.path) {
                 activeRootURL = resolvedURL
                 status = .accessGranted(url: resolvedURL, isSecurityScoped: false)
+                _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
+                if let client = ingestClient {
+                    Task {
+                        _ = try? await client.setRootVolumeBookmark(bookmarkData)
+                    }
+                }
                 return true
             } else {
                 status = .accessDenied(reason: "Failed to start accessing security-scoped resource for \(resolvedURL.path)")
@@ -457,6 +470,12 @@ public final class VolumeAccessService: ObservableObject {
                 }
             }
             #endif
+            _ = IngestEngine.shared.setSourceBookmark(path: path, bookmarkData: data)
+            if let client = ingestClient {
+                Task {
+                    _ = try? await client.setSourceBookmark(path: path, bookmarkData: data)
+                }
+            }
         }
     }
 

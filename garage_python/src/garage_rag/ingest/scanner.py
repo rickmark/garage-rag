@@ -57,6 +57,10 @@ class SourceScanResult:
     duration_seconds: float = 0.0
     error: str | None = None
 
+    @property
+    def source(self) -> str:
+        return self.source_slug
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_slug": self.source_slug,
@@ -68,6 +72,9 @@ class SourceScanResult:
             "duration_seconds": round(self.duration_seconds, 4),
             "error": self.error,
         }
+
+
+ScanResult = SourceScanResult
 
 
 # ---------------------------------------------------------------------------
@@ -498,38 +505,50 @@ def scan_source(
     root = Path(root_val).expanduser() if not isinstance(root_val, Path) else root_val
     default_class = getattr(source, "default_class", CorpusClass.DOCUMENT)
 
+    log.info("Scanning source %r (kind=%s, root=%s, include_code=%s)", slug, kind, root, include_code)
+
     prefixes = default_exclude_prefixes(default_class, root) if root.exists() else ()
 
     match kind:
         case "git":
-            return scan_git(
+            result = scan_git(
                 root,
                 source_slug=slug,
                 include_code=include_code,
                 exclude_prefixes=prefixes,
             )
         case "sqlite":
-            return scan_sqlite(
+            result = scan_sqlite(
                 root,
                 source_slug=slug,
             )
         case "maildir":
-            return scan_maildir(
+            result = scan_maildir(
                 root,
                 source_slug=slug,
             )
         case "feed":
-            return scan_feed(
+            result = scan_feed(
                 root,
                 source_slug=slug,
             )
         case _:
-            return scan_filesystem(
+            result = scan_filesystem(
                 root,
                 source_slug=slug,
                 include_code=include_code,
                 exclude_prefixes=prefixes,
             )
+
+    log.info(
+        "Scan completed for source %r: found %d %s in %.2fs (error=%s)",
+        slug,
+        result.item_count,
+        result.item_type,
+        result.duration_seconds,
+        result.error,
+    )
+    return result
 
 
 def persist_scan_result(session: Any, scan_result: SourceScanResult) -> None:

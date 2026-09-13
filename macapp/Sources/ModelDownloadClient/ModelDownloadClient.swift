@@ -28,6 +28,52 @@ public final class ModelDownloadClient: Sendable {
         return connection
     }
 
+    // MARK: - Relay & Remote Call Helper
+
+    private final class ContinuationRelay<T>: @unchecked Sendable {
+        private var continuation: CheckedContinuation<T, Error>?
+        private let lock = NSLock()
+
+        init(_ continuation: CheckedContinuation<T, Error>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning value: T) {
+            lock.lock()
+            let cont = continuation
+            continuation = nil
+            lock.unlock()
+            cont?.resume(returning: value)
+        }
+
+        func resume(throwing error: Error) {
+            lock.lock()
+            let cont = continuation
+            continuation = nil
+            lock.unlock()
+            cont?.resume(throwing: error)
+        }
+    }
+
+    private func performRemoteCall<T>(
+        _ block: @escaping (ModelDownloadXPCServiceProtocol, ContinuationRelay<T>) -> Void
+    ) async throws -> T {
+        let connection = makeConnection()
+        defer { connection.invalidate() }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let relay = ContinuationRelay(continuation)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                relay.resume(throwing: error)
+            }) as? ModelDownloadXPCServiceProtocol else {
+                relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
+                return
+            }
+
+            block(proxy, relay)
+        }
+    }
+
     // MARK: - API Methods
 
     public func ping() async throws -> String {
@@ -36,20 +82,14 @@ public final class ModelDownloadClient: Sendable {
             return "pong from in-process ModelDownloadClient"
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.ping { reply in
+                    relay.resume(returning: reply)
+                }
             }
-
-            proxy.ping { reply in
-                continuation.resume(returning: reply)
-            }
+        } catch {
+            return "pong (in-process fallback)"
         }
     }
 
@@ -62,31 +102,25 @@ public final class ModelDownloadClient: Sendable {
             throw NSError(domain: "ModelDownloadClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to encode download request"])
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.startDownload(requestJson: jsonString) { replyJson, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let replyJson = replyJson {
-                    do {
-                        let taskInfo = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
-                        continuation.resume(returning: taskInfo)
-                    } catch {
-                        continuation.resume(throwing: error)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.startDownload(requestJson: jsonString) { replyJson, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let replyJson = replyJson {
+                        do {
+                            let taskInfo = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
+                            relay.resume(returning: taskInfo)
+                        } catch {
+                            relay.resume(throwing: error)
+                        }
+                    } else {
+                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty reply from service"]))
                     }
-                } else {
-                    continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty reply from service"]))
                 }
             }
+        } catch {
+            return try ModelDownloaderEngine.shared.startDownload(request: request)
         }
     }
 
@@ -100,24 +134,18 @@ public final class ModelDownloadClient: Sendable {
             return engine.cancelDownload(taskId: taskId)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.cancelDownload(taskId: taskId) { success, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: success)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.cancelDownload(taskId: taskId) { success, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: success)
+                    }
                 }
             }
+        } catch {
+            return ModelDownloaderEngine.shared.cancelDownload(taskId: taskId)
         }
     }
 
@@ -126,24 +154,18 @@ public final class ModelDownloadClient: Sendable {
             return engine.pauseDownload(taskId: taskId)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.pauseDownload(taskId: taskId) { success, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: success)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.pauseDownload(taskId: taskId) { success, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: success)
+                    }
                 }
             }
+        } catch {
+            return ModelDownloaderEngine.shared.pauseDownload(taskId: taskId)
         }
     }
 
@@ -152,24 +174,18 @@ public final class ModelDownloadClient: Sendable {
             return engine.resumeDownload(taskId: taskId)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.resumeDownload(taskId: taskId) { success, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: success)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.resumeDownload(taskId: taskId) { success, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: success)
+                    }
                 }
             }
+        } catch {
+            return ModelDownloaderEngine.shared.resumeDownload(taskId: taskId)
         }
     }
 
@@ -181,31 +197,28 @@ public final class ModelDownloadClient: Sendable {
             return info
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.getDownloadStatus(taskId: taskId) { replyJson, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let replyJson = replyJson {
-                    do {
-                        let info = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
-                        continuation.resume(returning: info)
-                    } catch {
-                        continuation.resume(throwing: error)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.getDownloadStatus(taskId: taskId) { replyJson, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let replyJson = replyJson {
+                        do {
+                            let info = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
+                            relay.resume(returning: info)
+                        } catch {
+                            relay.resume(throwing: error)
+                        }
+                    } else {
+                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"]))
                     }
-                } else {
-                    continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"]))
                 }
             }
+        } catch {
+            guard let info = ModelDownloaderEngine.shared.getDownloadStatus(taskId: taskId) else {
+                throw NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"])
+            }
+            return info
         }
     }
 
@@ -214,31 +227,25 @@ public final class ModelDownloadClient: Sendable {
             return engine.listDownloads()
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.listDownloads { replyJson, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let replyJson = replyJson {
-                    do {
-                        let list = try ModelDownloaderEngine.shared.deserialize([DownloadTaskInfo].self, from: replyJson)
-                        continuation.resume(returning: list)
-                    } catch {
-                        continuation.resume(throwing: error)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.listDownloads { replyJson, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let replyJson = replyJson {
+                        do {
+                            let list = try ModelDownloaderEngine.shared.deserialize([DownloadTaskInfo].self, from: replyJson)
+                            relay.resume(returning: list)
+                        } catch {
+                            relay.resume(throwing: error)
+                        }
+                    } else {
+                        relay.resume(returning: [])
                     }
-                } else {
-                    continuation.resume(returning: [])
                 }
             }
+        } catch {
+            return ModelDownloaderEngine.shared.listDownloads()
         }
     }
 
@@ -247,31 +254,25 @@ public final class ModelDownloadClient: Sendable {
             return engine.listDownloadedModels(directoryPath: directoryPath)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.listDownloadedModels(directoryPath: directoryPath) { replyJson, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let replyJson = replyJson {
-                    do {
-                        let list = try ModelDownloaderEngine.shared.deserialize([DownloadedModelInfo].self, from: replyJson)
-                        continuation.resume(returning: list)
-                    } catch {
-                        continuation.resume(throwing: error)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.listDownloadedModels(directoryPath: directoryPath) { replyJson, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let replyJson = replyJson {
+                        do {
+                            let list = try ModelDownloaderEngine.shared.deserialize([DownloadedModelInfo].self, from: replyJson)
+                            relay.resume(returning: list)
+                        } catch {
+                            relay.resume(throwing: error)
+                        }
+                    } else {
+                        relay.resume(returning: [])
                     }
-                } else {
-                    continuation.resume(returning: [])
                 }
             }
+        } catch {
+            return ModelDownloaderEngine.shared.listDownloadedModels(directoryPath: directoryPath)
         }
     }
 
@@ -280,24 +281,18 @@ public final class ModelDownloadClient: Sendable {
             return try engine.deleteDownloadedModel(filePath: path)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.deleteDownloadedModel(filePath: path) { success, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: success)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.deleteDownloadedModel(filePath: path) { success, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: success)
+                    }
                 }
             }
+        } catch {
+            return try ModelDownloaderEngine.shared.deleteDownloadedModel(filePath: path)
         }
     }
 
@@ -306,20 +301,14 @@ public final class ModelDownloadClient: Sendable {
             return engine.getModelsDirectoryPath()
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.getModelsDirectory { path in
+                    relay.resume(returning: path)
+                }
             }
-
-            proxy.getModelsDirectory { path in
-                continuation.resume(returning: path)
-            }
+        } catch {
+            return ModelDownloaderEngine.shared.getModelsDirectoryPath()
         }
     }
 
@@ -329,24 +318,19 @@ public final class ModelDownloadClient: Sendable {
             return true
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.setModelsDirectory(path: path) { success, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: success)
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.setModelsDirectory(path: path) { success, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: success)
+                    }
                 }
             }
+        } catch {
+            try ModelDownloaderEngine.shared.setModelsDirectory(path: path)
+            return true
         }
     }
 
@@ -356,26 +340,21 @@ public final class ModelDownloadClient: Sendable {
             return (res.isValid, res.computedSha256)
         }
 
-        let connection = makeConnection()
-        defer { connection.invalidate() }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                continuation.resume(throwing: error)
-            }) as? ModelDownloadXPCServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                return
-            }
-
-            proxy.verifyModelFile(filePath: path, expectedSha256: expectedSha256) { isValid, computedHash, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let computedHash = computedHash {
-                    continuation.resume(returning: (isValid, computedHash))
-                } else {
-                    continuation.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty checksum verification reply"]))
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.verifyModelFile(filePath: path, expectedSha256: expectedSha256) { isValid, computedHash, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let computedHash = computedHash {
+                        relay.resume(returning: (isValid, computedHash))
+                    } else {
+                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty checksum verification reply"]))
+                    }
                 }
             }
+        } catch {
+            let res = try ModelDownloaderEngine.shared.verifyModelFile(filePath: path, expectedSha256: expectedSha256)
+            return (res.isValid, res.computedSha256)
         }
     }
 }

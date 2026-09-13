@@ -1,6 +1,5 @@
-"""Tests for ingest_xpc async and progress functionality."""
+"""Tests for ingest_xpc synchronous and progress functionality."""
 
-import asyncio
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -39,52 +38,49 @@ def test_ingest_progress_model():
     assert d["current_item"] == "note.md"
 
 
-def test_ingest_xpc_async_progress():
-    async def _run():
-        mock_counters = IngestCounters()
-        mock_counters.seen = 10
-        mock_counters.total_items = 10
-        mock_counters.indexed = 8
-        mock_counters.skipped = 2
-        mock_counters.failed = 0
-        mock_counters.placeholders = 1
-        mock_counters.chunks_written = 24
+def test_ingest_xpc_progress():
+    mock_counters = IngestCounters()
+    mock_counters.seen = 10
+    mock_counters.total_items = 10
+    mock_counters.indexed = 8
+    mock_counters.skipped = 2
+    mock_counters.failed = 0
+    mock_counters.placeholders = 1
+    mock_counters.chunks_written = 24
 
-        mock_walk_stats = WalkStats()
-        mock_budget = MaterializationBudget()
+    mock_walk_stats = WalkStats()
+    mock_budget = MaterializationBudget()
 
-        progress_events: list[IngestProgress] = []
+    progress_events: list[IngestProgress] = []
 
-        async def async_progress_handler(prog: IngestProgress):
-            progress_events.append(prog)
+    def progress_handler(prog: IngestProgress):
+        progress_events.append(prog)
 
-        def fake_ingest_source(factory, slug, **kwargs):
-            progress_fn = kwargs.get("progress")
-            if progress_fn:
-                progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
-                progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
-            return mock_counters, mock_walk_stats, mock_budget
+    def fake_ingest_source(factory, slug, **kwargs):
+        progress_fn = kwargs.get("progress")
+        if progress_fn:
+            progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
+            progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
+        return mock_counters, mock_walk_stats, mock_budget
 
-        with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
-            mock_factory = MagicMock()
-            await ingest_xpc(
-                source="my-source",
-                progress_callback=async_progress_handler,
-                session_factory=mock_factory,
-            )
+    with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
+        mock_factory = MagicMock()
+        ingest_xpc(
+            source="my-source",
+            progress_callback=progress_handler,
+            session_factory=mock_factory,
+        )
 
-        assert len(progress_events) >= 3
-        # Check scan event
-        assert progress_events[0].phase == "scan"
-        # Check ingest event with current_item
-        assert any(e.current_item == "file1.txt" for e in progress_events)
-        # Check completion event
-        assert progress_events[-1].phase == "complete"
-        assert progress_events[-1].source == "my-source"
-        assert progress_events[-1].progress == 1.0
-        assert progress_events[-1].chunks_written == 24
-
-    asyncio.run(_run())
+    assert len(progress_events) >= 3
+    # Check scan event
+    assert progress_events[0].phase == "scan"
+    # Check ingest event with current_item
+    assert any(e.current_item == "file1.txt" for e in progress_events)
+    # Check completion event
+    assert progress_events[-1].phase == "complete"
+    assert progress_events[-1].source == "my-source"
+    assert progress_events[-1].progress == 1.0
+    assert progress_events[-1].chunks_written == 24
 
 
 def test_run_ingest_xpc_sync():
@@ -121,43 +117,66 @@ def test_run_ingest_xpc_sync():
 
 
 def test_ingest_xpc_cancellation():
-    async def _run():
-        mock_counters = IngestCounters()
-        mock_counters.seen = 5
-        mock_counters.total_items = 10
-        mock_counters.indexed = 5
+    mock_counters = IngestCounters()
+    mock_counters.seen = 5
+    mock_counters.total_items = 10
+    mock_counters.indexed = 5
 
-        mock_walk_stats = WalkStats()
-        mock_budget = MaterializationBudget()
+    mock_walk_stats = WalkStats()
+    mock_budget = MaterializationBudget()
 
-        progress_events: list[IngestProgress] = []
+    progress_events: list[IngestProgress] = []
 
-        async def async_progress_handler(prog: IngestProgress):
-            progress_events.append(prog)
-            if prog.phase == "ingest":
-                cancel_ingest()
+    def progress_handler(prog: IngestProgress):
+        progress_events.append(prog)
+        if prog.phase == "ingest":
+            cancel_ingest()
 
-        def fake_ingest_source(factory, slug, **kwargs):
-            progress_fn = kwargs.get("progress")
-            is_cancelled = kwargs.get("is_cancelled")
-            if progress_fn:
-                progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
-                progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
-            if is_cancelled and is_cancelled():
-                return mock_counters, mock_walk_stats, mock_budget
+    def fake_ingest_source(factory, slug, **kwargs):
+        progress_fn = kwargs.get("progress")
+        is_cancelled = kwargs.get("is_cancelled")
+        if progress_fn:
+            progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
+            progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
+        if is_cancelled and is_cancelled():
             return mock_counters, mock_walk_stats, mock_budget
+        return mock_counters, mock_walk_stats, mock_budget
 
-        with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
-            mock_factory = MagicMock()
-            await ingest_xpc(
-                source="cancel-source",
-                progress_callback=async_progress_handler,
-                session_factory=mock_factory,
-            )
+    with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
+        mock_factory = MagicMock()
+        ingest_xpc(
+            source="cancel-source",
+            progress_callback=progress_handler,
+            session_factory=mock_factory,
+        )
 
-        assert is_ingest_cancelled()
-        assert len(progress_events) >= 2
-        assert progress_events[-1].phase == "cancelled"
-        assert progress_events[-1].source == "cancel-source"
+    assert is_ingest_cancelled()
+    assert len(progress_events) >= 2
+    assert progress_events[-1].phase == "cancelled"
+    assert progress_events[-1].source == "cancel-source"
 
-    asyncio.run(_run())
+
+def test_set_c_log_callback():
+    import ctypes
+    import logging
+    from garage_rag.ingest import set_c_log_callback
+
+    logs_received = []
+
+    @ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
+    def test_log_sink(level, msg_ptr):
+        msg = ctypes.string_at(msg_ptr).decode("utf-8")
+        logs_received.append((level, msg))
+
+    # Keep a reference to callback
+    func_ptr = ctypes.cast(test_log_sink, ctypes.c_void_p).value
+    set_c_log_callback(func_ptr)
+
+    log = logging.getLogger("test_logger")
+    log.info("Test message for OSLog")
+    log.error("Test error message")
+
+    set_c_log_callback(0)
+
+    assert any("Test message for OSLog" in msg for lvl, msg in logs_received)
+    assert any("Test error message" in msg for lvl, msg in logs_received)
