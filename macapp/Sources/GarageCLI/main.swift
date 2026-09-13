@@ -15,21 +15,30 @@ private func setupPythonEnvironment() {
     let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
 
     // 1. Inside .app bundle (Contents/Frameworks/Python.framework)
+    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
+    candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
 
     // 2. Relative to standalone CLI binary (../Frameworks/Python.framework)
+    candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Python").path)
+    candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
+    candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/Current/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
 
     // 3. System / Homebrew fallbacks
+    candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
     candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
+    candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
     candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
+    candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
     candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
+    candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
     candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
 
     for path in candidatePaths {
@@ -49,14 +58,35 @@ private func runCLI() {
     let binDir = execURL.deletingLastPathComponent()
     let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
 
+    let pythonLibCandidates = [
+        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+    ]
+
+    for libURL in pythonLibCandidates {
+        if FileManager.default.fileExists(atPath: libURL.path) {
+            sys.path.insert(0, libURL.path)
+        }
+    }
+
     let sitePackagesCandidates = [
         bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
         bundleURL.appendingPathComponent("Resources/site-packages"),
         binDir.appendingPathComponent("../Resources/site-packages"),
         binDir.appendingPathComponent("site-packages"),
+        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
         bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
         bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
         binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
         binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
     ]
 
