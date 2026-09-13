@@ -111,6 +111,7 @@ codesign(
     visibility = ["//visibility:public"],
 )
 
+
 swift_library(
     name = "LlamaClient_lib",
     srcs = glob(["Sources/LlamaClient/**/*.swift"]),
@@ -208,6 +209,7 @@ appstore_macos_application(
     app = ":GarageApp",
     visibility = ["//visibility:public"],
 )
+
 
 developer_id_xcarchive(
     name = "Garage.xcarchive",

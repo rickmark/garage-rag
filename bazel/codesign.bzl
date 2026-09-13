@@ -2,6 +2,17 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_apple//apple/internal:providers.bzl", "new_appleframeworkimportinfo", "new_appleresourceinfo")
+load("//bazel:codesign_test.bzl", _codesign_test = "codesign_test", _codesign_validation_test = "codesign_validation_test", _codesign_verify_test = "codesign_verify_test")
+load("//bazel:macho_test.bzl", _mach_o_arch_test = "mach_o_arch_test", _macho_arch_test = "macho_arch_test", _multi_arch_test = "multi_arch_test", _universal_binary_test = "universal_binary_test")
+
+codesign_test = _codesign_test
+codesign_verify_test = _codesign_verify_test
+codesign_validation_test = _codesign_validation_test
+macho_arch_test = _macho_arch_test
+mach_o_arch_test = _mach_o_arch_test
+universal_binary_test = _universal_binary_test
+multi_arch_test = _multi_arch_test
+macho_test = _macho_arch_test
 
 def _codesign_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
@@ -182,14 +193,38 @@ if [ "$kind" = "dir" ]; then
     if [ -n "$matched_input" ]; then
         if [ -d "$matched_input" ]; then
             tar -cf - -C "$matched_input" . | (cd "$output" && tar -xf -)
+        elif [[ "$matched_input" == *.zip ]]; then
+            tmp_unzip="$(mktemp -d)"
+            /usr/bin/unzip -q -o "$matched_input" -d "$tmp_unzip"
+            if [ -d "$tmp_unzip/$(basename "$output")" ]; then
+                tar -cf - -C "$tmp_unzip/$(basename "$output")" . | (cd "$output" && tar -xf -)
+            else
+                tar -cf - -C "$tmp_unzip" . | (cd "$output" && tar -xf -)
+            fi
+            rm -rf "$tmp_unzip"
         else
             cp -P "$matched_input" "$output/"
         fi
     else
         for input_path in "${inputs[@]}"; do
-            if [ -d "$input_path" ]; then
+            if [[ "$input_path" == *.zip ]]; then
+                tmp_unzip="$(mktemp -d)"
+                /usr/bin/unzip -q -o "$input_path" -d "$tmp_unzip"
+                if [ -d "$tmp_unzip/$(basename "$output")" ]; then
+                    tar -cf - -C "$tmp_unzip/$(basename "$output")" . | (cd "$output" && tar -xf -)
+                else
+                    tar -cf - -C "$tmp_unzip" . | (cd "$output" && tar -xf -)
+                fi
+                rm -rf "$tmp_unzip"
+            elif [ -d "$input_path" ]; then
+                if [[ "$input_path" == *.dSYM* ]]; then
+                    continue
+                fi
                 tar -cf - -C "$input_path" . | (cd "$output" && tar -xf -)
             else
+                if [[ "$input_path" == *.dSYM* ]]; then
+                    continue
+                fi
                 mkdir -p "$output/$(dirname "$input_path")"
                 cp -P "$input_path" "$output/$input_path"
             fi
@@ -197,6 +232,7 @@ if [ "$kind" = "dir" ]; then
     fi
     find "$output" -type d -exec chmod 755 {} + 2>/dev/null || true
     find "$output" -type f -exec chmod 755 {} + 2>/dev/null || true
+    find "$output" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
 
     if [ -d "$output/Versions" ]; then
         rm -rf "$output/bin" "$output/bazel-out" "$output/Contents" 2>/dev/null || true
@@ -223,9 +259,9 @@ if [ "$kind" = "dir" ]; then
         fi
     done
 
-    find "$output" -type f \\( -name "*.dylib" -o -name "*.dylib.*" -o -name "*.so" \\) | while IFS= read -r file; do
+    find "$output" -type f | while IFS= read -r file; do
         case "$file" in
-            *.a|*.dSYM/*) continue ;;
+            *.a|*.dSYM/*|*.dSYM) continue ;;
         esac
         if [ "$dylibs_only" = "1" ]; then
             filename="$(basename "$file")"
@@ -251,6 +287,8 @@ if [ "$kind" = "dir" ]; then
                 codesign_file "$ver_dir"
             fi
         done
+        codesign_file "$output"
+    elif [ -n "$output_zip" ] || [[ "$output" == *.framework ]]; then
         codesign_file "$output"
     fi
 

@@ -1,3 +1,5 @@
+load("//bazel:codesign.bzl", "codesign_test", "macho_arch_test", "macho_test")
+
 alias(
     name = "postgres",
     actual = "//ext/postgres:postgres",
@@ -41,6 +43,12 @@ alias(
 )
 
 alias(
+    name = "python_framework",
+    actual = "//ext/python:python_framework",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "llama_cpp",
     actual = "//ext/llama_cpp:llama_cpp",
     visibility = ["//visibility:public"],
@@ -56,4 +64,122 @@ alias(
     name = "pythonkit",
     actual = "//ext/pythonkit:PythonKit_swift",
     visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "PythonKit_framework",
+    actual = "//ext/pythonkit:PythonKit_framework",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pythonkit_framework",
+    actual = "//ext/pythonkit:PythonKit_framework",
+    visibility = ["//visibility:public"],
+)
+
+macho_test(
+    name = "postgres_arch_test",
+    src = ":postgres",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "pgvector_arch_test",
+    src = ":pgvector",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libicu_arch_test",
+    src = ":libicu",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libreadline_arch_test",
+    src = ":libreadline",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libzlib_arch_test",
+    src = ":libzlib",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "llama_cpp_arch_test",
+    src = ":llama_cpp",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "python_arch_test",
+    src = ":python",
+    archs = ["arm64"],
+)
+
+macho_test(
+    name = "python_static_arch_test",
+    src = ":python_static",
+    archs = ["arm64"],
+)
+
+macho_test(
+    name = "python_framework_arch_test",
+    src = ":python_framework",
+    archs = ["arm64"],
+)
+
+codesign_test(
+    name = "python_framework_codesign_test",
+    src = ":python_framework",
+    is_store = select({
+        "//bazel:is_store": True,
+        "//conditions:default": False,
+    }),
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
+)
+
+macho_test(
+    name = "pythonkit_arch_test",
+    src = "//ext/pythonkit:PythonKit",
+    archs = ["arm64"],
+)
+
+codesign_test(
+    name = "pythonkit_codesign_test",
+    src = "//ext/pythonkit:PythonKit",
+    is_store = select({
+        "//bazel:is_store": True,
+        "//conditions:default": False,
+    }),
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
 )
