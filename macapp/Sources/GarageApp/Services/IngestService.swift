@@ -7,7 +7,6 @@ private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestSe
 /// Execution strategy for document ingestion.
 enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
     case xpcService = "xpc"
-    case inProcess = "in_process"
     case cliProcess = "cli_process"
 
     var id: String { rawValue }
@@ -15,7 +14,6 @@ enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .xpcService: return "Out-of-Process (XPC Helper)"
-        case .inProcess: return "In-Process (Embedded)"
         case .cliProcess: return "Out-of-Process (`garage ingest` CLI)"
         }
     }
@@ -23,7 +21,6 @@ enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
     var shortTitle: String {
         switch self {
         case .xpcService: return "XPC Helper"
-        case .inProcess: return "In-Process"
         case .cliProcess: return "CLI Process"
         }
     }
@@ -32,15 +29,13 @@ enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .xpcService:
             return "Runs Python ingestion in a dedicated multi-threaded background process (GarageIngestXPCService) with crash isolation."
-        case .inProcess:
-            return "Runs Python ingestion directly inside the main application process."
         case .cliProcess:
             return "Runs document ingestion out-of-process by executing the standalone `garage ingest` CLI process."
         }
     }
 }
 
-/// Observable service that coordinates ingestion through the XPC service or in-process engine,
+/// Observable service that coordinates ingestion through the XPC service or CLI process,
 /// maintaining real-time progress state, per-source metrics, and logs for the UI.
 @MainActor
 final class IngestService: ObservableObject {
@@ -62,7 +57,6 @@ final class IngestService: ObservableObject {
     @Published private(set) var startedAt: Date? = nil
 
     let xpcClient: IngestClient
-    let inProcessClient: IngestClient
     let postgres: PostgresService?
     private var cliRunner: ProcessRunner?
     private var cliProcess: Process?
@@ -71,18 +65,16 @@ final class IngestService: ObservableObject {
 
     init(
         client: IngestClient = IngestClient(),
-        inProcessClient: IngestClient = IngestClient(inProcessEngine: IngestEngine.shared),
         postgres: PostgresService? = nil
     ) {
         let savedMode = UserDefaults.standard.string(forKey: "garage.ingest.executionMode")
         self.executionMode = savedMode.flatMap(IngestExecutionMode.init) ?? .xpcService
         self.xpcClient = client
-        self.inProcessClient = inProcessClient
         self.postgres = postgres
     }
 
     var client: IngestClient {
-        executionMode == .inProcess ? inProcessClient : xpcClient
+        xpcClient
     }
 
     func appendLog(_ line: LogLine) {
@@ -130,12 +122,7 @@ final class IngestService: ObservableObject {
     func cancel() async -> Bool {
         guard isRunning else { return false }
         isCancelling = true
-        let label: String
-        switch activeMode {
-        case .inProcess: label = "Ingest (In-Process)"
-        case .cliProcess: label = "Ingest (CLI)"
-        default: label = "Ingest (XPC)"
-        }
+        let label = activeMode == .cliProcess ? "Ingest (CLI)" : "Ingest (XPC)"
         logger.info("IngestService: requesting cancel for '\(self.currentSource ?? "source", privacy: .public)' in mode \(label, privacy: .public)")
         let line = LogLine(
             stream: .stderr,
@@ -150,9 +137,8 @@ final class IngestService: ObservableObject {
             return true
         }
 
-        let targetClient = activeMode == .inProcess ? inProcessClient : xpcClient
         do {
-            let success = try await targetClient.cancelIngest()
+            let success = try await xpcClient.cancelIngest()
             logger.info("IngestService: cancel signal result: \(success)")
             return success
         } catch {
@@ -175,7 +161,6 @@ final class IngestService: ObservableObject {
         let targetMode = mode ?? executionMode
         let commandLabel: String
         switch targetMode {
-        case .inProcess: commandLabel = "Ingest (In-Process)"
         case .cliProcess: commandLabel = "Ingest (CLI)"
         case .xpcService: commandLabel = "Ingest (XPC)"
         }
@@ -227,7 +212,7 @@ final class IngestService: ObservableObject {
             return await runCliIngest(slug: slug, options: options, commandLabel: commandLabel)
         }
 
-        let selectedClient = targetMode == .inProcess ? inProcessClient : xpcClient
+        let selectedClient = xpcClient
         let effectiveOptions: IngestOptions
         if options.grpcPort == nil {
             effectiveOptions = IngestOptions(

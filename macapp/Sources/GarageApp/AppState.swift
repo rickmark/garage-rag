@@ -472,7 +472,7 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
-    /// Runs ingestion through the configured execution mode (XPC helper, in-process, or CLI) streaming real-time progress.
+    /// Runs ingestion through the configured execution mode (XPC helper or CLI) streaming real-time progress.
     @discardableResult
     func ingestSource(slug: String, options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
         if slug == "*" {
@@ -526,12 +526,6 @@ final class AppState: ObservableObject {
         await ingestSource(slug: slug, options: options, mode: .xpcService)
     }
 
-    /// Runs ingestion directly in-process streaming real-time progress to the UI.
-    @discardableResult
-    func ingestInProcess(slug: String, options: IngestOptions = .default) async -> Bool {
-        await ingestSource(slug: slug, options: options, mode: .inProcess)
-    }
-
     /// Runs ingestion via the out-of-process standalone `garage ingest` CLI subprocess.
     @discardableResult
     func ingestViaCLI(slug: String, options: IngestOptions = .default) async -> Bool {
@@ -547,7 +541,7 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
-    /// Combines CLI ingest logs and XPC / in-process ingestion logs into a single chronologically ordered stream.
+    /// Combines CLI ingest logs and XPC ingestion logs into a single chronologically ordered stream.
     var combinedIngestLogs: [LogLine] {
         (ingest.logs + ingestService.logs).sorted { $0.date < $1.date }
     }
@@ -556,7 +550,7 @@ final class AppState: ObservableObject {
         switch sourceName {
         case "Postgres": postgres.clearLogs()
         case "garage CLI": garage.clearLogs()
-        case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (In-Process)", "Ingest (CLI)":
+        case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (CLI)":
             ingest.clearLogs()
             ingestService.clearLogs()
         case "Backfill": backfill.clearLogs()

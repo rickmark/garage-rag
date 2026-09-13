@@ -315,9 +315,6 @@ struct SourcesView: View {
                             Button("Ingest All via XPC Helper") {
                                 ingestAllSources(mode: .xpcService)
                             }
-                            Button("Ingest All via In-Process") {
-                                ingestAllSources(mode: .inProcess)
-                            }
                             Button("Ingest All via CLI Process") {
                                 ingestAllSources(mode: .cliProcess)
                             }
@@ -458,10 +455,6 @@ struct SourcesView: View {
 
                         Button("Ingest via XPC Helper") {
                             ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .xpcService)
-                        }
-
-                        Button("Ingest via In-Process") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .inProcess)
                         }
 
                         Button("Ingest via CLI Process") {
@@ -723,7 +716,7 @@ struct SourcesView: View {
     private var runIngestWithCustomParametersSection: some View {
         GroupBox("Run Ingest with Arbitrary Parameters") {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Execute the ingest command with standard options, quick presets, or arbitrary CLI parameters across any execution mode (XPC Helper, In-Process, or CLI Process).")
+                Text("Execute the ingest command with standard options, quick presets, or arbitrary CLI parameters across any execution mode (XPC Helper or CLI Process).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

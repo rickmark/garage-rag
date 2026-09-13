@@ -89,9 +89,8 @@ final class IngestClientTests: XCTestCase {
     }
 
     func testIngestExecutionModeEnumCases() {
-        XCTAssertEqual(IngestExecutionMode.allCases.count, 3)
+        XCTAssertEqual(IngestExecutionMode.allCases.count, 2)
         XCTAssertEqual(IngestExecutionMode.xpcService.rawValue, "xpc")
-        XCTAssertEqual(IngestExecutionMode.inProcess.rawValue, "in_process")
         XCTAssertEqual(IngestExecutionMode.cliProcess.rawValue, "cli_process")
 
         XCTAssertEqual(IngestExecutionMode.cliProcess.shortTitle, "CLI Process")
@@ -143,36 +142,18 @@ final class IngestClientTests: XCTestCase {
         engine.revokeAccess()
     }
 
-    func testIngestClientWithInProcessEngine() async throws {
-        let engine = IngestEngine()
-        let client = IngestClient(inProcessEngine: engine)
-
-        let pingResult = try await client.ping()
-        XCTAssertTrue(pingResult.contains("in-process"))
-
-        let revokeResult = try await client.revokeAccess()
-        XCTAssertTrue(revokeResult)
-
-        let tempDir = NSTemporaryDirectory()
-        let request = VolumeAccessTestRequest(
-            rootBookmarkData: nil,
-            sourceBookmarks: nil,
-            sourcePaths: [SourcePathTestItem(slug: "temp", root: tempDir)]
-        )
-
-        let testResult = try await client.testVolumeAccess(request: request)
-        XCTAssertTrue(testResult.isAccessible)
-        XCTAssertEqual(testResult.sourcePathResults.count, 1)
-        XCTAssertTrue(testResult.sourcePathResults[0].isAccessible)
-        XCTAssertEqual(testResult.sourcePathResults[0].slug, "temp")
+    func testIngestClientInit() {
+        let client = IngestClient()
+        _ = client
+        let customClient = IngestClient(serviceName: "custom.service")
+        _ = customClient
     }
 
     @MainActor
-    func testVolumeAccessServiceViaXPC() async throws {
+    func testVolumeAccessServiceViaXPCThrowsWhenHelperUnavailable() async {
         let mockStore = MockVolumeBookmarkStore()
         let tempDir = NSTemporaryDirectory()
-        let engine = IngestEngine()
-        let client = IngestClient(inProcessEngine: engine)
+        let client = IngestClient(serviceName: "me.rickmark.nonexistent.helper")
 
         let service = VolumeAccessService(
             bookmarkStore: mockStore,
@@ -180,31 +161,34 @@ final class IngestClientTests: XCTestCase {
             ingestClient: client
         )
 
-        let result = try await service.testFullVolumeAccessViaXPC(sourcePaths: [
-            (slug: "temp", root: tempDir)
-        ])
-
-        XCTAssertTrue(result.isAccessible)
-        XCTAssertEqual(result.sourcePathResults.count, 1)
-        XCTAssertTrue(result.sourcePathResults[0].isAccessible)
-        XCTAssertEqual(result.sourcePathResults[0].slug, "temp")
-        XCTAssertTrue(result.message.contains("XPC process"))
+        do {
+            _ = try await service.testFullVolumeAccessViaXPC(sourcePaths: [
+                (slug: "temp", root: tempDir)
+            ])
+            XCTFail("Expected XPC error when helper is unavailable")
+        } catch {
+            XCTAssertNotNil(error)
+        }
     }
 
     @MainActor
     func testIngestServiceProgressHandling() async throws {
-        let engine = IngestEngine()
-        let client = IngestClient(inProcessEngine: engine)
-        let service = IngestService(client: client)
+        let service = IngestService()
 
         XCTAssertFalse(service.isRunning)
         XCTAssertNil(service.currentSource)
 
-        let result = await service.ingest(slug: "my-docs")
-        XCTAssertTrue(result.succeeded)
-        XCTAssertFalse(service.isRunning)
-        XCTAssertNil(service.currentSource)
-        XCTAssertNotNil(service.latestProgress)
+        let update = IngestProgressUpdate(
+            source: "my-docs",
+            phase: "complete",
+            seen: 10,
+            totalItems: 10,
+            indexed: 10,
+            progress: 1.0,
+            message: "Finished"
+        )
+        service.handleProgress(update)
+
         XCTAssertEqual(service.latestProgress?.source, "my-docs")
         XCTAssertEqual(service.latestProgress?.phase, "complete")
         XCTAssertFalse(service.logs.isEmpty)
@@ -212,9 +196,7 @@ final class IngestClientTests: XCTestCase {
 
     @MainActor
     func testIngestServiceCancellation() async throws {
-        let engine = IngestEngine()
-        let client = IngestClient(inProcessEngine: engine)
-        let service = IngestService(client: client)
+        let service = IngestService()
 
         XCTAssertFalse(service.isRunning)
         XCTAssertFalse(service.isCancelling)
@@ -222,16 +204,9 @@ final class IngestClientTests: XCTestCase {
         // Cancel when not running returns false safely
         let cancelNotRunning = await service.cancel()
         XCTAssertFalse(cancelNotRunning)
-
-        let cancelClientResult = try await client.cancelIngest()
-        XCTAssertTrue(cancelClientResult)
-        XCTAssertTrue(engine.isCancelled)
-
-        engine.resetCancel()
-        XCTAssertFalse(engine.isCancelled)
     }
 
-    func testIngestClientFallbackWhenHelperUnavailable() async throws {
+    func testIngestClientWhenHelperUnavailable() async throws {
         // Test client configured with non-existent helper service name
         let client = IngestClient(serviceName: "me.rickmark.nonexistent.helper")
 
@@ -245,34 +220,11 @@ final class IngestClientTests: XCTestCase {
             }
         }
         let collector = ProgressCollector()
-        let ingestResult = try await client.ingest(slug: "fallback-source") { progress in
+        let ingestResult = try await client.ingest(slug: "test-source") { progress in
             collector.add(progress)
         }
-        XCTAssertTrue(ingestResult.succeeded)
-        // Verify XPC unavailable warning was logged into progress stream
-        XCTAssertTrue(collector.updates.contains(where: { $0.message.contains("XPC helper unavailable") }))
-    }
-
-    @MainActor
-    func testIngestEngineFailureLoggingAndPropagation() async throws {
-        let engine = IngestEngine { slug, options, onProgress in
-            let errorMsg = "Simulated disk failure during ingest of \(slug)"
-            onProgress?(IngestProgressUpdate(
-                source: slug,
-                phase: "error",
-                message: errorMsg,
-                error: errorMsg
-            ))
-            return IngestResult(succeeded: false, message: errorMsg)
-        }
-        let client = IngestClient(inProcessEngine: engine)
-        let service = IngestService(client: client)
-
-        let result = await service.ingest(slug: "fail-docs")
-        XCTAssertFalse(result.succeeded)
-        XCTAssertEqual(service.lastError, "Simulated disk failure during ingest of fail-docs")
-        XCTAssertTrue(service.logs.contains(where: { $0.stream == .stderr && $0.text.contains("Simulated disk failure") }))
-        XCTAssertTrue(service.latestProgress?.isError ?? false)
+        XCTAssertFalse(ingestResult.succeeded)
+        XCTAssertTrue(collector.updates.contains(where: { $0.isError }))
     }
 
     func testXPCDyldDiagnosticsReportGeneration() {
@@ -310,37 +262,6 @@ final class IngestClientTests: XCTestCase {
         let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
         _ = libPaths
         _ = spPaths
-    }
-
-    func testIngestEngineEnsurePythonInitialized() {
-        let engine = IngestEngine()
-        // Calling ensurePythonInitialized in test harness should not crash
-        do {
-            try engine.ensurePythonInitialized()
-        } catch {
-            // If Python.framework is not present in build sandbox, error is gracefully handled
-            XCTAssertNotNil(error)
-        }
-    }
-
-    func testIngestEngineAsyncIngest() async {
-        let engine = IngestEngine()
-        final class ProgressCollector: @unchecked Sendable {
-            var updates: [IngestProgressUpdate] = []
-            private let lock = NSLock()
-            func add(_ u: IngestProgressUpdate) {
-                lock.lock()
-                defer { lock.unlock() }
-                updates.append(u)
-            }
-        }
-        let collector = ProgressCollector()
-        let result = await engine.ingestSourceAsync(slug: "test-slug") { update in
-            collector.add(update)
-        }
-        XCTAssertTrue(result.succeeded)
-        XCTAssertFalse(collector.updates.isEmpty)
-        XCTAssertEqual(collector.updates.last?.phase, "complete")
     }
 
     func testXPCDyldDiagnosticsEnsurePsycopgDatabaseURL() {

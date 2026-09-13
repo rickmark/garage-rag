@@ -1,49 +1,22 @@
 import Foundation
 import OSLog
-#if canImport(PythonKit)
-import PythonKit
-#endif
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestEngine")
 
-/// Engine handling ingest operations, security-scoped bookmark lifecycle, and sandboxed access verification.
+/// Engine handling security-scoped bookmark lifecycle and sandboxed access verification.
 public final class IngestEngine: @unchecked Sendable {
     public static let shared = IngestEngine()
-
-    public typealias IngestHandler = @Sendable (String, IngestOptions, (@Sendable (IngestProgressUpdate) -> Void)?) -> IngestResult
 
     private let lock = NSLock()
     private var activeRootURL: URL?
     private var isAccessingRootScope = false
     private var activeSourceURLs: [String: URL] = [:]
-    private var customHandler: IngestHandler?
 
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     public private(set) var isCancelled = false
-    private var isPythonInitialized = false
-    private let pythonInitLock = NSLock()
 
-    /// Ensures the Python runtime is dynamically loaded and sys.path configured prior to any PythonKit calls.
-    public func ensurePythonInitialized() throws {
-        pythonInitLock.lock()
-        defer { pythonInitLock.unlock() }
-        guard !isPythonInitialized else { return }
-
-        logger.info("Initializing Python runtime dynamically in IngestEngine...")
-        _ = try XPCDyldDiagnostics.initializePythonRuntime()
-        isPythonInitialized = true
-    }
-
-    public init(customHandler: IngestHandler? = nil) {
-        self.customHandler = customHandler
-    }
-
-    public func setCustomIngestHandler(_ handler: IngestHandler?) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.customHandler = handler
-    }
+    public init() {}
 
     deinit {
         revokeAccess()
@@ -61,218 +34,6 @@ public final class IngestEngine: @unchecked Sendable {
         defer { lock.unlock() }
         logger.info("IngestEngine resetCancel() called")
         isCancelled = false
-    }
-
-    // MARK: - Ingestion
-
-    /// Executes ingestion in-process asynchronously for the given source slug and options.
-    public func ingestSourceAsync(
-        slug: String,
-        options: IngestOptions = .default,
-        onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil
-    ) async -> IngestResult {
-        logger.info("IngestEngine.ingestSourceAsync called for slug: '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))")
-        resetCancel()
-
-        lock.lock()
-        let handler = self.customHandler
-        lock.unlock()
-
-        if let handler = handler {
-            logger.info("Using custom handler for slug '\(slug, privacy: .public)'")
-            return handler(slug, options, onProgress)
-        }
-
-        #if canImport(PythonKit)
-        do {
-            try ensurePythonInitialized()
-            logger.info("Importing garage_rag.ingest via PythonKit...")
-            let ingestModule = try Python.attemptImport("garage_rag.ingest")
-
-            onProgress?(IngestProgressUpdate(
-                source: slug,
-                phase: "scan",
-                seen: 0,
-                totalItems: 0,
-                progress: 0.0,
-                message: "Starting in-process ingestion for \(slug)..."
-            ))
-
-            let limitObj: PythonObject = options.limit != nil ? PythonObject(options.limit!) : Python.None
-            logger.info("Executing Python ingest_xpc asynchronously in-process for '\(slug, privacy: .public)'")
-            _ = try await ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
-                ("", slug),
-                ("include_code", options.includeCode),
-                ("limit", limitObj),
-                ("force", options.force)
-            ])
-
-            let successMsg = "Ingestion completed successfully for \(slug)"
-            logger.info("\(successMsg, privacy: .public)")
-            let compProg = IngestProgressUpdate(
-                source: slug,
-                phase: "complete",
-                seen: 1,
-                totalItems: 1,
-                indexed: 1,
-                progress: 1.0,
-                message: successMsg
-            )
-            onProgress?(compProg)
-            return IngestResult(succeeded: true, message: successMsg)
-        } catch {
-            var dyldError = ""
-            if let errCStr = dlerror() {
-                dyldError = " (dyld: \(String(cString: errCStr)))"
-            }
-            let errorMsg = "In-process ingestion failed for \(slug): \(error)\(dyldError)"
-            logger.error("\(errorMsg, privacy: .public)")
-            let errProg = IngestProgressUpdate(
-                source: slug,
-                phase: "error",
-                message: errorMsg,
-                error: "\(error)"
-            )
-            onProgress?(errProg)
-            return IngestResult(succeeded: false, message: errorMsg)
-        }
-        #else
-        logger.info("IngestEngine running in non-PythonKit stub mode for '\(slug, privacy: .public)'")
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "scan",
-            seen: 0,
-            totalItems: 1,
-            progress: 0.0,
-            message: "Scanning \(slug)..."
-        ))
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "ingest",
-            seen: 1,
-            totalItems: 1,
-            indexed: 1,
-            progress: 1.0,
-            message: "Ingesting \(slug): 1/1"
-        ))
-        let compMsg = "Completed in-process fallback ingest for \(slug)"
-        logger.info("\(compMsg, privacy: .public)")
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "complete",
-            seen: 1,
-            totalItems: 1,
-            indexed: 1,
-            progress: 1.0,
-            message: compMsg
-        ))
-        return IngestResult(succeeded: true, message: compMsg)
-        #endif
-    }
-
-    /// Executes ingestion in-process for the given source slug and options.
-    public func ingestSource(
-        slug: String,
-        options: IngestOptions = .default,
-        onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil
-    ) -> IngestResult {
-        logger.info("IngestEngine.ingestSource called for slug: '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))")
-        resetCancel()
-
-        lock.lock()
-        let handler = self.customHandler
-        lock.unlock()
-
-        if let handler = handler {
-            logger.info("Using custom handler for slug '\(slug, privacy: .public)'")
-            return handler(slug, options, onProgress)
-        }
-
-        #if canImport(PythonKit)
-        do {
-            try ensurePythonInitialized()
-            logger.info("Importing garage_rag.ingest via PythonKit...")
-            let ingestModule = try Python.attemptImport("garage_rag.ingest")
-
-            onProgress?(IngestProgressUpdate(
-                source: slug,
-                phase: "scan",
-                seen: 0,
-                totalItems: 0,
-                progress: 0.0,
-                message: "Starting in-process ingestion for \(slug)..."
-            ))
-
-            let limitObj: PythonObject = options.limit != nil ? PythonObject(options.limit!) : Python.None
-            logger.info("Executing Python ingest_xpc in-process for '\(slug, privacy: .public)'")
-            _ = try ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
-                ("", slug),
-                ("include_code", options.includeCode),
-                ("limit", limitObj),
-                ("force", options.force)
-            ])
-
-            let successMsg = "Ingestion completed successfully for \(slug)"
-            logger.info("\(successMsg, privacy: .public)")
-            let compProg = IngestProgressUpdate(
-                source: slug,
-                phase: "complete",
-                seen: 1,
-                totalItems: 1,
-                indexed: 1,
-                progress: 1.0,
-                message: successMsg
-            )
-            onProgress?(compProg)
-            return IngestResult(succeeded: true, message: successMsg)
-        } catch {
-            var dyldError = ""
-            if let errCStr = dlerror() {
-                dyldError = " (dyld: \(String(cString: errCStr)))"
-            }
-            let errorMsg = "In-process ingestion failed for \(slug): \(error)\(dyldError)"
-            logger.error("\(errorMsg, privacy: .public)")
-            let errProg = IngestProgressUpdate(
-                source: slug,
-                phase: "error",
-                message: errorMsg,
-                error: "\(error)"
-            )
-            onProgress?(errProg)
-            return IngestResult(succeeded: false, message: errorMsg)
-        }
-        #else
-        logger.info("IngestEngine running in non-PythonKit stub mode for '\(slug, privacy: .public)'")
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "scan",
-            seen: 0,
-            totalItems: 1,
-            progress: 0.0,
-            message: "Scanning \(slug)..."
-        ))
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "ingest",
-            seen: 1,
-            totalItems: 1,
-            indexed: 1,
-            progress: 1.0,
-            message: "Ingesting \(slug): 1/1"
-        ))
-        let compMsg = "Completed in-process fallback ingest for \(slug)"
-        logger.info("\(compMsg, privacy: .public)")
-        onProgress?(IngestProgressUpdate(
-            source: slug,
-            phase: "complete",
-            seen: 1,
-            totalItems: 1,
-            indexed: 1,
-            progress: 1.0,
-            message: compMsg
-        ))
-        return IngestResult(succeeded: true, message: compMsg)
-        #endif
     }
 
     // MARK: - JSON Helpers
