@@ -65,30 +65,94 @@ public struct LogLine: Identifiable, Hashable, Sendable {
         self.rawText = rawText
     }
 
+    private static let levelPrefixRegex: NSRegularExpression = {
+        let pattern = "^(?:(?:\\d{4}[-/]\\d{2}[-/]\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2}(?:[\\.,]\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?|\\d{2}:\\d{2}:\\d{2}(?:[\\.,]\\d+)?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2})\\s*)?(?:[-:\\|]\\s*|\\[[^\\]]+\\]\\s*|\\([^\\)]+\\)\\s*|\\<[^\\>]+\\>\\s*|[\\w\\.-]+@\\w+\\s*|[\\w\\.-]+\\s*[-:\\|]\\s*)*[\\[\\(\\<]?(FATAL|CRITICAL|CRIT|PANIC|ERROR|ERR|WARNING|WARN|WRN|DEBUG(?:[1-5])?|TRACE|TRC|DBG|INFO|INFORMATION|INF|NOTICE|LOG|DETAIL|HINT|STATEMENT|NOTE)[\\]\\)\\>]?(?=[:\\s\\-\\|/\\[\\(\\<]|$)"
+        return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }()
+
+    private static func parseTokenLevel(_ token: String) -> LogLevel? {
+        let upper = token.uppercased()
+        switch upper {
+        case "FATAL", "CRITICAL", "CRIT", "PANIC", "ERROR", "ERR":
+            return .error
+        case "WARNING", "WARN", "WRN":
+            return .warning
+        case "DEBUG", "DEBUG1", "DEBUG2", "DEBUG3", "DEBUG4", "DEBUG5", "TRACE", "TRC", "DBG":
+            return .debug
+        case "INFO", "INFORMATION", "INF", "NOTICE", "LOG", "DETAIL", "HINT", "STATEMENT", "NOTE":
+            return .info
+        default:
+            return nil
+        }
+    }
+
     public static func inferLevel(stream: Stream, text: String) -> LogLevel {
-        let lower = text.lowercased()
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return stream == .stderr ? .error : .info
+        }
+
+        let lower = trimmed.lowercased()
+
+        // 1. Python tracebacks
+        if lower.contains("traceback (most recent call last):") {
+            return .error
+        }
+
+        // 2. Structured key-value / JSON logging
+        if lower.contains("\"level\":\"error\"") || lower.contains("\"level\": \"error\"")
+            || lower.contains("\"level\":\"fatal\"") || lower.contains("\"level\": \"fatal\"")
+            || lower.contains("\"level\":\"critical\"") || lower.contains("\"level\": \"critical\"")
+            || lower.contains("\"level\":\"panic\"") || lower.contains("\"level\": \"panic\"")
+            || lower.contains("level=error") || lower.contains("level=fatal")
+            || lower.contains("level=critical") || lower.contains("level=panic") {
+            return .error
+        }
+        if lower.contains("\"level\":\"warn\"") || lower.contains("\"level\": \"warn\"")
+            || lower.contains("\"level\":\"warning\"") || lower.contains("\"level\": \"warning\"")
+            || lower.contains("level=warn") || lower.contains("level=warning") {
+            return .warning
+        }
+        if lower.contains("\"level\":\"debug\"") || lower.contains("\"level\": \"debug\"")
+            || lower.contains("\"level\":\"trace\"") || lower.contains("\"level\": \"trace\"")
+            || lower.contains("level=debug") || lower.contains("level=trace") {
+            return .debug
+        }
+        if lower.contains("\"level\":\"info\"") || lower.contains("\"level\": \"info\"")
+            || lower.contains("\"level\":\"notice\"") || lower.contains("\"level\": \"notice\"")
+            || lower.contains("level=info") || lower.contains("level=notice") {
+            return .info
+        }
+
+        // 3. Match leading prefix/token (Python logging, Uvicorn, timestamps, etc.)
+        let fullRange = NSRange(location: 0, length: (trimmed as NSString).length)
+        if let match = levelPrefixRegex.firstMatch(in: trimmed, options: [], range: fullRange),
+           match.range(at: 1).location != NSNotFound,
+           let tokenRange = Range(match.range(at: 1), in: trimmed) {
+            let token = String(trimmed[tokenRange])
+            if let level = parseTokenLevel(token) {
+                return level
+            }
+        }
+
+        // 4. Bracketed / tagged levels anywhere in the line
         if lower.contains("[error]") || lower.contains("error:") || lower.contains("[fatal]")
-            || lower.contains("fatal:") || lower.contains("panic:") || lower.contains("level=error")
-            || lower.contains("\"level\":\"error\"") || lower.contains("\"level\": \"error\"")
-            || lower.contains("traceback (most recent call last):") {
+            || lower.contains("fatal:") || lower.contains("panic:") {
             return .error
         }
         if lower.contains("[warn]") || lower.contains("[warning]") || lower.contains("warning:")
-            || lower.contains("warn:") || lower.contains("level=warn") || lower.contains("level=warning")
-            || lower.contains("\"level\":\"warning\"") || lower.contains("\"level\": \"warning\"") {
+            || lower.contains("warn:") {
             return .warning
         }
         if lower.contains("[debug]") || lower.contains("[trace]") || lower.contains("debug:")
-            || lower.contains("trace:") || lower.contains("level=debug") || lower.contains("level=trace")
-            || lower.contains("\"level\":\"debug\"") || lower.contains("\"level\": \"debug\"") {
+            || lower.contains("trace:") {
             return .debug
         }
         if lower.contains("[info]") || lower.contains("info:") || lower.contains("log:")
-            || lower.contains("notice:") || lower.contains("level=info")
-            || lower.contains("\"level\":\"info\"") || lower.contains("\"level\": \"info\"")
-            || lower.contains("detail:") || lower.contains("hint:") {
+            || lower.contains("notice:") || lower.contains("detail:") || lower.contains("hint:") {
             return .info
         }
+
         if stream == .stderr {
             return .error
         }

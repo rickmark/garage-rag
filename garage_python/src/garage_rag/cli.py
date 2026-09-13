@@ -1444,25 +1444,34 @@ def serve(
         serve_grpc(host=host, port=port)
 
 
-def main_cli() -> None:
+def main_cli() -> int:
     """Main CLI entrypoint. Serializes console commands over gRPC protobufs in-process."""
     import sys
 
     argv = sys.argv[1:]
     # If starting server, run serve directly
     if argv and argv[0] in ("serve",):
-        app()
-        return
+        try:
+            app()
+            return 0
+        except SystemExit as se:
+            return se.code if isinstance(se.code, int) else 0
 
     # In-process gRPC command serialization execution
     if argv and not (len(argv) == 1 and argv[0] in ("--help", "-h")):
         from garage_rag.service.client import execute_and_render_cli
 
         exit_code = execute_and_render_cli(argv)
-        raise SystemExit(exit_code)
+        return exit_code
 
-    app()
+    try:
+        app()
+        return 0
+    except SystemExit as se:
+        return se.code if isinstance(se.code, int) else 0
 
 
 if __name__ == "__main__":
-    main_cli()
+    import sys
+
+    sys.exit(main_cli())

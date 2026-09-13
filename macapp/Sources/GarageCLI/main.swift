@@ -144,7 +144,8 @@ private func runCLI() {
     sys.argv = PythonObject(CommandLine.arguments)
 
     let cliModule = Python.import("garage_rag.cli")
-    cliModule.main_cli()
+    let exitCode = Int(cliModule.main_cli()) ?? 0
+    exit(Int32(exitCode))
     #else
     fputs("Error: PythonKit not available\n", stderr)
     exit(1)

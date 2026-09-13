@@ -31,6 +31,18 @@ alias(
 )
 
 alias(
+    name = "openssl",
+    actual = "//ext/openssl:openssl",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libopenssl",
+    actual = "//ext/openssl:openssl",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "python",
     actual = "//ext/python:python_3_13",
     visibility = ["//visibility:public"],
@@ -121,6 +133,12 @@ macho_test(
         "arm64",
         "x86_64",
     ],
+)
+
+macho_test(
+    name = "openssl_arch_test",
+    src = ":openssl",
+    archs = ["arm64"],
 )
 
 macho_test(

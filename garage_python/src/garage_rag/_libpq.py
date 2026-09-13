@@ -16,6 +16,9 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+# Ensure psycopg uses the python implementation (ctypes + bundled libpq) on macOS
+os.environ.setdefault("PSYCOPG_IMPL", "python")
+
 _configured_libpq_path: str | None = None
 
 

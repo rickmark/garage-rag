@@ -120,7 +120,7 @@ codesign(
     name = "garage",
     src = ":garage_bin",
     entitlements = select({
-        "//bazel:is_store": ":Garage.entitlements",
+        "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],

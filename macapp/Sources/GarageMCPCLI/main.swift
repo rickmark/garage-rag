@@ -144,7 +144,8 @@ private func runMCPCLI() {
     sys.argv = PythonObject(CommandLine.arguments)
 
     let mcpModule = Python.import("garage_rag.mcp_server.server")
-    mcpModule.main()
+    let exitCode = Int(mcpModule.main()) ?? 0
+    exit(Int32(exitCode))
     #else
     fputs("Error: PythonKit not available\n", stderr)
     exit(1)

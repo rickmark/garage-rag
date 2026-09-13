@@ -14,14 +14,22 @@ configure_make(
         "--without-ensurepip",
         "--with-static-libpython",
         "--with-universal-archs",
+        "--with-openssl=$$EXT_BUILD_DEPS/openssl",
+        "--with-readline=readline",
     ],
     copts = [
         "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
         "-DTIME=\\\"\\\\\\\"00:00:00\\\\\\\"\\\"",
     ],
+    deps = [
+        "//ext:libreadline",
+        "//ext:libzlib",
+        "//ext:openssl",
+    ],
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
+        "LIBREADLINE_LIBS": "-lreadline -lncurses",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
     },
     lib_source = "@python_3_13_framework//:python_source",
@@ -58,14 +66,22 @@ configure_make(
         "--without-ensurepip",
         "--with-static-libpython",
         "--with-universal-archs",
+        "--with-openssl=$$EXT_BUILD_DEPS/openssl",
+        "--with-readline=readline",
     ],
     copts = [
         "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
         "-DTIME=\\\"\\\\\\\"00:00:00\\\\\\\"\\\"",
     ],
+    deps = [
+        "//ext:libreadline",
+        "//ext:libzlib",
+        "//ext:openssl",
+    ],
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
+        "LIBREADLINE_LIBS": "-lreadline -lncurses",
     },
     lib_source = "@python_3_13_framework//:python_source",
     out_binaries = [

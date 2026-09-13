@@ -1,0 +1,23 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+configure_make(
+    name = "openssl",
+    configure_command = "config",
+    configure_options = [
+        "no-shared",
+        "no-tests",
+        "no-unit-test",
+        "no-docs",
+        "no-ui-console",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+        "ARFLAGS": "crs",
+    },
+    lib_source = "@openssl//:openssl_source",
+    out_static_libs = [
+        "libssl.a",
+        "libcrypto.a",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from garage_rag.cli import app
+from garage_rag.cli import app, main_cli
 
 runner = CliRunner()
 
@@ -24,3 +24,15 @@ def test_cli_serve_help():
     assert "--service-name" in result.output
     assert "--team-id" in result.output
     assert "--bundle-id" in result.output
+
+
+def test_main_cli_returns_exit_code(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["garage", "version"])
+    code = main_cli()
+    assert code == 0
+
+    monkeypatch.setattr(sys, "argv", ["garage", "--help"])
+    code = main_cli()
+    assert code == 0

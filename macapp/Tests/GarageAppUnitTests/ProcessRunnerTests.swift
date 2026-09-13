@@ -27,6 +27,134 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertEqual(line.stream, .stderr)
         XCTAssertEqual(line.text, "error occurred")
         XCTAssertEqual(line.source, "tester")
+        XCTAssertEqual(line.level, .error)
+    }
+
+    func testLogLineInferLevelForPythonCLIStderrInfo() {
+        let pythonLogLine = LogLine(
+            stream: .stderr,
+            text: "INFO garage_rag.cli: starting garage CLI",
+            source: "garage"
+        )
+        XCTAssertEqual(pythonLogLine.level, .info)
+
+        let pythonServerLine = LogLine(
+            stream: .stderr,
+            text: "INFO garage_rag.service.server: Server started on port 14824",
+            source: "garage-grpc"
+        )
+        XCTAssertEqual(pythonServerLine.level, .info)
+
+        let defaultPythonLine = LogLine(
+            stream: .stderr,
+            text: "INFO:root:Connected to database",
+            source: "garage"
+        )
+        XCTAssertEqual(defaultPythonLine.level, .info)
+
+        let uvicornLine = LogLine(
+            stream: .stderr,
+            text: "INFO:     Started server process [12345]",
+            source: "garage-mcp"
+        )
+        XCTAssertEqual(uvicornLine.level, .info)
+
+        let timestampedLine = LogLine(
+            stream: .stderr,
+            text: "2026-09-13 12:34:56,789 INFO garage_rag.cli: database ready",
+            source: "garage"
+        )
+        XCTAssertEqual(timestampedLine.level, .info)
+
+        let hyphenatedLine = LogLine(
+            stream: .stderr,
+            text: "2026-09-13 12:34:56,789 - garage_rag - INFO - Starting server...",
+            source: "garage"
+        )
+        XCTAssertEqual(hyphenatedLine.level, .info)
+
+        let bracketedLine = LogLine(
+            stream: .stderr,
+            text: "[INFO] Ready for connections",
+            source: "garage"
+        )
+        XCTAssertEqual(bracketedLine.level, .info)
+    }
+
+    func testLogLineInferLevelForOtherLevelsOnStderr() {
+        let debugLine = LogLine(
+            stream: .stderr,
+            text: "DEBUG garage_rag.db: database connection opened",
+            source: "garage"
+        )
+        XCTAssertEqual(debugLine.level, .debug)
+
+        let warnLine = LogLine(
+            stream: .stderr,
+            text: "WARNING garage_rag.attribute: file skipped",
+            source: "garage"
+        )
+        XCTAssertEqual(warnLine.level, .warning)
+
+        let errorLine = LogLine(
+            stream: .stderr,
+            text: "ERROR garage_rag.ingest: failed to read file",
+            source: "garage"
+        )
+        XCTAssertEqual(errorLine.level, .error)
+
+        let criticalLine = LogLine(
+            stream: .stderr,
+            text: "CRITICAL garage_rag.main: fatal error occurred",
+            source: "garage"
+        )
+        XCTAssertEqual(criticalLine.level, .error)
+    }
+
+    func testLogLineInferLevelStructuredJsonAndKeyValue() {
+        let jsonInfo = LogLine(
+            stream: .stderr,
+            text: "{\"level\": \"info\", \"message\": \"server up\"}",
+            source: "garage"
+        )
+        XCTAssertEqual(jsonInfo.level, .info)
+
+        let jsonWarn = LogLine(
+            stream: .stderr,
+            text: "{\"level\":\"warning\",\"message\":\"low memory\"}",
+            source: "garage"
+        )
+        XCTAssertEqual(jsonWarn.level, .warning)
+
+        let jsonError = LogLine(
+            stream: .stderr,
+            text: "{\"level\": \"error\", \"message\": \"failed\"}",
+            source: "garage"
+        )
+        XCTAssertEqual(jsonError.level, .error)
+
+        let logfmtInfo = LogLine(
+            stream: .stderr,
+            text: "level=info msg=\"starting service\"",
+            source: "garage"
+        )
+        XCTAssertEqual(logfmtInfo.level, .info)
+    }
+
+    func testLogLineInferLevelFallback() {
+        let genericStderr = LogLine(
+            stream: .stderr,
+            text: "Unrecognized stderr output",
+            source: "garage"
+        )
+        XCTAssertEqual(genericStderr.level, .error)
+
+        let genericStdout = LogLine(
+            stream: .stdout,
+            text: "Regular standard output",
+            source: "garage"
+        )
+        XCTAssertEqual(genericStdout.level, .info)
     }
 
     func testProcessRunnerRunSyncSuccess() {
