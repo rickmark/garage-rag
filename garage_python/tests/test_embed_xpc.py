@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -15,7 +16,18 @@ from garage_rag.proto.garage_pb2 import (
     UpdateEmbeddingsResponse,
 )
 from garage_rag.service.client import GarageClient
-from garage_rag.service.server import GarageRpcServicer
+from garage_rag.service.server import GarageRpcServicer, create_grpc_server
+
+
+@pytest.fixture
+def grpc_server():
+    """Start an in-memory / local gRPC server on an ephemeral port."""
+    stop_event = threading.Event()
+    server, servicer = create_grpc_server(host="127.0.0.1", port=0, stop_event=stop_event)
+    bound_port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    yield bound_port, servicer
+    server.stop(grace=None)
 
 
 def test_servicer_get_embedding_batches_and_update():
@@ -117,3 +129,59 @@ def test_embed_via_grpc_workflow():
         assert len(update_call_arg.embeddings) == 2
         assert update_call_arg.embeddings[0].chunk_id == 1
         assert list(update_call_arg.embeddings[0].vector) == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_embed_via_live_grpc_server(grpc_server):
+    port, servicer = grpc_server
+
+    mock_model = MagicMock()
+    mock_model.slug = "test-live-model"
+    mock_model.table_name = "emb_test_live_model"
+    mock_model.provider = "fastembed"
+    mock_model.model_ref = "mxbai-embed-xsmall"
+    mock_model.dims = 3
+    mock_model.stored_dims = 3
+    mock_model.storage_kind = "vector"
+    mock_model.index_kind = "hnsw"
+
+    call_count = 0
+
+    def fake_execute(stmt, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        res = MagicMock()
+        if call_count == 1:
+            res.all.return_value = [(1, "Text one"), (2, "Text two")]
+        else:
+            res.all.return_value = []
+        return res
+
+    mock_session = MagicMock()
+    mock_session.execute.side_effect = fake_execute
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [
+        [0.1, 0.2, 0.3],
+        [0.4, 0.5, 0.6],
+    ]
+
+    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
+         patch("garage_rag.db.emb_tables.get_model", return_value=mock_model), \
+         patch("garage_rag.embed.ollama.count_pending", side_effect=[2, 0]), \
+         patch("garage_rag.embed.ollama.assert_safe_table", return_value="emb_test_live_model"), \
+         patch("garage_rag.embed.ollama._plan_from_row"), \
+         patch("garage_rag.embed.ollama._adapt", side_effect=lambda v, p: v), \
+         patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder):
+
+        mock_scope.return_value.__enter__.return_value = mock_session
+
+        result = embed_via_grpc(
+            model_slug="test-live-model",
+            batch_size=10,
+            grpc_host="127.0.0.1",
+            grpc_port=port,
+        )
+
+        assert result["status"] == "ok"
+        assert result["count"] == 2
+        mock_embedder.embed.assert_called_once_with(["Text one", "Text two"])

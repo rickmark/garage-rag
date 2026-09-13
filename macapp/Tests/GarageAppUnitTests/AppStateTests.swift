@@ -193,4 +193,60 @@ final class AppStateTests: XCTestCase {
         state.clearLogs(for: "Backfill")
         XCTAssertTrue(state.backfill.logs.isEmpty)
     }
+
+    @MainActor
+    func testCombinedIngestLogsCombinesAndOrdersLogs() {
+        let state = AppState()
+
+        let now = Date()
+        let line1 = LogLine(date: now.addingTimeInterval(-10), stream: .stdout, text: "CLI Ingest Line 1", source: "ingest")
+        let line2 = LogLine(date: now.addingTimeInterval(-5), stream: .stdout, text: "XPC Ingest Line 2", source: "ingest-xpc")
+        let line3 = LogLine(date: now, stream: .stdout, text: "CLI Ingest Line 3", source: "ingest")
+
+        state.ingest.appendLog(line1.text)
+        state.ingestService.appendLog(line2.text)
+        state.ingest.appendLog(line3.text)
+
+        let combined = state.combinedIngestLogs
+        XCTAssertEqual(combined.count, 3)
+        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 1" })
+        XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 2" })
+        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 3" })
+
+        // Check chronological ordering
+        for i in 0..<(combined.count - 1) {
+            XCTAssertLessThanOrEqual(combined[i].date, combined[i + 1].date)
+        }
+    }
+
+    @MainActor
+    func testClearLogsForIngestClearsBothStreams() {
+        let state = AppState()
+
+        state.ingest.appendLog("CLI log")
+        state.ingestService.appendLog("XPC log")
+
+        XCTAssertFalse(state.ingest.logs.isEmpty)
+        XCTAssertFalse(state.ingestService.logs.isEmpty)
+        XCTAssertFalse(state.combinedIngestLogs.isEmpty)
+
+        state.clearLogs(for: "Ingest")
+
+        XCTAssertTrue(state.ingest.logs.isEmpty)
+        XCTAssertTrue(state.ingestService.logs.isEmpty)
+        XCTAssertTrue(state.combinedIngestLogs.isEmpty)
+    }
+
+    @MainActor
+    func testXPCServiceManagerLogsAndClear() async {
+        let state = AppState()
+
+        state.xpcServices.appendLog("Test XPC log line", source: "llama-xpc", level: .info)
+        XCTAssertEqual(state.xpcServices.logs.count, 1)
+        XCTAssertEqual(state.xpcServices.logs.first?.text, "Test XPC log line")
+        XCTAssertEqual(state.xpcServices.logs.first?.source, "llama-xpc")
+
+        state.clearLogs(for: "XPC Services")
+        XCTAssertTrue(state.xpcServices.logs.isEmpty)
+    }
 }

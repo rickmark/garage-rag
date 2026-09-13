@@ -811,16 +811,14 @@ struct SourcesView: View {
 
     private var ingestOutputSection: some View {
         Group {
-            let hasXPCLogs = !appState.ingestService.logs.isEmpty
-            let hasCLILogs = !appState.ingest.logs.isEmpty
-            if hasXPCLogs || hasCLILogs {
+            let combinedLogs = appState.combinedIngestLogs
+            if !combinedLogs.isEmpty {
                 GroupBox("Ingest output") {
                     LogTableView(
-                        lines: hasXPCLogs ? appState.ingestService.logs : appState.ingest.logs,
-                        sourceName: hasXPCLogs ? "Ingest XPC" : "Ingest",
+                        lines: combinedLogs,
+                        sourceName: "Ingest",
                         onClear: {
-                            appState.ingestService.clearLogs()
-                            appState.ingest.clearLogs()
+                            appState.clearLogs(for: "Ingest")
                         }
                     )
                     .frame(minHeight: 200, maxHeight: 350)

@@ -104,6 +104,37 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         }
     }
 
+    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
+        let name = "GarageIngestXPCService"
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let status = parent.initializationError == nil ? "ready" : "warning: \(parent.initializationError!)"
+        reply(name, pid, uptime, status)
+    }
+
+    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
+        reply(out, err)
+    }
+
+    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
+        reply(out, err, nil)
+    }
+
+    func clearLogs(with reply: @escaping (Bool) -> Void) {
+        GarageXPCOutputCapture.shared.clear()
+        reply(true)
+    }
+
+    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
+    }
+
+    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
+    }
+
     func setRootVolumeBookmark(_ bookmarkData: Data, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("Setting root volume bookmark (\(bookmarkData.count) bytes) from client pid: \(self.connection.processIdentifier)")
         let result = engine.setRootVolumeBookmark(bookmarkData)
@@ -126,6 +157,13 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
     func cancelIngest(with reply: @escaping (Bool) -> Void) {
         logger.info("Cancel ingest requested from client pid: \(self.connection.processIdentifier)")
+        parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            logger.warning("Cannot cancel ingest via Python because Python is not initialized: \(initErr, privacy: .public)")
+            engine.cancel()
+            reply(true)
+            return
+        }
         #if canImport(PythonKit)
         Task {
             do {
@@ -137,8 +175,10 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(true)
             } catch {
                 var tracebackStr = ""
-                if let traceback = try? Python.attemptImport("traceback") {
-                    tracebackStr = String(describing: traceback.format_exc())
+                if parent.initializationError == nil {
+                    if let traceback = try? Python.attemptImport("traceback") {
+                        tracebackStr = String(describing: traceback.format_exc())
+                    }
                 }
                 logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
                 reply(false)
@@ -168,6 +208,12 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("Received ingestSource request for slug: '\(slug, privacy: .public)', optionsJson: '\(optionsJson, privacy: .public)' from client pid: \(self.connection.processIdentifier)")
         parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            let errorMsg = "Python initialization error: \(initErr)"
+            logger.error("\(errorMsg, privacy: .public)")
+            reply(false, errorMsg)
+            return
+        }
         let options = (try? engine.deserialize(IngestOptions.self, from: optionsJson)) ?? .default
 
         let clientConnection = self.connection
@@ -221,8 +267,10 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(true, successMsg)
             } catch {
                 var tracebackStr = ""
-                if let traceback = try? Python.attemptImport("traceback") {
-                    tracebackStr = String(describing: traceback.format_exc())
+                if parent.initializationError == nil {
+                    if let traceback = try? Python.attemptImport("traceback") {
+                        tracebackStr = String(describing: traceback.format_exc())
+                    }
                 }
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let errorMsg = "Failed to run ingest for \(slug) after \(duration)s: \(error)\nTraceback:\n\(tracebackStr)"
@@ -240,6 +288,12 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     func ingestPath(_ source: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         logger.info("Received ingestPath request for source: '\(source, privacy: .public)', options: \(options, privacy: .public) from client pid: \(self.connection.processIdentifier)")
         parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            let errorMsg = "Python initialization error: \(initErr)"
+            logger.error("\(errorMsg, privacy: .public)")
+            reply(false, errorMsg)
+            return
+        }
 
         let clientConnection = self.connection
         Task {
@@ -296,8 +350,10 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(true, successMsg)
             } catch {
                 var tracebackStr = ""
-                if let traceback = try? Python.attemptImport("traceback") {
-                    tracebackStr = String(describing: traceback.format_exc())
+                if parent.initializationError == nil {
+                    if let traceback = try? Python.attemptImport("traceback") {
+                        tracebackStr = String(describing: traceback.format_exc())
+                    }
                 }
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let errorMsg = "Failed to run ingest for \(source) after \(duration)s: \(error)\nTraceback:\n\(tracebackStr)"
@@ -334,185 +390,50 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         }
     }
 
-    private func setupPostgresEnvironment() {
-        if let envPath = ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"],
-           FileManager.default.fileExists(atPath: envPath) {
-            _ = dlopen(envPath, RTLD_NOW | RTLD_GLOBAL)
-            return
-        }
-
-        var candidatePaths: [String] = []
-        if let resourceURL = Bundle.main.resourceURL {
-            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
-        }
-
-        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").path)
-
-        let grandParentURL = parentAppURL.deletingLastPathComponent()
-        candidatePaths.append(grandParentURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(grandParentURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
-
-        for path in candidatePaths {
-            if FileManager.default.fileExists(atPath: path) {
-                setenv("GARAGE_LIBPQ_PATH", path, 1)
-                let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
-                setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
-                let handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
-                if handle != nil {
-                    logger.info("Successfully loaded postgres libpq via dyld from: \(path, privacy: .public)")
-                } else if let errCStr = dlerror() {
-                    logger.warning("Failed to dlopen libpq at \(path, privacy: .public): \(String(cString: errCStr), privacy: .public)")
-                }
-                break
-            }
-        }
-    }
-
-    private func setupPythonEnvironment() {
-        if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
-           FileManager.default.fileExists(atPath: envPath) {
-            logger.info("Using explicit PYTHON_LIBRARY environment variable: \(envPath, privacy: .public)")
-            return
-        }
-
-        var candidatePaths: [String] = []
-        if let resourceURL = Bundle.main.resourceURL {
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Python").path)
-        }
-        if let fwURL = Bundle.main.privateFrameworksURL {
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Python").path)
-        }
-
-        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Python").path)
-
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
-
-        let (selectedPath, diagnostics) = XPCDyldDiagnostics.diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
-        for diag in diagnostics {
-            logger.debug("[Dyld Diagnostic] \(diag, privacy: .public)")
-        }
-
-        if let validPath = selectedPath {
-            logger.info("Setting PYTHON_LIBRARY to verified path: \(validPath, privacy: .public)")
-            setenv("PYTHON_LIBRARY", validPath, 1)
-        } else {
-            let msg = "[DYLD_WARNING] No valid Python library found among candidate paths:\n" + diagnostics.joined(separator: "\n")
-            fputs("\(msg)\n", stderr)
-            fflush(stderr)
-            logger.warning("\(msg, privacy: .public)")
-        }
-    }
-
     func initializePythonIfNeeded() {
         initLock.lock()
         defer { initLock.unlock() }
         guard !isInitialized else { return }
-        setupPostgresEnvironment()
-        setupPythonEnvironment()
+        
+        XPCDyldDiagnostics.setupPostgresEnvironment()
+        let pyLib = XPCDyldDiagnostics.setupPythonEnvironment()
+        logger.info("Python library candidate resolved: \(pyLib ?? "<none>", privacy: .public)")
+
         let pid = ProcessInfo.processInfo.processIdentifier
         let uid = getuid()
         let gid = getgid()
-        let euid = geteuid()
-        let egid = getegid()
         let host = ProcessInfo.processInfo.hostName
         let osVer = ProcessInfo.processInfo.operatingSystemVersionString
         let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
         let bundlePath = Bundle.main.bundlePath
         let execPath = Bundle.main.executablePath ?? "unknown"
-        let resourcePath = Bundle.main.resourcePath ?? "unknown"
-        let cwd = FileManager.default.currentDirectoryPath
-        let home = NSHomeDirectory()
-        let tmp = NSTemporaryDirectory()
 
         logger.info("""
         === GarageIngestXPCService Diagnostics Initialization ===
-        PID: \(pid), UID: \(uid), GID: \(gid), EUID: \(euid), EGID: \(egid)
+        PID: \(pid), UID: \(uid), GID: \(gid)
         Host: \(host, privacy: .public), OS: \(osVer, privacy: .public)
         Bundle ID: \(bundleID, privacy: .public)
         Bundle Path: \(bundlePath, privacy: .public)
         Executable: \(execPath, privacy: .public)
-        Resource Path: \(resourcePath, privacy: .public)
-        CWD: \(cwd, privacy: .public)
-        Home: \(home, privacy: .public)
-        Tmp: \(tmp, privacy: .public)
         =========================================================
         """)
 
         #if canImport(PythonKit)
         do {
-            logger.info("Attempting to load Python library...")
+            logger.info("Attempting to load Python library via PythonLibrary.loadLibrary()...")
             try PythonLibrary.loadLibrary()
             logger.info("Python dynamic library successfully loaded via dyld.")
 
             logger.info("Configuring Python runtime and search paths...")
             let sys = Python.import("sys")
-            let pyVersion = String(describing: sys["version"])
-            let pyExecutable = String(describing: sys["executable"])
-            let pyPrefix = String(describing: sys["prefix"])
-            logger.info("Python runtime: version=\(pyVersion, privacy: .public), executable=\(pyExecutable, privacy: .public), prefix=\(pyPrefix, privacy: .public)")
-
-            let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-
-            let pythonLibCandidates: [URL?] = [
-                parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-                parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-                parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-                parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-                Bundle.main.resourceURL?.appendingPathComponent("python_3_13/Python.framework/Versions/Current/lib/python3.13"),
-                Bundle.main.resourceURL?.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/lib/python3.13"),
-            ]
-            for libURL in pythonLibCandidates {
-                if let libURL = libURL, FileManager.default.fileExists(atPath: libURL.path) {
-                    logger.info("Found Python standard library at: \(libURL.path, privacy: .public)")
-                    sys["path"].insert(0, libURL.path)
-                }
+            let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
+            for lib in libPaths {
+                logger.info("Adding Python standard library path: \(lib, privacy: .public)")
+                sys["path"].insert(0, lib)
             }
-
-            let sitePackagesCandidates: [URL?] = [
-                Bundle.main.resourceURL?.appendingPathComponent("site-packages"),
-                parentAppURL.appendingPathComponent("Contents/Resources/site-packages"),
-                parentAppURL.appendingPathComponent("Resources/site-packages"),
-                parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-                parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-                parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-                parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-            ]
-            for spURL in sitePackagesCandidates {
-                if let spURL = spURL, FileManager.default.fileExists(atPath: spURL.path) {
-                    logger.info("Found site-packages at: \(spURL.path, privacy: .public)")
-                    sys["path"].insert(0, spURL.path)
-                }
+            for sp in spPaths {
+                logger.info("Adding site-packages path: \(sp, privacy: .public)")
+                sys["path"].insert(0, sp)
             }
             if let resourceURL = Bundle.main.resourceURL {
                 sys["path"].insert(0, resourceURL.path)
@@ -576,6 +497,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 }
 
 installCrashHandlers()
+GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageIngestXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageIngestXPCServiceDelegate()
 let listener = NSXPCListener.service()

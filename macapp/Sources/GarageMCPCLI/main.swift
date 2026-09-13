@@ -96,56 +96,67 @@ private func runMCPCLI() {
     setupPostgresEnvironment()
     setupPythonEnvironment()
     #if canImport(PythonKit)
-    try? PythonLibrary.loadLibrary()
-    let sys = Python.import("sys")
+    do {
+        try PythonLibrary.loadLibrary()
+    } catch {
+        fputs("Error: Failed to load Python runtime library: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+
     let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let binDir = execURL.deletingLastPathComponent()
     let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
 
-    let pythonLibCandidates = [
-        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-    ]
+    do {
+        let sys = try Python.attemptImport("sys")
+        let pythonLibCandidates = [
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+        ]
 
-    for libURL in pythonLibCandidates {
-        if FileManager.default.fileExists(atPath: libURL.path) {
-            sys.path.insert(0, libURL.path)
+        for libURL in pythonLibCandidates {
+            if FileManager.default.fileExists(atPath: libURL.path) {
+                sys.path.insert(0, libURL.path)
+            }
         }
-    }
 
-    let sitePackagesCandidates = [
-        bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
-        bundleURL.appendingPathComponent("Resources/site-packages"),
-        binDir.appendingPathComponent("../Resources/site-packages"),
-        binDir.appendingPathComponent("site-packages"),
-        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-    ]
+        let sitePackagesCandidates = [
+            bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
+            bundleURL.appendingPathComponent("Resources/site-packages"),
+            binDir.appendingPathComponent("../Resources/site-packages"),
+            binDir.appendingPathComponent("site-packages"),
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+            bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        ]
 
-    for spURL in sitePackagesCandidates {
-        if FileManager.default.fileExists(atPath: spURL.path) {
-            sys.path.insert(0, spURL.path)
+        for spURL in sitePackagesCandidates {
+            if FileManager.default.fileExists(atPath: spURL.path) {
+                sys.path.insert(0, spURL.path)
+            }
         }
+
+        // Set sys.argv
+        sys.argv = PythonObject(CommandLine.arguments)
+
+        let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
+        let exitCode = Int(mcpModule.main()) ?? 0
+        exit(Int32(exitCode))
+    } catch {
+        fputs("Error executing garage-mcp CLI: \(error.localizedDescription)\n", stderr)
+        exit(1)
     }
-
-    // Set sys.argv
-    sys.argv = PythonObject(CommandLine.arguments)
-
-    let mcpModule = Python.import("garage_rag.mcp_server.server")
-    let exitCode = Int(mcpModule.main()) ?? 0
-    exit(Int32(exitCode))
     #else
     fputs("Error: PythonKit not available\n", stderr)
     exit(1)

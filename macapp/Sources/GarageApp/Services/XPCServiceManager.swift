@@ -7,20 +7,6 @@ import LlamaClient
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCServiceManager")
 
-/// Objective-C protocol matching the standard `ping` method implemented across all Garage XPC services.
-@objc(GarageGenericXPCPingProtocol)
-public protocol GarageGenericXPCPingProtocol {
-    func ping(with reply: @escaping (String) -> Void)
-}
-
-/// Objective-C protocol for Embed XPC Service communication.
-@objc(GarageEmbedXPCServiceProtocol)
-public protocol GarageEmbedXPCServiceProtocol {
-    func ping(with reply: @escaping (String) -> Void)
-    func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
-    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
-}
-
 /// Represents the outcome of a functional beyond-ping diagnostic test on a service.
 public struct ServiceDiagnosticTestResult: Identifiable, Equatable, Sendable {
     public var id: String { serviceId }
@@ -74,6 +60,16 @@ public enum XPCServiceState: Equatable, Sendable {
         switch self {
         case .checking, .restarting: return true
         default: return false
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .checking: return "Checking"
+        case .running: return "Running"
+        case .restarting: return "Restarting"
+        case .unreachable: return "Unreachable"
         }
     }
 }
@@ -137,6 +133,9 @@ public final class XPCServiceManager: ObservableObject {
     @Published public private(set) var diagnosticResults: [String: ServiceDiagnosticTestResult] = [:]
     @Published public private(set) var testingServiceIds: Set<String> = []
     @Published public private(set) var isTestingAll: Bool = false
+    @Published public private(set) var logs: [LogLine] = []
+
+    private let maxLogLines = 4000
 
     public typealias PingExecutor = @Sendable (String) async throws -> (pid: pid_t, latencyMs: Double, response: String)
     public typealias KillExecutor = @Sendable (pid_t) -> Bool
@@ -211,6 +210,25 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    // MARK: - Logging Operations
+
+    public func appendLog(
+        _ text: String,
+        stream: LogLine.Stream = .stdout,
+        source: String = "xpc-services",
+        level: LogLevel? = nil,
+        pid: Int32? = nil
+    ) {
+        logs.append(LogLine(stream: stream, text: text, source: source, level: level, pid: pid))
+        if logs.count > maxLogLines {
+            logs.removeFirst(logs.count - maxLogLines)
+        }
+    }
+
+    public func clearLogs() {
+        logs.removeAll()
+    }
+
     // MARK: - Status Operations
 
     /// Performs a ping and latency check for a single XPC service.
@@ -230,6 +248,7 @@ public final class XPCServiceManager: ObservableObject {
             services[index].state = newState
             services[index].lastChecked = Date()
             logger.info("XPC service '\(bundleId, privacy: .public)' is active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms)")
+            appendLog("[\(services[index].name)] Active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms): \(result.response)", source: services[index].id, level: .info, pid: result.pid)
             return newState
         } catch {
             let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
@@ -238,6 +257,7 @@ public final class XPCServiceManager: ObservableObject {
             let newState = XPCServiceState.unreachable(error: errorMsg)
             services[index].state = newState
             services[index].lastChecked = Date()
+            appendLog("[\(services[index].name)] Ping failed: \(errorMsg)", stream: .stderr, source: services[index].id, level: .error)
             return newState
         }
     }
@@ -276,11 +296,13 @@ public final class XPCServiceManager: ObservableObject {
         let service = services[index]
         services[index].state = .restarting
         logger.info("Restarting XPC service '\(service.bundleId, privacy: .public)'...")
+        appendLog("[\(service.name)] Restarting service...", source: service.id, level: .warning, pid: service.pid)
 
         // If currently running with known PID, send termination signal
         if let currentPid = service.pid, currentPid > 0 {
             logger.info("Terminating existing process for '\(service.bundleId, privacy: .public)' (pid: \(currentPid))")
             _ = killExecutor(currentPid)
+            appendLog("[\(service.name)] Sent termination signal to pid \(currentPid)", source: service.id, level: .warning, pid: currentPid)
         }
 
         // Wait a brief moment for launchd to clean up the dead process
@@ -288,6 +310,7 @@ public final class XPCServiceManager: ObservableObject {
 
         // Ping the service to spawn a fresh instance via launchd / XPC runtime
         let newState = await refresh(serviceId: service.id)
+        appendLog("[\(service.name)] Restart finished with state: \(newState.title)", source: service.id, level: newState.isRunning ? .info : .error)
         return newState.isRunning
     }
 
@@ -300,6 +323,7 @@ public final class XPCServiceManager: ObservableObject {
             lastRefreshedAt = Date()
         }
 
+        appendLog("Restarting all XPC helper services...", source: "xpc-services", level: .warning)
         let serviceIds = services.map { $0.id }
         for id in serviceIds {
             _ = await restart(serviceId: id)
@@ -310,10 +334,12 @@ public final class XPCServiceManager: ObservableObject {
 
     /// Terminates all known running XPC helper services.
     public func terminateAll() {
+        appendLog("Terminating all active XPC helper processes...", source: "xpc-services", level: .warning)
         for service in services {
             if let currentPid = service.pid, currentPid > 0 {
                 logger.info("Terminating XPC service '\(service.bundleId, privacy: .public)' (pid: \(currentPid))")
                 _ = killExecutor(currentPid)
+                appendLog("[\(service.name)] Terminated process pid \(currentPid)", source: service.id, level: .warning, pid: currentPid)
             }
         }
         Self.stopAnyRunningInstances()
@@ -388,7 +414,7 @@ public final class XPCServiceManager: ObservableObject {
     private static func performXPCPing(bundleId: String) async throws -> (pid: pid_t, latencyMs: Double, response: String) {
         let startTime = CFAbsoluteTimeGetCurrent()
         let connection = NSXPCConnection(serviceName: bundleId)
-        connection.remoteObjectInterface = NSXPCInterface(with: GarageGenericXPCPingProtocol.self)
+        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
         connection.resume()
         defer { connection.invalidate() }
 
@@ -399,7 +425,7 @@ public final class XPCServiceManager: ObservableObject {
                 let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
                 logger.error("XPC remote object proxy error for service '\(bundleId, privacy: .public)': \(enriched.localizedDescription, privacy: .public)")
                 relay.resume(throwing: enriched)
-            }) as? GarageGenericXPCPingProtocol else {
+            }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for \(bundleId)"])
                 let enriched = XPCDyldDiagnostics.enrichXPCError(err, forServiceBundleId: bundleId)
                 logger.error("\(enriched.localizedDescription, privacy: .public)")
@@ -415,6 +441,53 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Fetches captured stdout and stderr logs from an XPC service and incorporates them into the log stream.
+    public func fetchServiceLogs(serviceId: String, clear: Bool = false) async -> (stdout: String?, stderr: String?) {
+        guard let service = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId }) else {
+            return (nil, nil)
+        }
+        let bundleId = service.bundleId
+        let connection = NSXPCConnection(serviceName: bundleId)
+        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
+        connection.resume()
+        defer { connection.invalidate() }
+
+        do {
+            let (stdout, stderr): (String?, String?) = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    relay.resume(throwing: error)
+                }) as? GarageCommonXPCServiceProtocol else {
+                    relay.resume(throwing: NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
+                    return
+                }
+
+                proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else {
+                        relay.resume(returning: (out, err))
+                    }
+                }
+            }
+
+            if let out = stdout, !out.isEmpty {
+                for line in out.components(separatedBy: .newlines) where !line.isEmpty {
+                    appendLog(line, stream: .stdout, source: service.id, level: .info)
+                }
+            }
+            if let err = stderr, !err.isEmpty {
+                for line in err.components(separatedBy: .newlines) where !line.isEmpty {
+                    appendLog(line, stream: .stderr, source: service.id, level: .error)
+                }
+            }
+            return (stdout, stderr)
+        } catch {
+            logger.warning("Failed to fetch logs from \(bundleId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return (nil, nil)
+        }
+    }
+
     // MARK: - Diagnostic Functional Tests (Beyond-Ping)
 
     /// Runs an in-depth functional diagnostic test (beyond a simple ping) for a specific service.
@@ -422,6 +495,8 @@ public final class XPCServiceManager: ObservableObject {
     public func runDiagnosticTest(for serviceId: String) async -> ServiceDiagnosticTestResult {
         testingServiceIds.insert(serviceId)
         defer { testingServiceIds.remove(serviceId) }
+
+        appendLog("[\(serviceId)] Starting diagnostic test...", source: serviceId, level: .info)
 
         let result: ServiceDiagnosticTestResult
         switch serviceId {
@@ -451,6 +526,9 @@ public final class XPCServiceManager: ObservableObject {
         }
 
         diagnosticResults[serviceId] = result
+        let stream: LogLine.Stream = result.isSuccess ? .stdout : .stderr
+        let level: LogLevel = result.isSuccess ? .info : .error
+        appendLog("[\(result.serviceId)] Diagnostic '\(result.testName)' \(result.isSuccess ? "passed" : "failed") (\(String(format: "%.1f", result.durationMs))ms): \(result.summary)\n\(result.details)", stream: stream, source: result.serviceId, level: level)
         return result
     }
 

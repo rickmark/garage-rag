@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
@@ -30,7 +31,18 @@ from garage_rag.proto.garage_pb2 import (
     PersistScanResponse,
 )
 from garage_rag.service.client import GarageClient
-from garage_rag.service.server import GarageRpcServicer
+from garage_rag.service.server import GarageRpcServicer, create_grpc_server
+
+
+@pytest.fixture
+def grpc_server():
+    """Start an in-memory / local gRPC server on an ephemeral port."""
+    stop_event = threading.Event()
+    server, servicer = create_grpc_server(host="127.0.0.1", port=0, stop_event=stop_event)
+    bound_port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    yield bound_port, servicer
+    server.stop(grace=None)
 
 
 def test_grpc_database_facade_servicer_methods():
@@ -254,3 +266,93 @@ def test_ingest_source_with_grpc_gateway(tmp_path: Path):
         mock_scan.assert_called_once()
         mock_doc.assert_called_once()
         mock_final.assert_called_once()
+
+
+def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
+    port, servicer = grpc_server
+    client = GarageClient(host="127.0.0.1", port=port, in_process=False)
+    gateway = GrpcIngestStorageGateway(client)
+
+    test_file = tmp_path / "doc.txt"
+    test_file.write_text("Hello live gRPC ingest", encoding="utf-8")
+
+    mock_source = MagicMock(spec=Source)
+    mock_source.id = 1
+    mock_source.slug = "live-grpc-src"
+    mock_source.root = str(tmp_path)
+    mock_source.kind = "filesystem"
+    mock_source.default_class = CorpusClass.DOCUMENT
+    mock_source.default_trust = TrustTier.AUTHORED
+    mock_source.allow_cloud_enrichment = False
+
+    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
+         patch("garage_rag.attribute.resolver.ensure_self_author"), \
+         patch("garage_rag.ingest.scanner.persist_scan_result"), \
+         patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author:
+
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source
+        mock_session.query.return_value.filter_by.return_value.all.return_value = [mock_source]
+        mock_session.query.return_value.order_by.return_value.all.return_value = [mock_source]
+        mock_scope.return_value.__enter__.return_value = mock_session
+
+        mock_auth_obj = MagicMock()
+        mock_auth_obj.id = 10
+        mock_author.return_value = mock_auth_obj
+
+        # 1. begin_session over live gRPC
+        ctx = gateway.begin_session("live-grpc-src")
+        assert ctx.source_id == 1
+        assert ctx.slug == "live-grpc-src"
+
+        # 2. persist_scan over live gRPC
+        scan_result = SourceScanResult(
+            source_slug="live-grpc-src",
+            kind="filesystem",
+            root=tmp_path,
+            item_count=1,
+            item_type="files",
+        )
+        gateway.persist_scan("live-grpc-src", scan_result)
+
+        # 3. check_stat over live gRPC
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = None
+        stat = gateway.check_stat("live-grpc-src", "doc.txt")
+        assert stat.exists is False
+
+        # 4. replace_document over live gRPC
+        written = gateway.replace_document(
+            run_id=ctx.run_id,
+            source_slug="live-grpc-src",
+            uri="doc.txt",
+            title="Doc",
+            lang="en",
+            byte_size=len("Hello live gRPC ingest"),
+            mtime=1700000000.0,
+            source_sha256="11",
+            content_sha256="22",
+            extractor="text",
+            extractor_version="1",
+            chunker="test",
+            content="Hello live gRPC ingest",
+            meta={},
+            corpus_class="document",
+            trust_tier="authored",
+            authors=[AuthorPayload(name="Author", role="author")],
+            chunks=[ChunkPayload(ord=0, text="Hello live gRPC ingest", chunk_sha256="33")],
+        )
+        assert written == 1
+
+        # 5. finalize_session over live gRPC
+        gateway.finalize_session(
+            run_id=ctx.run_id,
+            completed=True,
+            seen=1,
+            indexed=1,
+            skipped=0,
+            failed=0,
+            placeholders=0,
+            materialized=0,
+            materialized_bytes=0,
+            errors=[],
+        )

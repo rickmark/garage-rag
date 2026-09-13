@@ -463,6 +463,10 @@ public final class IngestEngine: @unchecked Sendable {
             let isReadable = fileManager.isReadableFile(atPath: resolvedPath)
             var count: Int? = nil
             var errorMsg: String? = nil
+            var canOpenFiles: Bool? = nil
+            var sampleTested: Int? = nil
+            var sampleOpened: Int? = nil
+            var fileOpenError: String? = nil
 
             let tccCategory = detectTCCCategory(slug: slug, path: resolvedPath)
             let requiresTCC = !isReadable && exists && (tccCategory != nil)
@@ -477,18 +481,50 @@ public final class IngestEngine: @unchecked Sendable {
                             options: [.skipsHiddenFiles]
                         )
                         count = contents.count
+
+                        var testedCount = 0
+                        var openedCount = 0
+                        for itemURL in contents.prefix(10) {
+                            var isSubDir: ObjCBool = false
+                            if fileManager.fileExists(atPath: itemURL.path, isDirectory: &isSubDir), !isSubDir.boolValue {
+                                testedCount += 1
+                                if let handle = try? FileHandle(forReadingFrom: itemURL) {
+                                    try? handle.close()
+                                    openedCount += 1
+                                } else {
+                                    fileOpenError = "Failed to open file '\(itemURL.lastPathComponent)' for reading"
+                                }
+                            }
+                        }
+                        sampleTested = testedCount
+                        sampleOpened = openedCount
+                        canOpenFiles = testedCount == 0 ? true : (fileOpenError == nil && openedCount == testedCount)
                     } catch {
                         errorMsg = error.localizedDescription
+                        canOpenFiles = false
+                    }
+                } else {
+                    sampleTested = 1
+                    if let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: resolvedPath)) {
+                        try? handle.close()
+                        sampleOpened = 1
+                        canOpenFiles = true
+                    } else {
+                        sampleOpened = 0
+                        canOpenFiles = false
+                        fileOpenError = "Failed to open file for reading"
                     }
                 }
             } else if !exists {
                 errorMsg = "Path does not exist"
+                canOpenFiles = false
             } else if !isReadable {
                 if let cat = tccCategory {
                     errorMsg = "TCC permission required (\(cat))"
                 } else {
                     errorMsg = "Permission denied / not readable"
                 }
+                canOpenFiles = false
             }
 
             sourceResults.append(IngestSourcePathAccessResult(
@@ -502,7 +538,11 @@ public final class IngestEngine: @unchecked Sendable {
                 errorMessage: errorMsg,
                 tccCategory: tccCategory,
                 requiresTCCPermission: requiresTCC || (!isReadable && exists),
-                tccHelpMessage: helpMsg
+                tccHelpMessage: helpMsg,
+                canOpenFiles: canOpenFiles,
+                sampleFilesTested: sampleTested,
+                sampleFilesOpened: sampleOpened,
+                fileOpenErrorMessage: fileOpenError
             ))
         }
 

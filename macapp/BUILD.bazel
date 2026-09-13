@@ -150,10 +150,20 @@ codesign(
 
 
 swift_library(
+    name = "IngestClient_lib",
+    srcs = glob(["Sources/IngestClient/**/*.swift"]),
+    module_name = "IngestClient",
+    visibility = ["//visibility:public"],
+)
+
+swift_library(
     name = "LlamaClient_lib",
     srcs = glob(["Sources/LlamaClient/**/*.swift"]),
     module_name = "LlamaClient",
     visibility = ["//visibility:public"],
+    deps = [
+        ":IngestClient_lib",
+    ],
 )
 
 swift_library(
@@ -161,13 +171,9 @@ swift_library(
     srcs = glob(["Sources/ModelDownloadClient/**/*.swift"]),
     module_name = "ModelDownloadClient",
     visibility = ["//visibility:public"],
-)
-
-swift_library(
-    name = "IngestClient_lib",
-    srcs = glob(["Sources/IngestClient/**/*.swift"]),
-    module_name = "IngestClient",
-    visibility = ["//visibility:public"],
+    deps = [
+        ":IngestClient_lib",
+    ],
 )
 
 swift_library(

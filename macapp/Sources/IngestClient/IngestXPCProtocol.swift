@@ -1,5 +1,11 @@
 import Foundation
 
+/// Objective-C protocol matching the standard `ping` method implemented across all Garage XPC services.
+@objc(GarageGenericXPCPingProtocol)
+public protocol GarageGenericXPCPingProtocol: NSObjectProtocol {
+    func ping(with reply: @escaping (String) -> Void)
+}
+
 /// Objective-C protocol for receiving progress updates from GarageIngestXPCService across XPC.
 @objc(GarageIngestProgressReceiverProtocol)
 public protocol GarageIngestProgressReceiverProtocol: NSObjectProtocol {
@@ -9,10 +15,7 @@ public protocol GarageIngestProgressReceiverProtocol: NSObjectProtocol {
 
 /// Objective-C protocol exposed by GarageIngestXPCService over NSXPC.
 @objc(GarageIngestXPCServiceProtocol)
-public protocol GarageIngestXPCServiceProtocol {
-    /// Ping the service for health check.
-    func ping(with reply: @escaping (String) -> Void)
-
+public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     /// Ingest a source by slug (or "*") with JSON-serialized options.
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void)
 
@@ -33,6 +36,25 @@ public protocol GarageIngestXPCServiceProtocol {
 
     /// Run full volume and source access tests inside the sandboxed XPC process.
     func testVolumeAccess(requestJson: String, with reply: @escaping (String?, Error?) -> Void)
+}
+
+/// Objective-C protocol for Embed XPC Service communication.
+@objc(GarageEmbedXPCServiceProtocol)
+public protocol GarageEmbedXPCServiceProtocol: GarageCommonXPCServiceProtocol {
+    func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
+    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
+}
+
+/// Objective-C protocol for MCP Server XPC Service communication.
+@objc(GarageMCPServerServiceProtocol)
+public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol {
+    func startServer(options: [String: String], with reply: @escaping (Bool, String?) -> Void)
+}
+
+/// Objective-C protocol for Garage Core Backend XPC Service communication.
+@objc(GarageXPCServiceProtocol)
+public protocol GarageXPCServiceProtocol: GarageCommonXPCServiceProtocol {
+    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void)
 }
 
 public enum IngestXPCConstants {

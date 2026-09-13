@@ -8,11 +8,12 @@ struct LogsView: View {
         case postgres = "Postgres"
         case garage = "garage CLI"
         case ingest = "Ingest"
-        case ingestXPC = "Ingest XPC"
         case backfill = "Backfill"
         case mcp = "MCP Server"
         case grpc = "gRPC Server"
         case llama = "Llama Service"
+        case modelDownload = "Model Downloader"
+        case xpcServices = "XPC Services"
         var id: String { rawValue }
     }
 
@@ -44,12 +45,13 @@ struct LogsView: View {
         switch source {
         case .postgres: appState.postgres.logs
         case .garage: appState.garage.logs
-        case .ingest: appState.ingest.logs
-        case .ingestXPC: appState.ingestService.logs
+        case .ingest: appState.combinedIngestLogs
         case .backfill: appState.backfill.logs
         case .mcp: appState.mcp.logs
         case .grpc: appState.grpc.logs
         case .llama: appState.llama.logs
+        case .modelDownload: appState.modelDownload.logs
+        case .xpcServices: appState.xpcServices.logs
         }
     }
 }

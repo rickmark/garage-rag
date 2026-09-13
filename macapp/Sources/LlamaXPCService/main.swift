@@ -1,5 +1,6 @@
 import Foundation
 import LlamaClient
+import IngestClient
 
 final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCServiceProtocol {
     private let engine = LlamaServerEngine.shared
@@ -13,6 +14,37 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
 
     func ping(with reply: @escaping (String) -> Void) {
         reply("pong from LlamaXPCService")
+    }
+
+    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
+        let name = "LlamaXPCService"
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let status = engine.currentModelPath != nil ? "model_loaded" : "idle"
+        reply(name, pid, uptime, status)
+    }
+
+    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
+        reply(out, err)
+    }
+
+    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
+        reply(out, err, nil)
+    }
+
+    func clearLogs(with reply: @escaping (Bool) -> Void) {
+        GarageXPCOutputCapture.shared.clear()
+        reply(true)
+    }
+
+    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
+    }
+
+    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
     }
 
     func health(with reply: @escaping (String?, Error?) -> Void) {
@@ -135,6 +167,7 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
     }
 }
 
+GarageXPCOutputCapture.shared.startCapturing()
 let delegate = LlamaXPCServiceDelegate()
 let listener = NSXPCListener.service()
 listener.delegate = delegate

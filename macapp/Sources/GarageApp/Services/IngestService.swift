@@ -92,6 +92,10 @@ final class IngestService: ObservableObject {
         }
     }
 
+    func appendLog(_ text: String, stream: LogLine.Stream = .stdout) {
+        appendLog(LogLine(stream: stream, text: text, source: "Ingest"))
+    }
+
     func clearLogs() {
         logs.removeAll()
     }

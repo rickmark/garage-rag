@@ -374,7 +374,7 @@ struct MCPServerView: View {
                                     }
                                 }
                             ),
-                            format: .number
+                            format: .number.grouping(.never)
                         )
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)

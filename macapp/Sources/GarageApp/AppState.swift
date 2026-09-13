@@ -546,17 +546,24 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
+    /// Combines CLI ingest logs and XPC / in-process ingestion logs into a single chronologically ordered stream.
+    var combinedIngestLogs: [LogLine] {
+        (ingest.logs + ingestService.logs).sorted { $0.date < $1.date }
+    }
+
     func clearLogs(for sourceName: String) {
         switch sourceName {
         case "Postgres": postgres.clearLogs()
         case "garage CLI": garage.clearLogs()
-        case "Ingest": ingest.clearLogs()
-        case "Ingest XPC", "Ingest (XPC)", "Ingest (In-Process)", "Ingest (CLI)": ingestService.clearLogs()
+        case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (In-Process)", "Ingest (CLI)":
+            ingest.clearLogs()
+            ingestService.clearLogs()
         case "Backfill": backfill.clearLogs()
         case "MCP Server": mcp.clearLogs()
         case "gRPC Server": grpc.clearLogs()
-        case "Llama Service": llama.clearLogs()
-        case "Model Downloader": modelDownload.clearLogs()
+        case "Llama Service", "Llama XPC": llama.clearLogs()
+        case "Model Downloader", "Model Download XPC": modelDownload.clearLogs()
+        case "XPC Services", "XPC Services Manager": xpcServices.clearLogs()
         default: break
         }
     }

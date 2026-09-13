@@ -180,3 +180,36 @@ def test_set_c_log_callback():
 
     assert any("Test message for OSLog" in msg for lvl, msg in logs_received)
     assert any("Test error message" in msg for lvl, msg in logs_received)
+
+
+def test_ingest_xpc_with_grpc_options():
+    mock_counters = IngestCounters()
+    mock_counters.seen = 1
+    mock_counters.total_items = 1
+    mock_counters.indexed = 1
+    mock_walk_stats = WalkStats()
+    mock_budget = MaterializationBudget()
+
+    progress_events: list[IngestProgress] = []
+
+    def fake_ingest_source(gateway, slug, **kwargs):
+        return mock_counters, mock_walk_stats, mock_budget
+
+    with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source), \
+         patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
+         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
+
+        mock_gw = MagicMock()
+        mock_gw_cls.return_value = mock_gw
+
+        ingest_xpc(
+            source="grpc-options-source",
+            progress_callback=lambda p: progress_events.append(p),
+            grpc_host="127.0.0.1",
+            grpc_port=50051,
+        )
+
+        mock_client_cls.assert_called_once_with(host="127.0.0.1", port=50051, in_process=False)
+        mock_gw_cls.assert_called_once()
+        assert len(progress_events) >= 2
+        assert progress_events[-1].phase == "complete"

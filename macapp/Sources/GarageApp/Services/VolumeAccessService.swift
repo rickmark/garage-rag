@@ -152,6 +152,10 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
     public let tccCategory: TCCPermissionCategory?
     public let requiresTCCPermission: Bool
     public let tccHelpMessage: String?
+    public let canOpenFiles: Bool?
+    public let sampleFilesTested: Int?
+    public let sampleFilesOpened: Int?
+    public let fileOpenErrorMessage: String?
 
     public init(
         slug: String,
@@ -164,7 +168,11 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         errorMessage: String? = nil,
         tccCategory: TCCPermissionCategory? = nil,
         requiresTCCPermission: Bool = false,
-        tccHelpMessage: String? = nil
+        tccHelpMessage: String? = nil,
+        canOpenFiles: Bool? = nil,
+        sampleFilesTested: Int? = nil,
+        sampleFilesOpened: Int? = nil,
+        fileOpenErrorMessage: String? = nil
     ) {
         self.slug = slug
         self.rawPath = rawPath
@@ -177,10 +185,14 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         self.tccCategory = tccCategory
         self.requiresTCCPermission = requiresTCCPermission
         self.tccHelpMessage = tccHelpMessage
+        self.canOpenFiles = canOpenFiles
+        self.sampleFilesTested = sampleFilesTested
+        self.sampleFilesOpened = sampleFilesOpened
+        self.fileOpenErrorMessage = fileOpenErrorMessage
     }
 
     public var isAccessible: Bool {
-        exists && isReadable && errorMessage == nil
+        exists && isReadable && errorMessage == nil && (canOpenFiles ?? true)
     }
 
     public var statusDescription: String {
@@ -196,8 +208,17 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         if let error = errorMessage {
             return "Error: \(error)"
         }
+        if let fileErr = fileOpenErrorMessage {
+            return "Listing OK, but opening files failed: \(fileErr)"
+        }
         if let count = itemCount {
+            if let opened = sampleFilesOpened, opened > 0 {
+                return "Accessible (\(count) \(count == 1 ? "item" : "items"), \(opened) test file\(opened == 1 ? "" : "s") opened)"
+            }
             return "Accessible (\(count) \(count == 1 ? "item" : "items"))"
+        }
+        if let opened = sampleFilesOpened, opened > 0 {
+            return "Accessible (file opened)"
         }
         return "Accessible"
     }
@@ -319,6 +340,17 @@ public protocol FileSystemAccessing {
     func contentsOfDirectory(at url: URL) throws -> [URL]
     func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool
     func isReadableFile(atPath path: String) -> Bool
+    func openFile(atPath path: String) -> Bool
+}
+
+public extension FileSystemAccessing {
+    func openFile(atPath path: String) -> Bool {
+        if let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) {
+            try? handle.close()
+            return true
+        }
+        return false
+    }
 }
 
 /// Standard FileManager-backed filesystem accessor.
@@ -339,6 +371,14 @@ public final class DefaultFileSystemAccessor: FileSystemAccessing {
 
     public func isReadableFile(atPath path: String) -> Bool {
         fileManager.isReadableFile(atPath: path)
+    }
+
+    public func openFile(atPath path: String) -> Bool {
+        if let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) {
+            try? handle.close()
+            return true
+        }
+        return false
     }
 }
 
@@ -394,6 +434,8 @@ open class MockFileSystemAccessor: FileSystemAccessing, @unchecked Sendable {
     public var directoryContents: [URL] = []
     public var shouldThrowOnContents = false
     public var readablePaths: Set<String> = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+    public var unopenablePaths: Set<String> = []
+    public var filePaths: Set<String> = []
 
     public init() {}
 
@@ -405,12 +447,24 @@ open class MockFileSystemAccessor: FileSystemAccessing, @unchecked Sendable {
     }
 
     open func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
-        isDirectory?.pointee = true
+        let isFile = filePaths.contains(path) || path.contains(".")
+        isDirectory?.pointee = ObjCBool(!isFile)
         return true
     }
 
     open func isReadableFile(atPath path: String) -> Bool {
         readablePaths.contains(path) || readablePaths.contains((path as NSString).expandingTildeInPath) || path.hasPrefix("/tmp") || path.hasPrefix("/var/folders")
+    }
+
+    open func openFile(atPath path: String) -> Bool {
+        if unopenablePaths.contains(path) || unopenablePaths.contains((path as NSString).expandingTildeInPath) {
+            return false
+        }
+        if isReadableFile(atPath: path) {
+            return true
+        }
+        let parent = (path as NSString).deletingLastPathComponent
+        return isReadableFile(atPath: parent)
     }
 }
 
@@ -768,7 +822,11 @@ public final class VolumeAccessService: ObservableObject {
                     errorMessage: res.errorMessage,
                     tccCategory: res.tccCategory.flatMap { TCCPermissionCategory(rawValue: $0) },
                     requiresTCCPermission: res.requiresTCCPermission,
-                    tccHelpMessage: res.tccHelpMessage
+                    tccHelpMessage: res.tccHelpMessage,
+                    canOpenFiles: res.canOpenFiles,
+                    sampleFilesTested: res.sampleFilesTested,
+                    sampleFilesOpened: res.sampleFilesOpened,
+                    fileOpenErrorMessage: res.fileOpenErrorMessage
                 )
             }
 
@@ -838,6 +896,10 @@ public final class VolumeAccessService: ObservableObject {
             let isReadable = fileSystem.isReadableFile(atPath: resolvedPath)
             var count: Int? = nil
             var errorMsg: String? = nil
+            var canOpenFiles: Bool? = nil
+            var sampleTested: Int? = nil
+            var sampleOpened: Int? = nil
+            var fileOpenError: String? = nil
 
             let tccCategory = TCCPermissionCategory.detect(slug: slug, path: resolvedPath)
             let requiresTCC = !isReadable && exists && (tccCategory != nil)
@@ -848,18 +910,48 @@ public final class VolumeAccessService: ObservableObject {
                     do {
                         let contents = try fileSystem.contentsOfDirectory(at: URL(fileURLWithPath: resolvedPath))
                         count = contents.count
+
+                        var testedCount = 0
+                        var openedCount = 0
+                        for itemURL in contents.prefix(10) {
+                            var isSubDir: ObjCBool = false
+                            if fileSystem.fileExists(atPath: itemURL.path, isDirectory: &isSubDir), !isSubDir.boolValue {
+                                testedCount += 1
+                                if fileSystem.openFile(atPath: itemURL.path) {
+                                    openedCount += 1
+                                } else {
+                                    fileOpenError = "Failed to open file '\(itemURL.lastPathComponent)' for reading"
+                                }
+                            }
+                        }
+                        sampleTested = testedCount
+                        sampleOpened = openedCount
+                        canOpenFiles = testedCount == 0 ? true : (fileOpenError == nil && openedCount == testedCount)
                     } catch {
                         errorMsg = error.localizedDescription
+                        canOpenFiles = false
+                    }
+                } else {
+                    sampleTested = 1
+                    if fileSystem.openFile(atPath: resolvedPath) {
+                        sampleOpened = 1
+                        canOpenFiles = true
+                    } else {
+                        sampleOpened = 0
+                        canOpenFiles = false
+                        fileOpenError = "Failed to open file for reading"
                     }
                 }
             } else if !exists {
                 errorMsg = "Path does not exist"
+                canOpenFiles = false
             } else if !isReadable {
                 if let cat = tccCategory {
                     errorMsg = "TCC permission required (\(cat.displayName))"
                 } else {
                     errorMsg = "Permission denied / not readable"
                 }
+                canOpenFiles = false
             }
 
             sourceResults.append(SourcePathAccessResult(
@@ -873,7 +965,11 @@ public final class VolumeAccessService: ObservableObject {
                 errorMessage: errorMsg,
                 tccCategory: tccCategory,
                 requiresTCCPermission: requiresTCC || (!isReadable && exists),
-                tccHelpMessage: helpMsg
+                tccHelpMessage: helpMsg,
+                canOpenFiles: canOpenFiles,
+                sampleFilesTested: sampleTested,
+                sampleFilesOpened: sampleOpened,
+                fileOpenErrorMessage: fileOpenError
             ))
         }
 
@@ -960,7 +1056,11 @@ public final class VolumeAccessService: ObservableObject {
                 errorMessage: res.errorMessage,
                 tccCategory: res.tccCategory.flatMap { TCCPermissionCategory(rawValue: $0) },
                 requiresTCCPermission: res.requiresTCCPermission,
-                tccHelpMessage: res.tccHelpMessage
+                tccHelpMessage: res.tccHelpMessage,
+                canOpenFiles: res.canOpenFiles,
+                sampleFilesTested: res.sampleFilesTested,
+                sampleFilesOpened: res.sampleFilesOpened,
+                fileOpenErrorMessage: res.fileOpenErrorMessage
             )
         }
 

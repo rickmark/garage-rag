@@ -193,6 +193,10 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
     public let tccCategory: String?
     public let requiresTCCPermission: Bool
     public let tccHelpMessage: String?
+    public let canOpenFiles: Bool?
+    public let sampleFilesTested: Int?
+    public let sampleFilesOpened: Int?
+    public let fileOpenErrorMessage: String?
 
     public init(
         slug: String,
@@ -205,7 +209,11 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
         errorMessage: String? = nil,
         tccCategory: String? = nil,
         requiresTCCPermission: Bool = false,
-        tccHelpMessage: String? = nil
+        tccHelpMessage: String? = nil,
+        canOpenFiles: Bool? = nil,
+        sampleFilesTested: Int? = nil,
+        sampleFilesOpened: Int? = nil,
+        fileOpenErrorMessage: String? = nil
     ) {
         self.slug = slug
         self.rawPath = rawPath
@@ -218,10 +226,14 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
         self.tccCategory = tccCategory
         self.requiresTCCPermission = requiresTCCPermission
         self.tccHelpMessage = tccHelpMessage
+        self.canOpenFiles = canOpenFiles
+        self.sampleFilesTested = sampleFilesTested
+        self.sampleFilesOpened = sampleFilesOpened
+        self.fileOpenErrorMessage = fileOpenErrorMessage
     }
 
     public var isAccessible: Bool {
-        exists && isReadable && errorMessage == nil
+        exists && isReadable && errorMessage == nil && (canOpenFiles ?? true)
     }
 
     public var statusDescription: String {
@@ -237,8 +249,17 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
         if let error = errorMessage {
             return "Error: \(error)"
         }
+        if let fileErr = fileOpenErrorMessage {
+            return "Listing OK, but opening files failed: \(fileErr)"
+        }
         if let count = itemCount {
+            if let opened = sampleFilesOpened, opened > 0 {
+                return "Accessible (\(count) \(count == 1 ? "item" : "items"), \(opened) test file\(opened == 1 ? "" : "s") opened)"
+            }
             return "Accessible (\(count) \(count == 1 ? "item" : "items"))"
+        }
+        if let opened = sampleFilesOpened, opened > 0 {
+            return "Accessible (file opened)"
         }
         return "Accessible"
     }
@@ -255,6 +276,10 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
         case tccCategory = "tcc_category"
         case requiresTCCPermission = "requires_tcc_permission"
         case tccHelpMessage = "tcc_help_message"
+        case canOpenFiles = "can_open_files"
+        case sampleFilesTested = "sample_files_tested"
+        case sampleFilesOpened = "sample_files_opened"
+        case fileOpenErrorMessage = "file_open_error_message"
     }
 }
 

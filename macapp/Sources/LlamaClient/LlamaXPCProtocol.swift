@@ -1,11 +1,9 @@
 import Foundation
+import IngestClient
 
 /// Objective-C protocol exposed by `LlamaXPCService` over NSXPC.
 @objc(LlamaXPCServiceProtocol)
-public protocol LlamaXPCServiceProtocol {
-    /// Ping / status check
-    func ping(with reply: @escaping (String) -> Void)
-
+public protocol LlamaXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     /// Server health check matching GET /health
     func health(with reply: @escaping (String?, Error?) -> Void)
 

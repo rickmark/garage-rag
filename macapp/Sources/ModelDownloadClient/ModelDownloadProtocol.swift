@@ -1,11 +1,9 @@
 import Foundation
+import IngestClient
 
 /// Objective-C compatible protocol for the ModelDownload XPC Service.
 @objc(ModelDownloadXPCServiceProtocol)
-public protocol ModelDownloadXPCServiceProtocol {
-    /// Ping the service for health check.
-    func ping(with reply: @escaping (String) -> Void)
-
+public protocol ModelDownloadXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     /// Start a download with JSON-encoded request.
     func startDownload(requestJson: String, with reply: @escaping (String?, Error?) -> Void)
 

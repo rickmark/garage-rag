@@ -13,6 +13,12 @@ public final class LlamaServerEngine: @unchecked Sendable {
         LlamaSlot(id: 0, state: 0, prompt: nil, taskId: nil)
     ]
 
+    public var currentModelPath: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadedModelPath
+    }
+
     public init(
         modelPath: String? = nil,
         modelAlias: String = "default",

@@ -26,11 +26,15 @@ final class GarageCLIService: ObservableObject {
         self.commandLabel = commandLabel
     }
 
-    private func appendLog(_ line: LogLine) {
+    func appendLog(_ line: LogLine) {
         logs.append(line)
         if logs.count > maxLogLines {
             logs.removeFirst(logs.count - maxLogLines)
         }
+    }
+
+    func appendLog(_ text: String, stream: LogLine.Stream = .stdout) {
+        appendLog(LogLine(stream: stream, text: text, source: commandLabel))
     }
 
     func clearLogs() {

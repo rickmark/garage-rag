@@ -1,147 +1,99 @@
 import Foundation
 import Darwin
+import OSLog
+import IngestClient
 #if canImport(PythonKit)
 import PythonKit
 #endif
 
-@objc public protocol GarageMCPServerServiceProtocol {
-    func ping(with reply: @escaping (String) -> Void)
-    func startServer(options: [String: String], with reply: @escaping (Bool, String?) -> Void)
+private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageMCPServerService")
+
+private func installCrashHandlers() {
+    NSSetUncaughtExceptionHandler { exception in
+        let callStack = exception.callStackSymbols.joined(separator: "\n  ")
+        let msg = "CRITICAL: Uncaught NSException '\(exception.name.rawValue)': \(exception.reason ?? "none")\nUserInfo: \(String(describing: exception.userInfo))\nCall Stack:\n  \(callStack)\n"
+        fputs(msg, stderr)
+        fflush(stderr)
+        logger.fault("CRITICAL: Uncaught NSException '\(exception.name.rawValue, privacy: .public)': \(exception.reason ?? "none", privacy: .public)\nUserInfo: \(String(describing: exception.userInfo), privacy: .public)\nCall Stack:\n  \(callStack, privacy: .public)")
+    }
+
+    let fatalSignals: [Int32] = [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGPIPE]
+    for sig in fatalSignals {
+        signal(sig) { signum in
+            let sigName: String
+            switch signum {
+            case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault)"
+            case SIGBUS: sigName = "SIGBUS (Bus Error)"
+            case SIGABRT: sigName = "SIGABRT (Abort)"
+            case SIGILL: sigName = "SIGILL (Illegal Instruction)"
+            case SIGFPE: sigName = "SIGFPE (Floating Point Exception)"
+            case SIGTRAP: sigName = "SIGTRAP (Trace/BPT Trap)"
+            case SIGPIPE: sigName = "SIGPIPE (Broken Pipe)"
+            default: sigName = "Signal \(signum)"
+            }
+
+            var dyldMsg = ""
+            if let errCStr = dlerror() {
+                dyldMsg = " | dyld error: \(String(cString: errCStr))"
+            }
+
+            let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
+            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
+            fputs(msg, stderr)
+            fflush(stderr)
+            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
+
+            signal(signum, SIG_DFL)
+            raise(signum)
+        }
+    }
 }
 
 final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, GarageMCPServerServiceProtocol {
     private var isInitialized = false
     private let initLock = NSLock()
-
-    private func setupPostgresEnvironment() {
-        if let envPath = ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"],
-           FileManager.default.fileExists(atPath: envPath) {
-            _ = dlopen(envPath, RTLD_NOW | RTLD_GLOBAL)
-            return
-        }
-
-        var candidatePaths: [String] = []
-        if let resourceURL = Bundle.main.resourceURL {
-            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
-        }
-
-        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").path)
-
-        let grandParentURL = parentAppURL.deletingLastPathComponent()
-        candidatePaths.append(grandParentURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
-        candidatePaths.append(grandParentURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
-
-        for path in candidatePaths {
-            if FileManager.default.fileExists(atPath: path) {
-                setenv("GARAGE_LIBPQ_PATH", path, 1)
-                let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
-                setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
-                _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
-                break
-            }
-        }
-    }
-
-    private func setupPythonEnvironment() {
-        if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
-           FileManager.default.fileExists(atPath: envPath) {
-            return
-        }
-
-        var candidatePaths: [String] = []
-        if let resourceURL = Bundle.main.resourceURL {
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Python").path)
-        }
-        if let fwURL = Bundle.main.privateFrameworksURL {
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Python").path)
-        }
-
-        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Contents/Resources/python_3_13/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Python").path)
-
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
-
-        for path in candidatePaths {
-            if FileManager.default.fileExists(atPath: path) {
-                setenv("PYTHON_LIBRARY", path, 1)
-                break
-            }
-        }
-    }
+    private(set) var initializationError: String? = nil
 
     private func initializePythonIfNeeded() {
         initLock.lock()
         defer { initLock.unlock() }
         guard !isInitialized else { return }
-        setupPostgresEnvironment()
-        setupPythonEnvironment()
+        
+        XPCDyldDiagnostics.setupPostgresEnvironment()
+        let pyLib = XPCDyldDiagnostics.setupPythonEnvironment()
+        logger.info("Python library candidate resolved: \(pyLib ?? "<none>", privacy: .public)")
+
         #if canImport(PythonKit)
-        try? PythonLibrary.loadLibrary()
-        let sys = Python.import("sys")
-        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+        do {
+            logger.info("Attempting to load Python library via PythonLibrary.loadLibrary()...")
+            try PythonLibrary.loadLibrary()
+            logger.info("Python dynamic library successfully loaded via dyld.")
 
-        let pythonLibCandidates: [URL?] = [
-            parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-            parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-            Bundle.main.resourceURL?.appendingPathComponent("python_3_13/Python.framework/Versions/Current/lib/python3.13"),
-            Bundle.main.resourceURL?.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/lib/python3.13"),
-        ]
-        for libURL in pythonLibCandidates {
-            if let libURL = libURL, FileManager.default.fileExists(atPath: libURL.path) {
-                sys.path.insert(0, libURL.path)
+            let sys = Python.import("sys")
+            let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
+            for lib in libPaths {
+                logger.info("Adding Python standard library path: \(lib, privacy: .public)")
+                sys["path"].insert(0, lib)
             }
-        }
-
-        let sitePackagesCandidates: [URL?] = [
-            Bundle.main.resourceURL?.appendingPathComponent("site-packages"),
-            parentAppURL.appendingPathComponent("Contents/Resources/site-packages"),
-            parentAppURL.appendingPathComponent("Resources/site-packages"),
-            parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            parentAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-            parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-        ]
-        for spURL in sitePackagesCandidates {
-            if let spURL = spURL, FileManager.default.fileExists(atPath: spURL.path) {
-                sys.path.insert(0, spURL.path)
+            for sp in spPaths {
+                logger.info("Adding site-packages path: \(sp, privacy: .public)")
+                sys["path"].insert(0, sp)
             }
+            if let resourceURL = Bundle.main.resourceURL {
+                sys["path"].insert(0, resourceURL.path)
+            }
+            _ = try? Python.attemptImport("garage_rag.mcp_server")
+        } catch {
+            var dyldError = ""
+            if let errCStr = dlerror() {
+                dyldError = "\ndyld error: \(String(cString: errCStr))"
+            }
+            let errorMsg = "Failed to initialize Python environment in GarageMCPServerService: \(error.localizedDescription)\(dyldError)"
+            initializationError = errorMsg
+            fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
+            fflush(stderr)
+            logger.error("\(errorMsg, privacy: .public)")
         }
-        if let resourceURL = Bundle.main.resourceURL {
-            sys.path.insert(0, resourceURL.path)
-        }
-        _ = try? Python.attemptImport("garage_rag.mcp_server")
         #endif
         isInitialized = true
     }
@@ -154,11 +106,50 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     }
 
     func ping(with reply: @escaping (String) -> Void) {
-        reply("pong from GarageMCPServerService")
+        if let initErr = initializationError {
+            reply("pong from GarageMCPServerService (with warning: \(initErr))")
+        } else {
+            reply("pong from GarageMCPServerService")
+        }
+    }
+
+    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
+        let name = "GarageMCPServerService"
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let status = initializationError == nil ? "ready" : "warning: \(initializationError!)"
+        reply(name, pid, uptime, status)
+    }
+
+    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
+        reply(out, err)
+    }
+
+    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
+        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
+        reply(out, err, nil)
+    }
+
+    func clearLogs(with reply: @escaping (Bool) -> Void) {
+        GarageXPCOutputCapture.shared.clear()
+        reply(true)
+    }
+
+    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
+    }
+
+    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
+        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
     }
 
     func startServer(options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         initializePythonIfNeeded()
+        if let initErr = initializationError {
+            reply(false, "Python initialization error: \(initErr)")
+            return
+        }
         #if canImport(PythonKit)
         do {
             let os = Python.import("os")
@@ -179,6 +170,9 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     }
 }
 
+installCrashHandlers()
+GarageXPCOutputCapture.shared.startCapturing()
+logger.info("GarageMCPServerService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageMCPServerServiceDelegate()
 let listener = NSXPCListener.service()
 listener.delegate = delegate

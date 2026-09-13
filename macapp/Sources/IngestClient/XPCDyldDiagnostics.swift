@@ -182,6 +182,167 @@ public struct XPCDyldDiagnostics: Sendable {
         )
     }
 
+    /// Sets up the Postgres / libpq environment variables and loads libpq if present.
+    @discardableResult
+    public static func setupPostgresEnvironment() -> String? {
+        var candidatePaths: [String] = []
+        if let envPath = ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"],
+           FileManager.default.fileExists(atPath: envPath) {
+            candidatePaths.append(envPath)
+        }
+
+        let bundleURL = Bundle.main.bundleURL
+        let isXPC = bundleURL.pathExtension == "xpc"
+        let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
+
+        if let resURL = Bundle.main.resourceURL {
+            candidatePaths.append(resURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
+            candidatePaths.append(resURL.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
+        }
+
+        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").path)
+
+        let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let binDir = execURL.deletingLastPathComponent()
+        candidatePaths.append(binDir.appendingPathComponent("../Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(binDir.appendingPathComponent("../Resources/postgres/lib/libpq.5.dylib").path)
+        candidatePaths.append(binDir.appendingPathComponent("postgres/lib/libpq.dylib").path)
+        candidatePaths.append(binDir.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
+
+        let (selectedPath, _) = diagnosePostgresLibraryLoading(candidatePaths: candidatePaths)
+        if let path = selectedPath {
+            setenv("GARAGE_LIBPQ_PATH", path, 1)
+            let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
+            _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
+            return path
+        }
+        return nil
+    }
+
+    /// Sets up the Python library environment variables and resolves the active dynamic Python library.
+    @discardableResult
+    public static func setupPythonEnvironment() -> String? {
+        if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
+           FileManager.default.fileExists(atPath: envPath) {
+            let handle = dlopen(envPath, RTLD_LAZY | RTLD_LOCAL)
+            if let handle = handle {
+                dlclose(handle)
+                return envPath
+            }
+        }
+
+        var candidatePaths: [String] = []
+        let bundleURL = Bundle.main.bundleURL
+        let isXPC = bundleURL.pathExtension == "xpc"
+        let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
+
+        // 1. Bundle frameworks / private frameworks
+        if let privFwURL = Bundle.main.privateFrameworksURL {
+            candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
+            candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
+            candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Python").path)
+        }
+        if let resURL = Bundle.main.resourceURL {
+            candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Versions/Current/Python").path)
+            candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/Python").path)
+            candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Python").path)
+        }
+
+        // 2. Parent app contents (from XPC service or app bundle)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Python").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Python").path)
+
+        // 3. Binary relative
+        let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let binDir = execURL.deletingLastPathComponent()
+        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Python").path)
+        candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
+
+        // 4. System / Homebrew fallbacks
+        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
+        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
+        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
+        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
+        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
+        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
+        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
+        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
+
+        let (selectedPath, _) = diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
+        if let path = selectedPath {
+            setenv("PYTHON_LIBRARY", path, 1)
+            let fwDir = URL(fileURLWithPath: path).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+            setenv("DYLD_FALLBACK_FRAMEWORK_PATH", fwDir, 1)
+            return path
+        }
+        return nil
+    }
+
+    /// Resolves candidate standard library and site-packages paths for sys.path configuration.
+    public static func getPythonLibAndSitePackagesPaths() -> (libPaths: [String], sitePackagesPaths: [String]) {
+        let bundleURL = Bundle.main.bundleURL
+        let isXPC = bundleURL.pathExtension == "xpc"
+        let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
+        let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let binDir = execURL.deletingLastPathComponent()
+
+        var libPaths: [String] = []
+        var spPaths: [String] = []
+
+        let libCandidates = [
+            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13"),
+            parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/lib/python3.13"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+        ]
+
+        let spCandidates = [
+            parentAppContents.appendingPathComponent("Resources/site-packages"),
+            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("../Resources/site-packages"),
+            binDir.appendingPathComponent("Resources/site-packages"),
+            binDir.appendingPathComponent("site-packages"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        ]
+
+        if let resURL = Bundle.main.resourceURL {
+            let sp = resURL.appendingPathComponent("site-packages")
+            if FileManager.default.fileExists(atPath: sp.path) {
+                spPaths.append(sp.path)
+            }
+        }
+
+        for c in libCandidates {
+            if FileManager.default.fileExists(atPath: c.path) && !libPaths.contains(c.path) {
+                libPaths.append(c.path)
+            }
+        }
+
+        for c in spCandidates {
+            if FileManager.default.fileExists(atPath: c.path) && !spPaths.contains(c.path) {
+                spPaths.append(c.path)
+            }
+        }
+
+        return (libPaths, spPaths)
+    }
+
     /// Diagnoses candidate Python library paths using dynamic linker `dlopen` dry run and `dlerror`.
     public static func diagnosePythonLibraryLoading(candidatePaths: [String]) -> (selectedPath: String?, diagnostics: [String]) {
         var logs: [String] = []
