@@ -684,14 +684,24 @@ def ingest(
     from garage_rag.ingest.pipeline import ingest_source
 
     factory = get_session_factory()
-    if source == "*":
-        with factory() as session:
+    with factory() as session:
+        if source == "*":
             sources = [s.slug for s in session.query(Source).order_by(Source.id).all()]
-    else:
-        sources = [source]
+        else:
+            s = session.query(Source).filter_by(slug=source).one_or_none()
+            if s is None:
+                console.print(f"[red]no such source:[/red] {source}")
+                raise typer.Exit(code=1)
+            sources = [s.slug]
+
+    if not sources:
+        console.print("[yellow]no sources registered to ingest[/yellow]")
+        return
 
     for source in sources:
         with console.status(f"scanning {source}...") as status:
+            last_reported = 0
+
             # slug bound as a default: the closure outlives this loop iteration.
             def on_progress(
                 progress_counters,
@@ -700,7 +710,9 @@ def ingest(
                 phase="ingest",
                 scan_result=None,
                 slug=source,
+                current_item=None,
             ) -> None:
+                nonlocal last_reported
                 note = ""
                 if progress_budget.files_done or progress_budget.deferred:
                     note = f" | downloaded {progress_budget.files_done:,} deferred {progress_budget.deferred:,}"
@@ -710,10 +722,14 @@ def ingest(
                     console.print(f"[cyan]scanned {slug}[/cyan]: found {total_items:,} {item_type}")
                     return
                 pct_str = f" [{(progress_counters.seen / total_items * 100):.1f}%]" if total_items > 0 else ""
-                status.update(
+                status_msg = (
                     f"{slug}:{pct_str} scanned {progress_counters.seen:,}/{total_items:,} | ingested {progress_counters.indexed:,} "
                     f"(skipped {progress_counters.skipped:,}, failed {progress_counters.failed:,}){note}"
                 )
+                status.update(status_msg)
+                if not console.is_terminal and (progress_counters.seen - last_reported >= 50 or progress_counters.seen == total_items):
+                    last_reported = progress_counters.seen
+                    console.print(status_msg)
 
             counters, walk_stats, budget = ingest_source(
                 factory,
@@ -1446,7 +1462,7 @@ def serve(
 
 
 def main_cli() -> int:
-    """Main CLI entrypoint. Serializes console commands over gRPC protobufs in-process."""
+    """Main CLI entrypoint."""
     import io
     import sys
 
@@ -1469,22 +1485,6 @@ def main_cli() -> int:
             sys.__stderr__ = sys.stderr
         except Exception:
             pass
-
-    argv = sys.argv[1:]
-    # If starting server, run serve directly
-    if argv and argv[0] in ("serve",):
-        try:
-            app()
-            return 0
-        except SystemExit as se:
-            return se.code if isinstance(se.code, int) else 0
-
-    # In-process gRPC command serialization execution
-    if argv and not (len(argv) == 1 and argv[0] in ("--help", "-h")):
-        from garage_rag.service.client import execute_and_render_cli
-
-        exit_code = execute_and_render_cli(argv)
-        return exit_code
 
     try:
         app()

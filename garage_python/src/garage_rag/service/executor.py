@@ -72,6 +72,7 @@ class CommandExecutor:
 
         if self._app is not None:
             cli_app = self._app
+            cli_mod = None
         else:
             cli_mod = importlib.import_module("garage_rag.cli")
             cli_app = cli_mod.app
@@ -86,14 +87,18 @@ class CommandExecutor:
         err_message = ""
         structured_data: str | None = None
 
+        old_console_file = None
+        if cli_mod is not None and hasattr(cli_mod, "console"):
+            old_console_file = cli_mod.console.file
+            cli_mod.console.file = capture_out
+
         try:
             # First check if this is a known structured command that can provide JSON data
             if argv[0] == "stats":
                 structured_data = self._get_stats_json()
             elif argv[0] == "version":
                 try:
-                    cli_mod = importlib.import_module("garage_rag.cli")
-                    version_str = cli_mod.get_version()
+                    version_str = cli_mod.get_version() if cli_mod else "0.1.0"
                 except Exception:
                     version_str = "0.1.0"
                 structured_data = json.dumps({"version": version_str})
@@ -114,6 +119,8 @@ class CommandExecutor:
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            if cli_mod is not None and old_console_file is not None and hasattr(cli_mod, "console"):
+                cli_mod.console.file = old_console_file
 
         stdout_text = capture_out.getvalue()
         stderr_text = capture_err.getvalue()

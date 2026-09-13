@@ -29,6 +29,8 @@ def _uv_export_requirements_impl(ctx):
         cmd_args.append("--no-hashes")
     if ctx.attr.frozen:
         cmd_args.append("--frozen")
+    if ctx.attr.offline:
+        cmd_args.append("--offline")
     if ctx.attr.all_packages:
         cmd_args.append("--all-packages")
     cmd_args.extend(ctx.attr.extra_args)
@@ -82,8 +84,12 @@ uv_export_requirements = rule(
             doc = "Do not include package hashes in exported requirements.",
         ),
         "frozen": attr.bool(
-            default = False,
+            default = True,
             doc = "Run in frozen mode without updating lockfile.",
+        ),
+        "offline": attr.bool(
+            default = True,
+            doc = "Run in offline mode.",
         ),
         "all_packages": attr.bool(
             default = False,

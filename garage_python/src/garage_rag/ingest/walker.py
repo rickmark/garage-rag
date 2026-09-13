@@ -60,6 +60,14 @@ class WalkStats:
     placeholders: int = 0
     unreadable: int = 0
 
+    @property
+    def scanned(self) -> int:
+        return self.files_seen
+
+    @property
+    def candidates(self) -> int:
+        return self.yielded
+
 
 def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     lowered = name.lower()
