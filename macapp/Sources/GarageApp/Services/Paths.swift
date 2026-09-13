@@ -99,6 +99,14 @@ enum Paths {
 
     /// The frozen `garage` CLI binary (packaged) or the venv's `garage` script (dev).
     static var garageCLI: URL {
+        if let aux = Bundle.main.url(forAuxiliaryExecutable: "garage"),
+           FileManager.default.fileExists(atPath: aux.path) {
+            return aux
+        }
+        if let execURL = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("garage"),
+           FileManager.default.fileExists(atPath: execURL.path) {
+            return execURL
+        }
         let bundled = root.appendingPathComponent("garage", isDirectory: false)
         if FileManager.default.fileExists(atPath: bundled.path) {
             return bundled
@@ -123,6 +131,14 @@ enum Paths {
 
     /// The frozen `garage-mcp` binary (packaged) or the venv's script (dev).
     static var garageMCP: URL {
+        if let aux = Bundle.main.url(forAuxiliaryExecutable: "garage-mcp"),
+           FileManager.default.fileExists(atPath: aux.path) {
+            return aux
+        }
+        if let execURL = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("garage-mcp"),
+           FileManager.default.fileExists(atPath: execURL.path) {
+            return execURL
+        }
         let bundled = root.appendingPathComponent("garage-mcp", isDirectory: false)
         if FileManager.default.fileExists(atPath: bundled.path) {
             return bundled

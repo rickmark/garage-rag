@@ -68,30 +68,25 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
 
         var candidatePaths: [String] = []
         if let resourceURL = Bundle.main.resourceURL {
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_14/Python.framework/Versions/3.14/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("python_3_14/Python.framework/Python").path)
-            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/3.14/Python").path)
+            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/Python").path)
+            candidatePaths.append(resourceURL.appendingPathComponent("python_3_13/Python.framework/Python").path)
+            candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
             candidatePaths.append(resourceURL.appendingPathComponent("Python.framework/Python").path)
         }
         if let fwURL = Bundle.main.privateFrameworksURL {
-            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/3.14/Python").path)
+            candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
             candidatePaths.append(fwURL.appendingPathComponent("Python.framework/Python").path)
         }
 
         let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_14/Python.framework/Versions/3.14/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_14/Python.framework/Python").path)
-        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.14/Python").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Resources/python_3_13/Python.framework/Python").path)
+        candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
         candidatePaths.append(parentAppURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
 
-        candidatePaths.append("/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Python")
         candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/opt/homebrew/opt/python@3.12/Frameworks/Python.framework/Versions/3.12/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.14/Python")
         candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/usr/local/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Python")
         candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.14/Python")
         candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
 
         let (selectedPath, diagnostics) = XPCDyldDiagnostics.diagnosePythonLibraryLoading(candidatePaths: candidatePaths)

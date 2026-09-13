@@ -11,7 +11,6 @@ from garage_rag.proto.garage_pb2 import (
     GetEmbeddingBatchesRequest,
     UpdateEmbeddingsRequest,
 )
-from garage_rag.service.client import GarageClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +26,8 @@ def embed_via_grpc(
 
     Zero direct database access is used in this workflow.
     """
+    from garage_rag.service.client import GarageClient
+
     client = GarageClient(host=grpc_host, port=grpc_port, in_process=False)
     b_size = batch_size if batch_size and batch_size > 0 else 64
     remaining_limit = limit if limit and limit > 0 else None

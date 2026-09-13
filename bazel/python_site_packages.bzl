@@ -2,6 +2,7 @@
 
 load("@aspect_rules_py//py/private:providers.bzl", "PyWheelsInfo")
 load("@aspect_rules_py//py/private:py_info.bzl", "RulesPyInfo")
+load("@rules_apple//apple/internal:providers.bzl", "new_appleresourceinfo")
 load("@rules_python//python:py_info.bzl", "PyInfo")
 
 def _python_site_packages_impl(ctx):
@@ -113,6 +114,10 @@ fi
         DefaultInfo(
             files = depset([out]),
             runfiles = ctx.runfiles(files = [out]),
+        ),
+        new_appleresourceinfo(
+            owners = depset([]),
+            unowned_resources = depset([]),
         ),
     ]
 

@@ -31,8 +31,8 @@ copy_to_directory(
         "*/include/**/*",
     ],
     replace_prefixes = {
-        "ext/pgvector/pgvector": "postgres/",
-        "ext/postgres/postgres_rpath": "postgres/",
+        "ext/pgvector/pgvector": "",
+        "ext/postgres/postgres_rpath": "",
     },
 )
 
@@ -40,6 +40,7 @@ codesign(
     name = "postgres_output",
     src = ":postgres_raw",
     out = "postgres",
+    parent_dir = "postgres",
     entitlements = select({
         "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
@@ -59,13 +60,23 @@ copy_to_directory(
     ],
     out = "schema",
     replace_prefixes = {
-        "data/sql/sql": "schema/",
+        "data/sql/sql": "",
     },
 )
 
 swift_binary(
     name = "garage_bin",
     srcs = ["Sources/GarageCLI/main.swift"],
+    linkopts = [
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@executable_path/../Frameworks",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@loader_path/../Frameworks",
+    ],
     deps = [
         "//ext/pythonkit:PythonKit_swift",
     ],
@@ -74,6 +85,16 @@ swift_binary(
 swift_binary(
     name = "garage_mcp_bin",
     srcs = ["Sources/GarageMCPCLI/main.swift"],
+    linkopts = [
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@executable_path/../Frameworks",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@loader_path/../Frameworks",
+    ],
     deps = [
         "//ext/pythonkit:PythonKit_swift",
     ],
@@ -136,16 +157,6 @@ swift_library(
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/GarageApp/**/*.swift"]),
-    data = [
-        ":garage",
-        ":garage-mcp",
-        ":postgres_output",
-        ":schema_output",
-        "//data/models:model_manifest",
-        "//data/schema:config_schema",
-        "//ext/python:python_framework",
-        "//garage_python:site-packages",
-    ],
     module_name = "GarageApp",
     visibility = ["//visibility:public"],
     deps = [
@@ -164,9 +175,19 @@ macapp_version(
 
 macos_application(
     name = "GarageApp",
+    additional_contents = {
+        ":garage": "MacOS",
+        ":garage-mcp": "MacOS",
+        ":postgres_output": "Resources/postgres",
+        ":schema_output": "Resources/schema",
+        "//data/models:model_manifest": "Resources",
+        "//data/schema:config_schema": "Resources",
+        "//garage_python:site-packages": "Resources/site-packages",
+    },
     app_icons = [":GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",
     bundle_name = "Garage",
+    executable_name = "GarageApp",
     codesignopts = [
         "--options=runtime",  # This enables the Hardened Runtime flag
     ],

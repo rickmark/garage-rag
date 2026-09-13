@@ -15,24 +15,22 @@ private func setupPythonEnvironment() {
     let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
 
     // 1. Inside .app bundle (Contents/Frameworks/Python.framework)
-    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.14/Python").path)
+    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-    candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.14/Python").path)
+    candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(bundleURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
 
     // 2. Relative to standalone CLI binary (../Frameworks/Python.framework)
-    candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.14/Python").path)
+    candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Python").path)
-    candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.14/Python").path)
-    candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.14/Python").path)
+    candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
+    candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
 
     // 3. System / Homebrew fallbacks
-    candidatePaths.append("/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Python")
     candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.14/Python")
     candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/usr/local/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Python")
-    candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.14/Python")
+    candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
+    candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
 
     for path in candidatePaths {
         if FileManager.default.fileExists(atPath: path) {

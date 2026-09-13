@@ -8,7 +8,7 @@ swift_library(
     visibility = ["//visibility:private"],
     deps = [
         "//ext:PythonKit",
-        "//ext/python:python_3_14_framework",
+        "//ext/python:python_3_13_framework",
     ],
 )
 
@@ -26,6 +26,6 @@ macos_xpc_service(
     visibility = ["//visibility:public"],
     deps = [
         ":GarageXPCService_lib",
-        "//ext/python:python_3_14_framework",
+        "//ext/python:python_3_13_framework",
     ],
 )

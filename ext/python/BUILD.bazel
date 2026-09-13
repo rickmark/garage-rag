@@ -4,7 +4,7 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 load("//bazel:codesign.bzl", "codesign")
 
 configure_make(
-    name = "python_3_14",
+    name = "python_3_13",
     args = [
         "-e",
     ],
@@ -25,7 +25,7 @@ configure_make(
         "ARFLAGS": "crs",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
     },
-    lib_source = "@python_3_14_framework//:python_source",
+    lib_source = "@python_3_13_framework//:python_source",
     out_binaries = [
         "python3",
         "python3-config",
@@ -50,7 +50,7 @@ done
 )
 
 configure_make(
-    name = "python_3_14_static",
+    name = "python_3_13_static",
     args = [
         "-e",
     ],
@@ -69,36 +69,42 @@ configure_make(
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
     },
-    lib_source = "@python_3_14_framework//:python_source",
+    lib_source = "@python_3_13_framework//:python_source",
     out_binaries = [
         "python3",
         "python3-config",
     ],
     out_static_libs = [
-        "libpython3.14.a",
+        "libpython3.13.a",
     ],
     visibility = ["//visibility:public"],
 )
 
 alias(
+    name = "python_3_13_framework",
+    actual = ":python_3_13",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "python_3_14_framework",
-    actual = ":python_3_14",
+    actual = ":python_3_13",
     visibility = ["//visibility:public"],
 )
 
 copy_to_directory(
     name = "python_framework_raw",
-    srcs = [":python_3_14"],
+    srcs = [":python_3_13"],
     out = "python_framework_raw",
     exclude_srcs_patterns = [
-        "**/Versions/3.14/lib/python3.14/test/**",
-        "**/Versions/3.14/lib/python3.14/test",
+        "**/Versions/3.13/lib/python3.13/test/**",
+        "**/Versions/3.13/lib/python3.13/test",
     ],
     include_srcs_patterns = [
-        "python_3_14/Python.framework/Versions/3.14/**",
+        "python_3_13/Python.framework/Versions/3.13/**",
     ],
     replace_prefixes = {
-        "python_3_14/Python.framework": "",
+        "python_3_13/Python.framework": "",
     },
 )
 

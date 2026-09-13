@@ -32,13 +32,13 @@ alias(
 
 alias(
     name = "python",
-    actual = "//ext/python:python_3_14",
+    actual = "//ext/python:python_3_13",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "python_static",
-    actual = "//ext/python:python_3_14_static",
+    actual = "//ext/python:python_3_13_static",
     visibility = ["//visibility:public"],
 )
 

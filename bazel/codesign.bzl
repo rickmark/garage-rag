@@ -154,6 +154,56 @@ inputs=("$@")
 signing_identity="${signing_identity#\\\"}"
 signing_identity="${signing_identity%\\\"}"
 
+fix_macho() {
+    local file="$1"
+    if [ -L "$file" ] || [ ! -f "$file" ]; then
+        return
+    fi
+    if ! file -b "$file" | grep -q "Mach-O"; then
+        return
+    fi
+    if file -b "$file" | grep -q "ar archive"; then
+        return
+    fi
+
+    # Fix install name (ID) if needed
+    local dylib_id
+    dylib_id="$(otool -D "$file" 2>/dev/null | tail -n +2 | head -n 1 || true)"
+    if [ -n "$dylib_id" ]; then
+        if [[ "$dylib_id" == *"/Python.framework/"* ]] || [[ "$file" == *"/Python.framework/"* ]]; then
+            /usr/bin/install_name_tool -id "@rpath/Python.framework/Versions/3.13/Python" "$file" 2>/dev/null || true
+        elif [[ "$dylib_id" == /Users/* ]] || [[ "$dylib_id" == */_bazel* ]] || [[ "$dylib_id" == /sandbox/* ]] || [[ "$dylib_id" == ./* ]] || [[ "$dylib_id" == /* && "$dylib_id" != /usr/lib/* && "$dylib_id" != /System/* && "$dylib_id" != /Library/* ]]; then
+            /usr/bin/install_name_tool -id "@rpath/$(basename "$file")" "$file" 2>/dev/null || true
+        fi
+    fi
+
+    # Fix dependencies
+    otool -L "$file" 2>/dev/null | tail -n +2 | while IFS= read -r line; do
+        dep="${line#"${line%%[![:space:]]*}"}"
+        dep="${dep%% *}"
+        if [ -z "$dep" ]; then
+            continue
+        fi
+
+        if [[ "$dep" == *"/Python.framework/"* ]] && [[ "$dep" != "@rpath/Python.framework/"* ]]; then
+            /usr/bin/install_name_tool -change "$dep" "@rpath/Python.framework/Versions/3.13/Python" "$file" 2>/dev/null || true
+        elif [[ "$dep" == /DLC/* ]]; then
+            /usr/bin/install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" "$file" 2>/dev/null || true
+        elif [[ "$dep" == ./* ]]; then
+            /usr/bin/install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" "$file" 2>/dev/null || true
+        elif [[ "$dep" == /Users/* ]] || [[ "$dep" == */_bazel* ]] || [[ "$dep" == /sandbox/* ]]; then
+            /usr/bin/install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$file" 2>/dev/null || true
+        fi
+    done
+
+    # If it is inside Python.framework/Versions/.../bin
+    if [[ "$file" == *"/Python.framework/Versions/"*"/bin/"* ]]; then
+        /usr/bin/install_name_tool -add_rpath "@executable_path/.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../../.." "$file" 2>/dev/null || true
+    fi
+}
+
 codesign_file() {
     local file="$1"
     local filename
@@ -176,6 +226,7 @@ codesign_file() {
     fi
 
     chmod 755 "$file" || echo "CHMOD FAILED ON $file"
+    fix_macho "$file"
     /usr/bin/codesign -f -s "$signing_identity" "${sign_opts[@]}" "$file"
 }
 
@@ -334,15 +385,6 @@ fi
                 (None, None, depset([output_zip])),
             ],
             owners = depset([(output_zip.short_path, str(ctx.label))]),
-            unowned_resources = depset([]),
-        )
-        providers.append(resource_info)
-    elif ctx.attr.parent_dir:
-        resource_info = new_appleresourceinfo(
-            unprocessed = [
-                (ctx.attr.parent_dir, None, depset([output])),
-            ],
-            owners = depset([(output.short_path, str(ctx.label))]),
             unowned_resources = depset([]),
         )
         providers.append(resource_info)
