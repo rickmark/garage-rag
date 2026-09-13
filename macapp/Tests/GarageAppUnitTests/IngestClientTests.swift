@@ -235,4 +235,44 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(service.logs.contains(where: { $0.stream == .stderr && $0.text.contains("Simulated disk failure") }))
         XCTAssertTrue(service.latestProgress?.isError ?? false)
     }
+
+    func testXPCDyldDiagnosticsReportGeneration() {
+        let report = XPCDyldDiagnostics.diagnoseService(
+            bundleId: "me.rickmark.garage-rag.ingest-xpc",
+            executableName: "GarageIngestXPCService"
+        )
+        XCTAssertEqual(report.serviceIdentifier, "me.rickmark.garage-rag.ingest-xpc")
+        XCTAssertFalse(report.formattedSummary.isEmpty)
+        XCTAssertFalse(report.shortSummary.isEmpty)
+        XCTAssertTrue(report.formattedSummary.contains("Diagnostic Report"))
+    }
+
+    func testXPCDyldDiagnosticsErrorEnrichment() {
+        let originalError = NSError(domain: "NSCocoaErrorDomain", code: 4097, userInfo: [NSLocalizedDescriptionKey: "connection interrupted"])
+        let enriched = XPCDyldDiagnostics.enrichXPCError(originalError, forServiceBundleId: "me.rickmark.garage-rag.ingest-xpc")
+
+        XCTAssertTrue(enriched.localizedDescription.contains("connection interrupted"))
+        XCTAssertTrue(enriched.localizedDescription.contains("XPC Diagnostics"))
+        XCTAssertNotNil(enriched.userInfo["XPCDiagnosticReport"])
+        XCTAssertNotNil(enriched.userInfo["XPCDiagnosticShortSummary"])
+    }
+
+    func testXPCDyldDiagnosticsPythonCandidateInspection() {
+        let nonExistentPath = "/path/to/nonexistent/Python"
+        let (selected, diagnostics) = XPCDyldDiagnostics.diagnosePythonLibraryLoading(candidatePaths: [nonExistentPath])
+        XCTAssertNil(selected)
+        XCTAssertEqual(diagnostics.count, 1)
+        XCTAssertTrue(diagnostics[0].contains("NOT FOUND"))
+    }
+
+    func testIngestEngineAsyncIngest() async {
+        let engine = IngestEngine()
+        var updates: [IngestProgressUpdate] = []
+        let result = await engine.ingestSourceAsync(slug: "test-slug") { update in
+            updates.append(update)
+        }
+        XCTAssertTrue(result.succeeded)
+        XCTAssertFalse(updates.isEmpty)
+        XCTAssertEqual(updates.last?.phase, "complete")
+    }
 }

@@ -47,6 +47,11 @@ struct StatusView: View {
     }
 
     @State private var refreshTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    @State private var expandedServiceIds: Set<String> = []
+    @State private var isGrpcExpanded: Bool = false
+    @State private var grpcTestResult: (isSuccess: Bool, summary: String, details: String, durationMs: Double)? = nil
+    @State private var isTestingGrpc: Bool = false
+    @State private var copiedServiceId: String? = nil
 
     var body: some View {
         ScrollView {
@@ -417,11 +422,11 @@ struct StatusView: View {
     // MARK: - XPC Helper Services Section
 
     private var xpcServicesSection: some View {
-        GroupBox("XPC Helper Services & Daemons") {
+        GroupBox("Services & Daemon Health Diagnostics") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Real-time operational status and control for all macOS sandboxed XPC helper processes.")
+                        Text("Real-time operational status and deep functional diagnostic testing beyond basic ping for all helpers.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let lastRefreshed = appState.xpcServices.lastRefreshedAt {
@@ -433,9 +438,32 @@ struct StatusView: View {
 
                     Spacer()
 
-                    if appState.xpcServices.isRefreshingAll {
+                    if appState.xpcServices.isRefreshingAll || appState.xpcServices.isTestingAll || isTestingGrpc {
                         ProgressView().controlSize(.small)
                     }
+
+                    Button {
+                        runAllFunctionalTests()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.circle.fill")
+                            Text("Run All Tests")
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .disabled(appState.xpcServices.isTestingAll || isTestingGrpc)
+
+                    Button {
+                        toggleExpandAll()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: allExpanded ? "chevron.up.circle" : "chevron.down.circle")
+                            Text(allExpanded ? "Collapse All" : "Expand All")
+                        }
+                    }
+                    .controlSize(.small)
 
                     Button {
                         Task { await appState.xpcServices.refreshAll() }
@@ -462,7 +490,11 @@ struct StatusView: View {
 
                 Divider()
 
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
+                    // gRPC Core Daemon Service Row
+                    grpcServiceRow
+
+                    // XPC Helper Services Rows
                     ForEach(appState.xpcServices.services) { service in
                         xpcServiceRow(for: service)
                     }
@@ -472,92 +504,518 @@ struct StatusView: View {
         }
     }
 
-    private func xpcServiceRow(for service: XPCServiceInfo) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            // Status Icon
-            Group {
-                switch service.state {
-                case .running:
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                case .checking, .restarting:
-                    ProgressView().controlSize(.small)
-                case .unreachable:
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                case .unknown:
-                    Image(systemName: "questionmark.circle.fill")
+    private var allExpanded: Bool {
+        let allIds = Set(appState.xpcServices.services.map { $0.id }).union(["grpc"])
+        return allIds.isSubset(of: expandedServiceIds) && isGrpcExpanded
+    }
+
+    private func toggleExpandAll() {
+        if allExpanded {
+            expandedServiceIds.removeAll()
+            isGrpcExpanded = false
+        } else {
+            expandedServiceIds = Set(appState.xpcServices.services.map { $0.id })
+            isGrpcExpanded = true
+        }
+    }
+
+    private func runAllFunctionalTests() {
+        Task {
+            isTestingGrpc = true
+            let grpcResult = await appState.grpc.testServiceQuery()
+            grpcTestResult = grpcResult
+            isTestingGrpc = false
+            await appState.xpcServices.runAllDiagnosticTests()
+        }
+    }
+
+    // MARK: - gRPC Service Row with Expandable Diagnostics
+
+    private var grpcServiceRow: some View {
+        let isExpanded = isGrpcExpanded
+        let isRunning = appState.grpc.status == .running
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isGrpcExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
+                        .frame(width: 14)
                 }
-            }
-            .font(.title3)
-            .frame(width: 24)
+                .buttonStyle(.plain)
 
-            // Service Metadata
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(service.name)
-                        .font(.subheadline.bold())
-
-                    Text(service.bundleId)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.secondary)
-
-                    if let pid = service.pid {
-                        badgeText("PID: \(pid)", bg: Color.blue.opacity(0.12), fg: .blue)
-                    }
-
-                    if let latency = service.latencyMs {
-                        badgeText(String(format: "%.1f ms", latency), bg: Color.green.opacity(0.12), fg: .green)
-                    }
-
-                    if service.state == .restarting {
-                        badgeText("RESTARTING", bg: Color.orange.opacity(0.15), fg: .orange)
-                    } else if service.state == .checking {
-                        badgeText("CHECKING", bg: Color.blue.opacity(0.15), fg: .blue)
-                    } else if case .unreachable = service.state {
-                        badgeText("UNREACHABLE", bg: Color.red.opacity(0.15), fg: .red)
+                // Status Icon
+                Group {
+                    switch appState.grpc.status {
+                    case .running:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .starting, .stopping:
+                        ProgressView().controlSize(.small)
+                    case .failed:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    case .stopped:
+                        Image(systemName: "pause.circle.fill")
+                            .foregroundStyle(.orange)
                     }
                 }
+                .font(.title3)
+                .frame(width: 24)
 
-                Text(service.serviceDescription)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                // Service Metadata
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Garage gRPC Daemon")
+                            .font(.subheadline.bold())
 
-                if let err = service.errorMessage {
-                    Text("Error: \(err)")
+                        Text("\(appState.grpc.host):\(appState.grpc.port)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+
+                        if isRunning {
+                            badgeText("RUNNING", bg: Color.green.opacity(0.12), fg: .green)
+                        } else if case .failed = appState.grpc.status {
+                            badgeText("FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                        } else {
+                            badgeText("STOPPED", bg: Color.orange.opacity(0.15), fg: .orange)
+                        }
+
+                        if let res = grpcTestResult {
+                            if res.isSuccess {
+                                badgeText("TEST PASSED", bg: Color.green.opacity(0.15), fg: .green)
+                            } else {
+                                badgeText("TEST FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                            }
+                        }
+                    }
+
+                    Text("Provides gRPC endpoints for document search, models registry, corpus statistics, and daemon control.")
                         .font(.caption2)
-                        .foregroundStyle(.red)
-                } else if let resp = service.pingResponse, !resp.isEmpty {
-                    Text("Ping reply: \(resp)")
-                        .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                // Actions
+                HStack(spacing: 6) {
+                    Button {
+                        Task {
+                            isTestingGrpc = true
+                            grpcTestResult = await appState.grpc.testServiceQuery()
+                            isTestingGrpc = false
+                            if !isGrpcExpanded {
+                                withAnimation {
+                                    isGrpcExpanded = true
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isTestingGrpc {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "play.fill")
+                            }
+                            Text("Query Services")
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(isTestingGrpc)
+
+                    Button(isExpanded ? "Hide Test" : "Expand Test") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isGrpcExpanded.toggle()
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
                 }
             }
 
-            Spacer()
+            // Expanded Functional Diagnostics View
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    Divider()
 
-            // Actions
-            HStack(spacing: 6) {
-                Button("Ping") {
-                    Task { await appState.xpcServices.refresh(serviceId: service.id) }
-                }
-                .controlSize(.small)
-                .buttonStyle(.bordered)
-                .disabled(service.isChecking || appState.xpcServices.isRefreshingAll)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text("Beyond-Ping Functional Test: gRPC Services Query")
+                                    .font(.caption.bold())
+                                badgeText("gRPC RPC", bg: Color.purple.opacity(0.12), fg: .purple)
+                            }
+                            Text("Executes GetStatus, GetVersion, ListModels, ListSources, and GetStats to verify gRPC server subsystem integrity.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
 
-                Button("Restart") {
-                    Task { await appState.xpcServices.restart(serviceId: service.id) }
+                        Spacer()
+
+                        Button {
+                            Task {
+                                isTestingGrpc = true
+                                grpcTestResult = await appState.grpc.testServiceQuery()
+                                isTestingGrpc = false
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if isTestingGrpc {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "play.circle")
+                                }
+                                Text("Run Query Test")
+                            }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .disabled(isTestingGrpc)
+                    }
+
+                    if let res = grpcTestResult {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                HStack(spacing: 6) {
+                                    Image(systemName: res.isSuccess ? "checkmark.seal.fill" : "xmark.seal.fill")
+                                        .foregroundStyle(res.isSuccess ? .green : .red)
+                                    Text(res.summary)
+                                        .font(.caption.bold())
+                                        .foregroundStyle(res.isSuccess ? .green : .red)
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(res.details, forType: .string)
+                                    copiedServiceId = "grpc"
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        if copiedServiceId == "grpc" { copiedServiceId = nil }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: copiedServiceId == "grpc" ? "checkmark" : "doc.on.doc")
+                                        Text(copiedServiceId == "grpc" ? "Copied!" : "Copy Output")
+                                    }
+                                }
+                                .controlSize(.small)
+                            }
+
+                            ScrollView {
+                                Text(res.details)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 140)
+                            .padding(8)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
                 }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-                .tint(service.isRunning ? .orange : .blue)
-                .disabled(service.isChecking || appState.xpcServices.isRestartingAll)
+                .padding(8)
+                .background(Color.purple.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(8)
         .background(Color.primary.opacity(0.02))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - XPC Helper Service Row with Expandable Diagnostics
+
+    private func xpcServiceRow(for service: XPCServiceInfo) -> some View {
+        let isExpanded = expandedServiceIds.contains(service.id)
+        let isTesting = appState.xpcServices.testingServiceIds.contains(service.id)
+        let diagResult = appState.xpcServices.diagnosticResults[service.id]
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if isExpanded {
+                            expandedServiceIds.remove(service.id)
+                        } else {
+                            expandedServiceIds.insert(service.id)
+                        }
+                    }
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                }
+                .buttonStyle(.plain)
+
+                // Status Icon
+                Group {
+                    switch service.state {
+                    case .running:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .checking, .restarting:
+                        ProgressView().controlSize(.small)
+                    case .unreachable:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    case .unknown:
+                        Image(systemName: "questionmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.title3)
+                .frame(width: 24)
+
+                // Service Metadata
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(service.name)
+                            .font(.subheadline.bold())
+
+                        Text(service.bundleId)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+
+                        if let pid = service.pid {
+                            badgeText("PID: \(pid)", bg: Color.blue.opacity(0.12), fg: .blue)
+                        }
+
+                        if let latency = service.latencyMs {
+                            badgeText(String(format: "%.1f ms", latency), bg: Color.green.opacity(0.12), fg: .green)
+                        }
+
+                        if service.state == .restarting {
+                            badgeText("RESTARTING", bg: Color.orange.opacity(0.15), fg: .orange)
+                        } else if service.state == .checking {
+                            badgeText("CHECKING", bg: Color.blue.opacity(0.15), fg: .blue)
+                        } else if case .unreachable = service.state {
+                            badgeText("UNREACHABLE", bg: Color.red.opacity(0.15), fg: .red)
+                        }
+
+                        if let res = diagResult {
+                            if res.isSuccess {
+                                badgeText("TEST PASSED", bg: Color.green.opacity(0.15), fg: .green)
+                            } else {
+                                badgeText("TEST FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                            }
+                        }
+                    }
+
+                    Text(service.serviceDescription)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    if let err = service.errorMessage {
+                        Text("Error: \(err)")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    } else if let resp = service.pingResponse, !resp.isEmpty {
+                        Text("Ping reply: \(resp)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                // Actions
+                HStack(spacing: 6) {
+                    Button {
+                        Task {
+                            _ = await appState.xpcServices.runDiagnosticTest(for: service.id)
+                            if !isExpanded {
+                                withAnimation {
+                                    _ = expandedServiceIds.insert(service.id)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isTesting {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "play.fill")
+                            }
+                            Text("Test")
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(isTesting || service.isChecking)
+
+                    Button("Ping") {
+                        Task { await appState.xpcServices.refresh(serviceId: service.id) }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(service.isChecking || appState.xpcServices.isRefreshingAll)
+
+                    Button("Restart") {
+                        Task { await appState.xpcServices.restart(serviceId: service.id) }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(service.isRunning ? .orange : .blue)
+                    .disabled(service.isChecking || appState.xpcServices.isRestartingAll)
+
+                    Button(isExpanded ? "Hide Test" : "Expand Test") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if isExpanded {
+                                expandedServiceIds.remove(service.id)
+                            } else {
+                                expandedServiceIds.insert(service.id)
+                            }
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            // Expanded Functional Test View
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    Divider()
+
+                    let testInfo = diagnosticTestInfo(for: service.id)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text("Beyond-Ping Functional Test: \(testInfo.name)")
+                                    .font(.caption.bold())
+                                badgeText("Beyond Ping", bg: Color.blue.opacity(0.12), fg: .blue)
+                            }
+                            Text(testInfo.description)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            Task {
+                                _ = await appState.xpcServices.runDiagnosticTest(for: service.id)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if isTesting {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "play.circle")
+                                }
+                                Text("Run Functional Test")
+                            }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .disabled(isTesting)
+                    }
+
+                    if let res = diagResult {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                HStack(spacing: 6) {
+                                    Image(systemName: res.isSuccess ? "checkmark.seal.fill" : "xmark.seal.fill")
+                                        .foregroundStyle(res.isSuccess ? .green : .red)
+                                    Text(res.summary)
+                                        .font(.caption.bold())
+                                        .foregroundStyle(res.isSuccess ? .green : .red)
+                                }
+
+                                Spacer()
+
+                                Text(String(format: "%.1f ms", res.durationMs))
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(res.details, forType: .string)
+                                    copiedServiceId = service.id
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        if copiedServiceId == service.id { copiedServiceId = nil }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: copiedServiceId == service.id ? "checkmark" : "doc.on.doc")
+                                        Text(copiedServiceId == service.id ? "Copied!" : "Copy Output")
+                                    }
+                                }
+                                .controlSize(.small)
+                            }
+
+                            ScrollView {
+                                Text(res.details)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 140)
+                            .padding(8)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+                .padding(8)
+                .background(Color.blue.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func diagnosticTestInfo(for serviceId: String) -> (name: String, description: String) {
+        switch serviceId {
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc":
+            return (
+                name: "Model Load & Vector Embeddings",
+                description: "Loads the vector embedding module and computes float vector coordinates on a fixed sample text."
+            )
+        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
+            return (
+                name: "Payload Download & SHA-256 Checksum",
+                description: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity."
+            )
+        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
+            return (
+                name: "Llama Tokenizer & Server Status",
+                description: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt."
+            )
+        case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc":
+            return (
+                name: "Document Ingest Pipeline & Python Runtime",
+                description: "Inspects PythonKit dynamic library resolution, tests signal handlers, verifies document extractors and chunkers."
+            )
+        case "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc":
+            return (
+                name: "Model Context Protocol (MCP) Tools",
+                description: "Initializes MCP protocol connection and discovers registered tools and capabilities."
+            )
+        case "garage-xpc", "me.rickmark.garage-rag.xpc":
+            return (
+                name: "Garage Backend Core Coordination",
+                description: "Tests Core XPC daemon coordination and backend lifecycle communication."
+            )
+        default:
+            return (
+                name: "Service Check",
+                description: "Functional readiness verification."
+            )
+        }
     }
 
     private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {

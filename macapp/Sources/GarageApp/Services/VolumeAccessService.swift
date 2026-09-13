@@ -342,6 +342,78 @@ public final class DefaultFileSystemAccessor: FileSystemAccessing {
     }
 }
 
+/// In-memory mock bookmark store for testing and headless execution.
+public final class MockVolumeBookmarkStore: VolumeBookmarkStoring, @unchecked Sendable {
+    public var storedData: Data?
+    public var storedPath: String?
+    public var sourceBookmarks: [String: Data] = [:]
+
+    public init(storedData: Data? = nil, storedPath: String? = nil) {
+        self.storedData = storedData
+        self.storedPath = storedPath
+    }
+
+    public func loadBookmarkData() -> Data? {
+        storedData
+    }
+
+    public func saveBookmarkData(_ data: Data, path: String) {
+        storedData = data
+        storedPath = path
+    }
+
+    public func loadBookmarkPath() -> String? {
+        storedPath
+    }
+
+    public func clearBookmark() {
+        storedData = nil
+        storedPath = nil
+        sourceBookmarks.removeAll()
+    }
+
+    public func saveSourceBookmark(path: String, data: Data) {
+        sourceBookmarks[path] = data
+    }
+
+    public func loadSourceBookmark(path: String) -> Data? {
+        sourceBookmarks[path]
+    }
+
+    public func loadAllSourceBookmarks() -> [String: Data] {
+        sourceBookmarks
+    }
+
+    public func clearSourceBookmark(path: String) {
+        sourceBookmarks.removeValue(forKey: path)
+    }
+}
+
+/// In-memory mock filesystem accessor for testing and headless execution without TCC prompts.
+open class MockFileSystemAccessor: FileSystemAccessing, @unchecked Sendable {
+    public var directoryContents: [URL] = []
+    public var shouldThrowOnContents = false
+    public var readablePaths: Set<String> = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes"]
+
+    public init() {}
+
+    open func contentsOfDirectory(at url: URL) throws -> [URL] {
+        if shouldThrowOnContents {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoPermissionError, userInfo: nil)
+        }
+        return directoryContents
+    }
+
+    open func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        isDirectory?.pointee = true
+        return true
+    }
+
+    open func isReadableFile(atPath path: String) -> Bool {
+        readablePaths.contains(path) || readablePaths.contains((path as NSString).expandingTildeInPath) || path.hasPrefix("/tmp") || path.hasPrefix("/var/folders")
+    }
+}
+
 /// Service managing full volume access, security-scoped bookmark lifecycle, and verification.
 @MainActor
 public final class VolumeAccessService: ObservableObject {
@@ -356,12 +428,14 @@ public final class VolumeAccessService: ObservableObject {
     private var isAccessingSecurityScope = false
 
     public init(
-        bookmarkStore: VolumeBookmarkStoring = UserDefaultsVolumeBookmarkStore(),
-        fileSystem: FileSystemAccessing = DefaultFileSystemAccessor(),
+        bookmarkStore: VolumeBookmarkStoring? = nil,
+        fileSystem: FileSystemAccessing? = nil,
         ingestClient: IngestClient? = nil
     ) {
-        self.bookmarkStore = bookmarkStore
-        self.fileSystem = fileSystem
+        let defaultStore: VolumeBookmarkStoring = isRunningInTestEnvironment ? MockVolumeBookmarkStore() : UserDefaultsVolumeBookmarkStore()
+        let defaultFS: FileSystemAccessing = isRunningInTestEnvironment ? MockFileSystemAccessor() : DefaultFileSystemAccessor()
+        self.bookmarkStore = bookmarkStore ?? defaultStore
+        self.fileSystem = fileSystem ?? defaultFS
         self.ingestClient = ingestClient
     }
 
@@ -481,6 +555,12 @@ public final class VolumeAccessService: ObservableObject {
 
     /// Displays an NSOpenPanel configured to assist the user in choosing the root hard-drive.
     public func promptForRootVolumeSelection() -> URL? {
+        if isRunningInTestEnvironment {
+            let defaultURL = URL(fileURLWithPath: "/")
+            try? grantAccess(for: defaultURL)
+            return defaultURL
+        }
+
         let panel = NSOpenPanel()
         panel.title = "Select Root Hard Drive"
         panel.message = "To grant Garage access to index files across your system, select your root hard drive (e.g. Macintosh HD or root '/') and click Grant Access."
@@ -508,6 +588,12 @@ public final class VolumeAccessService: ObservableObject {
     /// Displays an NSOpenPanel configured to select a specific source directory such as Messages or Mail.
     public func promptForSourceDirectoryAccess(slug: String? = nil, suggestedPath: String) -> URL? {
         let resolvedPath = (suggestedPath as NSString).expandingTildeInPath
+        if isRunningInTestEnvironment {
+            let defaultURL = URL(fileURLWithPath: resolvedPath)
+            try? grantSourceAccess(for: defaultURL, forSourcePath: suggestedPath)
+            return defaultURL
+        }
+
         let cat = TCCPermissionCategory.detect(slug: slug ?? "", path: resolvedPath)
         let displayName = cat?.displayName ?? (slug ?? "Source Directory")
 
@@ -569,6 +655,9 @@ public final class VolumeAccessService: ObservableObject {
 
     /// Opens macOS System Settings to the appropriate Privacy & Security pane.
     public func openPrivacySettings(for category: TCCPermissionCategory = .fullDiskAccess) {
+        if isRunningInTestEnvironment {
+            return
+        }
         if let url = category.systemSettingsURL, NSWorkspace.shared.open(url) {
             return
         }
@@ -585,6 +674,9 @@ public final class VolumeAccessService: ObservableObject {
         sourceSlug: String? = nil,
         sourcePath: String? = nil
     ) -> Bool {
+        if isRunningInTestEnvironment {
+            return false
+        }
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Permission Required: \(category.displayName)"

@@ -38,4 +38,7 @@ public protocol ModelDownloadXPCServiceProtocol {
 
     /// Verify the SHA256 checksum of a model file on disk.
     func verifyModelFile(filePath: String, expectedSha256: String?, with reply: @escaping (Bool, String?, Error?) -> Void)
+
+    /// Download a fixed small test value and verify its SHA256 checksum.
+    func testDownloadAndVerifySha256(with reply: @escaping (Bool, String?, Error?) -> Void)
 }

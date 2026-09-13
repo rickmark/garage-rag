@@ -363,6 +363,28 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
+    @discardableResult
+    func testDownloadAndVerifySha256() async -> (isValid: Bool, details: String) {
+        isBusy = true
+        defer { isBusy = false }
+        appendLog("Running functional download & SHA-256 integrity verification test...")
+        do {
+            let (isValid, details) = try await client.testDownloadAndVerifySha256()
+            if isValid {
+                lastSuccess = "Download & SHA-256 test passed."
+                appendLog("Download & SHA-256 verification test passed: \(details)")
+            } else {
+                lastError = "Download & SHA-256 test failed: \(details)"
+                appendLog("Download & SHA-256 test failed: \(details)", stream: .stderr)
+            }
+            return (isValid, details)
+        } catch {
+            lastError = error.localizedDescription
+            appendLog("Download & SHA-256 test failed: \(error.localizedDescription)", stream: .stderr)
+            return (false, "Error: \(error.localizedDescription)")
+        }
+    }
+
     func copyToClipboard(text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

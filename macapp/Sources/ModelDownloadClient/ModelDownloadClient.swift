@@ -357,4 +357,29 @@ public final class ModelDownloadClient: Sendable {
             return (res.isValid, res.computedSha256)
         }
     }
+
+    /// Downloads a fixed small value and verifies its SHA-256 hash.
+    public func testDownloadAndVerifySha256() async throws -> (isValid: Bool, details: String) {
+        if let engine = inProcessEngine {
+            let res = try engine.testDownloadAndVerifySha256()
+            return (res.isValid, res.details)
+        }
+
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.testDownloadAndVerifySha256 { isValid, details, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let details = details {
+                        relay.resume(returning: (isValid, details))
+                    } else {
+                        relay.resume(returning: (isValid, "Completed without details"))
+                    }
+                }
+            }
+        } catch {
+            let res = try ModelDownloaderEngine.shared.testDownloadAndVerifySha256()
+            return (res.isValid, res.details)
+        }
+    }
 }

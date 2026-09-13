@@ -53,10 +53,12 @@ public final class IngestClient: Sendable {
         }
 
         connection.interruptionHandler = {
-            logger.warning("IngestClient NSXPCConnection to '\(name, privacy: .public)' was interrupted")
+            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
+            logger.warning("IngestClient NSXPCConnection to '\(name, privacy: .public)' was interrupted. Diagnostics: \(report.shortSummary, privacy: .public)")
         }
         connection.invalidationHandler = {
-            logger.info("IngestClient NSXPCConnection to '\(name, privacy: .public)' was invalidated")
+            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
+            logger.info("IngestClient NSXPCConnection to '\(name, privacy: .public)' was invalidated. Diagnostics: \(report.shortSummary, privacy: .public)")
         }
 
         connection.resume()
@@ -100,13 +102,14 @@ public final class IngestClient: Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let relay = ContinuationRelay(continuation)
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                let nsError = error as NSError
-                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? IngestClient.serviceName, privacy: .public)': domain=\(nsError.domain, privacy: .public), code=\(nsError.code), userInfo=\(String(describing: nsError.userInfo), privacy: .public), desc=\(error.localizedDescription, privacy: .public)")
-                relay.resume(throwing: error)
+                let enrichedError = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: self.customServiceName ?? IngestClient.serviceName)
+                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? IngestClient.serviceName, privacy: .public)': \(enrichedError.localizedDescription, privacy: .public)")
+                relay.resume(throwing: enrichedError)
             }) as? GarageIngestXPCServiceProtocol else {
                 let err = NSError(domain: "IngestClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"])
-                logger.error("\(err.localizedDescription, privacy: .public)")
-                relay.resume(throwing: err)
+                let enrichedError = XPCDyldDiagnostics.enrichXPCError(err, forServiceBundleId: self.customServiceName ?? IngestClient.serviceName)
+                logger.error("\(enrichedError.localizedDescription, privacy: .public)")
+                relay.resume(throwing: enrichedError)
                 return
             }
 

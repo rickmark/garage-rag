@@ -1,11 +1,28 @@
 import Foundation
 import Security
 
-enum LMStudioTokenStore {
-    private static let service = "me.rickmark.garage-rag.lmstudio"
-    private static let account = "api-token"
+/// Detects whether the code is currently running within a test environment.
+public var isRunningInTestEnvironment: Bool {
+    NSClassFromString("XCTestCase") != nil ||
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+    ProcessInfo.processInfo.environment["TEST_WORKSPACE"] != nil ||
+    ProcessInfo.processInfo.environment["TEST_SRCDIR"] != nil ||
+    ProcessInfo.processInfo.environment["BAZEL_TEST"] != nil
+}
 
-    static func load() throws -> String? {
+public protocol LMStudioTokenStoring: Sendable {
+    func load() throws -> String?
+    func save(_ token: String) throws
+    func remove() throws
+}
+
+public final class KeychainLMStudioTokenStore: LMStudioTokenStoring, @unchecked Sendable {
+    private let service = "me.rickmark.garage-rag.lmstudio"
+    private let account = "api-token"
+
+    public init() {}
+
+    public func load() throws -> String? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -24,7 +41,7 @@ enum LMStudioTokenStore {
         return token
     }
 
-    static func save(_ token: String) throws {
+    public func save(_ token: String) throws {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -52,7 +69,7 @@ enum LMStudioTokenStore {
         }
     }
 
-    static func remove() throws {
+    public func remove() throws {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -62,6 +79,68 @@ enum LMStudioTokenStore {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw LMStudioTokenError.keychainDelete(status)
         }
+    }
+}
+
+public final class InMemoryLMStudioTokenStore: LMStudioTokenStoring, @unchecked Sendable {
+    private var token: String?
+    private let lock = NSLock()
+
+    public init(initialToken: String? = nil) {
+        self.token = initialToken
+    }
+
+    public func load() throws -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return token
+    }
+
+    public func save(_ token: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        self.token = token
+    }
+
+    public func remove() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        self.token = nil
+    }
+}
+
+public enum LMStudioTokenStore {
+    private static let lock = NSLock()
+    private static var _storage: LMStudioTokenStoring?
+
+    public static var storage: LMStudioTokenStoring {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            if let _storage {
+                return _storage
+            }
+            let defaultStore: LMStudioTokenStoring = isRunningInTestEnvironment ? InMemoryLMStudioTokenStore() : KeychainLMStudioTokenStore()
+            _storage = defaultStore
+            return defaultStore
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _storage = newValue
+        }
+    }
+
+    public static func load() throws -> String? {
+        try storage.load()
+    }
+
+    public static func save(_ token: String) throws {
+        try storage.save(token)
+    }
+
+    public static func remove() throws {
+        try storage.remove()
     }
 }
 

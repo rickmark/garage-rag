@@ -2,51 +2,6 @@ import XCTest
 import AppKit
 @testable import GarageApp
 
-final class MockVolumeBookmarkStore: VolumeBookmarkStoring {
-    var storedData: Data?
-    var storedPath: String?
-
-    func loadBookmarkData() -> Data? {
-        storedData
-    }
-
-    func saveBookmarkData(_ data: Data, path: String) {
-        storedData = data
-        storedPath = path
-    }
-
-    func loadBookmarkPath() -> String? {
-        storedPath
-    }
-
-    func clearBookmark() {
-        storedData = nil
-        storedPath = nil
-    }
-}
-
-final class MockFileSystemAccessor: FileSystemAccessing {
-    var directoryContents: [URL] = []
-    var shouldThrowOnContents = false
-    var readablePaths: Set<String> = []
-
-    func contentsOfDirectory(at url: URL) throws -> [URL] {
-        if shouldThrowOnContents {
-            throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoPermissionError, userInfo: nil)
-        }
-        return directoryContents
-    }
-
-    func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
-        isDirectory?.pointee = true
-        return true
-    }
-
-    func isReadableFile(atPath path: String) -> Bool {
-        readablePaths.contains(path)
-    }
-}
-
 @MainActor
 final class VolumeAccessServiceTests: XCTestCase {
 

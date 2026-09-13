@@ -287,4 +287,85 @@ final class GarageGRPCService: ObservableObject {
             throw GarageGRPCError.searchFailed(error.localizedDescription)
         }
     }
+
+    /// Functional test that performs structured gRPC RPC calls (GetStatus, GetVersion, ListModels, ListSources, GetStats)
+    /// to thoroughly verify that the gRPC daemon and all underlying subsystems are operational beyond a simple ping.
+    func testServiceQuery() async -> (isSuccess: Bool, summary: String, details: String, durationMs: Double) {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        var queries: [String] = []
+        var errors: [String] = []
+
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        let callOptions = CallOptions(timeLimit: .timeout(.seconds(5)))
+
+        // 1. GetStatus
+        do {
+            let statusRes = try await client.getStatus(Garage_StatusRequest(), callOptions: callOptions)
+            queries.append("GetStatus: ready=\(statusRes.isReady), pid=\(statusRes.pid), db=\(statusRes.dbStatus), type=\(statusRes.serverType)")
+        } catch {
+            errors.append("GetStatus error: \(error.localizedDescription)")
+        }
+
+        // 2. GetVersion
+        do {
+            let versionRes = try await client.getVersion(Garage_VersionRequest(), callOptions: callOptions)
+            queries.append("GetVersion: version=\(versionRes.version)")
+        } catch {
+            errors.append("GetVersion error: \(error.localizedDescription)")
+        }
+
+        // 3. ListModels
+        do {
+            let modelsRes = try await client.listModels(Garage_ListModelsRequest(), callOptions: callOptions)
+            queries.append("ListModels: returned \(modelsRes.models.count) registered model(s)")
+        } catch {
+            errors.append("ListModels error: \(error.localizedDescription)")
+        }
+
+        // 4. ListSources
+        do {
+            let sourcesRes = try await client.listSources(Garage_ListSourcesRequest(), callOptions: callOptions)
+            queries.append("ListSources: returned \(sourcesRes.sources.count) configured source(s)")
+        } catch {
+            errors.append("ListSources error: \(error.localizedDescription)")
+        }
+
+        // 5. GetStats
+        do {
+            let statsRes = try await client.getStats(Garage_StatsRequest(), callOptions: callOptions)
+            queries.append("GetStats: docs=\(statsRes.documents), chunks=\(statsRes.chunks)")
+        } catch {
+            errors.append("GetStats error: \(error.localizedDescription)")
+        }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+        let isSuccess = errors.isEmpty && !queries.isEmpty
+
+        let summary: String
+        if isSuccess {
+            summary = "All \(queries.count) gRPC service queries completed successfully in \(String(format: "%.1f", elapsed))ms."
+        } else if !queries.isEmpty {
+            summary = "Partial success: \(queries.count) queries succeeded, \(errors.count) failed in \(String(format: "%.1f", elapsed))ms."
+        } else {
+            summary = "gRPC query failed: \(errors.first ?? "Server unreachable")"
+        }
+
+        var lines: [String] = []
+        lines.append("gRPC Server: \(host):\(port) (daemon status: \(status))")
+        lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
+        if !queries.isEmpty {
+            lines.append("\nSuccessful RPC Queries:")
+            for q in queries {
+                lines.append("  ✓ \(q)")
+            }
+        }
+        if !errors.isEmpty {
+            lines.append("\nRPC Query Errors:")
+            for e in errors {
+                lines.append("  ✗ \(e)")
+            }
+        }
+
+        return (isSuccess, summary, lines.joined(separator: "\n"), elapsed)
+    }
 }

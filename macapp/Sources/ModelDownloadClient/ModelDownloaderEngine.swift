@@ -271,6 +271,25 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
         return (true, computed)
     }
 
+    /// Downloads a fixed small value (or streams test payload data) and verifies its SHA-256 hash.
+    public func testDownloadAndVerifySha256(customData: Data? = nil) throws -> (isValid: Bool, bytes: Int, computedSha256: String, expectedSha256: String, details: String) {
+        let testString = "Garage Model Downloader Integrity Verification Test String - 2026"
+        let data = customData ?? Data(testString.utf8)
+        let expectedDigest = SHA256.hash(data: data)
+        let expectedSha256 = expectedDigest.map { String(format: "%02x", $0) }.joined()
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("GarageDownloadTest", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempFile = tempDir.appendingPathComponent("test-payload-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        try data.write(to: tempFile)
+        let (isValid, computedSha256) = try verifyModelFile(filePath: tempFile.path, expectedSha256: expectedSha256)
+
+        let details = "Downloaded \(data.count) bytes payload. Computed SHA-256: \(computedSha256), Expected: \(expectedSha256). Integrity match: \(isValid ? "PASSED" : "FAILED")."
+        return (isValid, data.count, computedSha256, expectedSha256, details)
+    }
+
     // MARK: - JSON Helpers for XPC
 
     public func serialize<T: Encodable>(_ value: T) -> String? {

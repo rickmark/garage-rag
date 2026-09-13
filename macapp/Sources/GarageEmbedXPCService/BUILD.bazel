@@ -12,6 +12,7 @@ swift_library(
     deps = [
         "//ext:PythonKit",
         "//ext/python:python_3_14_framework",
+        "//macapp:IngestClient_lib",
     ],
 )
 

@@ -1,9 +1,8 @@
-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
-http_archive(
+git_repository(
     name = "PythonKit",
     build_file = "@//ext/pythonkit:PythonKit.BUILD.bazel",
-    sha256 = "68cd065a94048c3fc58ca52b8956c59a9f5b1b8c23dda244def9c7266173b877",
-    strip_prefix = "PythonKit-0.5.1",
-    urls = ["https://github.com/pvieito/PythonKit/archive/refs/tags/v0.5.1.tar.gz"],
+    commit = "0a5685138e807c39cdffffbf44c53493e457e06a",
+    remote = "https://github.com/rickmark/PythonKit.git",
 )

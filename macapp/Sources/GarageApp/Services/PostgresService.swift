@@ -971,8 +971,12 @@ private enum KeychainPostgresPassword {
     private static var account: String { NSUserName() }
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    private static var inMemoryPassword: String?
 
     static func load() throws -> String? {
+        if isRunningInTestEnvironment {
+            return inMemoryPassword
+        }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -992,6 +996,10 @@ private enum KeychainPostgresPassword {
     }
 
     static func save(_ password: String) throws {
+        if isRunningInTestEnvironment {
+            inMemoryPassword = password
+            return
+        }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

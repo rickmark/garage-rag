@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import ModelDownloadClient
 @testable import GarageApp
 
 final class StatusViewTests: XCTestCase {
@@ -276,5 +277,63 @@ final class StatusViewTests: XCTestCase {
         XCTAssertEqual(item.section, .models)
         XCTAssertEqual(item.severity, .healthy)
         XCTAssertTrue(item.statusDetails.contains("20 chunk(s) remaining to embed across models"))
+    }
+
+    // MARK: - Service Beyond-Ping Functional Tests
+
+    @MainActor
+    func testModelDownloadSHA256IntegrityTest() async throws {
+        let engine = ModelDownloaderEngine.shared
+        let result = try engine.testDownloadAndVerifySha256()
+        XCTAssertTrue(result.isValid)
+        XCTAssertGreaterThan(result.bytes, 0)
+        XCTAssertEqual(result.computedSha256, result.expectedSha256)
+        XCTAssertTrue(result.details.contains("Integrity match: PASSED"))
+
+        let client = ModelDownloadClient(inProcessEngine: engine)
+        let (isValid, details) = try await client.testDownloadAndVerifySha256()
+        XCTAssertTrue(isValid)
+        XCTAssertTrue(details.contains("PASSED"))
+    }
+
+    @MainActor
+    func testServiceDiagnosticTestResultModel() {
+        let res = ServiceDiagnosticTestResult(
+            serviceId: "embed-xpc",
+            testName: "Model Load & Vector Embeddings",
+            testDescription: "Loads model and embeds sample text",
+            isSuccess: true,
+            durationMs: 4.5,
+            summary: "Model loaded & embedded test string in 4.5ms",
+            details: "Input text: sample\nVector dim: 1024"
+        )
+        XCTAssertEqual(res.serviceId, "embed-xpc")
+        XCTAssertEqual(res.id, "embed-xpc")
+        XCTAssertTrue(res.isSuccess)
+        XCTAssertEqual(res.durationMs, 4.5)
+        XCTAssertNil(res.errorMessage)
+    }
+
+    @MainActor
+    func testXPCServiceManagerDiagnosticRunners() async {
+        let manager = XPCServiceManager()
+        XCTAssertTrue(manager.diagnosticResults.isEmpty)
+
+        let ingestRes = await manager.runDiagnosticTest(for: "ingest-xpc")
+        XCTAssertEqual(ingestRes.serviceId, "ingest-xpc")
+        XCTAssertEqual(manager.diagnosticResults["ingest-xpc"]?.serviceId, "ingest-xpc")
+
+        let dlRes = await manager.runDiagnosticTest(for: "model-download-xpc")
+        XCTAssertEqual(dlRes.serviceId, "model-download-xpc")
+        XCTAssertTrue(dlRes.isSuccess)
+    }
+
+    @MainActor
+    func testGRPCServiceDiagnosticQueryTestStructure() async {
+        let mockPostgres = PostgresService()
+        let grpcService = GarageGRPCService(postgres: mockPostgres)
+        let result = await grpcService.testServiceQuery()
+        XCTAssertGreaterThanOrEqual(result.durationMs, 0)
+        XCTAssertFalse(result.details.isEmpty)
     }
 }

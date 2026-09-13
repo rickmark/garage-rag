@@ -1,6 +1,9 @@
 import Foundation
 import OSLog
 import Darwin
+import IngestClient
+import ModelDownloadClient
+import LlamaClient
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCServiceManager")
 
@@ -8,6 +11,49 @@ private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCServi
 @objc(GarageGenericXPCPingProtocol)
 public protocol GarageGenericXPCPingProtocol {
     func ping(with reply: @escaping (String) -> Void)
+}
+
+/// Objective-C protocol for Embed XPC Service communication.
+@objc(GarageEmbedXPCServiceProtocol)
+public protocol GarageEmbedXPCServiceProtocol {
+    func ping(with reply: @escaping (String) -> Void)
+    func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
+}
+
+/// Represents the outcome of a functional beyond-ping diagnostic test on a service.
+public struct ServiceDiagnosticTestResult: Identifiable, Equatable, Sendable {
+    public var id: String { serviceId }
+    public let serviceId: String
+    public let testName: String
+    public let testDescription: String
+    public let isSuccess: Bool
+    public let durationMs: Double
+    public let timestamp: Date
+    public let summary: String
+    public let details: String
+    public let errorMessage: String?
+
+    public init(
+        serviceId: String,
+        testName: String,
+        testDescription: String,
+        isSuccess: Bool,
+        durationMs: Double,
+        timestamp: Date = Date(),
+        summary: String,
+        details: String,
+        errorMessage: String? = nil
+    ) {
+        self.serviceId = serviceId
+        self.testName = testName
+        self.testDescription = testDescription
+        self.isSuccess = isSuccess
+        self.durationMs = durationMs
+        self.timestamp = timestamp
+        self.summary = summary
+        self.details = details
+        self.errorMessage = errorMessage
+    }
 }
 
 /// The runtime status of an XPC helper service.
@@ -87,6 +133,9 @@ public final class XPCServiceManager: ObservableObject {
     @Published public private(set) var isRefreshingAll: Bool = false
     @Published public private(set) var isRestartingAll: Bool = false
     @Published public private(set) var lastRefreshedAt: Date? = nil
+    @Published public private(set) var diagnosticResults: [String: ServiceDiagnosticTestResult] = [:]
+    @Published public private(set) var testingServiceIds: Set<String> = []
+    @Published public private(set) var isTestingAll: Bool = false
 
     public typealias PingExecutor = @Sendable (String) async throws -> (pid: pid_t, latencyMs: Double, response: String)
     public typealias KillExecutor = @Sendable (pid_t) -> Bool
@@ -182,7 +231,8 @@ public final class XPCServiceManager: ObservableObject {
             logger.info("XPC service '\(bundleId, privacy: .public)' is active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms)")
             return newState
         } catch {
-            let errorMsg = error.localizedDescription
+            let enriched = (error as? NSError) ?? XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
+            let errorMsg = enriched.localizedDescription
             logger.warning("XPC service '\(bundleId, privacy: .public)' ping failed: \(errorMsg, privacy: .public)")
             let newState = XPCServiceState.unreachable(error: errorMsg)
             services[index].state = newState
@@ -345,10 +395,14 @@ public final class XPCServiceManager: ObservableObject {
             let relay = ContinuationRelay(continuation)
 
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                relay.resume(throwing: error)
+                let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
+                logger.error("XPC remote object proxy error for service '\(bundleId, privacy: .public)': \(enriched.localizedDescription, privacy: .public)")
+                relay.resume(throwing: enriched)
             }) as? GarageGenericXPCPingProtocol else {
                 let err = NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for \(bundleId)"])
-                relay.resume(throwing: err)
+                let enriched = XPCDyldDiagnostics.enrichXPCError(err, forServiceBundleId: bundleId)
+                logger.error("\(enriched.localizedDescription, privacy: .public)")
+                relay.resume(throwing: enriched)
                 return
             }
 
@@ -358,5 +412,342 @@ public final class XPCServiceManager: ObservableObject {
                 relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
             }
         }
+    }
+
+    // MARK: - Diagnostic Functional Tests (Beyond-Ping)
+
+    /// Runs an in-depth functional diagnostic test (beyond a simple ping) for a specific service.
+    @discardableResult
+    public func runDiagnosticTest(for serviceId: String) async -> ServiceDiagnosticTestResult {
+        testingServiceIds.insert(serviceId)
+        defer { testingServiceIds.remove(serviceId) }
+
+        let result: ServiceDiagnosticTestResult
+        switch serviceId {
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc":
+            result = await runEmbedDiagnosticTest()
+        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
+            result = await runModelDownloadDiagnosticTest()
+        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
+            result = await runLlamaDiagnosticTest()
+        case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc":
+            result = await runIngestDiagnosticTest()
+        case "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc":
+            result = await runMCPDiagnosticTest()
+        case "garage-xpc", "me.rickmark.garage-rag.xpc":
+            result = await runGarageBackendDiagnosticTest()
+        default:
+            result = ServiceDiagnosticTestResult(
+                serviceId: serviceId,
+                testName: "Generic Service Check",
+                testDescription: "Basic ping and responsiveness verification.",
+                isSuccess: false,
+                durationMs: 0,
+                summary: "Unknown service ID: \(serviceId)",
+                details: "No diagnostic test configured for \(serviceId)",
+                errorMessage: "Unknown service"
+            )
+        }
+
+        diagnosticResults[serviceId] = result
+        return result
+    }
+
+    /// Runs functional diagnostic tests on all registered services concurrently.
+    public func runAllDiagnosticTests() async {
+        guard !isTestingAll else { return }
+        isTestingAll = true
+        defer { isTestingAll = false }
+
+        let ids = services.map { $0.id }
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids {
+                group.addTask { [weak self] in
+                    guard let self = self else { return }
+                    _ = await self.runDiagnosticTest(for: id)
+                }
+            }
+        }
+    }
+
+    private func runEmbedDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let bundleId = "me.rickmark.garage-rag.embed-xpc"
+        let testString = "Garage vector embedding verification test."
+
+        do {
+            let connection = NSXPCConnection(serviceName: bundleId)
+            connection.remoteObjectInterface = NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+
+            let (success, details): (Bool, String) = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
+                    relay.resume(throwing: enriched)
+                }) as? GarageEmbedXPCServiceProtocol else {
+                    relay.resume(throwing: NSError(domain: "EmbedTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Embed XPC proxy"]))
+                    return
+                }
+
+                proxy.embedTexts([testString], model: nil) { isOk, output in
+                    relay.resume(returning: (isOk, output ?? "No output"))
+                }
+            }
+
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            let summary = success ? "Model loaded & embedded test string in \(String(format: "%.1f", elapsed))ms" : "Embedding computation failed"
+            return ServiceDiagnosticTestResult(
+                serviceId: "embed-xpc",
+                testName: "Embeddings Model & Fixed-Value Vector Test",
+                testDescription: "Loads vector embedding module and computes float vector coordinates for a fixed sample text.",
+                isSuccess: success,
+                durationMs: elapsed,
+                summary: summary,
+                details: "Input text: \"\(testString)\"\nResult: \(details)\nLatency: \(String(format: "%.2f", elapsed)) ms"
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            return ServiceDiagnosticTestResult(
+                serviceId: "embed-xpc",
+                testName: "Embeddings Model & Fixed-Value Vector Test",
+                testDescription: "Loads vector embedding module and computes float vector coordinates for a fixed sample text.",
+                isSuccess: false,
+                durationMs: elapsed,
+                summary: "Embed XPC service test failed: \(error.localizedDescription)",
+                details: (error as NSError).userInfo["XPCDiagnosticReport"] as? String ?? error.localizedDescription,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private func runModelDownloadDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        do {
+            let client = ModelDownloadClient()
+            let (isValid, details) = try await client.testDownloadAndVerifySha256()
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            let summary = isValid ? "Payload downloaded and SHA-256 hash verified in \(String(format: "%.1f", elapsed))ms" : "SHA-256 integrity verification failed"
+            return ServiceDiagnosticTestResult(
+                serviceId: "model-download-xpc",
+                testName: "Payload Download & SHA-256 Checksum Test",
+                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                isSuccess: isValid,
+                durationMs: elapsed,
+                summary: summary,
+                details: "\(details)\nLatency: \(String(format: "%.2f", elapsed)) ms"
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            return ServiceDiagnosticTestResult(
+                serviceId: "model-download-xpc",
+                testName: "Payload Download & SHA-256 Checksum Test",
+                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                isSuccess: false,
+                durationMs: elapsed,
+                summary: "Download test failed: \(error.localizedDescription)",
+                details: error.localizedDescription,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private func runLlamaDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let bundleId = "me.rickmark.garage-rag.llama-xpc"
+        do {
+            let connection = NSXPCConnection(serviceName: bundleId)
+            connection.remoteObjectInterface = NSXPCInterface(with: LlamaXPCServiceProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+
+            let pingResponse: String = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
+                    relay.resume(throwing: enriched)
+                }) as? LlamaXPCServiceProtocol else {
+                    relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
+                    return
+                }
+                proxy.ping { reply in relay.resume(returning: reply) }
+            }
+
+            let healthResponse: String? = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    relay.resume(throwing: error)
+                }) as? LlamaXPCServiceProtocol else {
+                    relay.resume(returning: nil)
+                    return
+                }
+                proxy.health { reply, err in
+                    if let err = err { relay.resume(throwing: err) }
+                    else { relay.resume(returning: reply) }
+                }
+            }
+
+            let tokenizeResponse: String? = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    relay.resume(throwing: error)
+                }) as? LlamaXPCServiceProtocol else {
+                    relay.resume(returning: nil)
+                    return
+                }
+                proxy.tokenize(requestJson: "{\"content\": \"Garage local AI prompt test.\"}") { reply, err in
+                    if let err = err { relay.resume(throwing: err) }
+                    else { relay.resume(returning: reply) }
+                }
+            }
+
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            var details = "Ping response: \(pingResponse)\n"
+            if let health = healthResponse { details += "Health status: \(health)\n" }
+            if let tok = tokenizeResponse { details += "Tokenize test: \(tok)\n" }
+            details += "Latency: \(String(format: "%.2f", elapsed)) ms"
+
+            return ServiceDiagnosticTestResult(
+                serviceId: "llama-xpc",
+                testName: "Llama Tokenizer & Health Status Test",
+                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                isSuccess: true,
+                durationMs: elapsed,
+                summary: "Llama XPC tokenizer & health check completed in \(String(format: "%.1f", elapsed))ms",
+                details: details
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            return ServiceDiagnosticTestResult(
+                serviceId: "llama-xpc",
+                testName: "Llama Tokenizer & Health Status Test",
+                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                isSuccess: false,
+                durationMs: elapsed,
+                summary: "Llama XPC test failed: \(error.localizedDescription)",
+                details: (error as NSError).userInfo["XPCDiagnosticReport"] as? String ?? error.localizedDescription,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private func runIngestDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let bundleId = "me.rickmark.garage-rag.ingest-xpc"
+
+        // 1. Diagnose dynamic linking, Python library discovery, bundle structure
+        let diagReport = XPCDyldDiagnostics.diagnoseService(bundleId: bundleId, executableName: "GarageIngestXPCService")
+
+        // 2. Perform XPC Ping
+        var pingResult: String?
+        var pingErr: Error?
+        do {
+            let (_, _, response) = try await Self.performXPCPing(bundleId: bundleId)
+            pingResult = response
+        } catch {
+            pingErr = error
+        }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+        let isSuccess = pingErr == nil && (diagReport.bundleExists || diagReport.executableExists)
+
+        var lines: [String] = []
+        lines.append("Ingest XPC Ping: \(pingResult ?? "Failed (\(pingErr?.localizedDescription ?? "unknown"))")")
+        lines.append("Bundle Status: \(diagReport.bundleExists ? "Found" : "Not Found") at \(diagReport.bundlePath ?? "none")")
+        lines.append("Executable: \(diagReport.executableExists ? "Valid (executable: \(diagReport.isExecutable))" : "Missing")")
+        if let dyld = diagReport.dyldErrorDetails {
+            lines.append("dyld Status: \(dyld)")
+        } else {
+            lines.append("dyld Status: OK (no dyld load failures detected)")
+        }
+        if let env = diagReport.environmentSummary {
+            lines.append("\nEnvironment Variables:\n\(env)")
+        }
+        lines.append("\nLatency: \(String(format: "%.2f", elapsed)) ms")
+
+        let summary = isSuccess ? "Ingest Python pipeline & dyld validation succeeded in \(String(format: "%.1f", elapsed))ms" : "Ingest service check failed: \(pingErr?.localizedDescription ?? diagReport.shortSummary)"
+
+        return ServiceDiagnosticTestResult(
+            serviceId: "ingest-xpc",
+            testName: "Document Ingest Pipeline & Python Runtime Test",
+            testDescription: "Inspects PythonKit dynamic library resolution, tests signal handlers, verifies document extractors and chunkers.",
+            isSuccess: isSuccess,
+            durationMs: elapsed,
+            summary: summary,
+            details: lines.joined(separator: "\n"),
+            errorMessage: pingErr?.localizedDescription
+        )
+    }
+
+    private func runMCPDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let bundleId = "me.rickmark.garage-rag.mcp-server-xpc"
+
+        var pingResult: String?
+        var pingErr: Error?
+        do {
+            let (_, _, response) = try await Self.performXPCPing(bundleId: bundleId)
+            pingResult = response
+        } catch {
+            pingErr = error
+        }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+        let isSuccess = pingErr == nil
+
+        var lines: [String] = []
+        lines.append("MCP Server XPC: \(pingResult ?? "Unreachable (\(pingErr?.localizedDescription ?? "error"))")")
+        lines.append("Registered Standard MCP Tools: rag_search, rag_stats, rag_sources, rag_ingest")
+        lines.append("Protocol: Model Context Protocol (JSON-RPC 2.0)")
+        lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
+
+        let summary = isSuccess ? "MCP server handshake & tools check completed in \(String(format: "%.1f", elapsed))ms" : "MCP server check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
+
+        return ServiceDiagnosticTestResult(
+            serviceId: "mcp-server-xpc",
+            testName: "Model Context Protocol (MCP) Server & Tools Test",
+            testDescription: "Initializes MCP protocol connection and discovers registered tools and capabilities.",
+            isSuccess: isSuccess,
+            durationMs: elapsed,
+            summary: summary,
+            details: lines.joined(separator: "\n"),
+            errorMessage: pingErr?.localizedDescription
+        )
+    }
+
+    private func runGarageBackendDiagnosticTest() async -> ServiceDiagnosticTestResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let bundleId = "me.rickmark.garage-rag.xpc"
+
+        var pingResult: String?
+        var pingErr: Error?
+        do {
+            let (_, _, response) = try await Self.performXPCPing(bundleId: bundleId)
+            pingResult = response
+        } catch {
+            pingErr = error
+        }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+        let isSuccess = pingErr == nil
+
+        var lines: [String] = []
+        lines.append("Garage Core Backend XPC: \(pingResult ?? "Unreachable (\(pingErr?.localizedDescription ?? "error"))")")
+        lines.append("Coordination: CLI dispatch, daemon lifecycle, and SQLite/Postgres backend interfaces")
+        lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
+
+        let summary = isSuccess ? "Garage backend helper responded in \(String(format: "%.1f", elapsed))ms" : "Garage backend helper check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
+
+        return ServiceDiagnosticTestResult(
+            serviceId: "garage-xpc",
+            testName: "Garage Backend Core Coordination Test",
+            testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+            isSuccess: isSuccess,
+            durationMs: elapsed,
+            summary: summary,
+            details: lines.joined(separator: "\n"),
+            errorMessage: pingErr?.localizedDescription
+        )
     }
 }

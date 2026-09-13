@@ -7,7 +7,7 @@ import PythonKit
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageIngestXPCService")
 
-// MARK: - Crash and Signal Handling
+// MARK: - Crash and Signal Handling with Dyld Diagnostics
 
 private func installCrashHandlers() {
     NSSetUncaughtExceptionHandler { exception in
@@ -33,11 +33,16 @@ private func installCrashHandlers() {
             default: sigName = "Signal \(signum)"
             }
 
+            var dyldMsg = ""
+            if let errCStr = dlerror() {
+                dyldMsg = " | dyld error: \(String(cString: errCStr))"
+            }
+
             let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
-            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum)).\nCall Stack:\n  \(callStack)\n"
+            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
             fputs(msg, stderr)
             fflush(stderr)
-            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum)). Call Stack:\n  \(callStack, privacy: .public)")
+            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
 
             signal(signum, SIG_DFL)
             raise(signum)
@@ -92,7 +97,11 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
     func ping(with reply: @escaping (String) -> Void) {
         logger.info("Ping received from client pid: \(self.connection.processIdentifier)")
-        reply("pong from GarageIngestXPCService")
+        if let initErr = parent.initializationError {
+            reply("pong from GarageIngestXPCService (with warning: \(initErr))")
+        } else {
+            reply("pong from GarageIngestXPCService")
+        }
     }
 
     func setRootVolumeBookmark(_ bookmarkData: Data, with reply: @escaping (Bool, String?) -> Void) {
@@ -118,20 +127,22 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     func cancelIngest(with reply: @escaping (Bool) -> Void) {
         logger.info("Cancel ingest requested from client pid: \(self.connection.processIdentifier)")
         #if canImport(PythonKit)
-        do {
-            let ingestModule = try Python.attemptImport("garage_rag.ingest")
-            if ingestModule.cancel_ingest != Python.None {
-                ingestModule.cancel_ingest()
-                logger.info("Python cancel_ingest invoked successfully")
+        Task {
+            do {
+                let ingestModule = try Python.attemptImport("garage_rag.ingest")
+                if ingestModule.cancel_ingest != Python.None {
+                    _ = try await ingestModule.cancel_ingest.throwing.dynamicallyCall(withArguments: [])
+                    logger.info("Python cancel_ingest invoked successfully")
+                }
+                reply(true)
+            } catch {
+                var tracebackStr = ""
+                if let traceback = try? Python.attemptImport("traceback") {
+                    tracebackStr = String(describing: traceback.format_exc())
+                }
+                logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
+                reply(false)
             }
-            reply(true)
-        } catch {
-            var tracebackStr = ""
-            if let traceback = try? Python.attemptImport("traceback") {
-                tracebackStr = String(describing: traceback.format_exc())
-            }
-            logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
-            reply(false)
         }
         #else
         engine.cancel()
@@ -160,9 +171,9 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         let options = (try? engine.deserialize(IngestOptions.self, from: optionsJson)) ?? .default
 
         let clientConnection = self.connection
-        parent.pythonQueue.async {
+        Task {
             let startTime = CFAbsoluteTimeGetCurrent()
-            logger.info("Starting ingestSource on background worker thread for slug: '\(slug, privacy: .public)'")
+            logger.info("Starting ingestSource asynchronously for slug: '\(slug, privacy: .public)'")
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
                 reason: "Garage document ingestion for \(slug)"
@@ -194,15 +205,15 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 let grpcPortObj: PythonObject = options.grpcPort != nil ? PythonObject(options.grpcPort!) : Python.None
                 let grpcHostObj: PythonObject = options.grpcHost != nil ? PythonObject(options.grpcHost!) : Python.None
 
-                logger.info("Invoking Python ingest_xpc on background thread for source '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)), grpcPort: \(String(describing: options.grpcPort)))")
-                ingestModule.ingest_xpc(
-                    slug,
-                    include_code: options.includeCode,
-                    limit: limitObj,
-                    force: options.force,
-                    grpc_host: grpcHostObj,
-                    grpc_port: grpcPortObj
-                )
+                logger.info("Invoking Python ingest_xpc asynchronously for source '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)), grpcPort: \(String(describing: options.grpcPort)))")
+                _ = try await ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
+                    ("", slug),
+                    ("include_code", options.includeCode),
+                    ("limit", limitObj),
+                    ("force", options.force),
+                    ("grpc_host", grpcHostObj),
+                    ("grpc_port", grpcPortObj)
+                ])
 
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let successMsg = "Ingestion completed successfully for \(slug) in \(duration)s"
@@ -231,9 +242,9 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         parent.initializePythonIfNeeded()
 
         let clientConnection = self.connection
-        parent.pythonQueue.async {
+        Task {
             let startTime = CFAbsoluteTimeGetCurrent()
-            logger.info("Starting ingestPath on background worker thread for source: '\(source, privacy: .public)'")
+            logger.info("Starting ingestPath asynchronously for source: '\(source, privacy: .public)'")
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
                 reason: "Garage document ingestion for \(source)"
@@ -270,15 +281,15 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 let grpcPortObj: PythonObject = grpcPortVal != nil ? PythonObject(grpcPortVal!) : Python.None
                 let grpcHostObj: PythonObject = grpcHostVal != nil ? PythonObject(grpcHostVal!) : Python.None
 
-                logger.info("Invoking Python ingest_xpc on background thread for path '\(source, privacy: .public)'")
-                ingestModule.ingest_xpc(
-                    source,
-                    include_code: includeCode,
-                    limit: limitObj,
-                    force: force,
-                    grpc_host: grpcHostObj,
-                    grpc_port: grpcPortObj
-                )
+                logger.info("Invoking Python ingest_xpc asynchronously for path '\(source, privacy: .public)'")
+                _ = try await ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
+                    ("", source),
+                    ("include_code", includeCode),
+                    ("limit", limitObj),
+                    ("force", force),
+                    ("grpc_host", grpcHostObj),
+                    ("grpc_port", grpcPortObj)
+                ])
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let successMsg = "Ingest completed successfully for: \(source) in \(duration)s"
                 logger.info("\(successMsg, privacy: .public)")
@@ -303,9 +314,9 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 }
 
 final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
-    let pythonQueue = DispatchQueue(label: "me.rickmark.garage.ingest.python-worker", qos: .userInitiated)
     private var isInitialized = false
     private let initLock = NSLock()
+    private(set) var initializationError: String? = nil
 
     private static let connectionLock = NSLock()
     private static weak var _sharedActiveConnection: NSXPCConnection?
@@ -326,6 +337,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
     private func setupPythonEnvironment() {
         if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
            FileManager.default.fileExists(atPath: envPath) {
+            logger.info("Using explicit PYTHON_LIBRARY environment variable: \(envPath, privacy: .public)")
             return
         }
 
@@ -357,12 +369,19 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.14/Python")
         candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
 
-        for path in candidatePaths {
-            if FileManager.default.fileExists(atPath: path) {
-                logger.info("Setting PYTHON_LIBRARY to: \(path, privacy: .public)")
-                setenv("PYTHON_LIBRARY", path, 1)
-                break
-            }
+        let (selectedPath, diagnostics) = XPCDyldDiagnostics.diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
+        for diag in diagnostics {
+            logger.debug("[Dyld Diagnostic] \(diag, privacy: .public)")
+        }
+
+        if let validPath = selectedPath {
+            logger.info("Setting PYTHON_LIBRARY to verified path: \(validPath, privacy: .public)")
+            setenv("PYTHON_LIBRARY", validPath, 1)
+        } else {
+            let msg = "[DYLD_WARNING] No valid Python library found among candidate paths:\n" + diagnostics.joined(separator: "\n")
+            fputs("\(msg)\n", stderr)
+            fflush(stderr)
+            logger.warning("\(msg, privacy: .public)")
         }
     }
 
@@ -402,6 +421,10 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 
         #if canImport(PythonKit)
         do {
+            logger.info("Attempting to load Python library...")
+            try PythonLibrary.loadLibrary()
+            logger.info("Python dynamic library successfully loaded via dyld.")
+
             logger.info("Configuring Python runtime and search paths...")
             let sys = Python.import("sys")
             let pyVersion = String(describing: sys["version"])
@@ -438,7 +461,15 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             if let traceback = try? Python.attemptImport("traceback") {
                 tracebackStr = String(describing: traceback.format_exc())
             }
-            logger.error("Failed to initialize Python environment: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
+            var dyldError = ""
+            if let errCStr = dlerror() {
+                dyldError = "\ndyld error: \(String(cString: errCStr))"
+            }
+            let errorMsg = "Failed to initialize Python environment: \(error.localizedDescription)\(dyldError)\nTraceback:\n\(tracebackStr)"
+            initializationError = errorMsg
+            fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
+            fflush(stderr)
+            logger.error("\(errorMsg, privacy: .public)")
         }
         #else
         logger.warning("GarageIngestXPCService compiled without PythonKit support")
