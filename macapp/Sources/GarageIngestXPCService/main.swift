@@ -50,20 +50,69 @@ private func installCrashHandlers() {
     }
 }
 
-// MARK: - C Callback Definitions
+// MARK: - C Callback Definitions and Active Connection Management
 
 private typealias ProgressCFunction = @convention(c) (UnsafePointer<CChar>?) -> Void
 private typealias LogCFunction = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
+
+final class GarageIngestActiveConnections: @unchecked Sendable {
+    static let shared = GarageIngestActiveConnections()
+
+    private var connections = Set<NSXPCConnection>()
+    private let lock = NSLock()
+    private var _activeIngestSource: String?
+
+    private init() {}
+
+    var activeIngestSource: String? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _activeIngestSource
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _activeIngestSource = newValue
+        }
+    }
+
+    func add(_ connection: NSXPCConnection) {
+        lock.lock()
+        defer { lock.unlock() }
+        connections.insert(connection)
+        logger.debug("Active XPC connection added (total: \(self.connections.count, privacy: .public))")
+    }
+
+    func remove(_ connection: NSXPCConnection) {
+        lock.lock()
+        defer { lock.unlock() }
+        connections.remove(connection)
+        logger.debug("Active XPC connection removed (total: \(self.connections.count, privacy: .public))")
+    }
+
+    func sendProgress(jsonString: String) {
+        let activeConns: [NSXPCConnection]
+        lock.lock()
+        activeConns = Array(connections)
+        lock.unlock()
+
+        for conn in activeConns {
+            guard let receiver = conn.remoteObjectProxyWithErrorHandler({ error in
+                logger.debug("Progress forwarding error to PID \(conn.processIdentifier): \(error.localizedDescription, privacy: .public)")
+            }) as? GarageIngestProgressReceiverProtocol else {
+                continue
+            }
+            receiver.didUpdateProgress(progressJson: jsonString)
+        }
+    }
+}
 
 private let globalProgressCallback: ProgressCFunction = { cStr in
     guard let cStr = cStr else { return }
     let jsonString = String(cString: cStr)
     logger.debug("Ingest C progress callback received: \(jsonString, privacy: .public)")
-    if let receiver = GarageIngestXPCServiceDelegate.sharedActiveConnection?.remoteObjectProxyWithErrorHandler({ error in
-        logger.error("Failed to forward progress update to receiver: \(error.localizedDescription, privacy: .public)")
-    }) as? GarageIngestProgressReceiverProtocol {
-        receiver.didUpdateProgress(progressJson: jsonString)
-    }
+    GarageIngestActiveConnections.shared.sendProgress(jsonString: jsonString)
 }
 
 private let globalLogCallback: LogCFunction = { level, cStr in
@@ -89,6 +138,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     private let connection: NSXPCConnection
     private let engine = IngestEngine.shared
     private let parent: GarageIngestXPCServiceDelegate
+    private static let workerQueue = DispatchQueue(label: "me.rickmark.garage.ingest.worker", qos: .userInitiated)
 
     init(connection: NSXPCConnection, parent: GarageIngestXPCServiceDelegate) {
         self.connection = connection
@@ -108,7 +158,10 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         let name = "GarageIngestXPCService"
         let pid = ProcessInfo.processInfo.processIdentifier
         let uptime = ProcessInfo.processInfo.systemUptime
-        let status = parent.initializationError == nil ? "ready" : "warning: \(parent.initializationError!)"
+        var status = parent.initializationError == nil ? "ready" : "warning: \(parent.initializationError!)"
+        if let current = GarageIngestActiveConnections.shared.activeIngestSource {
+            status = "ingesting (\(current))"
+        }
         reply(name, pid, uptime, status)
     }
 
@@ -158,34 +211,31 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     func cancelIngest(with reply: @escaping (Bool) -> Void) {
         logger.info("Cancel ingest requested from client pid: \(self.connection.processIdentifier)")
         parent.initializePythonIfNeeded()
+        engine.cancel()
         if let initErr = parent.initializationError {
             logger.warning("Cannot cancel ingest via Python because Python is not initialized: \(initErr, privacy: .public)")
-            engine.cancel()
             reply(true)
             return
         }
         #if canImport(PythonKit)
-        Task {
-            do {
-                let ingestModule = try Python.attemptImport("garage_rag.ingest")
-                if ingestModule.cancel_ingest != Python.None {
-                    _ = try await ingestModule.cancel_ingest.throwing.dynamicallyCall(withArguments: [])
-                    logger.info("Python cancel_ingest invoked successfully")
-                }
-                reply(true)
-            } catch {
-                var tracebackStr = ""
-                if parent.initializationError == nil {
-                    if let traceback = try? Python.attemptImport("traceback") {
-                        tracebackStr = String(describing: traceback.format_exc())
-                    }
-                }
-                logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
-                reply(false)
+        do {
+            let ingestModule = try Python.attemptImport("garage_rag.ingest")
+            if ingestModule.cancel_ingest != Python.None {
+                _ = try ingestModule.cancel_ingest.throwing.dynamicallyCall(withArguments: [])
+                logger.info("Python cancel_ingest invoked successfully")
             }
+            reply(true)
+        } catch {
+            var tracebackStr = ""
+            if parent.initializationError == nil {
+                if let traceback = try? Python.attemptImport("traceback") {
+                    tracebackStr = String(describing: traceback.format_exc())
+                }
+            }
+            logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
+            reply(false)
         }
         #else
-        engine.cancel()
         logger.info("Engine cancelled (non-PythonKit)")
         reply(true)
         #endif
@@ -205,6 +255,59 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         }
     }
 
+    private func applyEnvironmentConfig(databaseUrl: String?, lmStudioApiToken: String?) -> (Bool, String?) {
+        #if canImport(PythonKit)
+        if let dbURL = databaseUrl, !dbURL.isEmpty {
+            let normalized = XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL)
+            setenv("GARAGE_DATABASE_URL", normalized, 1)
+            if let os = try? Python.attemptImport("os") {
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(normalized)
+            }
+            if let configModule = try? Python.attemptImport("garage_rag.config") {
+                if configModule.reset_settings != Python.None {
+                    _ = configModule.reset_settings()
+                }
+            }
+            if let engineModule = try? Python.attemptImport("garage_rag.db.engine") {
+                if engineModule.reset_engine != Python.None {
+                    _ = engineModule.reset_engine()
+                }
+            }
+            logger.info("Successfully configured GARAGE_DATABASE_URL in XPC service: \(normalized, privacy: .public)")
+        }
+        if let lmToken = lmStudioApiToken, !lmToken.isEmpty {
+            setenv("GARAGE_LMSTUDIO_API_TOKEN", lmToken, 1)
+            if let os = try? Python.attemptImport("os") {
+                os.environ["GARAGE_LMSTUDIO_API_TOKEN"] = PythonObject(lmToken)
+            }
+            logger.info("Successfully configured GARAGE_LMSTUDIO_API_TOKEN in XPC service")
+        }
+        return (true, "Environment configured successfully")
+        #else
+        return (true, "Environment configured (non-PythonKit)")
+        #endif
+    }
+
+    func configureEnvironment(databaseUrl: String?, lmStudioApiToken: String?, with reply: @escaping (Bool, String?) -> Void) {
+        logger.info("Configuring environment from client pid: \(self.connection.processIdentifier)")
+        parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            logger.warning("Environment configuration note: Python init: \(initErr, privacy: .public)")
+        }
+        let (success, msg) = applyEnvironmentConfig(databaseUrl: databaseUrl, lmStudioApiToken: lmStudioApiToken)
+        reply(success, msg)
+    }
+
+    func setDatabaseURL(_ databaseUrl: String, lmStudioApiToken: String?, with reply: @escaping (Bool, String?) -> Void) {
+        logger.info("Setting database URL from client pid: \(self.connection.processIdentifier)")
+        parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            logger.warning("setDatabaseURL note: Python init: \(initErr, privacy: .public)")
+        }
+        let (success, msg) = applyEnvironmentConfig(databaseUrl: databaseUrl, lmStudioApiToken: lmStudioApiToken)
+        reply(success, msg)
+    }
+
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("Received ingestSource request for slug: '\(slug, privacy: .public)', optionsJson: '\(optionsJson, privacy: .public)' from client pid: \(self.connection.processIdentifier)")
         parent.initializePythonIfNeeded()
@@ -216,43 +319,45 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         }
         let options = (try? engine.deserialize(IngestOptions.self, from: optionsJson)) ?? .default
 
-        let clientConnection = self.connection
-        Task {
+        Self.workerQueue.async {
             let startTime = CFAbsoluteTimeGetCurrent()
-            logger.info("Starting ingestSource asynchronously for slug: '\(slug, privacy: .public)'")
+            logger.info("Starting ingestSource synchronously on worker queue for slug: '\(slug, privacy: .public)'")
+            GarageIngestActiveConnections.shared.activeIngestSource = slug
+            defer {
+                GarageIngestActiveConnections.shared.activeIngestSource = nil
+            }
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
                 reason: "Garage document ingestion for \(slug)"
             )
+            defer {
+                ProcessInfo.processInfo.endActivity(activity)
+            }
 
             #if canImport(PythonKit)
             do {
+                _ = self.applyEnvironmentConfig(databaseUrl: options.databaseUrl, lmStudioApiToken: options.lmStudioApiToken)
+
                 logger.info("Importing garage_rag.ingest in Python for slug '\(slug, privacy: .public)'...")
                 let ingestModule = try Python.attemptImport("garage_rag.ingest")
 
-                GarageIngestXPCServiceDelegate.sharedActiveConnection = clientConnection
-
                 // Register C callback function pointers with Python
                 let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
-                ingestModule.set_c_progress_callback(cFuncPtr)
+                if ingestModule.set_c_progress_callback != Python.None {
+                    ingestModule.set_c_progress_callback(cFuncPtr)
+                }
 
                 let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
                 if ingestModule.set_c_log_callback != Python.None {
                     ingestModule.set_c_log_callback(cLogFuncPtr)
                 }
 
-                defer {
-                    ingestModule.set_c_progress_callback(0)
-                    GarageIngestXPCServiceDelegate.sharedActiveConnection = nil
-                    ProcessInfo.processInfo.endActivity(activity)
-                }
-
                 let limitObj: PythonObject = options.limit != nil ? PythonObject(options.limit!) : Python.None
                 let grpcPortObj: PythonObject = options.grpcPort != nil ? PythonObject(options.grpcPort!) : Python.None
                 let grpcHostObj: PythonObject = options.grpcHost != nil ? PythonObject(options.grpcHost!) : Python.None
 
-                logger.info("Invoking Python ingest_xpc asynchronously for source '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)), grpcPort: \(String(describing: options.grpcPort)))")
-                _ = try await ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
+                logger.info("Invoking Python ingest_xpc synchronously for source '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)), grpcPort: \(String(describing: options.grpcPort)))")
+                _ = try ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
                     ("", slug),
                     ("include_code", options.includeCode),
                     ("limit", limitObj),
@@ -267,7 +372,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(true, successMsg)
             } catch {
                 var tracebackStr = ""
-                if parent.initializationError == nil {
+                if self.parent.initializationError == nil {
                     if let traceback = try? Python.attemptImport("traceback") {
                         tracebackStr = String(describing: traceback.format_exc())
                     }
@@ -278,7 +383,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(false, errorMsg)
             }
             #else
-            ProcessInfo.processInfo.endActivity(activity)
             logger.info("Ingest completed (stub mode)")
             reply(true, "Ingest completed (stub)")
             #endif
@@ -295,35 +399,39 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             return
         }
 
-        let clientConnection = self.connection
-        Task {
+        Self.workerQueue.async {
             let startTime = CFAbsoluteTimeGetCurrent()
-            logger.info("Starting ingestPath asynchronously for source: '\(source, privacy: .public)'")
+            logger.info("Starting ingestPath synchronously on worker queue for source: '\(source, privacy: .public)'")
+            GarageIngestActiveConnections.shared.activeIngestSource = source
+            defer {
+                GarageIngestActiveConnections.shared.activeIngestSource = nil
+            }
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
                 reason: "Garage document ingestion for \(source)"
             )
+            defer {
+                ProcessInfo.processInfo.endActivity(activity)
+            }
 
             #if canImport(PythonKit)
             do {
+                let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] ?? options["databaseUrl"]
+                let lmToken = options["GARAGE_LMSTUDIO_API_TOKEN"] ?? options["lmstudio_api_token"] ?? options["lmStudioApiToken"]
+                _ = self.applyEnvironmentConfig(databaseUrl: dbURL, lmStudioApiToken: lmToken)
+
                 logger.info("Importing garage_rag.ingest in Python for ingestPath...")
                 let ingestModule = try Python.attemptImport("garage_rag.ingest")
 
-                GarageIngestXPCServiceDelegate.sharedActiveConnection = clientConnection
-
                 // Register C callback function pointers with Python
                 let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
-                ingestModule.set_c_progress_callback(cFuncPtr)
+                if ingestModule.set_c_progress_callback != Python.None {
+                    ingestModule.set_c_progress_callback(cFuncPtr)
+                }
 
                 let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
                 if ingestModule.set_c_log_callback != Python.None {
                     ingestModule.set_c_log_callback(cLogFuncPtr)
-                }
-
-                defer {
-                    ingestModule.set_c_progress_callback(0)
-                    GarageIngestXPCServiceDelegate.sharedActiveConnection = nil
-                    ProcessInfo.processInfo.endActivity(activity)
                 }
 
                 let includeCode = options["include_code"] == "true" || options["includeCode"] == "true"
@@ -335,8 +443,8 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 let grpcPortObj: PythonObject = grpcPortVal != nil ? PythonObject(grpcPortVal!) : Python.None
                 let grpcHostObj: PythonObject = grpcHostVal != nil ? PythonObject(grpcHostVal!) : Python.None
 
-                logger.info("Invoking Python ingest_xpc asynchronously for path '\(source, privacy: .public)'")
-                _ = try await ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
+                logger.info("Invoking Python ingest_xpc synchronously for path '\(source, privacy: .public)'")
+                _ = try ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
                     ("", source),
                     ("include_code", includeCode),
                     ("limit", limitObj),
@@ -350,7 +458,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(true, successMsg)
             } catch {
                 var tracebackStr = ""
-                if parent.initializationError == nil {
+                if self.parent.initializationError == nil {
                     if let traceback = try? Python.attemptImport("traceback") {
                         tracebackStr = String(describing: traceback.format_exc())
                     }
@@ -361,7 +469,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 reply(false, errorMsg)
             }
             #else
-            ProcessInfo.processInfo.endActivity(activity)
             logger.info("Ingest completed (stub mode)")
             reply(true, "Ingest completed (stub)")
             #endif
@@ -373,22 +480,6 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
     private var isInitialized = false
     private let initLock = NSLock()
     private(set) var initializationError: String? = nil
-
-    private static let connectionLock = NSLock()
-    private static weak var _sharedActiveConnection: NSXPCConnection?
-
-    static var sharedActiveConnection: NSXPCConnection? {
-        get {
-            connectionLock.lock()
-            defer { connectionLock.unlock() }
-            return _sharedActiveConnection
-        }
-        set {
-            connectionLock.lock()
-            defer { connectionLock.unlock() }
-            _sharedActiveConnection = newValue
-        }
-    }
 
     func initializePythonIfNeeded() {
         initLock.lock()
@@ -424,13 +515,17 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
             logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
 
-            // Register C log callback
+            // Register C callbacks
+            let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
+            if ingestModule.set_c_progress_callback != Python.None {
+                ingestModule.set_c_progress_callback(cFuncPtr)
+                logger.info("Registered C progress callback with garage_rag.ingest")
+            }
+
             let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
             if ingestModule.set_c_log_callback != Python.None {
                 ingestModule.set_c_log_callback(cLogFuncPtr)
                 logger.info("Registered C log callback with garage_rag.ingest")
-            } else {
-                logger.warning("garage_rag.ingest.set_c_log_callback is not available")
             }
         } catch {
             var tracebackStr = ""
@@ -459,6 +554,8 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         let clientEGID = newConnection.effectiveGroupIdentifier
         logger.info("Ingest XPC listener received connection request from PID: \(clientPID), EUID: \(clientEUID), EGID: \(clientEGID)")
 
+        GarageIngestActiveConnections.shared.add(newConnection)
+
         let handler = GarageIngestXPCConnectionHandler(connection: newConnection, parent: self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageIngestXPCServiceProtocol.self)
         newConnection.exportedObject = handler
@@ -466,6 +563,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 
         newConnection.invalidationHandler = {
             logger.info("Ingest XPC connection invalidated for PID: \(clientPID)")
+            GarageIngestActiveConnections.shared.remove(newConnection)
         }
         newConnection.interruptionHandler = {
             logger.warning("Ingest XPC connection interrupted for PID: \(clientPID)")

@@ -36,6 +36,12 @@ public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
 
     /// Run full volume and source access tests inside the sandboxed XPC process.
     func testVolumeAccess(requestJson: String, with reply: @escaping (String?, Error?) -> Void)
+
+    /// Configure database URL and environment options for XPC ingestion.
+    func configureEnvironment(databaseUrl: String?, lmStudioApiToken: String?, with reply: @escaping (Bool, String?) -> Void)
+
+    /// Set database URL and optional LM Studio API token via XPC.
+    func setDatabaseURL(_ databaseUrl: String, lmStudioApiToken: String?, with reply: @escaping (Bool, String?) -> Void)
 }
 
 /// Objective-C protocol for Embed XPC Service communication.

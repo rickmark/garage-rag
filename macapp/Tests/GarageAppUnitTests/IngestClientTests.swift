@@ -53,7 +53,9 @@ final class IngestClientTests: XCTestCase {
             force: true,
             grpcHost: "127.0.0.1",
             grpcPort: 50051,
-            extraArguments: ["--custom-flag", "custom_val", "--verbose"]
+            extraArguments: ["--custom-flag", "custom_val", "--verbose"],
+            databaseUrl: "postgresql://localhost:5432/testdb",
+            lmStudioApiToken: "test-token-123"
         )
         let engine = IngestEngine.shared
         guard let json = engine.serialize(options) else {
@@ -68,6 +70,8 @@ final class IngestClientTests: XCTestCase {
         XCTAssertEqual(decoded.grpcHost, "127.0.0.1")
         XCTAssertEqual(decoded.grpcPort, 50051)
         XCTAssertEqual(decoded.extraArguments, ["--custom-flag", "custom_val", "--verbose"])
+        XCTAssertEqual(decoded.databaseUrl, "postgresql://localhost:5432/testdb")
+        XCTAssertEqual(decoded.lmStudioApiToken, "test-token-123")
     }
 
     func testCommandLineParser() {

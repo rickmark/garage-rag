@@ -157,6 +157,24 @@ public final class IngestClient: Sendable {
         }
     }
 
+    public func configureEnvironment(databaseUrl: String?, lmStudioApiToken: String? = nil) async throws -> (Bool, String?) {
+        logger.info("configureEnvironment: dispatching via XPC")
+        return try await performRemoteCall { proxy, relay in
+            proxy.configureEnvironment(databaseUrl: databaseUrl, lmStudioApiToken: lmStudioApiToken) { success, message in
+                relay.resume(returning: (success, message))
+            }
+        }
+    }
+
+    public func setDatabaseURL(_ databaseUrl: String, lmStudioApiToken: String? = nil) async throws -> Bool {
+        logger.info("setDatabaseURL: dispatching via XPC")
+        return try await performRemoteCall { proxy, relay in
+            proxy.setDatabaseURL(databaseUrl, lmStudioApiToken: lmStudioApiToken) { success, _ in
+                relay.resume(returning: success)
+            }
+        }
+    }
+
     public func testVolumeAccess(request: VolumeAccessTestRequest) async throws -> IngestVolumeAccessTestResult {
         guard let jsonString = IngestEngine.shared.serialize(request) else {
             let err = NSError(domain: "IngestClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to encode VolumeAccessTestRequest"])

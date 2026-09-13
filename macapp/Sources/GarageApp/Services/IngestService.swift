@@ -213,18 +213,28 @@ final class IngestService: ObservableObject {
         }
 
         let selectedClient = xpcClient
-        let effectiveOptions: IngestOptions
-        if options.grpcPort == nil {
-            effectiveOptions = IngestOptions(
-                includeCode: options.includeCode,
-                limit: options.limit,
-                force: options.force,
-                grpcHost: options.grpcHost ?? "127.0.0.1",
-                grpcPort: 50051,
-                extraArguments: options.extraArguments
-            )
-        } else {
-            effectiveOptions = options
+        var effectiveDatabaseURL = options.databaseUrl
+        if effectiveDatabaseURL == nil, let postgres = self.postgres, let dbURL = try? postgres.connectionURL() {
+            effectiveDatabaseURL = dbURL
+        }
+        var effectiveLMStudioToken = options.lmStudioApiToken
+        if effectiveLMStudioToken == nil, let lmToken = try? LMStudioTokenStore.load() {
+            effectiveLMStudioToken = lmToken
+        }
+
+        let effectiveOptions = IngestOptions(
+            includeCode: options.includeCode,
+            limit: options.limit,
+            force: options.force,
+            grpcHost: options.grpcHost,
+            grpcPort: options.grpcPort,
+            extraArguments: options.extraArguments,
+            databaseUrl: effectiveDatabaseURL,
+            lmStudioApiToken: effectiveLMStudioToken
+        )
+
+        if let dbURL = effectiveDatabaseURL {
+            _ = try? await selectedClient.setDatabaseURL(dbURL, lmStudioApiToken: effectiveLMStudioToken)
         }
 
         do {

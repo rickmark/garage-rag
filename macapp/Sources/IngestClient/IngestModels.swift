@@ -147,6 +147,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
     public let grpcHost: String?
     public let grpcPort: Int?
     public let extraArguments: [String]
+    public let databaseUrl: String?
+    public let lmStudioApiToken: String?
 
     public init(
         includeCode: Bool = false,
@@ -154,7 +156,9 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         force: Bool = false,
         grpcHost: String? = nil,
         grpcPort: Int? = nil,
-        extraArguments: [String] = []
+        extraArguments: [String] = [],
+        databaseUrl: String? = nil,
+        lmStudioApiToken: String? = nil
     ) {
         self.includeCode = includeCode
         self.limit = limit
@@ -162,6 +166,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.grpcHost = grpcHost
         self.grpcPort = grpcPort
         self.extraArguments = extraArguments
+        self.databaseUrl = databaseUrl
+        self.lmStudioApiToken = lmStudioApiToken
     }
 
     public static let `default` = IngestOptions()
@@ -173,6 +179,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         case grpcHost = "grpc_host"
         case grpcPort = "grpc_port"
         case extraArguments = "extra_arguments"
+        case databaseUrl = "database_url"
+        case lmStudioApiToken = "lmstudio_api_token"
     }
 
     public init(from decoder: Decoder) throws {
@@ -183,6 +191,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.grpcHost = try container.decodeIfPresent(String.self, forKey: .grpcHost)
         self.grpcPort = try container.decodeIfPresent(Int.self, forKey: .grpcPort)
         self.extraArguments = try container.decodeIfPresent([String].self, forKey: .extraArguments) ?? []
+        self.databaseUrl = try container.decodeIfPresent(String.self, forKey: .databaseUrl)
+        self.lmStudioApiToken = try container.decodeIfPresent(String.self, forKey: .lmStudioApiToken)
     }
 }
 
