@@ -18,6 +18,7 @@ be traced to the rule responsible instead of being a mystery.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -258,7 +259,7 @@ def get_or_create_author(
     session: Session,
     name: str,
     *,
-    identities: list[tuple[str, str]],
+    identities: list[tuple[str, str]] | Mapping[str, str] | Iterable[tuple[str, str]] | None = None,
     is_self: bool = False,
 ) -> Author:
     """Resolve an author by identity, creating one on first sight.
@@ -266,7 +267,21 @@ def get_or_create_author(
     Identity lookup comes first so the same person arriving via a git email and
     later via a PDF byline collapses onto one row.
     """
-    for kind, value in identities:
+    if identities is None:
+        pairs: list[tuple[str, str]] = []
+    elif isinstance(identities, Mapping) or hasattr(identities, "items"):
+        pairs = list(identities.items())
+    else:
+        pairs = list(identities)
+
+    valid_pairs: list[tuple[str, str]] = []
+    for item in pairs:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            kind, value = item
+            if kind and value:
+                valid_pairs.append((str(kind), str(value)))
+
+    for kind, value in valid_pairs:
         existing = session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
         if existing is not None:
             return existing.author
@@ -278,7 +293,7 @@ def get_or_create_author(
         session.flush()
 
     # Attach any identities not yet recorded.
-    for kind, value in identities:
+    for kind, value in valid_pairs:
         present = session.query(AuthorIdentity).filter_by(kind=kind, value=value).one_or_none()
         if present is None:
             session.add(AuthorIdentity(author_id=author.id, kind=kind, value=value))

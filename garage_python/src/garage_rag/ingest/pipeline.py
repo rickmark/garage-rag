@@ -383,7 +383,8 @@ def ingest_one(
             )
             return
 
-    content_hash = sha256_text(result.text)
+    content_hash_bytes = sha256_text(result.text)
+    content_hash_hex = content_hash_bytes.hex()
     try:
         raw_hash_bytes = file_sha256(candidate.path)
         raw_hash_hex = raw_hash_bytes.hex() if raw_hash_bytes else None
@@ -427,11 +428,11 @@ def ingest_one(
     if (
         existing_stat.exists
         and not force
-        and existing_stat.content_sha256 == content_hash
+        and existing_stat.content_sha256 == content_hash_hex
         and existing_stat.chunker == signature
         and existing_stat.state.upper() == "OK"
     ):
-        log.debug("Skipped %s: content hash %s unchanged, refreshing metadata", candidate.uri, content_hash[:8])
+        log.debug("Skipped %s: content hash %s unchanged, refreshing metadata", candidate.uri, content_hash_hex[:8])
         gateway.refresh_metadata(
             source_ctx.run_id,
             source_ctx.slug,
@@ -489,7 +490,7 @@ def ingest_one(
         byte_size=candidate.size,
         mtime=candidate.mtime.timestamp(),
         source_sha256=raw_hash_hex,
-        content_sha256=content_hash,
+        content_sha256=content_hash_hex,
         extractor=result.extractor,
         extractor_version=result.extractor_version,
         chunker=signature,

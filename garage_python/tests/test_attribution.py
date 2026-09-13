@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from garage_rag.attribute.git import remote_owner
 from garage_rag.attribute.pathrules import classify_path, is_vendored
-from garage_rag.attribute.resolver import SelfIdentity
-from garage_rag.db.models import CorpusClass, TrustTier
+from garage_rag.attribute.resolver import SelfIdentity, get_or_create_author
+from garage_rag.db.models import Author, AuthorIdentity, CorpusClass, TrustTier
 from garage_rag.extract.base import ContentKind, clean_author_hints, looks_like_tool_name
 from garage_rag.ingest.classify import classify, is_code_path
 
@@ -163,3 +164,74 @@ class TestToolNameFiltering:
     def test_clean_hints_dedupes_and_filters(self) -> None:
         out = clean_author_hints(["Ada Lovelace", "openpyxl", "ada lovelace", "  ", "Grace Hopper"])
         assert out == ["Ada Lovelace", "Grace Hopper"]
+
+
+class TestGetOrCreateAuthor:
+    def test_with_dict_identities(self) -> None:
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = None
+
+        author = get_or_create_author(
+            mock_session,
+            "Rick Mark",
+            identities={"git_email": "rickmark@outlook.com", "git_name": "Rick Mark"},
+            is_self=True,
+        )
+
+        assert author.display_name == "Rick Mark"
+        assert author.is_self is True
+        assert mock_session.add.call_count >= 1
+        added_objs = [call.args[0] for call in mock_session.add.call_args_list]
+        added_identities = [obj for obj in added_objs if isinstance(obj, AuthorIdentity)]
+        assert len(added_identities) == 2
+        kinds_values = {(ident.kind, ident.value) for ident in added_identities}
+        assert ("git_email", "rickmark@outlook.com") in kinds_values
+        assert ("git_name", "Rick Mark") in kinds_values
+
+    def test_with_list_tuples_identities(self) -> None:
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = None
+
+        author = get_or_create_author(
+            mock_session,
+            "Nikias Bassen",
+            identities=[("email", "nikias@gmail.com")],
+            is_self=False,
+        )
+
+        assert author.display_name == "Nikias Bassen"
+        assert author.is_self is False
+        added_objs = [call.args[0] for call in mock_session.add.call_args_list]
+        added_identities = [obj for obj in added_objs if isinstance(obj, AuthorIdentity)]
+        assert len(added_identities) == 1
+        assert added_identities[0].kind == "email"
+        assert added_identities[0].value == "nikias@gmail.com"
+
+    def test_with_none_identities(self) -> None:
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = None
+
+        author = get_or_create_author(
+            mock_session,
+            "Unknown Author",
+            identities=None,
+        )
+
+        assert author.display_name == "Unknown Author"
+
+    def test_matches_existing_identity(self) -> None:
+        mock_session = MagicMock()
+        existing_author = MagicMock(spec=Author)
+        existing_author.id = 42
+        mock_identity = MagicMock(spec=AuthorIdentity)
+        mock_identity.author = existing_author
+
+        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_identity
+
+        author = get_or_create_author(
+            mock_session,
+            "Rick",
+            identities={"git_email": "rickmark@outlook.com"},
+        )
+
+        assert author == existing_author

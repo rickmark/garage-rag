@@ -1187,7 +1187,11 @@ class GarageRpcServicer(GarageServiceServicer):
                     if request.mtime:
                         doc.mtime = datetime.fromtimestamp(request.mtime, tz=UTC)
                     if request.source_sha256:
-                        doc.source_sha256 = bytes.fromhex(request.source_sha256)
+                        doc.source_sha256 = (
+                            request.source_sha256
+                            if isinstance(request.source_sha256, (bytes, bytearray))
+                            else bytes.fromhex(request.source_sha256)
+                        )
                     if request.corpus_class:
                         doc.corpus_class = CorpusClass(request.corpus_class)
                     if request.trust_tier:
@@ -1195,8 +1199,16 @@ class GarageRpcServicer(GarageServiceServicer):
 
             elif action == "replace":
                 mtime_dt = datetime.fromtimestamp(request.mtime, tz=UTC) if request.mtime else None
-                raw_hash = bytes.fromhex(request.source_sha256) if request.source_sha256 else None
-                content_hash = bytes.fromhex(request.content_sha256) if request.content_sha256 else b""
+                raw_hash = (
+                    request.source_sha256
+                    if isinstance(request.source_sha256, (bytes, bytearray))
+                    else (bytes.fromhex(request.source_sha256) if request.source_sha256 else None)
+                )
+                content_hash = (
+                    request.content_sha256
+                    if isinstance(request.content_sha256, (bytes, bytearray))
+                    else (bytes.fromhex(request.content_sha256) if request.content_sha256 else b"")
+                )
                 corpus_class = CorpusClass(request.corpus_class) if request.corpus_class else src.default_class
                 trust_tier = TrustTier(request.trust_tier) if request.trust_tier else src.default_trust
                 meta_dict = json.loads(request.meta_json) if request.meta_json else {}
@@ -1256,7 +1268,11 @@ class GarageRpcServicer(GarageServiceServicer):
                 session.query(Chunk).filter_by(document_id=doc.id).delete()
                 session.flush()
                 for c in request.chunks:
-                    chunk_hash = bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b""
+                    chunk_hash = (
+                        c.chunk_sha256
+                        if isinstance(c.chunk_sha256, (bytes, bytearray))
+                        else (bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b"")
+                    )
                     session.add(
                         Chunk(
                             document_id=doc.id,

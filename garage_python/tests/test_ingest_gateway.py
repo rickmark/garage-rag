@@ -366,3 +366,104 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
         assert doc_entry["uri"] == "doc.txt"
         assert doc_entry["can_read"] is True
         assert doc_entry["bytes_read"] == len("Hello live gRPC ingest")
+
+
+def test_sqlalchemy_storage_gateway_hash_types():
+    """Verify SqlAlchemyIngestStorageGateway handles bytes and hex str hashes without error."""
+    mock_session = MagicMock()
+    mock_source = MagicMock(spec=Source)
+    mock_source.id = 1
+    mock_source.slug = "test-src"
+    mock_source.default_class = CorpusClass.DOCUMENT
+    mock_source.default_trust = TrustTier.AUTHORED
+
+    mock_doc = MagicMock()
+    mock_session.query.return_value.filter_by.return_value.one_or_none.side_effect = [
+        mock_source, mock_doc,  # replace_document call 1
+        mock_source, mock_doc,  # replace_document call 2
+        mock_source, mock_doc,  # refresh_metadata call 1
+        mock_source, mock_doc,  # refresh_metadata call 2
+    ]
+
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: mock_session)
+
+    with patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author:
+        mock_auth_obj = MagicMock()
+        mock_auth_obj.id = 10
+        mock_author.return_value = mock_auth_obj
+
+        # 1. replace_document with str hashes
+        written1 = gateway.replace_document(
+            run_id=1,
+            source_slug="test-src",
+            uri="doc1.txt",
+            title="Doc 1",
+            lang="en",
+            byte_size=10,
+            mtime=1700000000.0,
+            source_sha256="aabb",
+            content_sha256="ccdd",
+            extractor="text",
+            extractor_version="1",
+            chunker="test",
+            content="test",
+            meta={},
+            corpus_class="document",
+            trust_tier="authored",
+            authors=[AuthorPayload(name="Author", role="author")],
+            chunks=[ChunkPayload(ord=0, text="test", chunk_sha256="eeff")],
+        )
+        assert written1 == 1
+        assert mock_doc.source_sha256 == b"\xaa\xbb"
+        assert mock_doc.content_sha256 == b"\xcc\xdd"
+
+        # 2. replace_document with bytes hashes
+        written2 = gateway.replace_document(
+            run_id=1,
+            source_slug="test-src",
+            uri="doc2.txt",
+            title="Doc 2",
+            lang="en",
+            byte_size=10,
+            mtime=1700000000.0,
+            source_sha256=b"\x11\x22",
+            content_sha256=b"\x33\x44",
+            extractor="text",
+            extractor_version="1",
+            chunker="test",
+            content="test",
+            meta={},
+            corpus_class="document",
+            trust_tier="authored",
+            authors=[AuthorPayload(name="Author", role="author")],
+            chunks=[ChunkPayload(ord=0, text="test", chunk_sha256=b"\x55\x66")],
+        )
+        assert written2 == 1
+        assert mock_doc.source_sha256 == b"\x11\x22"
+        assert mock_doc.content_sha256 == b"\x33\x44"
+
+        # 3. refresh_metadata with str hash
+        gateway.refresh_metadata(
+            run_id=1,
+            source_slug="test-src",
+            uri="doc1.txt",
+            byte_size=10,
+            mtime=1700000000.0,
+            source_sha256="aabb",
+            corpus_class="document",
+            trust_tier="authored",
+        )
+        assert mock_doc.source_sha256 == b"\xaa\xbb"
+
+        # 4. refresh_metadata with bytes hash
+        gateway.refresh_metadata(
+            run_id=1,
+            source_slug="test-src",
+            uri="doc2.txt",
+            byte_size=10,
+            mtime=1700000000.0,
+            source_sha256=b"\x11\x22",
+            corpus_class="document",
+            trust_tier="authored",
+        )
+        assert mock_doc.source_sha256 == b"\x11\x22"

@@ -360,7 +360,11 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 if mtime:
                     doc.mtime = datetime.fromtimestamp(mtime, tz=UTC)
                 if source_sha256:
-                    doc.source_sha256 = bytes.fromhex(source_sha256)
+                    doc.source_sha256 = (
+                        source_sha256
+                        if isinstance(source_sha256, (bytes, bytearray))
+                        else bytes.fromhex(source_sha256)
+                    )
                 if corpus_class:
                     doc.corpus_class = CorpusClass(corpus_class)
                 if trust_tier:
@@ -415,8 +419,16 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
 
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None
-            raw_hash = bytes.fromhex(source_sha256) if source_sha256 else None
-            content_hash = bytes.fromhex(content_sha256) if content_sha256 else b""
+            raw_hash = (
+                source_sha256
+                if isinstance(source_sha256, (bytes, bytearray))
+                else (bytes.fromhex(source_sha256) if source_sha256 else None)
+            )
+            content_hash = (
+                content_sha256
+                if isinstance(content_sha256, (bytes, bytearray))
+                else (bytes.fromhex(content_sha256) if content_sha256 else b"")
+            )
             c_class = CorpusClass(corpus_class) if corpus_class else src.default_class
             t_tier = TrustTier(trust_tier) if trust_tier else src.default_trust
 
@@ -474,7 +486,11 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             session.query(Chunk).filter_by(document_id=doc.id).delete()
             session.flush()
             for c in chunks:
-                chunk_hash = bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b""
+                chunk_hash = (
+                    c.chunk_sha256
+                    if isinstance(c.chunk_sha256, (bytes, bytearray))
+                    else (bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b"")
+                )
                 session.add(
                     Chunk(
                         document_id=doc.id,
@@ -642,12 +658,17 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         uri: str,
         byte_size: int,
         mtime: float,
-        source_sha256: str,
+        source_sha256: str | bytes,
         corpus_class: str,
         trust_tier: str,
     ) -> None:
         from garage_rag.proto.garage_pb2 import PersistDocumentRequest
 
+        src_sha = (
+            source_sha256.hex()
+            if isinstance(source_sha256, (bytes, bytearray))
+            else (source_sha256 or "")
+        )
         req = PersistDocumentRequest(
             run_id=run_id,
             source_slug=source_slug,
@@ -655,7 +676,7 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             action="refresh_metadata",
             byte_size=byte_size,
             mtime=mtime,
-            source_sha256=source_sha256,
+            source_sha256=src_sha,
             corpus_class=corpus_class,
             trust_tier=trust_tier,
         )
@@ -708,7 +729,11 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
                 char_start=c.char_start or 0,
                 char_end=c.char_end or 0,
                 heading_path=c.heading_path or "",
-                chunk_sha256=c.chunk_sha256 or "",
+                chunk_sha256=(
+                    c.chunk_sha256.hex()
+                    if isinstance(c.chunk_sha256, (bytes, bytearray))
+                    else str(c.chunk_sha256 or "")
+                ),
                 chunker=c.chunker or "",
             )
             for c in chunks
