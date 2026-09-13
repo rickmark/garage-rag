@@ -395,10 +395,6 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         defer { initLock.unlock() }
         guard !isInitialized else { return }
         
-        XPCDyldDiagnostics.setupPostgresEnvironment()
-        let pyLib = XPCDyldDiagnostics.setupPythonEnvironment()
-        logger.info("Python library candidate resolved: \(pyLib ?? "<none>", privacy: .public)")
-
         let pid = ProcessInfo.processInfo.processIdentifier
         let uid = getuid()
         let gid = getgid()
@@ -420,25 +416,9 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 
         #if canImport(PythonKit)
         do {
-            logger.info("Attempting to load Python library via PythonLibrary.loadLibrary()...")
-            try PythonLibrary.loadLibrary()
-            logger.info("Python dynamic library successfully loaded via dyld.")
-
-            logger.info("Configuring Python runtime and search paths...")
-            let sys = Python.import("sys")
-            let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
-            for lib in libPaths {
-                logger.info("Adding Python standard library path: \(lib, privacy: .public)")
-                sys["path"].insert(0, lib)
-            }
-            for sp in spPaths {
-                logger.info("Adding site-packages path: \(sp, privacy: .public)")
-                sys["path"].insert(0, sp)
-            }
-            if let resourceURL = Bundle.main.resourceURL {
-                sys["path"].insert(0, resourceURL.path)
-            }
-            logger.info("Python sys.path: \(String(describing: sys["path"]), privacy: .public)")
+            logger.info("Initializing Python runtime and linking Python.framework dynamically...")
+            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
+            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
 
             logger.info("Importing garage_rag.ingest and setting up logging callbacks...")
             let ingestModule = try Python.attemptImport("garage_rag.ingest")

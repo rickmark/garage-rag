@@ -398,3 +398,19 @@ def run_ingest_xpc(
 ) -> None:
     """Synchronous entry point for running ingest_xpc."""
     ingest_xpc(source, progress_callback=progress_callback, **kwargs)
+
+
+def test_read_documents_via_grpc(
+    grpc_host: str = "127.0.0.1",
+    grpc_port: int = 50051,
+    source_slug: Optional[str] = None,
+    limit: int = 5,
+    sample_bytes: int = 1024,
+) -> dict[str, Any]:
+    """Connect to gRPC server, query source/document metadata, and test reading document files from disk."""
+    from garage_rag.ingest.gateway import GrpcIngestStorageGateway
+    from garage_rag.service.client import GarageClient
+
+    client = GarageClient(host=grpc_host, port=grpc_port, in_process=False)
+    gateway = GrpcIngestStorageGateway(client)
+    return gateway.test_read_documents(source_slug=source_slug, limit=limit, sample_bytes=sample_bytes)

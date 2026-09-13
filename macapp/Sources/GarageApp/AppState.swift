@@ -507,7 +507,8 @@ final class AppState: ObservableObject {
                 limit: options.limit,
                 force: options.force,
                 grpcHost: options.grpcHost,
-                grpcPort: options.grpcPort
+                grpcPort: options.grpcPort,
+                extraArguments: options.extraArguments
             )
             let result = await ingestService.ingest(slug: source.slug, options: sourceOptions, mode: mode)
             await fetchRegisteredSources()

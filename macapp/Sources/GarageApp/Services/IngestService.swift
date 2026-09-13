@@ -235,7 +235,8 @@ final class IngestService: ObservableObject {
                 limit: options.limit,
                 force: options.force,
                 grpcHost: options.grpcHost ?? "127.0.0.1",
-                grpcPort: 50051
+                grpcPort: 50051,
+                extraArguments: options.extraArguments
             )
         } else {
             effectiveOptions = options
@@ -296,6 +297,9 @@ final class IngestService: ObservableObject {
         }
         if let limit = options.limit {
             args.append(contentsOf: ["--limit", "\(limit)"])
+        }
+        if !options.extraArguments.isEmpty {
+            args.append(contentsOf: options.extraArguments)
         }
 
         let runner = ProcessRunner()

@@ -373,6 +373,25 @@ class TestDatabaseEnvironment:
         assert settings.chunk_size == 123
         assert settings.database_url == "postgresql+psycopg:///app-managed"
 
+    def test_database_url_environment_normalizes_to_postgresql_psycopg(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql://user:password@localhost:5432/garage-rag")
+        settings = load_config()
+        assert settings.database_url == "postgresql+psycopg://user:password@localhost:5432/garage-rag"
+
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgres://user:password@localhost:5432/garage-rag")
+        settings = load_config()
+        assert settings.database_url == "postgresql+psycopg://user:password@localhost:5432/garage-rag"
+
+    def test_settings_normalizes_database_url(self) -> None:
+        from garage_rag.config import ensure_psycopg_database_url
+
+        assert ensure_psycopg_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+        assert ensure_psycopg_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+        assert ensure_psycopg_database_url("postgresql+psycopg://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+
+        settings = Settings(database_url="postgresql://user:pass@host/db")
+        assert settings.database_url == "postgresql+psycopg://user:pass@host/db"
+
     def test_empty_database_url_environment_is_an_error(self, monkeypatch) -> None:
         monkeypatch.setenv("GARAGE_DATABASE_URL", " ")
         with pytest.raises(ConfigError, match="must not be empty"):

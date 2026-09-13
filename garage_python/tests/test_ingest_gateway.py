@@ -356,3 +356,13 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
             materialized_bytes=0,
             errors=[],
         )
+
+        # 6. test_read_documents over live gRPC
+        read_test_res = gateway.test_read_documents("live-grpc-src", limit=5)
+        assert read_test_res["status"] == "ok"
+        assert read_test_res["total_tested"] == 1
+        assert read_test_res["total_readable"] == 1
+        doc_entry = read_test_res["documents"][0]
+        assert doc_entry["uri"] == "doc.txt"
+        assert doc_entry["can_read"] is True
+        assert doc_entry["bytes_read"] == len("Hello live gRPC ingest")

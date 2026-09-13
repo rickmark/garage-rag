@@ -770,6 +770,78 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         )
         self.client.finalize_ingest_session(req)
 
+    def test_read_documents(
+        self,
+        source_slug: Optional[str] = None,
+        limit: int = 5,
+        sample_bytes: int = 1024,
+    ) -> dict[str, Any]:
+        """Query gRPC server for registered source(s) and test reading sample document files from disk."""
+        sources = []
+        if source_slug and source_slug != "*":
+            sources = [source_slug]
+        else:
+            list_resp = self.client.list_sources()
+            sources = [s.slug for s in list_resp.sources if s.enabled]
+            if not sources and list_resp.sources:
+                sources = [s.slug for s in list_resp.sources]
+
+        results: list[dict[str, Any]] = []
+        total_tested = 0
+        total_readable = 0
+
+        for slug in sources:
+            ctx = self.begin_session(slug)
+            root_path = Path(ctx.root)
+            sample_uris: list[str] = []
+            if root_path.exists() and root_path.is_dir():
+                for p in root_path.rglob("*"):
+                    if p.is_file() and not p.name.startswith("."):
+                        sample_uris.append(str(p.relative_to(root_path)))
+                        if len(sample_uris) >= limit:
+                            break
+            elif root_path.is_file():
+                sample_uris.append(root_path.name)
+
+            for uri in sample_uris:
+                total_tested += 1
+                stat = self.check_stat(slug, uri)
+                full_path = root_path / uri if root_path.is_dir() else root_path
+                can_read = False
+                bytes_read = 0
+                error_msg = None
+                try:
+                    with open(full_path, "rb") as f:
+                        data = f.read(sample_bytes)
+                        bytes_read = len(data)
+                        can_read = True
+                        total_readable += 1
+                except Exception as e:
+                    error_msg = str(e)
+
+                results.append({
+                    "source_slug": slug,
+                    "uri": uri,
+                    "full_path": str(full_path),
+                    "exists": stat.exists,
+                    "byte_size": stat.byte_size if stat.exists else (full_path.stat().st_size if full_path.exists() else 0),
+                    "can_read": can_read,
+                    "bytes_read": bytes_read,
+                    "error": error_msg,
+                })
+
+        return {
+            "status": "ok" if (total_tested == total_readable and total_tested > 0) or total_tested == 0 else "partial",
+            "total_tested": total_tested,
+            "total_readable": total_readable,
+            "documents": results,
+            "message": (
+                f"Tested {total_tested} document(s): {total_readable} readable"
+                if total_tested > 0
+                else "No documents found to test"
+            ),
+        }
+
 
 def get_storage_gateway(
     session_factory: Optional[Callable[[], Any]] = None,

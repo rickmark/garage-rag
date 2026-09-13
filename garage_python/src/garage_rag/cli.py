@@ -23,6 +23,7 @@ from garage_rag.config import (
     Settings,
     candidate_paths,
     default_config_path,
+    ensure_psycopg_database_url,
     get_settings,
     json_schema,
     load_config,
@@ -969,7 +970,7 @@ def mcp_install(
         command, args = server_command(config_file)
         console.print(f"  command : {command} {' '.join(args)}")
         if database_url := os.environ.get("GARAGE_DATABASE_URL"):
-            database_environment = {"GARAGE_DATABASE_URL": database_url}
+            database_environment = {"GARAGE_DATABASE_URL": ensure_psycopg_database_url(database_url)}
 
     for chosen in chosen_list:
         console.print(f"\n[bold]{chosen.label}[/bold] -> {chosen.path}")
@@ -1446,7 +1447,28 @@ def serve(
 
 def main_cli() -> int:
     """Main CLI entrypoint. Serializes console commands over gRPC protobufs in-process."""
+    import io
     import sys
+
+    # Ensure stdin, stdout, and stderr are attached and valid for CLI execution
+    if sys.stdin is None or not hasattr(sys.stdin, "read"):
+        try:
+            sys.stdin = io.open(0, mode="r", encoding="utf-8", errors="replace", closefd=False)
+            sys.__stdin__ = sys.stdin
+        except Exception:
+            pass
+    if sys.stdout is None or not hasattr(sys.stdout, "write"):
+        try:
+            sys.stdout = io.open(1, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)
+            sys.__stdout__ = sys.stdout
+        except Exception:
+            pass
+    if sys.stderr is None or not hasattr(sys.stderr, "write"):
+        try:
+            sys.stderr = io.open(2, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)
+            sys.__stderr__ = sys.stderr
+        except Exception:
+            pass
 
     argv = sys.argv[1:]
     # If starting server, run serve directly

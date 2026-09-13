@@ -185,7 +185,11 @@ fix_macho() {
             continue
         fi
 
-        if [[ "$dep" == *"/Python.framework/"* ]] && [[ "$dep" != "@rpath/Python.framework/"* ]]; then
+        if [[ "$file" == *"/Python.framework/Versions/"*"/bin/"* ]] || [[ "$file" == *"/Python.framework/bin/"* ]] || [[ "$file" == *"/Versions/"*"/bin/"* ]] || [[ "$file" == *"/bin/python"* ]]; then
+            if [[ "$dep" == *"/Python.framework/"* ]] || [[ "$dep" == "@rpath/Python"* ]] || [[ "$dep" == *"/Python" && "$dep" != "/usr/lib/"* && "$dep" != "/System/"* ]]; then
+                /usr/bin/install_name_tool -change "$dep" "@executable_path/../Python" "$file" 2>/dev/null || true
+            fi
+        elif [[ "$dep" == *"/Python.framework/"* ]] && [[ "$dep" != "@rpath/Python.framework/"* ]]; then
             /usr/bin/install_name_tool -change "$dep" "@rpath/Python.framework/Versions/3.13/Python" "$file" 2>/dev/null || true
         elif [[ "$dep" == /DLC/* ]]; then
             /usr/bin/install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" "$file" 2>/dev/null || true
@@ -197,10 +201,15 @@ fix_macho() {
     done
 
     # If it is inside Python.framework/Versions/.../bin
-    if [[ "$file" == *"/Python.framework/Versions/"*"/bin/"* ]]; then
+    if [[ "$file" == *"/Python.framework/Versions/"*"/bin/"* ]] || [[ "$file" == *"/Python.framework/bin/"* ]] || [[ "$file" == *"/Versions/"*"/bin/"* ]]; then
+        /usr/bin/install_name_tool -add_rpath "@loader_path/.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../../.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../../../.." "$file" 2>/dev/null || true
         /usr/bin/install_name_tool -add_rpath "@executable_path/.." "$file" 2>/dev/null || true
         /usr/bin/install_name_tool -add_rpath "@executable_path/../.." "$file" 2>/dev/null || true
         /usr/bin/install_name_tool -add_rpath "@executable_path/../../.." "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../../../.." "$file" 2>/dev/null || true
     fi
 
     if [[ "$file" == *".xpc/Contents/MacOS/"* ]]; then

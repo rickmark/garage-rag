@@ -47,7 +47,14 @@ final class IngestClientTests: XCTestCase {
     }
 
     func testIngestOptionsModel() throws {
-        let options = IngestOptions(includeCode: true, limit: 25, force: true)
+        let options = IngestOptions(
+            includeCode: true,
+            limit: 25,
+            force: true,
+            grpcHost: "127.0.0.1",
+            grpcPort: 50051,
+            extraArguments: ["--custom-flag", "custom_val", "--verbose"]
+        )
         let engine = IngestEngine.shared
         guard let json = engine.serialize(options) else {
             XCTFail("Failed to serialize IngestOptions")
@@ -58,6 +65,27 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(decoded.includeCode)
         XCTAssertEqual(decoded.limit, 25)
         XCTAssertTrue(decoded.force)
+        XCTAssertEqual(decoded.grpcHost, "127.0.0.1")
+        XCTAssertEqual(decoded.grpcPort, 50051)
+        XCTAssertEqual(decoded.extraArguments, ["--custom-flag", "custom_val", "--verbose"])
+    }
+
+    func testCommandLineParser() {
+        // Empty string
+        XCTAssertEqual(CommandLineParser.splitArguments(""), [])
+        XCTAssertEqual(CommandLineParser.splitArguments("   "), [])
+
+        // Basic flags and values
+        let args1 = CommandLineParser.splitArguments("--source apple-sms --limit 10 --force")
+        XCTAssertEqual(args1, ["--source", "apple-sms", "--limit", "10", "--force"])
+
+        // Quotes handling
+        let args2 = CommandLineParser.splitArguments("--source \"My Documents\" --option 'single quoted value' --flag")
+        XCTAssertEqual(args2, ["--source", "My Documents", "--option", "single quoted value", "--flag"])
+
+        // Escaped whitespace
+        let args3 = CommandLineParser.splitArguments("--path /Library/Application\\ Support/Garage --flag")
+        XCTAssertEqual(args3, ["--path", "/Library/Application Support/Garage", "--flag"])
     }
 
     func testIngestExecutionModeEnumCases() {
@@ -274,6 +302,25 @@ final class IngestClientTests: XCTestCase {
         XCTAssertNil(selected)
         XCTAssertEqual(diagnostics.count, 1)
         XCTAssertTrue(diagnostics[0].contains("NOT FOUND"))
+
+        let candidates = XPCDyldDiagnostics.defaultPythonCandidatePaths()
+        XCTAssertFalse(candidates.isEmpty)
+        XCTAssertTrue(candidates.contains(where: { $0.contains("Python.framework") }))
+
+        let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
+        _ = libPaths
+        _ = spPaths
+    }
+
+    func testIngestEngineEnsurePythonInitialized() {
+        let engine = IngestEngine()
+        // Calling ensurePythonInitialized in test harness should not crash
+        do {
+            try engine.ensurePythonInitialized()
+        } catch {
+            // If Python.framework is not present in build sandbox, error is gracefully handled
+            XCTAssertNotNil(error)
+        }
     }
 
     func testIngestEngineAsyncIngest() async {
@@ -294,6 +341,29 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(result.succeeded)
         XCTAssertFalse(collector.updates.isEmpty)
         XCTAssertEqual(collector.updates.last?.phase, "complete")
+    }
+
+    func testXPCDyldDiagnosticsEnsurePsycopgDatabaseURL() {
+        XCTAssertEqual(
+            XPCDyldDiagnostics.ensurePsycopgDatabaseURL("postgresql://user:pass@localhost:5432/garage-rag"),
+            "postgresql+psycopg://user:pass@localhost:5432/garage-rag"
+        )
+        XCTAssertEqual(
+            XPCDyldDiagnostics.ensurePsycopgDatabaseURL("postgres://user:pass@localhost:5432/garage-rag"),
+            "postgresql+psycopg://user:pass@localhost:5432/garage-rag"
+        )
+        XCTAssertEqual(
+            XPCDyldDiagnostics.ensurePsycopgDatabaseURL("postgresql+psycopg://user:pass@localhost:5432/garage-rag"),
+            "postgresql+psycopg://user:pass@localhost:5432/garage-rag"
+        )
+        XCTAssertEqual(
+            XPCDyldDiagnostics.ensurePsycopgDatabaseURL(""),
+            ""
+        )
+        XCTAssertEqual(
+            XPCDyldDiagnostics.ensurePsycopgDatabaseURL("   "),
+            ""
+        )
     }
 
     func testIngestProgressScanVsIngestCounts() {

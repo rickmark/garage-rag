@@ -58,30 +58,12 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         initLock.lock()
         defer { initLock.unlock() }
         guard !isInitialized else { return }
-        
-        XPCDyldDiagnostics.setupPostgresEnvironment()
-        let pyLib = XPCDyldDiagnostics.setupPythonEnvironment()
-        logger.info("Python library candidate resolved: \(pyLib ?? "<none>", privacy: .public)")
 
         #if canImport(PythonKit)
         do {
-            logger.info("Attempting to load Python library via PythonLibrary.loadLibrary()...")
-            try PythonLibrary.loadLibrary()
-            logger.info("Python dynamic library successfully loaded via dyld.")
-
-            let sys = Python.import("sys")
-            let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
-            for lib in libPaths {
-                logger.info("Adding Python standard library path: \(lib, privacy: .public)")
-                sys["path"].insert(0, lib)
-            }
-            for sp in spPaths {
-                logger.info("Adding site-packages path: \(sp, privacy: .public)")
-                sys["path"].insert(0, sp)
-            }
-            if let resourceURL = Bundle.main.resourceURL {
-                sys["path"].insert(0, resourceURL.path)
-            }
+            logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageMCPServerService...")
+            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
+            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
             _ = try? Python.attemptImport("garage_rag.mcp_server")
         } catch {
             var dyldError = ""
@@ -157,7 +139,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
                 os.environ[key] = PythonObject(value)
             }
             if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
-                os.environ["GARAGE_DATABASE_URL"] = PythonObject(dbURL)
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL))
             }
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server")
             reply(true, "MCP server module loaded successfully: \(mcpModule)")

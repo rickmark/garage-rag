@@ -49,3 +49,14 @@ def test_configure_libpq_patches_psycopg(tmp_path: Path, monkeypatch: pytest.Mon
     import psycopg.pq.misc as pq_misc
 
     assert pq_misc.find_libpq_full_path() == str(fake_libpq)
+
+
+def test_psycopg2_compatibility_alias() -> None:
+    _libpq.setup_psycopg_compatibility()
+    import sys
+    assert "psycopg2" in sys.modules
+    assert sys.modules["psycopg2"] is sys.modules["psycopg"]
+    import psycopg2
+    assert psycopg2 is sys.modules["psycopg"]
+    import psycopg2.errors
+    assert psycopg2.errors is sys.modules["psycopg.errors"]

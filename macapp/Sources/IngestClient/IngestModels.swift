@@ -101,6 +101,44 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
     }
 }
 
+/// Splits command-line strings into discrete arguments respecting quotes and escapes.
+public enum CommandLineParser {
+    /// Splits a command line string into an array of arguments, respecting single and double quotes and escaped spaces.
+    public static func splitArguments(_ commandLine: String) -> [String] {
+        var arguments: [String] = []
+        var current = ""
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var isEscaped = false
+
+        for char in commandLine {
+            if isEscaped {
+                current.append(char)
+                isEscaped = false
+            } else if char == "\\" && !inSingleQuote {
+                isEscaped = true
+            } else if char == "'" && !inDoubleQuote {
+                inSingleQuote.toggle()
+            } else if char == "\"" && !inSingleQuote {
+                inDoubleQuote.toggle()
+            } else if char.isWhitespace && !inSingleQuote && !inDoubleQuote {
+                if !current.isEmpty {
+                    arguments.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(char)
+            }
+        }
+
+        if !current.isEmpty {
+            arguments.append(current)
+        }
+
+        return arguments
+    }
+}
+
 /// Options configuring an ingest run.
 public struct IngestOptions: Codable, Sendable, Equatable {
     public let includeCode: Bool
@@ -108,19 +146,22 @@ public struct IngestOptions: Codable, Sendable, Equatable {
     public let force: Bool
     public let grpcHost: String?
     public let grpcPort: Int?
+    public let extraArguments: [String]
 
     public init(
         includeCode: Bool = false,
         limit: Int? = nil,
         force: Bool = false,
         grpcHost: String? = nil,
-        grpcPort: Int? = nil
+        grpcPort: Int? = nil,
+        extraArguments: [String] = []
     ) {
         self.includeCode = includeCode
         self.limit = limit
         self.force = force
         self.grpcHost = grpcHost
         self.grpcPort = grpcPort
+        self.extraArguments = extraArguments
     }
 
     public static let `default` = IngestOptions()
@@ -131,6 +172,17 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         case force
         case grpcHost = "grpc_host"
         case grpcPort = "grpc_port"
+        case extraArguments = "extra_arguments"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.includeCode = try container.decodeIfPresent(Bool.self, forKey: .includeCode) ?? false
+        self.limit = try container.decodeIfPresent(Int.self, forKey: .limit)
+        self.force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        self.grpcHost = try container.decodeIfPresent(String.self, forKey: .grpcHost)
+        self.grpcPort = try container.decodeIfPresent(Int.self, forKey: .grpcPort)
+        self.extraArguments = try container.decodeIfPresent([String].self, forKey: .extraArguments) ?? []
     }
 }
 

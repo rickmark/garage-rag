@@ -40,12 +40,12 @@ codesign(
     name = "postgres_output",
     src = ":postgres_raw",
     out = "postgres",
-    parent_dir = "postgres",
     entitlements = select({
         "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],
+    parent_dir = "postgres",
     signing_identity = select({
         "//bazel:is_adhoc": "-",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
@@ -86,6 +86,7 @@ swift_binary(
         "@loader_path/../Frameworks/Python.framework",
     ],
     deps = [
+        "//ext/python:python_3_13_framework",
         "//ext/pythonkit:PythonKit_swift",
     ],
 )
@@ -112,6 +113,7 @@ swift_binary(
         "@loader_path/../Frameworks/Python.framework",
     ],
     deps = [
+        "//ext/python:python_3_13_framework",
         "//ext/pythonkit:PythonKit_swift",
     ],
 )
@@ -147,7 +149,6 @@ codesign(
     }),
     visibility = ["//visibility:public"],
 )
-
 
 swift_library(
     name = "IngestClient_lib",
@@ -227,7 +228,6 @@ macos_application(
     app_icons = [":GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",
     bundle_name = "Garage",
-    executable_name = "GarageApp",
     codesignopts = [
         "--options=runtime",  # This enables the Hardened Runtime flag
     ],
@@ -235,6 +235,7 @@ macos_application(
         "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,
     }),
+    executable_name = "GarageApp",
     frameworks = [
         "//ext/pythonkit:PythonKit_framework",
     ],
@@ -271,7 +272,6 @@ appstore_macos_application(
     app = ":GarageApp",
     visibility = ["//visibility:public"],
 )
-
 
 developer_id_xcarchive(
     name = "Garage.xcarchive",

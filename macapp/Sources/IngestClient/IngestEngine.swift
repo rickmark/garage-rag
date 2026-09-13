@@ -21,6 +21,19 @@ public final class IngestEngine: @unchecked Sendable {
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     public private(set) var isCancelled = false
+    private var isPythonInitialized = false
+    private let pythonInitLock = NSLock()
+
+    /// Ensures the Python runtime is dynamically loaded and sys.path configured prior to any PythonKit calls.
+    public func ensurePythonInitialized() throws {
+        pythonInitLock.lock()
+        defer { pythonInitLock.unlock() }
+        guard !isPythonInitialized else { return }
+
+        logger.info("Initializing Python runtime dynamically in IngestEngine...")
+        _ = try XPCDyldDiagnostics.initializePythonRuntime()
+        isPythonInitialized = true
+    }
 
     public init(customHandler: IngestHandler? = nil) {
         self.customHandler = customHandler
@@ -72,6 +85,7 @@ public final class IngestEngine: @unchecked Sendable {
 
         #if canImport(PythonKit)
         do {
+            try ensurePythonInitialized()
             logger.info("Importing garage_rag.ingest via PythonKit...")
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
 
@@ -176,6 +190,7 @@ public final class IngestEngine: @unchecked Sendable {
 
         #if canImport(PythonKit)
         do {
+            try ensurePythonInitialized()
             logger.info("Importing garage_rag.ingest via PythonKit...")
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
 

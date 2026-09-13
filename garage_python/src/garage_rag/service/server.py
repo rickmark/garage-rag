@@ -797,7 +797,7 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def McpInstall(self, request: McpInstallRequest, context: grpc.ServicerContext) -> McpInstallResponse:
         """Register MCP server in a client config."""
-        from garage_rag.config import get_settings
+        from garage_rag.config import ensure_psycopg_database_url, get_settings
         from garage_rag.mcp_server.install import (
             ClientTarget,
             client_targets,
@@ -837,7 +837,7 @@ class GarageRpcServicer(GarageServiceServicer):
             settings = get_settings()
             config_file = settings.config_path
             if database_url := os.environ.get("GARAGE_DATABASE_URL"):
-                db_env = {"GARAGE_DATABASE_URL": database_url}
+                db_env = {"GARAGE_DATABASE_URL": ensure_psycopg_database_url(database_url)}
         else:
             settings = get_settings()
             url = http_url(

@@ -3,7 +3,14 @@
 from unittest.mock import MagicMock, patch
 import pytest
 
-from garage_rag.ingest import IngestProgress, cancel_ingest, ingest_xpc, is_ingest_cancelled, run_ingest_xpc
+from garage_rag.ingest import (
+    IngestProgress,
+    cancel_ingest,
+    ingest_xpc,
+    is_ingest_cancelled,
+    run_ingest_xpc,
+    test_read_documents_via_grpc,
+)
 from garage_rag.ingest.pipeline import IngestCounters, MaterializationBudget, WalkStats
 
 
@@ -213,3 +220,41 @@ def test_ingest_xpc_with_grpc_options():
         mock_gw_cls.assert_called_once()
         assert len(progress_events) >= 2
         assert progress_events[-1].phase == "complete"
+
+
+def test_test_read_documents_via_grpc_helper():
+    with patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
+         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
+
+        mock_gw = MagicMock()
+        mock_gw.test_read_documents.return_value = {
+            "status": "ok",
+            "total_tested": 2,
+            "total_readable": 2,
+            "documents": [
+                {"uri": "doc1.txt", "can_read": True, "bytes_read": 100},
+                {"uri": "doc2.txt", "can_read": True, "bytes_read": 200},
+            ],
+            "message": "Tested 2 document(s): 2 readable",
+        }
+        mock_gw_cls.return_value = mock_gw
+
+        res = test_read_documents_via_grpc(
+            grpc_host="127.0.0.1",
+            grpc_port=50051,
+            source_slug="test-source",
+            limit=5,
+        )
+
+        mock_client_cls.assert_called_once_with(host="127.0.0.1", port=50051, in_process=False)
+        mock_gw.test_read_documents.assert_called_once_with(
+            source_slug="test-source",
+            limit=5,
+            sample_bytes=1024,
+        )
+        assert res["status"] == "ok"
+        assert res["total_tested"] == 2
+        assert res["total_readable"] == 2
+        assert len(res["documents"]) == 2
+        assert res["documents"][0]["uri"] == "doc1.txt"
+        assert res["documents"][0]["can_read"] is True

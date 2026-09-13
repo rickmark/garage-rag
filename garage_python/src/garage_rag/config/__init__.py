@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 CONFIG_FILENAME = "garage.json"
 SCHEMA_FILENAME = "garage.schema.json"
@@ -203,6 +203,24 @@ class SourceSpec(BaseModel):
         return Path(self.root).expanduser()
 
 
+def ensure_psycopg_database_url(url: str) -> str:
+    """Ensure a PostgreSQL database URL is in the form postgresql+psycopg://."""
+    if not url or not url.strip():
+        return url
+    trimmed = url.strip()
+    if trimmed.startswith("postgresql+psycopg://"):
+        return trimmed
+    if trimmed.startswith("postgresql://"):
+        return "postgresql+psycopg://" + trimmed[len("postgresql://") :]
+    if trimmed.startswith("postgres://"):
+        return "postgresql+psycopg://" + trimmed[len("postgres://") :]
+    if "://" in trimmed:
+        scheme, rest = trimmed.split("://", 1)
+        if scheme.startswith("postgres") or scheme.startswith("postgresql"):
+            return f"postgresql+psycopg://{rest}"
+    return trimmed
+
+
 class Settings(BaseModel):
     """Flat view of the configuration, as the rest of the code consumes it."""
 
@@ -213,6 +231,13 @@ class Settings(BaseModel):
         default="postgresql+psycopg:///rag",
         description="SQLAlchemy URL for the RAG database (psycopg3 driver).",
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _validate_database_url(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return ensure_psycopg_database_url(v)
+        return v
     hnsw_ef_search: int = Field(
         default=100,
         description="HNSW probe width at query time. Higher is better recall, slower.",
@@ -627,7 +652,7 @@ def _apply_database_url_environment(settings: Settings) -> Settings:
         return settings
     if not database_url.strip():
         raise ConfigError("GARAGE_DATABASE_URL must not be empty")
-    settings.database_url = database_url
+    settings.database_url = ensure_psycopg_database_url(database_url)
     return settings
 
 

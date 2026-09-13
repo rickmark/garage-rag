@@ -57,30 +57,12 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
         initLock.lock()
         defer { initLock.unlock() }
         guard !isInitialized else { return }
-        
-        XPCDyldDiagnostics.setupPostgresEnvironment()
-        let pyLib = XPCDyldDiagnostics.setupPythonEnvironment()
-        logger.info("Python library candidate resolved: \(pyLib ?? "<none>", privacy: .public)")
 
         #if canImport(PythonKit)
         do {
-            logger.info("Attempting to load Python library via PythonLibrary.loadLibrary()...")
-            try PythonLibrary.loadLibrary()
-            logger.info("Python dynamic library successfully loaded via dyld.")
-
-            let sys = Python.import("sys")
-            let (libPaths, spPaths) = XPCDyldDiagnostics.getPythonLibAndSitePackagesPaths()
-            for lib in libPaths {
-                logger.info("Adding Python standard library path: \(lib, privacy: .public)")
-                sys.path.insert(0, lib)
-            }
-            for sp in spPaths {
-                logger.info("Adding site-packages path: \(sp, privacy: .public)")
-                sys.path.insert(0, sp)
-            }
-            if let resourceURL = Bundle.main.resourceURL {
-                sys.path.insert(0, resourceURL.path)
-            }
+            logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageEmbedXPCService...")
+            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
+            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
             _ = try? Python.attemptImport("garage_rag.embed")
         } catch {
             var dyldError = ""

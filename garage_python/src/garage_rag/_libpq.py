@@ -60,11 +60,53 @@ def find_bundled_libpq() -> str | None:
                 parent / "bazel-bin" / "ext" / "postgres" / "postgres_rpath" / "lib" / "libpq.dylib",
             ])
 
+    # 3. System / Homebrew / App fallbacks
+    candidates.extend([
+        Path("/Applications/Garage.app/Contents/Resources/postgres/lib/libpq.dylib"),
+        Path("/Applications/Garage.app/Contents/Resources/postgres/lib/libpq.5.dylib"),
+        Path("/opt/homebrew/opt/libpq/lib/libpq.dylib"),
+        Path("/opt/homebrew/opt/libpq/lib/libpq.5.dylib"),
+        Path("/opt/homebrew/lib/postgresql@18/libpq.dylib"),
+        Path("/opt/homebrew/lib/postgresql@18/libpq.5.dylib"),
+        Path("/opt/homebrew/lib/postgresql@17/libpq.dylib"),
+        Path("/opt/homebrew/lib/postgresql@17/libpq.5.dylib"),
+        Path("/opt/homebrew/lib/postgresql@16/libpq.dylib"),
+        Path("/opt/homebrew/lib/postgresql@16/libpq.5.dylib"),
+        Path("/opt/homebrew/lib/libpq.dylib"),
+        Path("/opt/homebrew/lib/libpq.5.dylib"),
+        Path("/usr/local/opt/libpq/lib/libpq.dylib"),
+        Path("/usr/local/opt/libpq/lib/libpq.5.dylib"),
+        Path("/usr/local/lib/libpq.dylib"),
+        Path("/usr/local/lib/libpq.5.dylib"),
+    ])
+
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
 
     return None
+
+
+def setup_psycopg_compatibility() -> None:
+    """Ensure psycopg2 imports map to psycopg if psycopg2 is not separately installed."""
+    if "psycopg2" not in sys.modules:
+        try:
+            import psycopg
+            import psycopg.errors
+            import psycopg.rows
+            try:
+                import psycopg_pool
+            except ImportError:
+                psycopg_pool = None
+
+            sys.modules["psycopg2"] = psycopg
+            sys.modules["psycopg2.errors"] = psycopg.errors
+            sys.modules["psycopg2.extensions"] = psycopg
+            sys.modules["psycopg2.extras"] = psycopg.rows
+            if psycopg_pool is not None:
+                sys.modules["psycopg2.pool"] = psycopg_pool
+        except Exception as e:
+            logger.debug("Failed to set up psycopg2 compatibility alias: %s", e)
 
 
 def configure_libpq() -> str | None:
@@ -122,3 +164,4 @@ def configure_libpq() -> str | None:
 
 # Automatically configure when module is imported
 configure_libpq()
+setup_psycopg_compatibility()
