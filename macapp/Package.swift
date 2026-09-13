@@ -52,6 +52,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "GarageEmbedXPCService",
+            dependencies: ["IngestClient"],
             path: "Sources/GarageEmbedXPCService"
         ),
         .executableTarget(

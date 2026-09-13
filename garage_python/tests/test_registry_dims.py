@@ -165,6 +165,7 @@ class TestKnownModels:
     def test_pulled_models_have_expected_widths(self) -> None:
         assert KNOWN_MODELS["bge-m3"].dims == 1024
         assert KNOWN_MODELS["nomic-embed-text"].dims == 768
+        assert KNOWN_MODELS["mxbai-embed-xsmall"].dims == 384
 
     def test_known_models_default_provider_is_llama_xpc(self) -> None:
         for slug, spec in KNOWN_MODELS.items():

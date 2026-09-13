@@ -2,7 +2,7 @@ load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_apple//apple:macos.bzl", "macos_application", "macos_ui_test", "macos_unit_test", "macos_xpc_service")
-load("@rules_swift//swift:swift.bzl", "swift_library")
+load("@rules_swift//swift:swift.bzl", "swift_binary", "swift_library")
 load(
     "@rules_xcodeproj//xcodeproj:defs.bzl",
     "top_level_target",
@@ -63,18 +63,28 @@ copy_to_directory(
     },
 )
 
+swift_binary(
+    name = "garage_bin",
+    srcs = ["Sources/GarageCLI/main.swift"],
+    deps = [
+        "//ext/pythonkit:PythonKit_swift",
+    ],
+)
+
+swift_binary(
+    name = "garage_mcp_bin",
+    srcs = ["Sources/GarageMCPCLI/main.swift"],
+    deps = [
+        "//ext/pythonkit:PythonKit_swift",
+    ],
+)
+
 codesign(
     name = "garage",
-    src = "//garage_python:garage",
+    src = ":garage_bin",
     entitlements = select({
         "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,
-    }),
-    entitlements_by_filename = select({
-        "//bazel:is_store": {
-            "postgres": ":GarageServer.entitlements",
-        },
-        "//conditions:default": {},
     }),
     options = ["runtime"],
     signing_identity = select({
@@ -82,11 +92,12 @@ codesign(
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),
+    visibility = ["//visibility:public"],
 )
 
 codesign(
     name = "garage-mcp",
-    src = "//garage_python:garage-mcp",
+    src = ":garage_mcp_bin",
     entitlements = select({
         "//bazel:is_store": ":GarageServer.entitlements",
         "//conditions:default": None,
@@ -97,6 +108,7 @@ codesign(
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),
+    visibility = ["//visibility:public"],
 )
 
 swift_library(
@@ -120,29 +132,6 @@ swift_library(
     visibility = ["//visibility:public"],
 )
 
-copy_to_directory(
-    name = "python_3_14",
-    srcs = [
-        "//ext/python:python_3_14",
-    ],
-    out = "python_3_14",
-)
-
-codesign(
-    name = "python_3_14_signed",
-    src = ":python_3_14",
-    entitlements = select({
-        "//bazel:is_store": ":Garage.entitlements",
-        "//conditions:default": None,
-    }),
-    options = ["runtime"],
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
-)
-
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["Sources/GarageApp/**/*.swift"]),
@@ -150,10 +139,11 @@ swift_library(
         ":garage",
         ":garage-mcp",
         ":postgres_output",
-        ":python_3_14_signed",
         ":schema_output",
         "//data/models:model_manifest",
         "//data/schema:config_schema",
+        "//ext/python:python_framework",
+        "//garage_python:site-packages",
     ],
     module_name = "GarageApp",
     visibility = ["//visibility:public"],
@@ -183,6 +173,9 @@ macos_application(
         "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,
     }),
+    frameworks = [
+        "//ext/pythonkit:PythonKit_framework",
+    ],
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     provisioning_profile = select({

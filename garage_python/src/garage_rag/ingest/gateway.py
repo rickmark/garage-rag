@@ -714,6 +714,9 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             for c in chunks
         ]
 
+        src_sha = source_sha256.hex() if isinstance(source_sha256, (bytes, bytearray)) else (source_sha256 or "")
+        cnt_sha = content_sha256.hex() if isinstance(content_sha256, (bytes, bytearray)) else str(content_sha256 or "")
+
         req = PersistDocumentRequest(
             run_id=run_id,
             source_slug=source_slug,
@@ -723,8 +726,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             lang=lang or "",
             byte_size=byte_size,
             mtime=mtime,
-            source_sha256=source_sha256 or "",
-            content_sha256=content_sha256,
+            source_sha256=src_sha,
+            content_sha256=cnt_sha,
             extractor=extractor,
             extractor_version=extractor_version,
             chunker=chunker or "",
@@ -765,7 +768,7 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             materialized_bytes=materialized_bytes,
             errors=errors,
         )
-        self.client.finalize_session(req)
+        self.client.finalize_ingest_session(req)
 
 
 def get_storage_gateway(

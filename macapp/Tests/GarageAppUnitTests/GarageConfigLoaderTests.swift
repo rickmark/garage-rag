@@ -253,6 +253,11 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertFalse(presets.isEmpty)
         XCTAssertTrue(presets.contains { $0.slug == "bge-m3" })
         XCTAssertTrue(presets.contains { $0.slug == "nomic-embed-text" })
+        XCTAssertTrue(presets.contains { $0.slug == "mxbai-embed-xsmall" })
+        if let mxbai = presets.first(where: { $0.slug == "mxbai-embed-xsmall" }) {
+            XCTAssertEqual(mxbai.effectiveDims, 384)
+            XCTAssertEqual(mxbai.sha256, "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44")
+        }
     }
 
     func testEmbeddingVectorStatsCalculation() {

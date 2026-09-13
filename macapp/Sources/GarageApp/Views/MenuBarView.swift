@@ -70,7 +70,7 @@ struct MenuBarView: View {
                 }
             } else {
                 Button("Ingest now") {
-                    Task { await appState.ingestViaXPC(slug: "*") }
+                    Task { await appState.ingestAllSources() }
                 }
                 .disabled(appState.postgres.status != .running || appState.isIngesting || appState.isScanning)
             }

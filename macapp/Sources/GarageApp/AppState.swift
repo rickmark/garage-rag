@@ -1,7 +1,10 @@
 import Foundation
 import SwiftUI
 import Combine
+import OSLog
 import IngestClient
+
+private let logger = Logger(subsystem: "me.rickmark.garage", category: "AppState")
 
 @MainActor
 final class AppState: ObservableObject {
@@ -69,7 +72,7 @@ final class AppState: ObservableObject {
         self.volumeAccess = volumeAccess ?? VolumeAccessService(ingestClient: client)
         let downloadService = modelDownload ?? ModelDownloadService()
         self.modelDownload = downloadService
-        self.ingestService = IngestService(client: self.volumeAccess.ingestClient ?? client)
+        self.ingestService = IngestService(client: self.volumeAccess.ingestClient ?? client, postgres: postgres)
         self.xpcServices = xpcServices ?? XPCServiceManager()
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
@@ -469,15 +472,51 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
-    /// Runs ingestion through the configured execution mode (XPC helper or in-process) streaming real-time progress.
+    /// Runs ingestion through the configured execution mode (XPC helper, in-process, or CLI) streaming real-time progress.
     @discardableResult
     func ingestSource(slug: String, options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
+        if slug == "*" {
+            return await ingestAllSources(options: options, mode: mode)
+        }
         let result = await ingestService.ingest(slug: slug, options: options, mode: mode)
         await fetchRegisteredSources()
         await fetchCorpusStats()
         lastCommandSucceeded = result.succeeded
         lastCommandOutput = result.message ?? (result.succeeded ? "Ingestion completed" : "Ingestion failed")
         return result.succeeded
+    }
+
+    /// Ingests all registered sources sequentially, looping over each source and streaming individual progress.
+    @discardableResult
+    func ingestAllSources(options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
+        await fetchRegisteredSources()
+        let sources = registeredSources
+        guard !sources.isEmpty else {
+            let msg = "No sources registered to ingest."
+            logger.warning("\(msg, privacy: .public)")
+            return false
+        }
+        var allSucceeded = true
+        for source in sources {
+            if ingestService.isCancelling {
+                logger.info("ingestAllSources stopped because cancellation was requested.")
+                break
+            }
+            let sourceOptions = IngestOptions(
+                includeCode: options.includeCode || source.includeCode,
+                limit: options.limit,
+                force: options.force,
+                grpcHost: options.grpcHost,
+                grpcPort: options.grpcPort
+            )
+            let result = await ingestService.ingest(slug: source.slug, options: sourceOptions, mode: mode)
+            await fetchRegisteredSources()
+            await fetchCorpusStats()
+            if !result.succeeded {
+                allSucceeded = false
+            }
+        }
+        return allSucceeded
     }
 
     /// Runs ingestion specifically through the XPC service streaming real-time progress to the UI.
@@ -490,6 +529,12 @@ final class AppState: ObservableObject {
     @discardableResult
     func ingestInProcess(slug: String, options: IngestOptions = .default) async -> Bool {
         await ingestSource(slug: slug, options: options, mode: .inProcess)
+    }
+
+    /// Runs ingestion via the out-of-process standalone `garage ingest` CLI subprocess.
+    @discardableResult
+    func ingestViaCLI(slug: String, options: IngestOptions = .default) async -> Bool {
+        await ingestSource(slug: slug, options: options, mode: .cliProcess)
     }
 
     /// Runs embedding backfill in an independent process and log stream.
@@ -506,7 +551,7 @@ final class AppState: ObservableObject {
         case "Postgres": postgres.clearLogs()
         case "garage CLI": garage.clearLogs()
         case "Ingest": ingest.clearLogs()
-        case "Ingest XPC", "Ingest (XPC)", "Ingest (In-Process)": ingestService.clearLogs()
+        case "Ingest XPC", "Ingest (XPC)", "Ingest (In-Process)", "Ingest (CLI)": ingestService.clearLogs()
         case "Backfill": backfill.clearLogs()
         case "MCP Server": mcp.clearLogs()
         case "gRPC Server": grpc.clearLogs()
@@ -587,7 +632,7 @@ final class AppState: ObservableObject {
         guard postgres.status == .running, !ingestService.isRunning, !ingest.isRunning, !backfill.isRunning else { return }
 
         _ = await scanSources()
-        let ingestSucceeded = await ingestViaXPC(slug: "*")
+        let ingestSucceeded = await ingestAllSources(mode: .xpcService)
         let backfillSucceeded = await runBackfill(["backfill"])
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded

@@ -248,6 +248,19 @@ public enum GarageConfigLoader {
             sha256: "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
         ),
         ModelPresetEntry(
+            name: "mxbai Embed XSmall",
+            modelId: "mixedbread-ai/mxbai-embed-xsmall-v1",
+            slug: "mxbai-embed-xsmall",
+            modelRef: "mxbai-embed-xsmall",
+            provider: "llama_xpc",
+            nativeDims: 384,
+            defaultDims: 384,
+            contextSize: 512,
+            downloadModelId: "mixedbread-ai/mxbai-embed-xsmall-v1",
+            downloadFile: "gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
+            sha256: "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44"
+        ),
+        ModelPresetEntry(
             name: "mxbai Embed Large",
             modelId: "mixedbread-ai/mxbai-embed-large",
             slug: "mxbai-embed-large",

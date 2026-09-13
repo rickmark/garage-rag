@@ -37,6 +37,8 @@ from garage_rag.proto.garage_pb2 import (
     ExtractResponse,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
+    GetEmbeddingBatchesRequest,
+    GetEmbeddingBatchesResponse,
     IngestRequest,
     IngestStatus,
     InitDbRequest,
@@ -80,6 +82,8 @@ from garage_rag.proto.garage_pb2 import (
     StopResponse,
     SyncRequest,
     SyncStatus,
+    UpdateEmbeddingsRequest,
+    UpdateEmbeddingsResponse,
     VersionRequest,
     VersionResponse,
 )
@@ -283,6 +287,12 @@ class GarageClient:
 
     def finalize_ingest_session(self, request: FinalizeIngestSessionRequest) -> FinalizeIngestSessionResponse:
         return self._invoke_unary("FinalizeIngestSession", request, FinalizeIngestSessionResponse)
+
+    def get_embedding_batches(self, request: GetEmbeddingBatchesRequest) -> GetEmbeddingBatchesResponse:
+        return self._invoke_unary("GetEmbeddingBatches", request, GetEmbeddingBatchesResponse)
+
+    def update_embeddings(self, request: UpdateEmbeddingsRequest) -> UpdateEmbeddingsResponse:
+        return self._invoke_unary("UpdateEmbeddings", request, UpdateEmbeddingsResponse)
 
     def execute_command(self, argv: list[str]) -> Iterator[CommandStatus]:
         req = CommandRequest(

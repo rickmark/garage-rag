@@ -1,11 +1,42 @@
-alias(
-    name = "PythonKit",
-    actual = "@PythonKit//:PythonKit",
+load("@rules_apple//apple:macos.bzl", "macos_framework")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:codesign.bzl", "codesign")
+
+swift_library(
+    name = "PythonKit_swift",
+    srcs = ["@PythonKit//:pythonkit_swift"],
+    module_name = "PythonKit",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "pythonkit",
     actual = ":PythonKit",
+    visibility = ["//visibility:public"],
+)
+
+macos_framework(
+    name = "PythonKit_framework",
+    bundle_id = "me.rickmark.garage-rag.PythonKit",
+    bundle_name = "PythonKit",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    version = "//macapp:GarageAppVersion",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":PythonKit_swift",
+    ],
+)
+
+codesign(
+    name = "PythonKit",
+    src = ":PythonKit_framework",
+    out = "PythonKit.framework",
+    is_framework = True,
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
     visibility = ["//visibility:public"],
 )

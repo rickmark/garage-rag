@@ -102,6 +102,16 @@ final class ModelDownloadXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Mo
             reply(false, nil, error)
         }
     }
+
+    func downloadFixedTestModel(destinationDirectory: String?, with reply: @escaping (String?, Error?) -> Void) {
+        do {
+            let task = try engine.downloadFixedTestModel(destinationDirectory: destinationDirectory)
+            let json = engine.serialize(task)
+            reply(json, nil)
+        } catch {
+            reply(nil, error)
+        }
+    }
 }
 
 let delegate = ModelDownloadXPCServiceDelegate()

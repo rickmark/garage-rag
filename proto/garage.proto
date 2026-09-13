@@ -56,12 +56,14 @@ service GarageService {
     rpc ConfigSchema (ConfigSchemaRequest) returns (ConfigSchemaResponse);
     rpc ConfigImportSources (ConfigImportSourcesRequest) returns (ConfigImportSourcesResponse);
 
-    // --- Database Facade for Ingest Workers ---
+    // --- Database Facade for Ingest & Embed Workers ---
     rpc BeginIngestSession (BeginIngestSessionRequest) returns (BeginIngestSessionResponse);
     rpc PersistScan (PersistScanRequest) returns (PersistScanResponse);
     rpc CheckDocumentStat (CheckDocumentStatRequest) returns (CheckDocumentStatResponse);
     rpc PersistDocument (PersistDocumentRequest) returns (PersistDocumentResponse);
     rpc FinalizeIngestSession (FinalizeIngestSessionRequest) returns (FinalizeIngestSessionResponse);
+    rpc GetEmbeddingBatches (GetEmbeddingBatchesRequest) returns (GetEmbeddingBatchesResponse);
+    rpc UpdateEmbeddings (UpdateEmbeddingsRequest) returns (UpdateEmbeddingsResponse);
 
     // --- Legacy / Generic Command Fallback ---
     rpc ExecuteCommand (CommandRequest) returns (stream CommandStatus);
@@ -679,4 +681,45 @@ message FinalizeIngestSessionRequest {
 
 message FinalizeIngestSessionResponse {
     bool success = 1;
+}
+
+message EmbeddingChunkItem {
+    int64 chunk_id = 1;
+    string text = 2;
+}
+
+message GetEmbeddingBatchesRequest {
+    string model_slug = 1;
+    int32 batch_size = 2;
+    int32 limit = 3;
+}
+
+message GetEmbeddingBatchesResponse {
+    string model_slug = 1;
+    string table_name = 2;
+    string provider = 3;
+    string model_ref = 4;
+    int32 dims = 5;
+    int32 stored_dims = 6;
+    string storage_kind = 7;
+    string index_kind = 8;
+    int64 total_pending = 9;
+    repeated EmbeddingChunkItem chunks = 10;
+    bool has_more = 11;
+}
+
+message ChunkEmbeddingItem {
+    int64 chunk_id = 1;
+    repeated float vector = 2;
+}
+
+message UpdateEmbeddingsRequest {
+    string model_slug = 1;
+    repeated ChunkEmbeddingItem embeddings = 2;
+}
+
+message UpdateEmbeddingsResponse {
+    bool success = 1;
+    int32 count = 2;
+    string error = 3;
 }

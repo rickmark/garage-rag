@@ -1267,6 +1267,8 @@ struct ModelsView: View {
         modelDownload.activeDownloads.first {
             $0.modelId == item.slug ||
             $0.filename == item.effectiveFilename ||
+            URL(fileURLWithPath: $0.filename).lastPathComponent == item.effectiveFilename ||
+            (item.effectiveFilename != nil && URL(fileURLWithPath: item.effectiveFilename!).lastPathComponent == URL(fileURLWithPath: $0.filename).lastPathComponent) ||
             $0.url == item.effectiveDownloadURL
         }
     }
@@ -1295,9 +1297,22 @@ struct ModelsView: View {
     private func verifyAllDownloadedModels() {
         Task {
             for dl in modelDownload.downloadedModels {
-                let expectedSha = unifiedModels.first(where: { $0.effectiveFilename == dl.filename })?.effectiveSha256
-                    ?? appState.presetModels.first(where: { $0.effectiveFilename == dl.filename })?.sha256
-                    ?? ModelPresetCatalog.items.first(where: { $0.filename == dl.filename })?.sha256
+                let dlLast = URL(fileURLWithPath: dl.filename).lastPathComponent
+                let expectedSha = unifiedModels.first(where: {
+                    $0.effectiveFilename == dl.filename ||
+                    $0.effectiveFilename == dlLast ||
+                    ($0.effectiveFilename != nil && URL(fileURLWithPath: $0.effectiveFilename!).lastPathComponent == dlLast)
+                })?.effectiveSha256
+                    ?? appState.presetModels.first(where: {
+                        $0.effectiveFilename == dl.filename ||
+                        $0.effectiveFilename == dlLast ||
+                        ($0.effectiveFilename != nil && URL(fileURLWithPath: $0.effectiveFilename!).lastPathComponent == dlLast)
+                    })?.sha256
+                    ?? ModelPresetCatalog.items.first(where: {
+                        $0.filename == dl.filename ||
+                        $0.filename == dlLast ||
+                        URL(fileURLWithPath: $0.filename).lastPathComponent == dlLast
+                    })?.sha256
                 await modelDownload.verifyModelFile(path: dl.path, expectedSha256: expectedSha)
             }
         }

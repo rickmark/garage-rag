@@ -48,12 +48,12 @@ alias(
 
 alias(
     name = "PythonKit",
-    actual = "//ext/pythonkit:PythonKit",
+    actual = "//ext/pythonkit:PythonKit_swift",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "pythonkit",
-    actual = "//ext/pythonkit:PythonKit",
+    actual = "//ext/pythonkit:PythonKit_swift",
     visibility = ["//visibility:public"],
 )

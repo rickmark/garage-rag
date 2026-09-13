@@ -1,8 +1,11 @@
-load("@rules_swift//swift:swift.bzl", "swift_library")
+filegroup(
+    name = "pythonkit_source",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
 
-swift_library(
-    name = "PythonKit",
+filegroup(
+    name = "pythonkit_swift",
     srcs = glob(["PythonKit/*.swift"]),
-    module_name = "PythonKit",
     visibility = ["//visibility:public"],
 )

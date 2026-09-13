@@ -41,4 +41,7 @@ public protocol ModelDownloadXPCServiceProtocol {
 
     /// Download a fixed small test value and verify its SHA256 checksum.
     func testDownloadAndVerifySha256(with reply: @escaping (Bool, String?, Error?) -> Void)
+
+    /// Download the fixed mxbai-embed-xsmall test model resource.
+    func downloadFixedTestModel(destinationDirectory: String?, with reply: @escaping (String?, Error?) -> Void)
 }

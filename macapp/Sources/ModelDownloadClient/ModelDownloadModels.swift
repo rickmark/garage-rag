@@ -290,6 +290,20 @@ public struct ModelPresetCatalog {
             sha256: "731ece8d06dc7eda6f6572997feb9ee1258db0784827e642909d9b565641937b"
         ),
         ModelCatalogItem(
+            id: "mxbai-embed-xsmall",
+            name: "mxbai Embed XSmall (GGUF)",
+            description: "Ultra-compact 22.7M parameter embedding model (384 dims) optimized for fast testing and low resource usage.",
+            category: .embedding,
+            downloadUrl: "https://huggingface.co/mixedbread-ai/mxbai-embed-xsmall-v1/resolve/main/gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
+            filename: "gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
+            sizeBytes: 30_784_160,
+            parameterSize: "22.7M",
+            quantization: "Q8_0",
+            contextLength: 512,
+            defaultGpuLayers: 33,
+            sha256: "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44"
+        ),
+        ModelCatalogItem(
             id: "bge-m3-gguf",
             name: "BGE-M3 Embeddings (GGUF)",
             description: "Multi-lingual, multi-functionality (dense, sparse, multi-vector) high quality embedding model.",
@@ -352,10 +366,17 @@ public struct ModelPresetCatalog {
     }
 
     public static func item(forModelIdOrSlug idOrSlug: String) -> ModelCatalogItem? {
-        if let exact = items.first(where: { $0.id == idOrSlug || $0.filename.lowercased() == idOrSlug.lowercased() }) {
+        if let exact = items.first(where: {
+            $0.id == idOrSlug ||
+            $0.filename.lowercased() == idOrSlug.lowercased() ||
+            URL(fileURLWithPath: $0.filename).lastPathComponent.lowercased() == idOrSlug.lowercased()
+        }) {
             return exact
         }
         let normalized = idOrSlug.lowercased()
+        if normalized.contains("mxbai-embed-xsmall") || normalized.contains("mxbai-xsmall") {
+            return item(for: "mxbai-embed-xsmall")
+        }
         if normalized.contains("bge-m3") || normalized.contains("baai/bge-m3") {
             return item(for: "bge-m3-gguf")
         }

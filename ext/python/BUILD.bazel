@@ -1,4 +1,7 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:codesign.bzl", "codesign")
 
 configure_make(
     name = "python_3_14",
@@ -80,5 +83,34 @@ configure_make(
 alias(
     name = "python_3_14_framework",
     actual = ":python_3_14",
+    visibility = ["//visibility:public"],
+)
+
+copy_to_directory(
+    name = "python_framework_raw",
+    srcs = [":python_3_14"],
+    out = "python_framework_raw",
+    exclude_srcs_patterns = [
+        "**/Versions/3.14/lib/python3.14/test/**",
+        "**/Versions/3.14/lib/python3.14/test",
+    ],
+    include_srcs_patterns = [
+        "python_3_14/Python.framework/Versions/3.14/**",
+    ],
+    replace_prefixes = {
+        "python_3_14/Python.framework": "",
+    },
+)
+
+codesign(
+    name = "python_framework",
+    src = ":python_framework_raw",
+    out = "Python.framework",
+    is_framework = True,
+    signing_identity = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
     visibility = ["//visibility:public"],
 )

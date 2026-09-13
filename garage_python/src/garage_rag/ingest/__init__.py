@@ -280,22 +280,22 @@ def ingest_xpc(
             elif phase == "complete":
                 prog_val = 1.0
                 msg = (
-                    f"Ingested {current_source}: {indexed} indexed, {skipped} skipped, "
-                    f"{failed} failed, {chunks_written} chunks written"
+                    f"Ingested {current_source}: {indexed} ingested ({seen}/{total_items} {item_type} scanned, "
+                    f"{skipped} skipped, {failed} failed, {chunks_written} chunks written)"
                 )
             elif phase == "cancelled":
-                msg = f"Ingestion cancelled for {current_source} after {seen}/{total_items} {item_type}"
+                msg = f"Ingestion cancelled for {current_source} after {seen}/{total_items} {item_type} scanned ({indexed} ingested)"
             elif current_item:
                 pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
                 msg = (
-                    f"[{seen}/{total_items} {pct}] {current_source}: {current_item} "
-                    f"({indexed} indexed, {skipped} skipped, {failed} failed)"
+                    f"[{seen}/{total_items} scanned {pct}] {current_source}: {indexed} ingested "
+                    f"({skipped} skipped, {failed} failed) - {current_item}"
                 )
             else:
                 pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
                 msg = (
-                    f"[{seen}/{total_items} {pct}] {current_source}: {seen}/{total_items} {item_type} "
-                    f"({indexed} indexed, {skipped} skipped, {failed} failed, {chunks_written} chunks)"
+                    f"[{seen}/{total_items} scanned {pct}] {current_source}: {indexed} ingested "
+                    f"({skipped} skipped, {failed} failed, {chunks_written} chunks)"
                 )
 
             prog = IngestProgress(

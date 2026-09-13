@@ -4,9 +4,6 @@ load("@rules_swift//swift:swift.bzl", "swift_library")
 swift_library(
     name = "GarageMCPServerService_lib",
     srcs = glob(["**/*.swift"]),
-    data = [
-        "//garage_python:garage-par",
-    ],
     module_name = "GarageMCPServerService",
     visibility = ["//visibility:private"],
     deps = [

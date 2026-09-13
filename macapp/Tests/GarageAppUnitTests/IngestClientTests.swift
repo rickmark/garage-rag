@@ -60,6 +60,17 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(decoded.force)
     }
 
+    func testIngestExecutionModeEnumCases() {
+        XCTAssertEqual(IngestExecutionMode.allCases.count, 3)
+        XCTAssertEqual(IngestExecutionMode.xpcService.rawValue, "xpc")
+        XCTAssertEqual(IngestExecutionMode.inProcess.rawValue, "in_process")
+        XCTAssertEqual(IngestExecutionMode.cliProcess.rawValue, "cli_process")
+
+        XCTAssertEqual(IngestExecutionMode.cliProcess.shortTitle, "CLI Process")
+        XCTAssertTrue(IngestExecutionMode.cliProcess.title.contains("CLI"))
+        XCTAssertTrue(IngestExecutionMode.cliProcess.modeDescription.contains("garage ingest"))
+    }
+
     func testVolumeAccessTestRequestAndResult() throws {
         let req = VolumeAccessTestRequest(
             rootBookmarkData: nil,
@@ -267,12 +278,48 @@ final class IngestClientTests: XCTestCase {
 
     func testIngestEngineAsyncIngest() async {
         let engine = IngestEngine()
-        var updates: [IngestProgressUpdate] = []
+        final class ProgressCollector: @unchecked Sendable {
+            var updates: [IngestProgressUpdate] = []
+            private let lock = NSLock()
+            func add(_ u: IngestProgressUpdate) {
+                lock.lock()
+                defer { lock.unlock() }
+                updates.append(u)
+            }
+        }
+        let collector = ProgressCollector()
         let result = await engine.ingestSourceAsync(slug: "test-slug") { update in
-            updates.append(update)
+            collector.add(update)
         }
         XCTAssertTrue(result.succeeded)
-        XCTAssertFalse(updates.isEmpty)
-        XCTAssertEqual(updates.last?.phase, "complete")
+        XCTAssertFalse(collector.updates.isEmpty)
+        XCTAssertEqual(collector.updates.last?.phase, "complete")
+    }
+
+    func testIngestProgressScanVsIngestCounts() {
+        let update = IngestProgressUpdate(
+            source: "books",
+            phase: "ingest",
+            seen: 150,
+            totalItems: 300,
+            indexed: 120,
+            skipped: 25,
+            failed: 5,
+            placeholders: 0,
+            chunksWritten: 480,
+            itemType: "files",
+            progress: 0.5,
+            message: "[150/300 scanned 50.0%] books: 120 ingested (25 skipped, 5 failed) - chapter1.pdf",
+            error: nil,
+            currentItem: "chapter1.pdf"
+        )
+        XCTAssertEqual(update.seen, 150)
+        XCTAssertEqual(update.totalItems, 300)
+        XCTAssertEqual(update.indexed, 120)
+        XCTAssertEqual(update.skipped, 25)
+        XCTAssertEqual(update.failed, 5)
+        XCTAssertEqual(update.formattedPercent, "50%")
+        XCTAssertTrue(update.message.contains("150/300 scanned"))
+        XCTAssertTrue(update.message.contains("120 ingested"))
     }
 }

@@ -51,6 +51,7 @@ private func installCrashHandlers() {
 @objc public protocol GarageEmbedXPCServiceProtocol {
     func ping(with reply: @escaping (String) -> Void)
     func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
+    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
 }
 
 final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageEmbedXPCServiceProtocol {
@@ -121,11 +122,19 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             logger.info("Python dynamic library successfully loaded via dyld.")
 
             let sys = Python.import("sys")
-            if let resourceURL = Bundle.main.resourceURL {
-                let parFile = resourceURL.appendingPathComponent("garage-par")
-                if FileManager.default.fileExists(atPath: parFile.path) {
-                    sys.path.insert(0, parFile.path)
+            let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            let sitePackagesCandidates: [URL?] = [
+                Bundle.main.resourceURL?.appendingPathComponent("site-packages"),
+                parentAppURL.appendingPathComponent("Contents/Resources/site-packages"),
+                parentAppURL.appendingPathComponent("Resources/site-packages"),
+            ]
+            for spURL in sitePackagesCandidates {
+                if let spURL = spURL, FileManager.default.fileExists(atPath: spURL.path) {
+                    logger.info("Found site-packages at: \(spURL.path, privacy: .public)")
+                    sys.path.insert(0, spURL.path)
                 }
+            }
+            if let resourceURL = Bundle.main.resourceURL {
                 sys.path.insert(0, resourceURL.path)
             }
             _ = try? Python.attemptImport("garage_rag.embed")
@@ -170,18 +179,19 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                 
                 // If get_embedder is available, attempt to get embedder and embed sample text
                 if embedModule.get_embedder != Python.None {
-                    let modelArg: PythonObject = model != nil ? PythonObject(model!) : Python.None
+                    let targetModel = model ?? "mxbai-embed-xsmall"
+                    let modelArg = PythonObject(targetModel)
                     let embedder = try await embedModule.get_embedder.throwing.dynamicallyCall(withKeywordArguments: [("model_name", modelArg)])
                     if embedder.embed_query != Python.None {
                         let vec = try await embedder.embed_query.throwing.dynamicallyCall(withArguments: [sampleTexts[0]])
                         let len = Int(Python.len(vec)) ?? 0
                         let preview = String(describing: vec.take(min(3, len)))
-                        details = "Embedded '\(sampleTexts[0].prefix(30))...' successfully. Vector dimensions: \(len), sample: \(preview)"
+                        details = "Embedded '\(sampleTexts[0].prefix(30))...' with \(targetModel) successfully. Vector dimensions: \(len), sample: \(preview)"
                     } else if embedder.embed_documents != Python.None {
                         let pyTexts = PythonObject(sampleTexts)
                         let vecs = try await embedder.embed_documents.throwing.dynamicallyCall(withArguments: [pyTexts])
                         let len = Int(Python.len(vecs)) ?? 0
-                        details = "Embedded \(sampleTexts.count) document(s) successfully. Output vectors count: \(len)"
+                        details = "Embedded \(sampleTexts.count) document(s) with \(targetModel) successfully. Output vectors count: \(len)"
                     }
                 }
                 reply(true, details)
@@ -197,6 +207,45 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
         }
         #else
         reply(true, "Embedded \(texts.count) test text(s) successfully in mock fallback mode.")
+        #endif
+    }
+
+    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void) {
+        initializePythonIfNeeded()
+        #if canImport(PythonKit)
+        Task {
+            do {
+                let embedModule = try Python.attemptImport("garage_rag.embed")
+                if embedModule.embed_via_grpc != Python.None {
+                    let host = grpcHost ?? "127.0.0.1"
+                    let port = grpcPort > 0 ? grpcPort : 50051
+                    let pyModel = model != nil ? PythonObject(model!) : Python.None
+                    let pyLimit = limit > 0 ? PythonObject(limit) : Python.None
+                    let pyBatchSize = batchSize > 0 ? PythonObject(batchSize) : Python.None
+                    let resultDict = try await embedModule.embed_via_grpc.throwing.dynamicallyCall(withKeywordArguments: [
+                        ("model_slug", pyModel),
+                        ("limit", pyLimit),
+                        ("batch_size", pyBatchSize),
+                        ("grpc_host", PythonObject(host)),
+                        ("grpc_port", PythonObject(port))
+                    ])
+                    let message = String(resultDict["message"]) ?? "Embed via gRPC completed"
+                    reply(true, message)
+                } else {
+                    reply(false, "embed_via_grpc not found in garage_rag.embed")
+                }
+            } catch {
+                var tracebackStr = ""
+                if let traceback = try? Python.attemptImport("traceback") {
+                    tracebackStr = String(describing: traceback.format_exc())
+                }
+                let errDetails = "Embed via gRPC failed: \(error.localizedDescription)\nTraceback: \(tracebackStr)"
+                logger.error("\(errDetails, privacy: .public)")
+                reply(false, errDetails)
+            }
+        }
+        #else
+        reply(true, "Mock embedBatches succeeded")
         #endif
     }
 }

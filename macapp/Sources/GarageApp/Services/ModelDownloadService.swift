@@ -291,16 +291,38 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Query Helpers
 
+    private func matchesModel(info: DownloadedModelInfo, target: String) -> Bool {
+        let cleanTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTarget.isEmpty else { return false }
+        if info.filename == cleanTarget || info.path == cleanTarget || info.name == cleanTarget {
+            return true
+        }
+        let targetLast = URL(fileURLWithPath: cleanTarget).lastPathComponent
+        let infoLast = URL(fileURLWithPath: info.filename).lastPathComponent
+        if !targetLast.isEmpty && (targetLast == infoLast || targetLast == info.name) {
+            return true
+        }
+        if info.path.hasSuffix("/" + cleanTarget) || info.filename.hasSuffix("/" + cleanTarget) || cleanTarget.hasSuffix("/" + info.filename) {
+            return true
+        }
+        return false
+    }
+
     func isModelDownloaded(filename: String) -> Bool {
-        downloadedModels.contains { $0.filename == filename }
+        downloadedModels.contains { matchesModel(info: $0, target: filename) }
     }
 
     func isModelDownloading(url: String) -> Bool {
-        activeDownloads.contains { ($0.url == url || $0.filename == url) && ($0.status == .downloading || $0.status == .queued) }
+        let cleanUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let last = URL(fileURLWithPath: cleanUrl).lastPathComponent
+        return activeDownloads.contains {
+            ($0.url == cleanUrl || $0.filename == cleanUrl || URL(fileURLWithPath: $0.filename).lastPathComponent == last || $0.destinationPath.hasSuffix("/" + cleanUrl)) &&
+            ($0.status == .downloading || $0.status == .queued)
+        }
     }
 
     func downloadedModel(for filename: String) -> DownloadedModelInfo? {
-        downloadedModels.first { $0.filename == filename }
+        downloadedModels.first { matchesModel(info: $0, target: filename) }
     }
 
     func revealInFinder(path: String) {

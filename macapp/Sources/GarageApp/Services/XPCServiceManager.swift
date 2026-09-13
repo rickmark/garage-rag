@@ -18,6 +18,7 @@ public protocol GarageGenericXPCPingProtocol {
 public protocol GarageEmbedXPCServiceProtocol {
     func ping(with reply: @escaping (String) -> Void)
     func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
+    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
 }
 
 /// Represents the outcome of a functional beyond-ping diagnostic test on a service.
@@ -231,7 +232,7 @@ public final class XPCServiceManager: ObservableObject {
             logger.info("XPC service '\(bundleId, privacy: .public)' is active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms)")
             return newState
         } catch {
-            let enriched = (error as? NSError) ?? XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
+            let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
             let errorMsg = enriched.localizedDescription
             logger.warning("XPC service '\(bundleId, privacy: .public)' ping failed: \(errorMsg, privacy: .public)")
             let newState = XPCServiceState.unreachable(error: errorMsg)
@@ -491,28 +492,28 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                proxy.embedTexts([testString], model: nil) { isOk, output in
+                proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
                     relay.resume(returning: (isOk, output ?? "No output"))
                 }
             }
 
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-            let summary = success ? "Model loaded & embedded test string in \(String(format: "%.1f", elapsed))ms" : "Embedding computation failed"
+            let summary = success ? "Model mxbai-embed-xsmall loaded & embedded test string in \(String(format: "%.1f", elapsed))ms" : "Embedding computation failed"
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module and computes float vector coordinates for a fixed sample text.",
+                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
+                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
                 isSuccess: success,
                 durationMs: elapsed,
                 summary: summary,
-                details: "Input text: \"\(testString)\"\nResult: \(details)\nLatency: \(String(format: "%.2f", elapsed)) ms"
+                details: "Model: mxbai-embed-xsmall\nInput text: \"\(testString)\"\nResult: \(details)\nLatency: \(String(format: "%.2f", elapsed)) ms"
             )
         } catch {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module and computes float vector coordinates for a fixed sample text.",
+                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
+                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Embed XPC service test failed: \(error.localizedDescription)",

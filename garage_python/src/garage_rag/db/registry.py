@@ -166,6 +166,12 @@ KNOWN_MODELS: dict[str, ModelSpec] = {
         dims=1024,
         model_id="BAAI/bge-m3",
     ),
+    "mxbai-embed-xsmall": ModelSpec(
+        slug="mxbai-embed-xsmall",
+        model_ref="mxbai-embed-xsmall",
+        dims=384,
+        model_id="mixedbread-ai/mxbai-embed-xsmall-v1",
+    ),
     "mxbai-embed-large": ModelSpec(
         slug="mxbai-embed-large",
         model_ref="mxbai-embed-large",

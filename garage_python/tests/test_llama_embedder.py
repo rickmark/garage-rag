@@ -32,6 +32,28 @@ def test_embedder_factory_llama_xpc():
     assert dims == 768
 
 
+def test_llama_embedder_mxbai_embed_xsmall():
+    model_path = "/Users/rickmark/Developer/garage/models/mxbai-embed-xsmall-v1-q8_0.gguf"
+    client = LlamaXPCClient()
+    load_res = client.load_model(model_path, alias="mxbai-embed-xsmall")
+    assert load_res["success"] is True
+
+    embedder = LlamaXPCEmbedder(model_ref="mxbai-embed-xsmall", client=client)
+    assert isinstance(embedder, Embedder)
+
+    dims = embedder.probe_dims()
+    assert dims == 384
+
+    texts = [
+        "First document for mxbai-embed-xsmall test embeddings.",
+        "Second query testing semantic search indexing with 384-dimension vectors.",
+    ]
+    vectors = embedder.embed(texts)
+    assert len(vectors) == 2
+    assert len(vectors[0]) == 384
+    assert len(vectors[1]) == 384
+
+
 def test_llama_embedder_bge_m3():
     model_path = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
     client = LlamaXPCClient()

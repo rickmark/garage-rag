@@ -75,6 +75,15 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
             filename = lastComponent.isEmpty ? "model-\(UUID().uuidString.prefix(8)).gguf" : lastComponent
         }
 
+        // Clean leading slashes while preserving subdirectories
+        var cleanFilename = filename
+        while cleanFilename.hasPrefix("/") {
+            cleanFilename.removeFirst()
+        }
+        if cleanFilename.isEmpty {
+            cleanFilename = "model-\(UUID().uuidString.prefix(8)).gguf"
+        }
+
         let targetDir: URL
         if let customDir = request.destinationDirectory, !customDir.isEmpty {
             targetDir = URL(fileURLWithPath: customDir, isDirectory: true)
@@ -83,7 +92,8 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
             targetDir = defaultModelsDirectory
         }
 
-        let destinationFile = targetDir.appendingPathComponent(filename)
+        let destinationFile = targetDir.appendingPathComponent(cleanFilename)
+        try? FileManager.default.createDirectory(at: destinationFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         let taskId = UUID().uuidString
 
         var urlRequest = URLRequest(url: url)
@@ -97,7 +107,7 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
         let taskInfo = DownloadTaskInfo(
             id: taskId,
             url: request.url,
-            filename: filename,
+            filename: cleanFilename,
             destinationPath: destinationFile.path,
             status: .downloading,
             bytesDownloaded: 0,
@@ -195,30 +205,47 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
             dirUrl = defaultModelsDirectory
         }
 
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: dirUrl, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else {
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: dirUrl,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
             return []
         }
 
         let supportedExtensions: Set<String> = ["gguf", "bin", "safetensors", "pt", "onnx"]
-
         var results: [DownloadedModelInfo] = []
-        for fileUrl in contents {
+        let baseDirStandardPath = dirUrl.standardizedFileURL.path
+
+        for case let fileUrl as URL in enumerator {
             let ext = fileUrl.pathExtension.lowercased()
             guard supportedExtensions.contains(ext) || fileUrl.lastPathComponent.contains(".gguf") else {
                 continue
             }
 
-            let values = try? fileUrl.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+            let values = try? fileUrl.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true else { continue }
 
             let size = Int64(values?.fileSize ?? 0)
             let modDate = values?.contentModificationDate ?? Date()
-            let filename = fileUrl.lastPathComponent
+
+            // Calculate relative path from base directory
+            let standardFilePath = fileUrl.standardizedFileURL.path
+            var relativeFilename = fileUrl.lastPathComponent
+            if standardFilePath.hasPrefix(baseDirStandardPath) {
+                let suffix = String(standardFilePath.dropFirst(baseDirStandardPath.count))
+                let trimmed = suffix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if !trimmed.isEmpty {
+                    relativeFilename = trimmed
+                }
+            }
+
             let name = fileUrl.deletingPathExtension().lastPathComponent
 
             let modelInfo = DownloadedModelInfo(
                 name: name,
-                filename: filename,
+                filename: relativeFilename,
                 path: fileUrl.path,
                 size: size,
                 modifiedAt: modDate,
@@ -271,23 +298,48 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
         return (true, computed)
     }
 
+    /// Fixed test model specification for mxbai-embed-xsmall.
+    public static let fixedTestModel = (
+        modelId: "mixedbread-ai/mxbai-embed-xsmall-v1",
+        slug: "mxbai-embed-xsmall",
+        filename: "gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
+        url: "https://huggingface.co/mixedbread-ai/mxbai-embed-xsmall-v1/resolve/main/gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
+        sha256: "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44",
+        expectedSize: Int64(30_784_160)
+    )
+
     /// Downloads a fixed small value (or streams test payload data) and verifies its SHA-256 hash.
     public func testDownloadAndVerifySha256(customData: Data? = nil) throws -> (isValid: Bool, bytes: Int, computedSha256: String, expectedSha256: String, details: String) {
-        let testString = "Garage Model Downloader Integrity Verification Test String - 2026"
+        let fixed = Self.fixedTestModel
+        let testString = "Garage Model Downloader Integrity Verification Test String for \(fixed.slug) (\(fixed.filename)) - 2026"
         let data = customData ?? Data(testString.utf8)
         let expectedDigest = SHA256.hash(data: data)
         let expectedSha256 = expectedDigest.map { String(format: "%02x", $0) }.joined()
 
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("GarageDownloadTest", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let tempFile = tempDir.appendingPathComponent("test-payload-\(UUID().uuidString).bin")
+        let tempFile = tempDir.appendingPathComponent("test-\(fixed.slug)-\(UUID().uuidString).bin")
         defer { try? FileManager.default.removeItem(at: tempFile) }
 
         try data.write(to: tempFile)
         let (isValid, computedSha256) = try verifyModelFile(filePath: tempFile.path, expectedSha256: expectedSha256)
 
-        let details = "Downloaded \(data.count) bytes payload. Computed SHA-256: \(computedSha256), Expected: \(expectedSha256). Integrity match: \(isValid ? "PASSED" : "FAILED")."
+        let details = "Downloaded \(data.count) bytes test payload for \(fixed.slug). Computed SHA-256: \(computedSha256), Expected: \(expectedSha256). Integrity match: \(isValid ? "PASSED" : "FAILED")."
         return (isValid, data.count, computedSha256, expectedSha256, details)
+    }
+
+    /// Downloads the fixed mxbai-embed-xsmall model resource.
+    public func downloadFixedTestModel(destinationDirectory: String? = nil) throws -> DownloadTaskInfo {
+        let fixed = Self.fixedTestModel
+        let req = ModelDownloadRequest(
+            url: fixed.url,
+            filename: fixed.filename,
+            modelId: fixed.modelId,
+            destinationDirectory: destinationDirectory,
+            expectedSize: fixed.expectedSize,
+            sha256: fixed.sha256
+        )
+        return try startDownload(request: req)
     }
 
     // MARK: - JSON Helpers for XPC

@@ -178,7 +178,13 @@ class LlamaServiceEngine:
 
         model = payload.get("model", self.model_alias)
         default_dims = (
-            1024
+            384
+            if (
+                "mxbai-embed-xsmall" in str(model).lower()
+                or "mxbai-embed-xsmall" in self.model_alias.lower()
+                or (self.model_path and "mxbai-embed-xsmall" in self.model_path.lower())
+            )
+            else 1024
             if (
                 "bge-m3" in str(model).lower()
                 or "bge-m3" in self.model_alias.lower()

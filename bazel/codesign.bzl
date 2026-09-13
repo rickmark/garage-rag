@@ -1,6 +1,7 @@
 """Rules for codesigning binaries and directories of binaries on macOS."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@rules_apple//apple/internal:providers.bzl", "new_appleframeworkimportinfo", "new_appleresourceinfo")
 
 def _codesign_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
@@ -19,7 +20,11 @@ def _codesign_impl(ctx):
         fail("{}: 'src', 'dep', or 'srcs' must be specified and non-empty".format(ctx.label))
 
     is_dir = False
-    if len(inputs) == 1:
+    if ctx.attr.src and ctx.attr.src[DefaultInfo].files_to_run and ctx.attr.src[DefaultInfo].files_to_run.executable:
+        is_dir = False
+    elif ctx.attr.dep and ctx.attr.dep[DefaultInfo].files_to_run and ctx.attr.dep[DefaultInfo].files_to_run.executable:
+        is_dir = False
+    elif len(inputs) == 1:
         input_file = inputs[0]
         is_dir = input_file.is_directory
     else:
@@ -69,12 +74,17 @@ def _codesign_impl(ctx):
 
     dylibs_only = ctx.attr.dylibs_only or ctx.attr.dylib_only or ctx.attr.only_dylibs
 
+    output_zip = None
+    if ctx.attr.is_framework:
+        output_zip = ctx.actions.declare_file(ctx.label.name + ".framework.zip")
+
     args = ctx.actions.args()
     args.add(output.path)
     args.add("dir" if is_dir else "file")
     args.add(signing_identity)
     args.add("1" if dylibs_only else "0")
     args.add(default_entitlements_path)
+    args.add(output_zip.path if output_zip else "")
     args.add(str(len(entitlements_by_filename)))
     for filename, entitlement_path in entitlements_by_filename.items():
         args.add(filename)
@@ -85,10 +95,15 @@ def _codesign_impl(ctx):
     for f in inputs:
         args.add(f.path)
 
+    action_outputs = [output, output_zip] if output_zip else [output]
+
     ctx.actions.run_shell(
         inputs = inputs + extra_inputs,
-        outputs = [output],
+        outputs = action_outputs,
         arguments = [args],
+        execution_requirements = {
+            "no-sandbox": "1",
+        },
         command = """
 set -euo pipefail
 
@@ -97,8 +112,9 @@ kind="$2"
 signing_identity="$3"
 dylibs_only="$4"
 default_entitlements="$5"
-num_entitlements_by_filename="$6"
-shift 6
+output_zip="$6"
+num_entitlements_by_filename="$7"
+shift 7
 
 entitlement_filenames=()
 entitlement_paths=()
@@ -148,22 +164,66 @@ codesign_file() {
         sign_opts+=("--entitlements" "$entitlements")
     fi
 
+    chmod 755 "$file" || echo "CHMOD FAILED ON $file"
     /usr/bin/codesign -f -s "$signing_identity" "${sign_opts[@]}" "$file"
 }
 
 if [ "$kind" = "dir" ]; then
     mkdir -p "$output"
+    # If one of the inputs matches the output directory basename, copy only that input
+    matched_input=""
     for input_path in "${inputs[@]}"; do
-        if [ -d "$input_path" ]; then
-            cp -pPR "$input_path/." "$output/"
-        else
-            mkdir -p "$output/$(dirname "$input_path")"
-            cp -pP "$input_path" "$output/$input_path"
+        if [ "$(basename "$input_path")" = "$(basename "$output")" ]; then
+            matched_input="$input_path"
+            break
         fi
     done
-    chmod -R u+w "$output" 2>/dev/null || true
 
-    find "$output" -type f | while IFS= read -r file; do
+    if [ -n "$matched_input" ]; then
+        if [ -d "$matched_input" ]; then
+            tar -cf - -C "$matched_input" . | (cd "$output" && tar -xf -)
+        else
+            cp -P "$matched_input" "$output/"
+        fi
+    else
+        for input_path in "${inputs[@]}"; do
+            if [ -d "$input_path" ]; then
+                tar -cf - -C "$input_path" . | (cd "$output" && tar -xf -)
+            else
+                mkdir -p "$output/$(dirname "$input_path")"
+                cp -P "$input_path" "$output/$input_path"
+            fi
+        done
+    fi
+    find "$output" -type d -exec chmod 755 {} + 2>/dev/null || true
+    find "$output" -type f -exec chmod 755 {} + 2>/dev/null || true
+
+    if [ -d "$output/Versions" ]; then
+        rm -rf "$output/bin" "$output/bazel-out" "$output/Contents" 2>/dev/null || true
+        find "$output" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
+        find "$output" -name "*.app" -exec rm -rf {} + 2>/dev/null || true
+        if [ ! -e "$output/Versions/Current" ]; then
+            latest_ver="$(ls -1 "$output/Versions" | grep -v Current | tail -n 1)"
+            if [ -n "$latest_ver" ]; then
+                (cd "$output/Versions" && ln -sf "$latest_ver" Current)
+            fi
+        fi
+        for link_target in Python Headers Resources; do
+            if [ -e "$output/Versions/Current/$link_target" ]; then
+                rm -rf "$output/$link_target"
+                (cd "$output" && ln -sf "Versions/Current/$link_target" "$link_target")
+            fi
+        done
+    fi
+
+    # Ensure all regular files are independent writable copies (break hardlinks)
+    for file in $(find "$output" -type f); do
+        if [ ! -L "$file" ]; then
+            chmod 755 "$file"
+        fi
+    done
+
+    find "$output" -type f \\( -name "*.dylib" -o -name "*.dylib.*" -o -name "*.so" \\) | while IFS= read -r file; do
         case "$file" in
             *.a|*.dSYM/*) continue ;;
         esac
@@ -181,6 +241,24 @@ if [ "$kind" = "dir" ]; then
             codesign_file "$file"
         fi
     done
+
+    if [ -d "$output/Versions" ]; then
+        for ver_dir in "$output/Versions"/*; do
+            if [ -d "$ver_dir" ] && [ ! -L "$ver_dir" ]; then
+                if [ -f "$ver_dir/Python" ]; then
+                    codesign_file "$ver_dir/Python"
+                fi
+                codesign_file "$ver_dir"
+            fi
+        done
+        codesign_file "$output"
+    fi
+
+    if [ -n "$output_zip" ]; then
+        abs_output_zip="$PWD/$output_zip"
+        rm -f "$abs_output_zip"
+        (cd "$(dirname "$output")" && zip -y -r -q -0 "$abs_output_zip" "$(basename "$output")")
+    fi
 else
     mkdir -p "$(dirname "$output")"
     cp -pL "${inputs[0]}" "$output"
@@ -202,14 +280,36 @@ fi
         progress_message = "Codesigning {}".format(ctx.label),
     )
 
+    output_files = [output_zip] if (ctx.attr.is_framework and output_zip) else [output]
     default_info_kwargs = {
-        "files": depset([output]),
-        "runfiles": ctx.runfiles(files = [output]),
+        "files": depset(output_files),
+        "runfiles": ctx.runfiles(),
     }
     if not is_dir:
         default_info_kwargs["executable"] = output
 
-    return [DefaultInfo(**default_info_kwargs)]
+    providers = [DefaultInfo(**default_info_kwargs)]
+
+    if ctx.attr.is_framework and output_zip:
+        resource_info = new_appleresourceinfo(
+            framework = [
+                (None, None, depset([output_zip])),
+            ],
+            owners = depset([(output_zip.short_path, str(ctx.label))]),
+            unowned_resources = depset([]),
+        )
+        providers.append(resource_info)
+    elif ctx.attr.parent_dir:
+        resource_info = new_appleresourceinfo(
+            unprocessed = [
+                (ctx.attr.parent_dir, None, depset([output])),
+            ],
+            owners = depset([(output.short_path, str(ctx.label))]),
+            unowned_resources = depset([]),
+        )
+        providers.append(resource_info)
+
+    return providers
 
 codesign = rule(
     implementation = _codesign_impl,
@@ -236,6 +336,10 @@ codesign = rule(
             allow_files = True,
             doc = "Entitlements plist files to use for specific output basenames.",
         ),
+        "is_framework": attr.bool(
+            default = False,
+            doc = "Whether this target is an Apple framework bundle to embed under Contents/Frameworks.",
+        ),
         "only_dylibs": attr.bool(
             default = False,
             doc = "Alias for dylibs_only.",
@@ -246,6 +350,10 @@ codesign = rule(
         ),
         "out": attr.string(
             doc = "Output file or directory name. Defaults to target name.",
+        ),
+        "parent_dir": attr.string(
+            default = "",
+            doc = "Subdirectory inside Contents/Resources to place this resource.",
         ),
         "sign": attr.string(
             doc = "Signing identity (alias for signing_identity).",

@@ -670,7 +670,7 @@ def scan(
 
 @app.command()
 def ingest(
-    source: Annotated[str, typer.Option("--source", "-s", help="Source slug to walk.")],
+    source: Annotated[str, typer.Option("--source", "-s", help="Source slug to walk, or '*' for all.")] = "*",
     include_code: Annotated[
         bool,
         typer.Option("--include-code", help="Also index source files, not just documents."),
@@ -710,8 +710,8 @@ def ingest(
                     return
                 pct_str = f" [{(progress_counters.seen / total_items * 100):.1f}%]" if total_items > 0 else ""
                 status.update(
-                    f"{slug}:{pct_str} seen {progress_counters.seen:,}/{total_items:,} indexed {progress_counters.indexed:,} "
-                    f"skipped {progress_counters.skipped:,} failed {progress_counters.failed:,}{note}"
+                    f"{slug}:{pct_str} scanned {progress_counters.seen:,}/{total_items:,} | ingested {progress_counters.indexed:,} "
+                    f"(skipped {progress_counters.skipped:,}, failed {progress_counters.failed:,}){note}"
                 )
 
             counters, walk_stats, budget = ingest_source(

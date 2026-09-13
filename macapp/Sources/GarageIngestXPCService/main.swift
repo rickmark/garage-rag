@@ -432,14 +432,19 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             let pyPrefix = String(describing: sys["prefix"])
             logger.info("Python runtime: version=\(pyVersion, privacy: .public), executable=\(pyExecutable, privacy: .public), prefix=\(pyPrefix, privacy: .public)")
 
-            if let resourceURL = Bundle.main.resourceURL {
-                let parFile = resourceURL.appendingPathComponent("garage-par")
-                if FileManager.default.fileExists(atPath: parFile.path) {
-                    logger.info("Found garage-par bundle at: \(parFile.path, privacy: .public)")
-                    sys["path"].insert(0, parFile.path)
-                } else {
-                    logger.warning("garage-par bundle not found at: \(parFile.path, privacy: .public)")
+            let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            let sitePackagesCandidates: [URL?] = [
+                Bundle.main.resourceURL?.appendingPathComponent("site-packages"),
+                parentAppURL.appendingPathComponent("Contents/Resources/site-packages"),
+                parentAppURL.appendingPathComponent("Resources/site-packages"),
+            ]
+            for spURL in sitePackagesCandidates {
+                if let spURL = spURL, FileManager.default.fileExists(atPath: spURL.path) {
+                    logger.info("Found site-packages at: \(spURL.path, privacy: .public)")
+                    sys["path"].insert(0, spURL.path)
                 }
+            }
+            if let resourceURL = Bundle.main.resourceURL {
                 sys["path"].insert(0, resourceURL.path)
             }
             logger.info("Python sys.path: \(String(describing: sys["path"]), privacy: .public)")

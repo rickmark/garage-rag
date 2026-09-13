@@ -259,7 +259,7 @@ struct SourcesView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
+                    .frame(maxWidth: 320)
 
                     Text(appState.ingestService.executionMode.modeDescription)
                         .font(.caption2)
@@ -302,6 +302,9 @@ struct SourcesView: View {
                             }
                             Button("Ingest All via In-Process") {
                                 ingestAllSources(mode: .inProcess)
+                            }
+                            Button("Ingest All via CLI Process") {
+                                ingestAllSources(mode: .cliProcess)
                             }
                         } label: {
                             Text("Ingest All Sources")
@@ -446,6 +449,10 @@ struct SourcesView: View {
                             ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .inProcess)
                         }
 
+                        Button("Ingest via CLI Process") {
+                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .cliProcess)
+                        }
+
                         Divider()
 
                         Button("Ingest (Include Code)") {
@@ -534,7 +541,7 @@ struct SourcesView: View {
                             .font(.caption.bold())
                             .foregroundStyle(.blue)
                         Spacer()
-                        Text("\(progress.seen) / \(progress.totalItems) \(progress.itemType)")
+                        Text("Scanned: \(progress.seen)/\(progress.totalItems) \(progress.itemType) • Ingested: \(progress.indexed)")
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                     }
@@ -558,11 +565,11 @@ struct SourcesView: View {
                         Image(systemName: progress.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                             .foregroundStyle(progress.isError ? Color.red : Color.green)
                             .font(.caption)
-                        Text("Last Ingest (\(progress.phase)): \(progress.indexed) indexed, \(progress.skipped) skipped, \(progress.failed) failed")
+                        Text("Last Ingest (\(progress.phase)): \(progress.indexed) ingested, \(progress.skipped) skipped, \(progress.failed) failed")
                             .font(.caption)
                         Spacer()
                         if progress.totalItems > 0 {
-                            Text("\(progress.seen)/\(progress.totalItems)")
+                            Text("Scanned: \(progress.seen)/\(progress.totalItems) \(progress.itemType)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }

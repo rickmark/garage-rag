@@ -8,6 +8,8 @@
 
 load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("@aspect_rules_py//uv:defs.bzl", "gazelle_python_manifest")
+load("//bazel:codesign.bzl", "codesign")
+load("//bazel:python_site_packages.bzl", "python_site_packages")
 load("//tools/pex:pex.bzl", "py_pex_binary", "py_scie_binary")
 load("//tools/pyoxidizer:pyoxidizer.bzl", "apple_pyoxidizer_binary", "uv_export_requirements")
 
@@ -55,5 +57,29 @@ py_scie_binary(
     name = "garage-mcp",
     binary = ":garage-mcp-par",
     scie = "eager",
+    visibility = ["//visibility:public"],
+)
+
+python_site_packages(
+    name = "site-packages-raw",
+    deps = [
+        "//garage_python/src:garage_rag",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+codesign(
+    name = "site-packages",
+    src = ":site-packages-raw",
+    out = "site-packages",
+    options = [
+        "runtime",
+    ],
+    parent_dir = "site-packages",
+    sign = select({
+        "//bazel:is_adhoc": "-",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
     visibility = ["//visibility:public"],
 )

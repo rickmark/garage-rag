@@ -382,4 +382,32 @@ public final class ModelDownloadClient: Sendable {
             return (res.isValid, res.details)
         }
     }
+
+    /// Downloads the fixed mxbai-embed-xsmall test model resource.
+    public func downloadFixedTestModel(destinationDirectory: String? = nil) async throws -> DownloadTaskInfo {
+        if let engine = inProcessEngine {
+            return try engine.downloadFixedTestModel(destinationDirectory: destinationDirectory)
+        }
+
+        do {
+            return try await performRemoteCall { proxy, relay in
+                proxy.downloadFixedTestModel(destinationDirectory: destinationDirectory) { jsonString, error in
+                    if let error = error {
+                        relay.resume(throwing: error)
+                    } else if let jsonString = jsonString {
+                        do {
+                            let task = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: jsonString)
+                            relay.resume(returning: task)
+                        } catch {
+                            relay.resume(throwing: error)
+                        }
+                    } else {
+                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty download task response"]))
+                    }
+                }
+            }
+        } catch {
+            return try ModelDownloaderEngine.shared.downloadFixedTestModel(destinationDirectory: destinationDirectory)
+        }
+    }
 }

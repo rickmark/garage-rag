@@ -24,6 +24,7 @@ from garage_rag.proto.garage_pb2 import (
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
     CheckDocumentStatResponse,
+    ChunkEmbeddingItem,
     CommandRequest,
     CommandStatus,
     ConfigImportSourcesRequest,
@@ -40,11 +41,14 @@ from garage_rag.proto.garage_pb2 import (
     DocumentChunkPayload,
     DropModelRequest,
     DropModelResponse,
+    EmbeddingChunkItem,
     ExtractChunk,
     ExtractRequest,
     ExtractResponse,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
+    GetEmbeddingBatchesRequest,
+    GetEmbeddingBatchesResponse,
     IngestRequest,
     IngestStatus,
     InitDbRequest,
@@ -92,6 +96,8 @@ from garage_rag.proto.garage_pb2 import (
     StopResponse,
     SyncRequest,
     SyncStatus,
+    UpdateEmbeddingsRequest,
+    UpdateEmbeddingsResponse,
     VersionRequest,
     VersionResponse,
 )
@@ -139,13 +145,14 @@ class GarageRpcServicer(GarageServiceServicer):
         db_status = "unknown"
         is_ready = True
         try:
-            from garage_rag.db.engine import check_connection
+            from sqlalchemy import text
+            from garage_rag.db.engine import get_engine
             from garage_rag.db.migrate import has_pending_migrations
 
-            if not check_connection():
-                db_status = "disconnected"
-                is_ready = False
-            elif has_pending_migrations():
+            with get_engine().connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+            if has_pending_migrations():
                 db_status = "needs_migration"
                 is_ready = False
             else:
@@ -1071,8 +1078,9 @@ class GarageRpcServicer(GarageServiceServicer):
             if src is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.source_slug}")
             scan_res = ScanResult(
-                source=request.source_slug,
+                source_slug=request.source_slug,
                 kind=src.kind,
+                root=Path(src.root),
                 item_count=request.item_count,
                 item_type=request.item_type,
                 duration_seconds=request.duration_seconds,
@@ -1298,6 +1306,113 @@ class GarageRpcServicer(GarageServiceServicer):
                 if request.errors:
                     run.error = "; ".join(request.errors[:5])[:4000]
             return FinalizeIngestSessionResponse(success=True)
+
+    def GetEmbeddingBatches(
+        self, request: GetEmbeddingBatchesRequest, context: grpc.ServicerContext
+    ) -> GetEmbeddingBatchesResponse:
+        """Fetch pending unembedded text chunks for a target embedding model."""
+        from sqlalchemy import text
+        from garage_rag.db.emb_tables import get_model
+        from garage_rag.db.engine import session_scope
+        from garage_rag.embed.ollama import assert_safe_table, count_pending
+
+        with session_scope() as session:
+            slug = request.model_slug if request.model_slug else None
+            try:
+                model = get_model(session, slug)
+            except Exception:
+                return GetEmbeddingBatchesResponse(
+                    model_slug=request.model_slug,
+                    has_more=False,
+                )
+
+            if model is None:
+                return GetEmbeddingBatchesResponse(
+                    model_slug=request.model_slug,
+                    has_more=False,
+                )
+
+            table = assert_safe_table(model.table_name)
+            pending_total = count_pending(session, model)
+
+            fetch_limit = request.batch_size if request.batch_size > 0 else 64
+            if request.limit > 0 and request.limit < fetch_limit:
+                fetch_limit = request.limit
+
+            sql = text(
+                f"""
+                SELECT c.id, c.text
+                FROM chunks c
+                LEFT JOIN {table} e ON e.chunk_id = c.id
+                WHERE e.chunk_id IS NULL
+                ORDER BY c.id
+                LIMIT :limit
+                """
+            )
+            rows = session.execute(sql, {"limit": fetch_limit}).all()
+            chunk_items = [
+                EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1])
+                for r in rows
+            ]
+            has_more = (pending_total - len(chunk_items)) > 0
+            return GetEmbeddingBatchesResponse(
+                model_slug=model.slug,
+                table_name=model.table_name,
+                provider=model.provider or "",
+                model_ref=model.model_ref or "",
+                dims=model.dims or 0,
+                stored_dims=model.stored_dims or 0,
+                storage_kind=model.storage_kind or "",
+                index_kind=model.index_kind or "",
+                total_pending=pending_total,
+                chunks=chunk_items,
+                has_more=has_more,
+            )
+
+    def UpdateEmbeddings(
+        self, request: UpdateEmbeddingsRequest, context: grpc.ServicerContext
+    ) -> UpdateEmbeddingsResponse:
+        """Upsert computed embedding vectors for the given model table."""
+        from sqlalchemy import text
+        from garage_rag.db.emb_tables import get_model
+        from garage_rag.db.engine import session_scope
+        from garage_rag.embed.ollama import _adapt, _plan_from_row, assert_safe_table
+
+        with session_scope() as session:
+            slug = request.model_slug if request.model_slug else None
+            try:
+                model = get_model(session, slug)
+            except Exception as e:
+                return UpdateEmbeddingsResponse(
+                    success=False,
+                    count=0,
+                    error=f"Embedding model not found ({slug}): {e}",
+                )
+
+            if model is None:
+                return UpdateEmbeddingsResponse(
+                    success=False,
+                    count=0,
+                    error=f"Embedding model not found: {request.model_slug}",
+                )
+
+            if not request.embeddings:
+                return UpdateEmbeddingsResponse(success=True, count=0)
+
+            table = assert_safe_table(model.table_name)
+            plan = _plan_from_row(model)
+
+            insert_sql = text(
+                f"INSERT INTO {table} (chunk_id, embedding) VALUES (:chunk_id, :embedding) "
+                "ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding"
+            )
+
+            params = [
+                {"chunk_id": item.chunk_id, "embedding": _adapt(list(item.vector), plan)}
+                for item in request.embeddings
+            ]
+            session.execute(insert_sql, params)
+            return UpdateEmbeddingsResponse(success=True, count=len(params))
 
     # -----------------------------------------------------------------------
     # Generic command fallback

@@ -61,11 +61,18 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         setupPythonEnvironment()
         #if canImport(PythonKit)
         let sys = Python.import("sys")
-        if let resourceURL = Bundle.main.resourceURL {
-            let parFile = resourceURL.appendingPathComponent("garage-par")
-            if FileManager.default.fileExists(atPath: parFile.path) {
-                sys.path.insert(0, parFile.path)
+        let parentAppURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+        let sitePackagesCandidates: [URL?] = [
+            Bundle.main.resourceURL?.appendingPathComponent("site-packages"),
+            parentAppURL.appendingPathComponent("Contents/Resources/site-packages"),
+            parentAppURL.appendingPathComponent("Resources/site-packages"),
+        ]
+        for spURL in sitePackagesCandidates {
+            if let spURL = spURL, FileManager.default.fileExists(atPath: spURL.path) {
+                sys.path.insert(0, spURL.path)
             }
+        }
+        if let resourceURL = Bundle.main.resourceURL {
             sys.path.insert(0, resourceURL.path)
         }
         _ = try? Python.attemptImport("garage_rag.mcp_server")

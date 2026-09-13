@@ -289,11 +289,56 @@ final class StatusViewTests: XCTestCase {
         XCTAssertGreaterThan(result.bytes, 0)
         XCTAssertEqual(result.computedSha256, result.expectedSha256)
         XCTAssertTrue(result.details.contains("Integrity match: PASSED"))
+        XCTAssertTrue(result.details.contains("mxbai-embed-xsmall"))
 
         let client = ModelDownloadClient(inProcessEngine: engine)
         let (isValid, details) = try await client.testDownloadAndVerifySha256()
         XCTAssertTrue(isValid)
         XCTAssertTrue(details.contains("PASSED"))
+
+        let fixedTask = try await client.downloadFixedTestModel()
+        XCTAssertEqual(fixedTask.modelId, "mixedbread-ai/mxbai-embed-xsmall-v1")
+        XCTAssertEqual(fixedTask.filename, "gguf/mxbai-embed-xsmall-v1-q8_0.gguf")
+        XCTAssertEqual(fixedTask.expectedSha256, "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44")
+    }
+
+    @MainActor
+    func testSubdirectoryModelDownloadAndDiscovery() async throws {
+        let engine = ModelDownloaderEngine.shared
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("TestSubdirModels_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir.appendingPathComponent("gguf"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: tempDir.appendingPathComponent("nested/sub"), withIntermediateDirectories: true)
+
+        let file1 = tempDir.appendingPathComponent("root_model.gguf")
+        let file2 = tempDir.appendingPathComponent("gguf/mxbai-embed-xsmall-v1-q8_0.gguf")
+        let file3 = tempDir.appendingPathComponent("nested/sub/deep-model.gguf")
+
+        try "root model dummy data".write(to: file1, atomically: true, encoding: .utf8)
+        try "sub model dummy data".write(to: file2, atomically: true, encoding: .utf8)
+        try "deep model dummy data".write(to: file3, atomically: true, encoding: .utf8)
+
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let discovered = engine.listDownloadedModels(directoryPath: tempDir.path)
+        XCTAssertEqual(discovered.count, 3)
+
+        let filenames = Set(discovered.map(\.filename))
+        XCTAssertTrue(filenames.contains("root_model.gguf"))
+        XCTAssertTrue(filenames.contains("gguf/mxbai-embed-xsmall-v1-q8_0.gguf"))
+        XCTAssertTrue(filenames.contains("nested/sub/deep-model.gguf"))
+
+        let service = ModelDownloadService(client: ModelDownloadClient(inProcessEngine: engine))
+        try engine.setModelsDirectory(path: tempDir.path)
+        await service.refresh()
+
+        XCTAssertTrue(service.isModelDownloaded(filename: "gguf/mxbai-embed-xsmall-v1-q8_0.gguf"))
+        XCTAssertTrue(service.isModelDownloaded(filename: "mxbai-embed-xsmall-v1-q8_0.gguf"))
+        XCTAssertTrue(service.isModelDownloaded(filename: "nested/sub/deep-model.gguf"))
+        XCTAssertTrue(service.isModelDownloaded(filename: "deep-model.gguf"))
+
+        let found = service.downloadedModel(for: "mxbai-embed-xsmall-v1-q8_0.gguf")
+        XCTAssertNotNil(found)
+        XCTAssertEqual(found?.filename, "gguf/mxbai-embed-xsmall-v1-q8_0.gguf")
     }
 
     @MainActor
