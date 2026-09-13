@@ -202,6 +202,22 @@ fix_macho() {
         /usr/bin/install_name_tool -add_rpath "@executable_path/../.." "$file" 2>/dev/null || true
         /usr/bin/install_name_tool -add_rpath "@executable_path/../../.." "$file" 2>/dev/null || true
     fi
+
+    if [[ "$file" == *".xpc/Contents/MacOS/"* ]]; then
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../Frameworks/Python.framework" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../../../../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../../../../Frameworks/Python.framework" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks/Python.framework" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../../../../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../../../../Frameworks/Python.framework" "$file" 2>/dev/null || true
+    elif [[ "$file" == *".app/Contents/MacOS/"* ]] || [[ "$file" == *"/MacOS/"* ]]; then
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@loader_path/../Frameworks/Python.framework" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks" "$file" 2>/dev/null || true
+        /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks/Python.framework" "$file" 2>/dev/null || true
+    fi
 }
 
 codesign_file() {

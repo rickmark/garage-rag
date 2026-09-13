@@ -43,6 +43,7 @@ private func setupPythonEnvironment() {
 private func runMCPCLI() {
     setupPythonEnvironment()
     #if canImport(PythonKit)
+    try? PythonLibrary.loadLibrary()
     let sys = Python.import("sys")
     let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let binDir = execURL.deletingLastPathComponent()
@@ -53,6 +54,10 @@ private func runMCPCLI() {
         bundleURL.appendingPathComponent("Resources/site-packages"),
         binDir.appendingPathComponent("../Resources/site-packages"),
         binDir.appendingPathComponent("site-packages"),
+        bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        bundleURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+        binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
     ]
 
     for spURL in sitePackagesCandidates {

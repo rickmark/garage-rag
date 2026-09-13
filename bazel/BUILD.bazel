@@ -108,6 +108,20 @@ platform(
     ],
 )
 
+platform(
+    name = "arm_developer_id",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+        ":distribution_developer_id",
+    ],
+    flags = [
+        "--apple_generate_dsym",
+        "--apple_platform_type=macos",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    ],
+)
+
 alias(
     name = "developer_id",
     actual = ":universal_developer_id",

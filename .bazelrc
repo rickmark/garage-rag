@@ -32,6 +32,7 @@ build --platforms=//bazel:universal_developer_id
 # Platform configuration presets
 build:adhoc --platforms=//bazel:adhoc
 build:local --platforms=//bazel:local
+build:arm_developer_id --platforms=//bazel:arm_developer_id --macos_cpus=arm64
 build:developer_id --platforms=//bazel:universal_developer_id --macos_cpus=arm64,x86_64
 build:universal --platforms=//bazel:universal_developer_id --macos_cpus=arm64,x86_64
 build:appstore --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64 --compilation_mode=opt
