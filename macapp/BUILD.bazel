@@ -120,6 +120,18 @@ alias(
 )
 
 alias(
+    name = "postgresql.conf",
+    actual = "//macapp/externals:postgresql.conf",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "postgres.conf",
+    actual = "//macapp/externals:postgresql.conf",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "garage",
     actual = "//macapp/Sources/GarageCLI:garage",
     visibility = ["//visibility:public"],

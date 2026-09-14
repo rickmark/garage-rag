@@ -9,7 +9,8 @@ configure_make(
         "--with-icu",
         "--with-readline",
         "--with-zlib",
-        # Keep features minimal unless your system provides headers (like OpenSSL)
+        "--with-template=darwin",
+        "--disable-rpath",
     ],
     copts = [
         "-Wno-error=unguarded-availability-new",
@@ -89,6 +90,14 @@ done
 for f in $$INSTALLDIR/lib/*.dylib; do
     if [ -f "$$f" ]; then
         dsymutil "$$f" -o "$$f.dSYM" || true
+    fi
+done
+for conf in "$$INSTALLDIR"/share/postgresql.conf "$$INSTALLDIR"/share/postgresql/postgresql.conf "$$INSTALLDIR"/share/postgresql.conf.sample "$$INSTALLDIR"/share/postgresql/postgresql.conf.sample; do
+    if [ -f "$$conf" ]; then
+        sed -i.bak -e 's/^[# ]*shared_memory_type = .*/shared_memory_type = mmap/' \
+                   -e 's/^[# ]*dynamic_shared_memory_type = .*/dynamic_shared_memory_type = mmap/' \
+                   "$$conf"
+        rm -f "$$conf.bak"
     fi
 done
 """,

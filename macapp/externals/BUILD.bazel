@@ -6,9 +6,16 @@ exports_files(
     visibility = ["//visibility:public"],
 )
 
+alias(
+    name = "postgres.conf",
+    actual = ":postgresql.conf",
+    visibility = ["//visibility:public"],
+)
+
 copy_to_directory(
     name = "postgres_raw",
     srcs = [
+        ":postgresql.conf",
         "//ext:pgvector",
         "//ext/postgres:postgres_rpath",
     ],
@@ -19,6 +26,7 @@ copy_to_directory(
     replace_prefixes = {
         "ext/pgvector/pgvector": "",
         "ext/postgres/postgres_rpath": "",
+        "macapp/externals": "",
     },
 )
 
@@ -28,7 +36,7 @@ codesign(
     out = "postgres",
     entitlements = select({
         "//bazel:is_store": "//macapp/externals:GarageServer.entitlements",
-        "//conditions:default": None,
+        "//conditions:default": "//macapp/externals:GarageServer.entitlements",
     }),
     options = ["runtime"],
     parent_dir = "postgres",

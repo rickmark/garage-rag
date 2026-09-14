@@ -61,6 +61,11 @@ final class PathsTests: XCTestCase {
         XCTAssertEqual(shareDir.deletingLastPathComponent().standardizedFileURL, Paths.postgresDir.standardizedFileURL)
     }
 
+    func testPostgresConfigFileResolution() {
+        let conf = Paths.postgresConfigFile
+        XCTAssertTrue(conf.lastPathComponent == "postgresql.conf" || conf.lastPathComponent == "postgres.conf")
+    }
+
     func testGarageCLIName() {
         let cli = Paths.garageCLI
         XCTAssertEqual(cli.lastPathComponent, "garage")

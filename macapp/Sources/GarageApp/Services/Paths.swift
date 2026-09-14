@@ -55,6 +55,44 @@ enum Paths {
         return root.appendingPathComponent("schema", isDirectory: true)
     }
 
+    /// Path to postgresql.conf configuration file.
+    static var postgresConfigFile: URL {
+        if let resourceURL = Bundle.main.url(forResource: "postgresql", withExtension: "conf") {
+            return resourceURL
+        }
+        if let resourceURL = Bundle.main.url(forResource: "postgres", withExtension: "conf") {
+            return resourceURL
+        }
+        if let resourceURL = Bundle.main.url(forResource: "postgresql.conf", withExtension: nil) {
+            return resourceURL
+        }
+        if let resourceURL = Bundle.main.url(forResource: "postgres.conf", withExtension: nil) {
+            return resourceURL
+        }
+        let bundledPostgresConf = root.appendingPathComponent("postgres/postgresql.conf")
+        if FileManager.default.fileExists(atPath: bundledPostgresConf.path) {
+            return bundledPostgresConf
+        }
+        let bundledConf = root.appendingPathComponent("postgresql.conf")
+        if FileManager.default.fileExists(atPath: bundledConf.path) {
+            return bundledConf
+        }
+        let bundledAltConf = root.appendingPathComponent("postgres.conf")
+        if FileManager.default.fileExists(atPath: bundledAltConf.path) {
+            return bundledAltConf
+        }
+        let devCandidates = [
+            devRepoRoot.appendingPathComponent("macapp/externals/postgresql.conf"),
+            devRepoRoot.appendingPathComponent("macapp/externals/postgres.conf"),
+        ]
+        for candidate in devCandidates {
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return bundledPostgresConf
+    }
+
     /// Path to models.json manifest file.
     static var modelsJSON: URL {
         if let resourceURL = Bundle.main.url(forResource: "models", withExtension: "json") {

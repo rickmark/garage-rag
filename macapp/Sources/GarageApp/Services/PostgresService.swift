@@ -234,16 +234,25 @@ final class PostgresService: ObservableObject {
         )
         defer { try? FileManager.default.removeItem(at: passwordFile) }
 
+        var initdbArguments = [
+            "-D", Paths.pgDataDir.path,
+            "-U", NSUserName(),
+            "-E", "UTF8",
+            "--auth=scram-sha-256",
+            "--pwfile=\(passwordFile.path)",
+            "--no-instructions",
+            "-c", "shared_memory_type=mmap",
+            "-c", "dynamic_shared_memory_type=mmap",
+            "-c", "shared_buffers=128kB",
+            "-c", "max_connections=5"
+        ]
+        if FileManager.default.fileExists(atPath: Paths.postgresShareDir.path) {
+            initdbArguments.append(contentsOf: ["-L", Paths.postgresShareDir.path])
+        }
+
         let (status, output) = ProcessRunner.runSync(
             executable: Paths.postgresTool("initdb"),
-            arguments: [
-                "-D", Paths.pgDataDir.path,
-                "-U", NSUserName(),
-                "-E", "UTF8",
-                "--auth=scram-sha-256",
-                "--pwfile=\(passwordFile.path)",
-                "--no-instructions",
-            ],
+            arguments: initdbArguments,
             environment: runtimeEnvironment(password: password)
         )
         for rawLine in output.split(separator: "\n") {
@@ -251,6 +260,13 @@ final class PostgresService: ObservableObject {
         }
         guard status == 0 else {
             throw PostgresError.initFailed(output)
+        }
+
+        let configFile = Paths.postgresConfigFile
+        if FileManager.default.fileExists(atPath: configFile.path) {
+            let destinationConf = Paths.pgDataDir.appendingPathComponent("postgresql.conf")
+            try? FileManager.default.removeItem(at: destinationConf)
+            try? FileManager.default.copyItem(at: configFile, to: destinationConf)
         }
     }
 
@@ -266,18 +282,24 @@ final class PostgresService: ObservableObject {
 
         try FileManager.default.createDirectory(at: Paths.logsDir, withIntermediateDirectories: true)
 
+        var postgresArguments = [
+            "-D", Paths.pgDataDir.path,
+            "-p", String(port),
+            "-c", "listen_addresses=localhost",
+            "-c", "logging_collector=off",
+            "-c", "log_line_prefix=%m [%p] ",
+            "-c", "shared_memory_type=mmap",
+            "-c", "dynamic_shared_memory_type=mmap",
+        ]
+        let configFile = Paths.postgresConfigFile
+        if FileManager.default.fileExists(atPath: configFile.path) {
+            postgresArguments.append(contentsOf: ["--config-file=\(configFile.path)"])
+        }
+
         do {
             try runner.run(
                 executable: Paths.postgresTool("postgres"),
-                arguments: [
-                    "-D", Paths.pgDataDir.path,
-                    "-p", String(port),
-                    "-c", "listen_addresses=localhost",
-                    "-c", "unix_socket_directories=",
-                    "-c", "logging_collector=off",
-                    "-c", "log_line_prefix=%m [%p] ",
-                    "-c", "shared_memory_type=mmap",
-                ],
+                arguments: postgresArguments,
                 environment: runtimeEnvironment(),
                 source: "postgres"
             ) { [weak self] line in
