@@ -66,11 +66,12 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
             _ = try? Python.attemptImport("garage_rag.service")
         } catch {
+            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageXPCService: \(error.localizedDescription)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageXPCService: \(errorDetails)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -137,7 +138,7 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             let serviceModule = try Python.attemptImport("garage_rag.service")
             reply(0, "Service module loaded successfully: \(serviceModule)", nil)
         } catch {
-            reply(1, nil, "Failed to load service module: \(error)")
+            reply(1, nil, "Failed to load service module: \(XPCDyldDiagnostics.formatError(error))")
         }
         #else
         reply(0, "Executed without PythonKit", nil)

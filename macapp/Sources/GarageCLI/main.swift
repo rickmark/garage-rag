@@ -15,6 +15,10 @@ private func setupPostgresEnvironment() {
     let binDir = execURL.deletingLastPathComponent()
     let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
 
+    // 2. Inside .app bundle (Contents/Resources/postgres/lib/libpq.dylib)
+    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
+    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
+
     // 4. Bundle.main resourceURL
     if let resourceURL = Bundle.main.resourceURL {
         candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
@@ -139,6 +143,12 @@ private func runCLI() {
             fputs("Warning: Could not import site module: \(error)\n", stderr)
         }
 
+        if ProcessInfo.processInfo.environment["GARAGE_DEBUG"] != nil || CommandLine.arguments.contains("--debug") {
+            fputs("[GARAGE_CLI] Dynamic Python: \(ProcessInfo.processInfo.environment["PYTHON_LIBRARY"] ?? "default")\n", stderr)
+            fputs("[GARAGE_CLI] Dynamic Postgres: \(ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"] ?? "default")\n", stderr)
+            fputs("[GARAGE_CLI] Python sys.path: \(sys.path)\n", stderr)
+        }
+
         let cliModule: PythonObject
         do {
             cliModule = try Python.attemptImport("garage_rag.cli")
@@ -147,6 +157,7 @@ private func runCLI() {
                 _ = tb.print_exc()
             }
             fputs("Error executing garage CLI: \(error)\n", stderr)
+            fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
             exit(1)
         }
         let exitCode = Int(cliModule.main_cli()) ?? 0
@@ -156,6 +167,9 @@ private func runCLI() {
             _ = tb.print_exc()
         }
         fputs("Error executing garage CLI: \(error)\n", stderr)
+        if let sys = try? Python.attemptImport("sys") {
+            fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+        }
         exit(1)
     }
     #else

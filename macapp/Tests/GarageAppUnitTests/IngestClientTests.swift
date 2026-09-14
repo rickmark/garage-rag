@@ -268,6 +268,24 @@ final class IngestClientTests: XCTestCase {
         _ = spPaths
     }
 
+    func testXPCDyldDiagnosticsMainAppBundleResolution() {
+        let defaultAppURL = XPCDyldDiagnostics.resolveMainAppBundleURL()
+        XCTAssertFalse(defaultAppURL.path.isEmpty)
+
+        // Test with custom app bundle path in environment
+        let tempDir = FileManager.default.temporaryDirectory
+        let mockAppURL = tempDir.appendingPathComponent("MockGarage.app")
+        try? FileManager.default.createDirectory(at: mockAppURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: mockAppURL)
+            unsetenv("GARAGE_APP_BUNDLE_PATH")
+        }
+
+        setenv("GARAGE_APP_BUNDLE_PATH", mockAppURL.path, 1)
+        let resolvedCustomApp = XPCDyldDiagnostics.resolveMainAppBundleURL()
+        XCTAssertEqual(resolvedCustomApp.standardizedFileURL.path, mockAppURL.standardizedFileURL.path)
+    }
+
     func testXPCDyldDiagnosticsEnsurePsycopgDatabaseURL() {
         XCTAssertEqual(
             XPCDyldDiagnostics.ensurePsycopgDatabaseURL("postgresql://user:pass@localhost:5432/garage-rag"),

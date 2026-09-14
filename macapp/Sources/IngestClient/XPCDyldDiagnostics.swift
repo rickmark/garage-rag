@@ -1,6 +1,13 @@
 import Foundation
 import OSLog
 import Darwin
+import PythonKit
+
+extension PythonError: @retroactive LocalizedError {
+    public var errorDescription: String? {
+        return self.description
+    }
+}
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCDyldDiagnostics")
 
@@ -94,6 +101,14 @@ public struct XPCServiceDiagnosticReport: Sendable {
 
 /// Utility for diagnosing dyld loading issues, crashes, and startup failures for XPC helper services.
 public struct XPCDyldDiagnostics: Sendable {
+
+    /// Formats any error, displaying full Python exception details and tracebacks when the error is a PythonKit error.
+    public static func formatError(_ error: Error) -> String {
+        if let pyErr = error as? PythonError {
+            return pyErr.description
+        }
+        return error.localizedDescription
+    }
 
     /// Known mapping from service bundle IDs to default executable names.
     public static let knownServiceExecutableMap: [String: String] = [
@@ -223,13 +238,18 @@ public struct XPCDyldDiagnostics: Sendable {
             candidatePaths.append(envPath)
         }
 
+        let mainAppURL = resolveMainAppBundleURL()
         let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let binDir = execURL.deletingLastPathComponent()
         let bundleURL = Bundle.main.bundleURL
         let isXPC = bundleURL.pathExtension == "xpc"
         let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
 
-        // 1. Primary path from Contents/MacOS/<binary>: ../../Resources/postgres/lib/libpq.dylib
+        // 1. Primary path from main app bundle: Contents/Resources/postgres/lib/libpq.dylib
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
+
+        // 2. Primary path from Contents/MacOS/<binary>: ../../Resources/postgres/lib/libpq.dylib
         candidatePaths.append(execURL.appendingPathComponent("../../Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
         candidatePaths.append(execURL.appendingPathComponent("../../Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
         candidatePaths.append(binDir.appendingPathComponent("../Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
@@ -250,45 +270,101 @@ public struct XPCDyldDiagnostics: Sendable {
         candidatePaths.append(binDir.appendingPathComponent("../postgres/lib/libpq.dylib").path)
         candidatePaths.append(binDir.appendingPathComponent("../postgres/lib/libpq.5.dylib").path)
 
-        // Fallbacks
-        candidatePaths.append("/Applications/Garage.app/Contents/Resources/postgres/lib/libpq.dylib")
-        candidatePaths.append("/Applications/Garage.app/Contents/Resources/postgres/lib/libpq.5.dylib")
-        candidatePaths.append("/opt/homebrew/opt/libpq/lib/libpq.dylib")
-        candidatePaths.append("/opt/homebrew/opt/libpq/lib/libpq.5.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@18/libpq.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@18/libpq.5.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@17/libpq.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@17/libpq.5.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@16/libpq.dylib")
-        candidatePaths.append("/opt/homebrew/lib/postgresql@16/libpq.5.dylib")
-        candidatePaths.append("/opt/homebrew/lib/libpq.dylib")
-        candidatePaths.append("/opt/homebrew/lib/libpq.5.dylib")
-        candidatePaths.append("/usr/local/opt/libpq/lib/libpq.dylib")
-        candidatePaths.append("/usr/local/opt/libpq/lib/libpq.5.dylib")
-        candidatePaths.append("/usr/local/lib/libpq.dylib")
-        candidatePaths.append("/usr/local/lib/libpq.5.dylib")
 
-        let (selectedPath, _) = diagnosePostgresLibraryLoading(candidatePaths: candidatePaths)
+
+        let (selectedPath, diagnostics) = diagnosePostgresLibraryLoading(candidatePaths: candidatePaths)
         if let path = selectedPath {
             setenv("GARAGE_LIBPQ_PATH", path, 1)
             let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
             setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
             _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
+            logger.info("Resolved Postgres libpq load path: \(path, privacy: .public)")
+            logger.info("Set DYLD_FALLBACK_LIBRARY_PATH to: \(libDir, privacy: .public)")
+            fputs("[DYLD_POSTGRES_LOAD_PATH] Resolved: \(path)\n", stderr)
+            fflush(stderr)
             return path
+        } else {
+            let diagStr = diagnostics.joined(separator: "\n")
+            logger.warning("Could not resolve Postgres libpq load path. Candidates tested:\n\(diagStr, privacy: .public)")
+            fputs("[DYLD_POSTGRES_LOAD_PATH_ERROR] Could not resolve libpq. Candidates:\n\(diagStr)\n", stderr)
+            fflush(stderr)
         }
         return nil
+    }
+
+    /// Resolves the main application bundle URL whether running in the main app, an XPC service, or a CLI tool.
+    public static func resolveMainAppBundleURL() -> URL {
+        // 1. Environment override if set
+        if let envApp = ProcessInfo.processInfo.environment["GARAGE_APP_BUNDLE_PATH"],
+           FileManager.default.fileExists(atPath: envApp) {
+            return URL(fileURLWithPath: envApp).standardizedFileURL.resolvingSymlinksInPath()
+        }
+
+        let bundleURL = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
+
+        // 2. If bundleURL itself is an .app bundle
+        if bundleURL.pathExtension == "app" {
+            return bundleURL
+        }
+
+        // 3. Search ancestor directories of bundleURL for an enclosing .app bundle (e.g. from Contents/XPCServices/<service>.xpc)
+        var scanURL = bundleURL
+        while scanURL.path != "/" && scanURL.path != "." {
+            if scanURL.pathExtension == "app" && scanURL.lastPathComponent != "Xcode.app" {
+                return scanURL
+            }
+            scanURL = scanURL.deletingLastPathComponent()
+        }
+
+        // 4. Search ancestor directories of the main bundle executable URL
+        if let execURL = Bundle.main.executableURL?.standardizedFileURL.resolvingSymlinksInPath() {
+            var current = execURL
+            while current.path != "/" && current.path != "." {
+                if current.pathExtension == "app" && current.lastPathComponent != "Xcode.app" {
+                    return current
+                }
+                current = current.deletingLastPathComponent()
+            }
+        }
+
+        // 5. Search ancestor directories of CommandLine.arguments[0]
+        if !CommandLine.arguments.isEmpty {
+            let arg0URL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
+            var current = arg0URL
+            while current.path != "/" && current.path != "." {
+                if current.pathExtension == "app" && current.lastPathComponent != "Xcode.app" {
+                    return current
+                }
+                current = current.deletingLastPathComponent()
+            }
+        }
+
+        // 6. Standard system fallback locations
+        let standardApp = URL(fileURLWithPath: "/Applications/Garage.app")
+        if FileManager.default.fileExists(atPath: standardApp.path) {
+            return standardApp
+        }
+
+        return bundleURL
     }
 
     /// Generates candidate paths for locating the Python runtime dynamic library.
     public static func defaultPythonCandidatePaths() -> [String] {
         var candidatePaths: [String] = []
+        let mainAppURL = resolveMainAppBundleURL()
         let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let binDir = execURL.deletingLastPathComponent()
         let bundleURL = Bundle.main.bundleURL
         let isXPC = bundleURL.pathExtension == "xpc"
         let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
 
-        // 1. Primary paths from Contents/MacOS/<binary> or Contents/XPCServices/<service>.xpc/Contents/MacOS/<binary>
+        // 1. Primary paths from the main bundle path: Contents/Frameworks/Python.framework/Versions/Current/Python
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/libpython3.13.dylib").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").path)
+
         // Main app / helper binary relative (../../Frameworks)
         candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
         candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
@@ -300,6 +376,11 @@ public struct XPCDyldDiagnostics: Sendable {
         candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
         candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Python").standardizedFileURL.path)
         candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").standardizedFileURL.path)
+
+        // Direct bundle URL candidate paths
+        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
+        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
+        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
 
         // Additional relative candidate traversals
         candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
@@ -339,18 +420,7 @@ public struct XPCDyldDiagnostics: Sendable {
         candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/Current/Python").path)
         candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
 
-        // 5. System / Homebrew fallbacks
-        candidatePaths.append("/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/Applications/Garage.app/Contents/Frameworks/Python.framework/Python")
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
-        candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
+
 
         return candidatePaths
     }
@@ -378,17 +448,28 @@ public struct XPCDyldDiagnostics: Sendable {
                 dlclose(handle)
                 configureFrameworkEnvironment(forPythonPath: envPath)
                 _ = dlopen(envPath, RTLD_NOW | RTLD_GLOBAL)
+                logger.info("Resolved Python dynamic library load path from environment: \(envPath, privacy: .public)")
+                fputs("[DYLD_PYTHON_LOAD_PATH] Resolved from PYTHON_LIBRARY env: \(envPath)\n", stderr)
+                fflush(stderr)
                 return envPath
             }
         }
 
         let candidatePaths = defaultPythonCandidatePaths()
-        let (selectedPath, _) = diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
+        let (selectedPath, diagnostics) = diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
         if let path = selectedPath {
             setenv("PYTHON_LIBRARY", path, 1)
             configureFrameworkEnvironment(forPythonPath: path)
             _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
+            logger.info("Resolved Python dynamic library load path: \(path, privacy: .public)")
+            fputs("[DYLD_PYTHON_LOAD_PATH] Resolved: \(path)\n", stderr)
+            fflush(stderr)
             return path
+        } else {
+            let diagStr = diagnostics.joined(separator: "\n")
+            logger.warning("Could not resolve Python dynamic library load path. Candidates tested:\n\(diagStr, privacy: .public)")
+            fputs("[DYLD_PYTHON_LOAD_PATH_ERROR] Could not resolve Python dynamic library. Candidates:\n\(diagStr)\n", stderr)
+            fflush(stderr)
         }
         return nil
     }
@@ -414,21 +495,67 @@ public struct XPCDyldDiagnostics: Sendable {
             )
         }
 
-        #if canImport(PythonKit)
         try PythonLibrary.loadLibrary()
         let sys = try Python.attemptImport("sys")
         let (libPaths, spPaths) = getPythonLibAndSitePackagesPaths()
-        for lib in libPaths {
-            sys.path.insert(0, lib)
+
+        logger.info("Discovered \(libPaths.count) Python standard library load path(s) on disk:")
+        for (idx, p) in libPaths.enumerated() {
+            logger.info("  [stdlib \(idx)] \(p, privacy: .public)")
+            fputs("  [PYTHON_STDLIB_PATH] \(p)\n", stderr)
         }
-        for sp in spPaths {
-            sys.path.insert(0, sp)
+        for lib in libPaths.reversed() {
+            if Bool(sys.path.__contains__(lib)) != true {
+                sys.path.insert(0, lib)
+            }
         }
+
+        logger.info("Discovered \(spPaths.count) site-packages load path(s) on disk:")
+        for (idx, p) in spPaths.enumerated() {
+            logger.info("  [site-packages \(idx)] \(p, privacy: .public)")
+            fputs("  [PYTHON_SITEPACKAGES_PATH] \(p)\n", stderr)
+        }
+        for sp in spPaths.reversed() {
+            if Bool(sys.path.__contains__(sp)) != true {
+                sys.path.insert(0, sp)
+            }
+        }
+
         if let resURL = Bundle.main.resourceURL {
-            sys.path.insert(0, resURL.path)
+            let resPath = resURL.path
+            if FileManager.default.fileExists(atPath: resPath) {
+                logger.info("Discovered bundle resource load path: \(resPath, privacy: .public)")
+                fputs("  [PYTHON_RESOURCE_PATH] \(resPath)\n", stderr)
+                if Bool(sys.path.__contains__(resPath)) != true {
+                    sys.path.insert(0, resPath)
+                }
+            }
+        }
+
+        do {
+            let _ = try Python.attemptImport("site")
+            logger.info("Successfully loaded Python 'site' module.")
+        } catch {
+            let siteErr = "Warning: Could not import site module: \(error.localizedDescription)"
+            logger.warning("\(siteErr, privacy: .public)")
+            fputs("[WARNING] \(siteErr)\n", stderr)
         }
         ensureStandardStreams()
-        #endif
+
+        let loadPathStr = String(describing: sys.path)
+        logger.info("Python runtime initialized: \(pythonLib, privacy: .public)")
+        logger.info("Active Python sys.path: \(loadPathStr, privacy: .public)")
+        fputs("[PYTHON_LOAD_PATH] sys.path entries:\n", stderr)
+        if let pathList = Array(sys.path) as? [PythonObject] {
+            for (idx, item) in pathList.enumerated() {
+                let entry = String(describing: item)
+                fputs("  [\(idx)] \(entry)\n", stderr)
+                logger.info("  sys.path[\(idx)]: \(entry, privacy: .public)")
+            }
+        } else {
+            fputs("  \(loadPathStr)\n", stderr)
+        }
+        fflush(stderr)
 
         return pythonLib
     }
@@ -436,7 +563,7 @@ public struct XPCDyldDiagnostics: Sendable {
     /// Configures standard streams (stdin, stdout, stderr) in Python's sys module so that
     /// standard output and error are properly connected to file descriptors 0, 1, and 2.
     public static func ensureStandardStreams() {
-        #if canImport(PythonKit)
+
         do {
             let sys = try Python.attemptImport("sys")
             let io = try Python.attemptImport("io")
@@ -459,11 +586,11 @@ public struct XPCDyldDiagnostics: Sendable {
         } catch {
             fputs("Warning: Could not configure Python standard streams: \(error)\n", stderr)
         }
-        #endif
     }
 
     /// Resolves candidate standard library and site-packages paths for sys.path configuration.
     public static func getPythonLibAndSitePackagesPaths() -> (libPaths: [String], sitePackagesPaths: [String]) {
+        let mainAppURL = resolveMainAppBundleURL()
         let bundleURL = Bundle.main.bundleURL
         let isXPC = bundleURL.pathExtension == "xpc"
         let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
@@ -474,18 +601,26 @@ public struct XPCDyldDiagnostics: Sendable {
         var spPaths: [String] = []
 
         let libCandidates = [
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
+            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
+            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
             execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
             execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
             execURL.appendingPathComponent("../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
             execURL.appendingPathComponent("../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
+            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
+            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
             binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
             binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
+            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13"),
@@ -497,17 +632,29 @@ public struct XPCDyldDiagnostics: Sendable {
         ]
 
         let spCandidates = [
-            execURL.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
+            mainAppURL.appendingPathComponent("Contents/Resources/site-packages"),
+            mainAppURL.appendingPathComponent("Contents/Resources"),
+            bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
+            bundleURL.appendingPathComponent("Contents/Resources"),
+            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
+            execURL.appendingPathComponent("../../../../../Resources/site-packages").standardizedFileURL,
             execURL.appendingPathComponent("../../../../Resources/site-packages").standardizedFileURL,
             execURL.appendingPathComponent("../../../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
+            execURL.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
+            binDir.appendingPathComponent("../../../../Resources/site-packages").standardizedFileURL,
             binDir.appendingPathComponent("../../../Resources/site-packages").standardizedFileURL,
+            binDir.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
+            binDir.appendingPathComponent("../Resources/site-packages").standardizedFileURL,
             parentAppContents.appendingPathComponent("Resources/site-packages"),
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
+            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
+            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
             execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
             execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
+            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
+            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
+            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
+            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
             binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
             binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),

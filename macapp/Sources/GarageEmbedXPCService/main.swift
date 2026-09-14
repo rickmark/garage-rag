@@ -65,11 +65,12 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
             _ = try? Python.attemptImport("garage_rag.embed")
         } catch {
+            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageEmbedXPCService: \(error.localizedDescription)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageEmbedXPCService: \(errorDetails)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -164,13 +165,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                 }
                 reply(true, details)
             } catch {
-                var tracebackStr = ""
-                if initializationError == nil {
-                    if let traceback = try? Python.attemptImport("traceback") {
-                        tracebackStr = String(describing: traceback.format_exc())
-                    }
-                }
-                let errDetails = "Embed execution failed: \(error.localizedDescription)\nTraceback: \(tracebackStr)"
+                let errDetails = "Embed execution failed: \(XPCDyldDiagnostics.formatError(error))"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
             }
@@ -209,13 +204,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                     reply(false, "embed_via_grpc not found in garage_rag.embed")
                 }
             } catch {
-                var tracebackStr = ""
-                if initializationError == nil {
-                    if let traceback = try? Python.attemptImport("traceback") {
-                        tracebackStr = String(describing: traceback.format_exc())
-                    }
-                }
-                let errDetails = "Embed via gRPC failed: \(error.localizedDescription)\nTraceback: \(tracebackStr)"
+                let errDetails = "Embed via gRPC failed: \(XPCDyldDiagnostics.formatError(error))"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
             }

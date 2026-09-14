@@ -95,6 +95,7 @@ final class IngestService: ObservableObject {
     func clearMessages() {
         lastError = nil
         lastSuccess = nil
+        latestProgress = nil
     }
 
     func handleProgress(_ progress: IngestProgressUpdate, sourceLabel: String = "Ingest") {

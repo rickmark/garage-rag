@@ -235,6 +235,12 @@ private func runMCPCLI() {
             fputs("Warning: Could not import site module: \(error)\n", stderr)
         }
 
+        if ProcessInfo.processInfo.environment["GARAGE_DEBUG"] != nil || CommandLine.arguments.contains("--debug") {
+            fputs("[GARAGE_MCP] Dynamic Python: \(ProcessInfo.processInfo.environment["PYTHON_LIBRARY"] ?? "default")\n", stderr)
+            fputs("[GARAGE_MCP] Dynamic Postgres: \(ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"] ?? "default")\n", stderr)
+            fputs("[GARAGE_MCP] Python sys.path: \(sys.path)\n", stderr)
+        }
+
         let mcpModule: PythonObject
         do {
             mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
@@ -243,6 +249,7 @@ private func runMCPCLI() {
                 _ = tb.print_exc()
             }
             fputs("Error executing garage-mcp CLI: \(error)\n", stderr)
+            fputs("[GARAGE_MCP] Python sys.path at failure: \(sys.path)\n", stderr)
             exit(1)
         }
         let exitCode = Int(mcpModule.main()) ?? 0
@@ -252,6 +259,9 @@ private func runMCPCLI() {
             _ = tb.print_exc()
         }
         fputs("Error executing garage-mcp CLI: \(error)\n", stderr)
+        if let sys = try? Python.attemptImport("sys") {
+            fputs("[GARAGE_MCP] Python sys.path at failure: \(sys.path)\n", stderr)
+        }
         exit(1)
     }
     #else

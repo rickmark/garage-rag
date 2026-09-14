@@ -66,11 +66,12 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
             _ = try? Python.attemptImport("garage_rag.mcp_server")
         } catch {
+            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageMCPServerService: \(error.localizedDescription)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageMCPServerService: \(errorDetails)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -144,7 +145,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server")
             reply(true, "MCP server module loaded successfully: \(mcpModule)")
         } catch {
-            reply(false, "Failed to load MCP server module: \(error)")
+            reply(false, "Failed to load MCP server module: \(XPCDyldDiagnostics.formatError(error))")
         }
         #else
         reply(true, "Started without PythonKit")

@@ -1,9 +1,7 @@
 import Foundation
 import IngestClient
 import OSLog
-#if canImport(PythonKit)
 import PythonKit
-#endif
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageIngestXPCService")
 
@@ -217,7 +215,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             reply(true)
             return
         }
-        #if canImport(PythonKit)
         do {
             let ingestModule = try Python.attemptImport("garage_rag.ingest")
             if ingestModule.cancel_ingest != Python.None {
@@ -226,19 +223,10 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             }
             reply(true)
         } catch {
-            var tracebackStr = ""
-            if parent.initializationError == nil {
-                if let traceback = try? Python.attemptImport("traceback") {
-                    tracebackStr = String(describing: traceback.format_exc())
-                }
-            }
-            logger.error("Failed to invoke Python cancel_ingest: \(error.localizedDescription, privacy: .public)\nTraceback:\n\(tracebackStr, privacy: .public)")
+            let errorDetails = XPCDyldDiagnostics.formatError(error)
+            logger.error("Failed to invoke Python cancel_ingest: \(errorDetails, privacy: .public)")
             reply(false)
         }
-        #else
-        logger.info("Engine cancelled (non-PythonKit)")
-        reply(true)
-        #endif
     }
 
     func testVolumeAccess(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
@@ -256,7 +244,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     }
 
     private func applyEnvironmentConfig(databaseUrl: String?, lmStudioApiToken: String?) -> (Bool, String?) {
-        #if canImport(PythonKit)
         if let dbURL = databaseUrl, !dbURL.isEmpty {
             let normalized = XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL)
             setenv("GARAGE_DATABASE_URL", normalized, 1)
@@ -283,9 +270,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             logger.info("Successfully configured GARAGE_LMSTUDIO_API_TOKEN in XPC service")
         }
         return (true, "Environment configured successfully")
-        #else
-        return (true, "Environment configured (non-PythonKit)")
-        #endif
     }
 
     func configureEnvironment(databaseUrl: String?, lmStudioApiToken: String?, with reply: @escaping (Bool, String?) -> Void) {
@@ -334,7 +318,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 ProcessInfo.processInfo.endActivity(activity)
             }
 
-            #if canImport(PythonKit)
             do {
                 _ = self.applyEnvironmentConfig(databaseUrl: options.databaseUrl, lmStudioApiToken: options.lmStudioApiToken)
 
@@ -358,7 +341,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
                 logger.info("Invoking Python ingest_xpc synchronously for source '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)), grpcPort: \(String(describing: options.grpcPort)))")
                 _ = try ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
-                    ("", slug),
+                     ("source", slug),
                     ("include_code", options.includeCode),
                     ("limit", limitObj),
                     ("force", options.force),
@@ -371,21 +354,13 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 logger.info("\(successMsg, privacy: .public)")
                 reply(true, successMsg)
             } catch {
-                var tracebackStr = ""
-                if self.parent.initializationError == nil {
-                    if let traceback = try? Python.attemptImport("traceback") {
-                        tracebackStr = String(describing: traceback.format_exc())
-                    }
-                }
+                let errorDetails = XPCDyldDiagnostics.formatError(error)
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
-                let errorMsg = "Failed to run ingest for \(slug) after \(duration)s: \(error)\nTraceback:\n\(tracebackStr)"
+                let errorMsg = "Failed to run ingest for \(slug) after \(duration)s: \(errorDetails)"
                 logger.error("\(errorMsg, privacy: .public)")
                 reply(false, errorMsg)
             }
-            #else
-            logger.info("Ingest completed (stub mode)")
-            reply(true, "Ingest completed (stub)")
-            #endif
+
         }
     }
 
@@ -414,7 +389,6 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 ProcessInfo.processInfo.endActivity(activity)
             }
 
-            #if canImport(PythonKit)
             do {
                 let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] ?? options["databaseUrl"]
                 let lmToken = options["GARAGE_LMSTUDIO_API_TOKEN"] ?? options["lmstudio_api_token"] ?? options["lmStudioApiToken"]
@@ -445,7 +419,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
                 logger.info("Invoking Python ingest_xpc synchronously for path '\(source, privacy: .public)'")
                 _ = try ingestModule.ingest_xpc.throwing.dynamicallyCall(withKeywordArguments: [
-                    ("", source),
+                    ("source", source),
                     ("include_code", includeCode),
                     ("limit", limitObj),
                     ("force", force),
@@ -457,21 +431,13 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 logger.info("\(successMsg, privacy: .public)")
                 reply(true, successMsg)
             } catch {
-                var tracebackStr = ""
-                if self.parent.initializationError == nil {
-                    if let traceback = try? Python.attemptImport("traceback") {
-                        tracebackStr = String(describing: traceback.format_exc())
-                    }
-                }
+                let errorDetails = XPCDyldDiagnostics.formatError(error)
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
-                let errorMsg = "Failed to run ingest for \(source) after \(duration)s: \(error)\nTraceback:\n\(tracebackStr)"
+                let errorMsg = "Failed to run ingest for \(source) after \(duration)s: \(errorDetails)"
                 logger.error("\(errorMsg, privacy: .public)")
                 reply(false, errorMsg)
             }
-            #else
-            logger.info("Ingest completed (stub mode)")
-            reply(true, "Ingest completed (stub)")
-            #endif
+
         }
     }
 }
@@ -505,7 +471,6 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         =========================================================
         """)
 
-        #if canImport(PythonKit)
         do {
             logger.info("Initializing Python runtime and linking Python.framework dynamically...")
             let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
@@ -528,23 +493,18 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
                 logger.info("Registered C log callback with garage_rag.ingest")
             }
         } catch {
-            var tracebackStr = ""
-            if let traceback = try? Python.attemptImport("traceback") {
-                tracebackStr = String(describing: traceback.format_exc())
-            }
+            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment: \(error.localizedDescription)\(dyldError)\nTraceback:\n\(tracebackStr)"
+            let errorMsg = "Failed to initialize Python environment: \(errorDetails)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
             logger.error("\(errorMsg, privacy: .public)")
         }
-        #else
-        logger.warning("GarageIngestXPCService compiled without PythonKit support")
-        #endif
+
         isInitialized = true
     }
 

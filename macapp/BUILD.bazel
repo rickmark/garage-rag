@@ -155,6 +155,9 @@ swift_library(
     srcs = glob(["Sources/IngestClient/**/*.swift"]),
     module_name = "IngestClient",
     visibility = ["//visibility:public"],
+    deps = [
+        "//ext:PythonKit",
+    ],
 )
 
 swift_library(
