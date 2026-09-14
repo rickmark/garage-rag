@@ -276,6 +276,7 @@ final class PostgresService: ObservableObject {
                     "-c", "unix_socket_directories=",
                     "-c", "logging_collector=off",
                     "-c", "log_line_prefix=%m [%p] ",
+                    "-c", "shared_memory_type=mmap",
                 ],
                 environment: runtimeEnvironment(),
                 source: "postgres"
