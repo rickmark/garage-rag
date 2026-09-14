@@ -309,8 +309,60 @@ public struct XPCDyldDiagnostics: Sendable {
         return nil
     }
 
+    private static let bundleLock = NSLock()
+    private static var _configuredAppBundleURL: URL?
+    private static var _activeSecurityScopedBundleURL: URL?
+
+    /// Sets the main application bundle URL, extending the sandbox access if security-scoped.
+    public static func setMainAppBundleURL(_ url: URL) {
+        bundleLock.lock()
+        defer { bundleLock.unlock() }
+
+        if let existing = _activeSecurityScopedBundleURL {
+            existing.stopAccessingSecurityScopedResource()
+            _activeSecurityScopedBundleURL = nil
+        }
+
+        let isSecurityScoped = url.startAccessingSecurityScopedResource()
+        if isSecurityScoped {
+            _activeSecurityScopedBundleURL = url
+            logger.info("Successfully started accessing security-scoped main app bundle URL: \(url.path, privacy: .public)")
+        } else {
+            logger.debug("Configured main app bundle URL: \(url.path, privacy: .public)")
+        }
+
+        let standardized = url.standardizedFileURL.resolvingSymlinksInPath()
+        _configuredAppBundleURL = standardized
+        setenv("GARAGE_APP_BUNDLE_PATH", standardized.path, 1)
+    }
+
+    /// Resolves the file reference URL for the main application bundle.
+    public static func resolveMainAppBundleFileReference() -> URL {
+        let url = resolveMainAppBundleURL()
+        return (url as NSURL).fileReferenceURL() ?? url
+    }
+
+    /// Resets any configured main application bundle URL back to default discovery.
+    public static func resetMainAppBundleURL() {
+        bundleLock.lock()
+        defer { bundleLock.unlock() }
+        if let existing = _activeSecurityScopedBundleURL {
+            existing.stopAccessingSecurityScopedResource()
+            _activeSecurityScopedBundleURL = nil
+        }
+        _configuredAppBundleURL = nil
+        unsetenv("GARAGE_APP_BUNDLE_PATH")
+    }
+
     /// Resolves the main application bundle URL whether running in the main app, an XPC service, or a CLI tool.
     public static func resolveMainAppBundleURL() -> URL {
+        bundleLock.lock()
+        if let configured = _configuredAppBundleURL {
+            bundleLock.unlock()
+            return configured
+        }
+        bundleLock.unlock()
+
         // 1. Environment override if set
         if let envApp = ProcessInfo.processInfo.environment["GARAGE_APP_BUNDLE_PATH"],
            FileManager.default.fileExists(atPath: envApp) {

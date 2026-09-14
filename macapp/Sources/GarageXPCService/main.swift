@@ -104,6 +104,12 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
         reply(name, pid, uptime, status)
     }
 
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
+        logger.info("GarageXPCService setting main app bundle reference: \(bundleURL.path, privacy: .public)")
+        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        reply(true, "Main app bundle configured: \(bundleURL.path)")
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

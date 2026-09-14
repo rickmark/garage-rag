@@ -166,6 +166,16 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     public init() {}
 
+    /// Passes the main application bundle file reference URL to set the bundle and extend the sandbox.
+    private func ensureAppBundleConfigured(proxy: GarageCommonXPCServiceProtocol) async {
+        let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+        await withCheckedContinuation { continuation in
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                continuation.resume()
+            }
+        }
+    }
+
     /// Dispatches a gRPC call with raw binary payload across an XPC connection.
     public func call(
         service: String = "",
@@ -173,8 +183,18 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
         payload: Data,
         connection: NSXPCConnection
     ) async throws -> (Data?, String?) {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageCommonXPCServiceProtocol else {
+            let err = NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+            throw err
+        }
+        await ensureAppBundleConfigured(proxy: proxy)
+
         return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let activeProxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 continuation.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(
@@ -186,7 +206,7 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
                 return
             }
 
-            proxy.handleGRPCCall(service: service, method: method, payload: payload) { data, message, error in
+            activeProxy.handleGRPCCall(service: service, method: method, payload: payload) { data, message, error in
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else {
@@ -202,8 +222,18 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
         requestJson: String,
         connection: NSXPCConnection
     ) async throws -> String {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageCommonXPCServiceProtocol else {
+            let err = NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+            throw err
+        }
+        await ensureAppBundleConfigured(proxy: proxy)
+
         return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let activeProxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 continuation.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(
@@ -215,7 +245,7 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
                 return
             }
 
-            proxy.handleRPC(method: method, requestJson: requestJson) { responseJson, error in
+            activeProxy.handleRPC(method: method, requestJson: requestJson) { responseJson, error in
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else {
@@ -227,8 +257,18 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     /// Fetches captured stdout and stderr buffers from the XPC service.
     public func fetchLogs(connection: NSXPCConnection) async throws -> (stdout: String?, stderr: String?) {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageCommonXPCServiceProtocol else {
+            let err = NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+            throw err
+        }
+        await ensureAppBundleConfigured(proxy: proxy)
+
         return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let activeProxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 continuation.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(
@@ -240,7 +280,7 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
                 return
             }
 
-            proxy.fetchLogs { stdout, stderr in
+            activeProxy.fetchLogs { stdout, stderr in
                 continuation.resume(returning: (stdout, stderr))
             }
         }
@@ -248,8 +288,18 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     /// Clears the captured stdout and stderr logs in the XPC service.
     public func clearLogs(connection: NSXPCConnection) async throws -> Bool {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageCommonXPCServiceProtocol else {
+            let err = NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+            throw err
+        }
+        await ensureAppBundleConfigured(proxy: proxy)
+
         return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let activeProxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 continuation.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(
@@ -261,7 +311,7 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
                 return
             }
 
-            proxy.clearLogs { success in
+            activeProxy.clearLogs { success in
                 continuation.resume(returning: success)
             }
         }
@@ -269,8 +319,18 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     /// Retrieves structured service info from the XPC service.
     public func getServiceInfo(connection: NSXPCConnection) async throws -> (name: String, pid: Int32, uptime: Double, status: String?) {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageCommonXPCServiceProtocol else {
+            let err = NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+            throw err
+        }
+        await ensureAppBundleConfigured(proxy: proxy)
+
         return try await withCheckedThrowingContinuation { continuation in
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let activeProxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 continuation.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(
@@ -282,7 +342,7 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
                 return
             }
 
-            proxy.getServiceInfo { name, pid, uptime, status in
+            activeProxy.getServiceInfo { name, pid, uptime, status in
                 continuation.resume(returning: (name, pid, uptime, status))
             }
         }

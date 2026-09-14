@@ -4,7 +4,7 @@ load(
     "xcodeproj",
 )
 load("//bazel:macos_application.bzl", "appstore_macos_application", "developer_id_macos_application")
-load("//bazel:xcarchive.bzl", "appstore_xcarchive", "developer_id_xcarchive")
+load("//bazel:xcarchive.bzl", "appstore_xcarchive")
 
 exports_files(
     glob(["*"]),
@@ -26,12 +26,6 @@ developer_id_macos_application(
 appstore_macos_application(
     name = "GarageStore.app",
     app = "//macapp/Sources/GarageApp:GarageApp",
-    visibility = ["//visibility:public"],
-)
-
-developer_id_xcarchive(
-    name = "Garage.xcarchive",
-    bundle = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
@@ -228,16 +222,92 @@ alias(
 )
 
 alias(
-    name = "xcarchive",
-    actual = select({
-        "//bazel:is_store": ":GarageStore.xcarchive",
-        "//conditions:default": ":Garage.xcarchive",
-    }),
+    name = "GarageApp_arm64",
+    actual = "//macapp/package:GarageApp_arm64",
+    visibility = ["//visibility:public"],
 )
 
 alias(
-    name = "GarageDeveloperID.xcarchive",
-    actual = ":Garage.xcarchive",
+    name = "GarageApp_x86_64",
+    actual = "//macapp/package:GarageApp_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstaller_arm64",
+    actual = "//macapp/package:GarageInstaller_arm64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstaller_x86_64",
+    actual = "//macapp/package:GarageInstaller_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "installer_arm64",
+    actual = "//macapp/package:GarageInstaller_arm64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "installer_x86_64",
+    actual = "//macapp/package:GarageInstaller_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageAppNotary_arm64",
+    actual = "//macapp/package:GarageAppNotary_arm64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageAppNotary_x86_64",
+    actual = "//macapp/package:GarageAppNotary_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstallerNotary_arm64",
+    actual = "//macapp/package:GarageInstallerNotary_arm64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstallerNotary_x86_64",
+    actual = "//macapp/package:GarageInstallerNotary_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstallerNotary",
+    actual = "//macapp/package:GarageInstallerNotary",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "package",
+    actual = "//macapp/package:package",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "install_arm64",
+    actual = "//macapp/package:install_arm64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "install_x86_64",
+    actual = "//macapp/package:install_x86_64",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "xcarchive",
+    actual = ":GarageStore.xcarchive",
     visibility = ["//visibility:public"],
 )
 
@@ -250,12 +320,6 @@ alias(
 alias(
     name = "appstore.xcarchive",
     actual = ":GarageStore.xcarchive",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "developer_id.xcarchive",
-    actual = ":Garage.xcarchive",
     visibility = ["//visibility:public"],
 )
 

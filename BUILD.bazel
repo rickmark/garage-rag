@@ -111,6 +111,11 @@ alias(
 )
 
 alias(
+    name = "package",
+    actual = "//macapp:package",
+)
+
+alias(
     name = "install",
     actual = "//macapp:install",
 )

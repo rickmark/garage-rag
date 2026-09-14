@@ -433,10 +433,13 @@ public final class XPCServiceManager: ObservableObject {
                 return
             }
 
-            proxy.ping { reply in
-                let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-                let pid = connection.processIdentifier
-                relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
+            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                proxy.ping { reply in
+                    let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+                    let pid = connection.processIdentifier
+                    relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
+                }
             }
         }
     }
@@ -462,11 +465,14 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: (out, err))
+                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                proxy.setAppBundleReference(bundleRef) { _, _ in
+                    proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
+                        if let error = error {
+                            relay.resume(throwing: error)
+                        } else {
+                            relay.resume(returning: (out, err))
+                        }
                     }
                 }
             }
@@ -570,8 +576,11 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
-                    relay.resume(returning: (isOk, output ?? "No output"))
+                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                proxy.setAppBundleReference(bundleRef) { _, _ in
+                    proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
+                        relay.resume(returning: (isOk, output ?? "No output"))
+                    }
                 }
             }
 
@@ -650,7 +659,10 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
                     return
                 }
-                proxy.ping { reply in relay.resume(returning: reply) }
+                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                proxy.setAppBundleReference(bundleRef) { _, _ in
+                    proxy.ping { reply in relay.resume(returning: reply) }
+                }
             }
 
             let healthResponse: String? = try await withCheckedThrowingContinuation { continuation in

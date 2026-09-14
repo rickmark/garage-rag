@@ -1,4 +1,5 @@
 import Foundation
+import IngestClient
 
 /// High-level Swift client for communicating with `ModelDownloadXPCService`.
 public final class ModelDownloadClient: Sendable {
@@ -70,7 +71,10 @@ public final class ModelDownloadClient: Sendable {
                 return
             }
 
-            block(proxy, relay)
+            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                block(proxy, relay)
+            }
         }
     }
 

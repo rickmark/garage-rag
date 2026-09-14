@@ -163,6 +163,12 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         reply(name, pid, uptime, status)
     }
 
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
+        logger.info("GarageIngestXPCService setting main app bundle reference from client pid \(self.connection.processIdentifier): \(bundleURL.path, privacy: .public)")
+        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        reply(true, "Main app bundle configured: \(bundleURL.path)")
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

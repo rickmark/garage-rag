@@ -106,7 +106,10 @@ public final class IngestClient: Sendable {
                 return
             }
 
-            block(proxy, relay)
+            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                block(proxy, relay)
+            }
         }
     }
 

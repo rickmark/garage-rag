@@ -21,6 +21,9 @@ public protocol GarageCommonXPCServiceProtocol: NSObjectProtocol {
     /// Health check returning structured status (service name, PID, uptime/timestamp, extra status string).
     func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void)
 
+    /// Sets the main application bundle file reference URL to resolve bundle resources and extend the sandbox.
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void)
+
     /// Fetch buffered stdout and stderr strings since last fetch or since service startup.
     func fetchLogs(with reply: @escaping (String?, String?) -> Void)
 

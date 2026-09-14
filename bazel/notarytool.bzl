@@ -14,26 +14,43 @@ def _notarytool_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))
 
-    target = ctx.attr.app or ctx.attr.bundle or ctx.attr.pkg or ctx.attr.src or (ctx.attr.srcs[0] if ctx.attr.srcs else None)
-    if not target:
-        fail("{}: 'app', 'bundle', 'pkg', 'src', or 'srcs' must be specified".format(ctx.label))
+    raw_targets = []
+    if ctx.attr.app:
+        raw_targets.append(ctx.attr.app)
+    if ctx.attr.bundle:
+        raw_targets.append(ctx.attr.bundle)
+    if ctx.attr.pkg:
+        raw_targets.append(ctx.attr.pkg)
+    if ctx.attr.src:
+        raw_targets.append(ctx.attr.src)
+    if ctx.attr.srcs:
+        raw_targets.extend(ctx.attr.srcs)
+    if ctx.attr.apps:
+        raw_targets.extend(ctx.attr.apps)
+    if ctx.attr.pkgs:
+        raw_targets.extend(ctx.attr.pkgs)
 
-    target_files = target[DefaultInfo].files.to_list()
-    if not target_files:
-        fail("{}: target '{}' did not produce any files".format(ctx.label, target.label))
+    if not raw_targets:
+        fail("{}: 'app', 'bundle', 'pkg', 'src', 'srcs', 'apps', or 'pkgs' must be specified".format(ctx.label))
 
-    target_file = None
-    for f in target_files:
-        if f.path.endswith(".zip") or f.path.endswith(".pkg") or f.path.endswith(".dmg") or ".app" in f.path:
-            target_file = f
-            break
-    if not target_file:
-        target_file = target_files[0]
+    target_files = []
+    for t in raw_targets:
+        t_files = t[DefaultInfo].files.to_list()
+        for f in t_files:
+            if f.path.endswith(".zip") or f.path.endswith(".pkg") or f.path.endswith(".dmg") or ".app" in f.path:
+                if f not in target_files:
+                    target_files.append(f)
+        if not t_files:
+            fail("{}: target '{}' did not produce any files".format(ctx.label, t.label))
+        elif not any([f in target_files for f in t_files]):
+            target_files.append(t_files[0])
 
     runner = ctx.actions.declare_file(ctx.label.name)
-    target_rlocation = ctx.workspace_name + "/" + target_file.short_path
+    extra_inputs = list(target_files)
 
-    extra_inputs = [target_file]
+    target_rlocations = [ctx.workspace_name + "/" + f.short_path for f in target_files]
+    target_short_paths = [f.short_path for f in target_files]
+
     key_rlocation = ""
     key_short_path = ""
     if ctx.file.key:
@@ -41,30 +58,42 @@ def _notarytool_impl(ctx):
         key_rlocation = ctx.workspace_name + "/" + ctx.file.key.short_path
         key_short_path = ctx.file.key.short_path
 
+    rlocations_str = " ".join(['"{}"'.format(loc) for loc in target_rlocations])
+    short_paths_str = " ".join(['"{}"'.format(sp) for sp in target_short_paths])
+
     runner_content = """#!/bin/bash
 set -euo pipefail
 
-TARGET_FILE=""
-if [ -n "${{RUNFILES_DIR:-}}" ] && [ -e "${{RUNFILES_DIR}}/{target_rlocation}" ]; then
-    TARGET_FILE="${{RUNFILES_DIR}}/{target_rlocation}"
-elif [ -n "${{RUNFILES_MANIFEST_FILE:-}}" ]; then
-    TARGET_FILE="$(grep -m 1 "^{target_rlocation} " "${{RUNFILES_MANIFEST_FILE}}" 2>/dev/null | cut -d' ' -f2- || true)"
-fi
+TARGET_RLOCATIONS=({rlocations_str})
+TARGET_SHORT_PATHS=({short_paths_str})
 
-if [ -z "$TARGET_FILE" ] || [ ! -e "$TARGET_FILE" ]; then
-    if [ -e "${{0}}.runfiles/{target_rlocation}" ]; then
-        TARGET_FILE="${{0}}.runfiles/{target_rlocation}"
-    elif [ -e "${{0}}.runfiles/_main/{target_short_path}" ]; then
-        TARGET_FILE="${{0}}.runfiles/_main/{target_short_path}"
-    elif [ -e "{target_short_path}" ]; then
-        TARGET_FILE="{target_short_path}"
+RESOLVED_FILES=()
+for i in "${{!TARGET_RLOCATIONS[@]}}"; do
+    rloc="${{TARGET_RLOCATIONS[$i]}}"
+    spath="${{TARGET_SHORT_PATHS[$i]}}"
+    tfile=""
+    if [ -n "${{RUNFILES_DIR:-}}" ] && [ -e "${{RUNFILES_DIR}}/$rloc" ]; then
+        tfile="${{RUNFILES_DIR}}/$rloc"
+    elif [ -n "${{RUNFILES_MANIFEST_FILE:-}}" ]; then
+        tfile="$(grep -m 1 "^$rloc " "${{RUNFILES_MANIFEST_FILE}}" 2>/dev/null | cut -d' ' -f2- || true)"
     fi
-fi
 
-if [ -z "$TARGET_FILE" ] || [ ! -e "$TARGET_FILE" ]; then
-    echo "Error: Could not locate target file ({target_short_path})" >&2
-    exit 1
-fi
+    if [ -z "$tfile" ] || [ ! -e "$tfile" ]; then
+        if [ -e "${{0}}.runfiles/$rloc" ]; then
+            tfile="${{0}}.runfiles/$rloc"
+        elif [ -e "${{0}}.runfiles/_main/$spath" ]; then
+            tfile="${{0}}.runfiles/_main/$spath"
+        elif [ -e "$spath" ]; then
+            tfile="$spath"
+        fi
+    fi
+
+    if [ -z "$tfile" ] || [ ! -e "$tfile" ]; then
+        echo "Error: Could not locate target file ($spath)" >&2
+        exit 1
+    fi
+    RESOLVED_FILES+=("$tfile")
+done
 
 KEY_FILE=""
 if [ -n "{key_rlocation}" ]; then
@@ -83,16 +112,6 @@ if [ -n "{key_rlocation}" ]; then
             KEY_FILE="{key_short_path}"
         fi
     fi
-fi
-
-FILE_TO_SUBMIT="$TARGET_FILE"
-if [ -d "$TARGET_FILE" ]; then
-    TMP_DIR="$(mktemp -d)"
-    trap 'rm -rf "$TMP_DIR"' EXIT
-    TMP_ZIP="$TMP_DIR/$(basename "$TARGET_FILE").zip"
-    echo "==> Packaging directory into temporary zip for notarization: $TMP_ZIP"
-    /usr/bin/ditto -c -k --keepParent "$TARGET_FILE" "$TMP_ZIP"
-    FILE_TO_SUBMIT="$TMP_ZIP"
 fi
 
 default_args=()
@@ -152,24 +171,40 @@ if [ $# -gt 0 ]; then
     esac
 fi
 
-if [ "$subcommand" = "submit" ]; then
-    echo "==> Running xcrun notarytool submit on $FILE_TO_SUBMIT..."
-    cmd=(xcrun notarytool submit "$FILE_TO_SUBMIT")
-    if [ ${{#default_args[@]}} -gt 0 ]; then
-        cmd+=("${{default_args[@]}}")
+for TARGET_FILE in "${{RESOLVED_FILES[@]}}"; do
+    FILE_TO_SUBMIT="$TARGET_FILE"
+    TMP_DIR=""
+    if [ -d "$TARGET_FILE" ]; then
+        TMP_DIR="$(mktemp -d)"
+        TMP_ZIP="$TMP_DIR/$(basename "$TARGET_FILE").zip"
+        echo "==> Packaging directory into temporary zip for notarization: $TMP_ZIP"
+        /usr/bin/ditto -c -k --keepParent "$TARGET_FILE" "$TMP_ZIP"
+        FILE_TO_SUBMIT="$TMP_ZIP"
     fi
-    if [ ${{#extra_args[@]}} -gt 0 ]; then
-        cmd+=("${{extra_args[@]}}")
+
+    if [ "$subcommand" = "submit" ]; then
+        echo "==> Running xcrun notarytool submit on $FILE_TO_SUBMIT..."
+        cmd=(xcrun notarytool submit "$FILE_TO_SUBMIT")
+        if [ ${{#default_args[@]}} -gt 0 ]; then
+            cmd+=("${{default_args[@]}}")
+        fi
+        if [ ${{#extra_args[@]}} -gt 0 ]; then
+            cmd+=("${{extra_args[@]}}")
+        fi
+        "${{cmd[@]}}"
+    else
+        echo "==> Running xcrun notarytool $subcommand..."
+        cmd=(xcrun notarytool "$subcommand")
+        if [ ${{#extra_args[@]}} -gt 0 ]; then
+            cmd+=("${{extra_args[@]}}")
+        fi
+        "${{cmd[@]}}"
     fi
-    exec "${{cmd[@]}}"
-else
-    echo "==> Running xcrun notarytool $subcommand..."
-    cmd=(xcrun notarytool "$subcommand")
-    if [ ${{#extra_args[@]}} -gt 0 ]; then
-        cmd+=("${{extra_args[@]}}")
+
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
     fi
-    exec "${{cmd[@]}}"
-fi
+done
 """.format(
         apple_id = ctx.attr.apple_id,
         issuer = ctx.attr.issuer,
@@ -181,8 +216,8 @@ fi
         notary_timeout = ctx.attr.notary_timeout,
         output_format = ctx.attr.output_format,
         password = ctx.attr.password,
-        target_rlocation = target_rlocation,
-        target_short_path = target_file.short_path,
+        rlocations_str = rlocations_str,
+        short_paths_str = short_paths_str,
         team_id = ctx.attr.team_id,
         wait = "true" if ctx.attr.wait else "false",
     )
@@ -195,13 +230,13 @@ fi
 
     return [
         DefaultInfo(
-            files = depset([target_file]),
+            files = depset(target_files),
             executable = runner,
             runfiles = ctx.runfiles(files = extra_inputs),
         ),
         MacosNotaryInfo(
             keychain_profile = ctx.attr.keychain_profile,
-            target_file = target_file,
+            target_file = target_files[0] if target_files else None,
         ),
     ]
 
@@ -212,6 +247,9 @@ notarytool = rule(
     attrs = {
         "app": attr.label(
             doc = "Target providing a macOS application (.app or .zip), package (.pkg), or archive (.dmg).",
+        ),
+        "apps": attr.label_list(
+            doc = "List of targets providing macOS applications (.app or .zip).",
         ),
         "apple_id": attr.string(
             doc = "Developer Apple ID username.",
@@ -247,6 +285,9 @@ notarytool = rule(
         ),
         "pkg": attr.label(
             doc = "Alias for app.",
+        ),
+        "pkgs": attr.label_list(
+            doc = "List of targets providing macOS installer packages (.pkg).",
         ),
         "src": attr.label(
             doc = "Alias for app.",

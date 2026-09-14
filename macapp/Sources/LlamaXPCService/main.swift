@@ -24,6 +24,11 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
         reply(name, pid, uptime, status)
     }
 
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
+        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        reply(true, "Main app bundle configured: \(bundleURL.path)")
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

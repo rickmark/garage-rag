@@ -25,6 +25,7 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
     var logsStdout = "sample stdout line 1\nsample stdout line 2\n"
     var logsStderr = "sample stderr error 1\n"
     var didClearLogs = false
+    var receivedAppBundleURL: URL?
 
     func ping(with reply: @escaping (String) -> Void) {
         reply(pingResponse)
@@ -32,6 +33,12 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
 
     func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
         reply("MockCommonXPCService", 12345, 99.5, "ready")
+    }
+
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
+        receivedAppBundleURL = bundleURL
+        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        reply(true, "Main app bundle configured: \(bundleURL.path)")
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
@@ -242,5 +249,44 @@ final class GarageCommonXPCProtocolTests: XCTestCase {
         }
 
         await fulfillment(of: [ingestExpectation, embedExpectation], timeout: 2.0)
+    }
+
+    func testMockCommonXPCServiceSetAppBundleReference() async throws {
+        defer { XPCDyldDiagnostics.resetMainAppBundleURL() }
+        let mockService = MockCommonXPCService()
+        let testBundleURL = URL(fileURLWithPath: "/Applications/Garage.app")
+        let fileRefURL = (testBundleURL as NSURL).fileReferenceURL() ?? testBundleURL
+
+        let expectation = expectation(description: "setAppBundleReference")
+        mockService.setAppBundleReference(fileRefURL) { success, message in
+            XCTAssertTrue(success)
+            XCTAssertNotNil(message)
+            expectation.fulfill()
+        }
+
+        await fulfillment(of: [expectation], timeout: 2.0)
+        XCTAssertNotNil(mockService.receivedAppBundleURL)
+        XCTAssertEqual(XPCDyldDiagnostics.resolveMainAppBundleURL().path, testBundleURL.path)
+        XCTAssertEqual(ProcessInfo.processInfo.environment["GARAGE_APP_BUNDLE_PATH"], testBundleURL.path)
+    }
+
+    func testXPCDyldDiagnosticsAppBundleResolutionAndReference() {
+        let tempBundleDir = FileManager.default.temporaryDirectory.appendingPathComponent("TestGarage_\(UUID().uuidString).app")
+        try? FileManager.default.createDirectory(at: tempBundleDir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempBundleDir)
+            XPCDyldDiagnostics.resetMainAppBundleURL()
+        }
+
+        XPCDyldDiagnostics.setMainAppBundleURL(tempBundleDir)
+
+        let resolvedURL = XPCDyldDiagnostics.resolveMainAppBundleURL()
+        XCTAssertEqual(resolvedURL.path, tempBundleDir.standardizedFileURL.resolvingSymlinksInPath().path)
+
+        let fileRefURL = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+        XCTAssertNotNil(fileRefURL)
+
+        let candidates = XPCDyldDiagnostics.defaultPythonCandidatePaths()
+        XCTAssertTrue(candidates.contains(where: { $0.contains(tempBundleDir.path) }))
     }
 }

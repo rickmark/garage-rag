@@ -1,4 +1,5 @@
 import Foundation
+import IngestClient
 
 public enum LlamaClientError: LocalizedError {
     case serviceUnavailable(String)
@@ -98,7 +99,10 @@ public final class LlamaClient: @unchecked Sendable {
                 return
             }
 
-            block(proxy, relay)
+            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                block(proxy, relay)
+            }
         }
     }
 

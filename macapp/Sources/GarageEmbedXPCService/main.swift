@@ -103,6 +103,11 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
         reply(name, pid, uptime, status)
     }
 
+    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
+        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        reply(true, nil)
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)
