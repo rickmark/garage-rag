@@ -1,0 +1,11 @@
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "ModelDownloadClient_lib",
+    srcs = glob(["**/*.swift"]),
+    module_name = "ModelDownloadClient",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//macapp/Sources/IngestClient:IngestClient_lib",
+    ],
+)

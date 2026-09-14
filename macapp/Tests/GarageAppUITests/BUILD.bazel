@@ -1,0 +1,24 @@
+load("@rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "GarageAppUITests_lib",
+    testonly = True,
+    srcs = glob(["**/*.swift"]),
+    module_name = "GarageAppUITests",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//macapp/Sources/GarageApp:GarageApp_lib",
+    ],
+)
+
+macos_unit_test(
+    name = "GarageAppUITests",
+    bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
+    bundle_name = "GarageAppUITests",
+    minimum_os_version = "14.0",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":GarageAppUITests_lib",
+    ],
+)

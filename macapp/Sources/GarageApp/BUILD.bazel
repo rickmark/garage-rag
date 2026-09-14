@@ -1,0 +1,87 @@
+load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:version.bzl", "macapp_version")
+
+swift_library(
+    name = "GarageApp_lib",
+    srcs = glob(["**/*.swift"]),
+    linkopts = [
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@executable_path/../Frameworks",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@loader_path/../Frameworks",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@executable_path/../Frameworks/Python.framework",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@loader_path/../Frameworks/Python.framework",
+    ],
+    module_name = "GarageApp",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//macapp/Sources/IngestClient:IngestClient_lib",
+        "//macapp/Sources/LlamaClient:LlamaClient_lib",
+        "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
+        "//proto:garage_proto_swift",
+    ],
+)
+
+macapp_version(
+    name = "GarageAppVersion",
+    short_version_string = "0.9",
+    visibility = ["//visibility:public"],
+)
+
+macos_application(
+    name = "GarageApp",
+    additional_contents = {
+        "//macapp/Sources/GarageCLI:garage": "MacOS",
+        "//macapp/Sources/GarageMCPCLI:garage-mcp": "MacOS",
+        "//macapp/externals:postgres_output": "Resources/postgres",
+        "//macapp/externals:schema_output": "Resources/schema",
+        "//data/models:model_manifest": "Resources",
+        "//data/schema:config_schema": "Resources",
+        "//garage_python:site-packages": "Resources/site-packages",
+    },
+    app_icons = ["//macapp:GarageApp.xcassets"],
+    bundle_id = "me.rickmark.garage-rag",
+    bundle_name = "Garage",
+    codesignopts = [
+        "--options=runtime",  # This enables the Hardened Runtime flag
+    ],
+    entitlements = select({
+        "//bazel:is_store": ":Garage.entitlements",
+        "//conditions:default": ":Garage.entitlements",
+    }),
+    executable_name = "GarageApp",
+    frameworks = [
+        "//ext/pythonkit:PythonKit_framework",
+    ],
+    infoplists = [":Info.plist"],
+    minimum_os_version = "14.0",
+    provisioning_profile = select({
+        "//bazel:is_store": "//macapp:GarageSplatAppStore.provisionprofile",
+        "//conditions:default": None,
+    }),
+    version = ":GarageAppVersion",
+    visibility = ["//visibility:public"],
+    xpc_services = [
+        "//macapp/Sources/LlamaXPCService:LlamaXPCService",
+        "//macapp/Sources/GarageMCPServerService:GarageMCPServerService",
+        "//macapp/Sources/GarageEmbedXPCService:GarageEmbedXPCService",
+        "//macapp/Sources/GarageIngestXPCService:GarageIngestXPCService",
+        "//macapp/Sources/GarageXPCService:GarageXPCService",
+        "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
+    ],
+    deps = [
+        ":GarageApp_lib",
+        "//ext/python:python_framework",
+    ],
+)

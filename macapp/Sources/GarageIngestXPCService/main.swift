@@ -247,25 +247,29 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         if let dbURL = databaseUrl, !dbURL.isEmpty {
             let normalized = XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL)
             setenv("GARAGE_DATABASE_URL", normalized, 1)
-            if let os = try? Python.attemptImport("os") {
-                os.environ["GARAGE_DATABASE_URL"] = PythonObject(normalized)
-            }
-            if let configModule = try? Python.attemptImport("garage_rag.config") {
-                if configModule.reset_settings != Python.None {
-                    _ = configModule.reset_settings()
+            if parent.initializationError == nil {
+                if let os = try? Python.attemptImport("os") {
+                    os.environ["GARAGE_DATABASE_URL"] = PythonObject(normalized)
                 }
-            }
-            if let engineModule = try? Python.attemptImport("garage_rag.db.engine") {
-                if engineModule.reset_engine != Python.None {
-                    _ = engineModule.reset_engine()
+                if let configModule = try? Python.attemptImport("garage_rag.config") {
+                    if configModule.reset_settings != Python.None {
+                        _ = configModule.reset_settings()
+                    }
+                }
+                if let engineModule = try? Python.attemptImport("garage_rag.db.engine") {
+                    if engineModule.reset_engine != Python.None {
+                        _ = engineModule.reset_engine()
+                    }
                 }
             }
             logger.info("Successfully configured GARAGE_DATABASE_URL in XPC service: \(normalized, privacy: .public)")
         }
         if let lmToken = lmStudioApiToken, !lmToken.isEmpty {
             setenv("GARAGE_LMSTUDIO_API_TOKEN", lmToken, 1)
-            if let os = try? Python.attemptImport("os") {
-                os.environ["GARAGE_LMSTUDIO_API_TOKEN"] = PythonObject(lmToken)
+            if parent.initializationError == nil {
+                if let os = try? Python.attemptImport("os") {
+                    os.environ["GARAGE_LMSTUDIO_API_TOKEN"] = PythonObject(lmToken)
+                }
             }
             logger.info("Successfully configured GARAGE_LMSTUDIO_API_TOKEN in XPC service")
         }
@@ -477,20 +481,23 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
 
             logger.info("Importing garage_rag.ingest and setting up logging callbacks...")
-            let ingestModule = try Python.attemptImport("garage_rag.ingest")
-            logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
+            if let ingestModule = try? Python.attemptImport("garage_rag.ingest") {
+                logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
 
-            // Register C callbacks
-            let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
-            if ingestModule.set_c_progress_callback != Python.None {
-                ingestModule.set_c_progress_callback(cFuncPtr)
-                logger.info("Registered C progress callback with garage_rag.ingest")
-            }
+                // Register C callbacks
+                let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
+                if ingestModule.set_c_progress_callback != Python.None {
+                    ingestModule.set_c_progress_callback(cFuncPtr)
+                    logger.info("Registered C progress callback with garage_rag.ingest")
+                }
 
-            let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
-            if ingestModule.set_c_log_callback != Python.None {
-                ingestModule.set_c_log_callback(cLogFuncPtr)
-                logger.info("Registered C log callback with garage_rag.ingest")
+                let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
+                if ingestModule.set_c_log_callback != Python.None {
+                    ingestModule.set_c_log_callback(cLogFuncPtr)
+                    logger.info("Registered C log callback with garage_rag.ingest")
+                }
+            } else {
+                logger.warning("garage_rag.ingest could not be imported during startup pre-warming; will be imported on demand.")
             }
         } catch {
             let errorDetails = XPCDyldDiagnostics.formatError(error)

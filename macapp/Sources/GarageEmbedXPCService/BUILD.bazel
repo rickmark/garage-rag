@@ -43,7 +43,7 @@ swift_library(
     deps = [
         "//ext:PythonKit",
         "//ext/python:python_3_13_framework",
-        "//macapp:IngestClient_lib",
+        "//macapp/Sources/IngestClient:IngestClient_lib",
     ],
 )
 
@@ -60,7 +60,7 @@ macos_xpc_service(
     }),
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
-    version = "//macapp:GarageAppVersion",
+    version = "//macapp/Sources/GarageApp:GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageEmbedXPCService_lib",

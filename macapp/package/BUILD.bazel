@@ -1,0 +1,23 @@
+load("//bazel:notarytool.bzl", "notarytool")
+load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
+
+notarytool(
+    name = "GarageNotary",
+    app = "//macapp/Sources/GarageApp:GarageApp",
+    visibility = ["//visibility:public"],
+)
+
+pkgbuild(
+    name = "GarageInstaller",
+    app = "//macapp/Sources/GarageApp:GarageApp",
+    identifier = "me.rickmark.garage-rag.pkg",
+    install_location = "/Applications",
+    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
+    visibility = ["//visibility:public"],
+)
+
+pkg_install(
+    name = "install",
+    pkg = ":GarageInstaller",
+    visibility = ["//visibility:public"],
+)

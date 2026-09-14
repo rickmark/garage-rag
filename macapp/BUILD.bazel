@@ -1,290 +1,43 @@
-load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
-load("@aspect_bazel_lib//lib:output_files.bzl", "output_files")
-load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("@rules_apple//apple:macos.bzl", "macos_application", "macos_ui_test", "macos_unit_test", "macos_xpc_service")
-load("@rules_swift//swift:swift.bzl", "swift_binary", "swift_library")
 load(
     "@rules_xcodeproj//xcodeproj:defs.bzl",
     "top_level_target",
     "xcodeproj",
 )
-load("//bazel:codesign.bzl", "codesign")
 load("//bazel:macos_application.bzl", "appstore_macos_application", "developer_id_macos_application")
-load("//bazel:notarytool.bzl", "notarytool")
-load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
-load("//bazel:version.bzl", "macapp_version")
 load("//bazel:xcarchive.bzl", "appstore_xcarchive", "developer_id_xcarchive")
+
+exports_files(
+    glob(["*"]),
+    visibility = ["//visibility:public"],
+)
 
 filegroup(
     name = "GarageApp.xcassets",
     srcs = glob(["GarageApp.xcassets/**"]),
-)
-
-copy_to_directory(
-    name = "postgres_raw",
-    srcs = [
-        "//ext:pgvector",
-        "//ext/postgres:postgres_rpath",
-    ],
-    out = "postgres_raw",
-    exclude_srcs_patterns = [
-        "*/include/**/*",
-    ],
-    replace_prefixes = {
-        "ext/pgvector/pgvector": "",
-        "ext/postgres/postgres_rpath": "",
-    },
-)
-
-codesign(
-    name = "postgres_output",
-    src = ":postgres_raw",
-    out = "postgres",
-    entitlements = select({
-        "//bazel:is_store": ":GarageServer.entitlements",
-        "//conditions:default": None,
-    }),
-    options = ["runtime"],
-    parent_dir = "postgres",
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
-)
-
-copy_to_directory(
-    name = "schema_output",
-    srcs = [
-        "//data/sql:sql_schema",
-    ],
-    out = "schema",
-    replace_prefixes = {
-        "data/sql/sql": "",
-    },
-)
-
-swift_binary(
-    name = "garage_bin",
-    srcs = ["Sources/GarageCLI/main.swift"],
-    linkopts = [
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks/Python.framework",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks/Python.framework",
-    ],
-    deps = [
-        "//ext/python:python_3_13_framework",
-        "//ext/pythonkit:PythonKit_swift",
-    ],
-)
-
-swift_binary(
-    name = "garage_mcp_bin",
-    srcs = ["Sources/GarageMCPCLI/main.swift"],
-    linkopts = [
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks/Python.framework",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks/Python.framework",
-    ],
-    deps = [
-        "//ext/python:python_3_13_framework",
-        "//ext/pythonkit:PythonKit_swift",
-    ],
-)
-
-codesign(
-    name = "garage",
-    src = ":garage_bin",
-    entitlements = select({
-        "//bazel:is_store": ":GarageServer.entitlements",
-        "//conditions:default": None,
-    }),
-    options = ["runtime"],
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
     visibility = ["//visibility:public"],
-)
-
-codesign(
-    name = "garage-mcp",
-    src = ":garage_mcp_bin",
-    entitlements = select({
-        "//bazel:is_store": ":GarageServer.entitlements",
-        "//conditions:default": None,
-    }),
-    options = ["runtime"],
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
-    visibility = ["//visibility:public"],
-)
-
-swift_library(
-    name = "IngestClient_lib",
-    srcs = glob(["Sources/IngestClient/**/*.swift"]),
-    module_name = "IngestClient",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//ext:PythonKit",
-    ],
-)
-
-swift_library(
-    name = "LlamaClient_lib",
-    srcs = glob(["Sources/LlamaClient/**/*.swift"]),
-    module_name = "LlamaClient",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":IngestClient_lib",
-    ],
-)
-
-swift_library(
-    name = "ModelDownloadClient_lib",
-    srcs = glob(["Sources/ModelDownloadClient/**/*.swift"]),
-    module_name = "ModelDownloadClient",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":IngestClient_lib",
-    ],
-)
-
-swift_library(
-    name = "GarageApp_lib",
-    srcs = glob(["Sources/GarageApp/**/*.swift"]),
-    linkopts = [
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks/Python.framework",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks/Python.framework",
-    ],
-    module_name = "GarageApp",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":IngestClient_lib",
-        ":LlamaClient_lib",
-        ":ModelDownloadClient_lib",
-        "//proto:garage_proto_swift",
-    ],
-)
-
-macapp_version(
-    name = "GarageAppVersion",
-    short_version_string = "0.9",
-    visibility = ["//visibility:public"],
-)
-
-macos_application(
-    name = "GarageApp",
-    additional_contents = {
-        ":garage": "MacOS",
-        ":garage-mcp": "MacOS",
-        ":postgres_output": "Resources/postgres",
-        ":schema_output": "Resources/schema",
-        "//data/models:model_manifest": "Resources",
-        "//data/schema:config_schema": "Resources",
-        "//garage_python:site-packages": "Resources/site-packages",
-    },
-    app_icons = [":GarageApp.xcassets"],
-    bundle_id = "me.rickmark.garage-rag",
-    bundle_name = "Garage",
-    codesignopts = [
-        "--options=runtime",  # This enables the Hardened Runtime flag
-    ],
-    entitlements = select({
-        "//bazel:is_store": ":Garage.entitlements",
-        "//conditions:default": None,
-    }),
-    executable_name = "GarageApp",
-    frameworks = [
-        "//ext/pythonkit:PythonKit_framework",
-    ],
-    infoplists = ["Info.plist"],
-    minimum_os_version = "14.0",
-    provisioning_profile = select({
-        "//bazel:is_store": "GarageSplatAppStore.provisionprofile",
-        "//conditions:default": None,
-    }),
-    version = ":GarageAppVersion",
-    visibility = ["//visibility:public"],
-    xpc_services = [
-        "//macapp/Sources/LlamaXPCService:LlamaXPCService",
-        "//macapp/Sources/GarageMCPServerService:GarageMCPServerService",
-        "//macapp/Sources/GarageEmbedXPCService:GarageEmbedXPCService",
-        "//macapp/Sources/GarageIngestXPCService:GarageIngestXPCService",
-        "//macapp/Sources/GarageXPCService:GarageXPCService",
-        "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
-    ],
-    deps = [
-        ":GarageApp_lib",
-        "//ext/python:python_framework",
-    ],
 )
 
 developer_id_macos_application(
     name = "Garage.app",
-    app = ":GarageApp",
+    app = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
 appstore_macos_application(
     name = "GarageStore.app",
-    app = ":GarageApp",
+    app = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
 developer_id_xcarchive(
     name = "Garage.xcarchive",
-    bundle = ":GarageApp",
+    bundle = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
 appstore_xcarchive(
     name = "GarageStore.xcarchive",
-    bundle = ":GarageApp",
+    bundle = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
@@ -294,7 +47,7 @@ xcodeproj(
     tags = ["manual"],
     top_level_targets = [
         top_level_target(
-            ":GarageApp",
+            "//macapp/Sources/GarageApp:GarageApp",
         ),
         top_level_target(
             "//macapp/Sources/LlamaXPCService:LlamaXPCService",
@@ -315,85 +68,109 @@ xcodeproj(
             "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
         ),
         top_level_target(
-            ":GarageAppUnitTests",
+            "//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests",
         ),
         top_level_target(
-            ":GarageAppUITests",
+            "//macapp/Tests/GarageAppUITests:GarageAppUITests",
         ),
     ],
     visibility = ["//visibility:public"],
 )
 
-swift_library(
-    name = "GarageAppUnitTests_lib",
-    testonly = True,
-    srcs = glob(["Tests/GarageAppUnitTests/**/*.swift"]),
-    data = [
-        "//data/models:model_manifest",
-    ],
-    module_name = "GarageAppUnitTests",
+alias(
+    name = "GarageApp",
+    actual = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
-    deps = [
-        ":GarageApp_lib",
-        ":IngestClient_lib",
-        ":LlamaClient_lib",
-        ":ModelDownloadClient_lib",
-    ],
 )
 
-macos_unit_test(
+alias(
+    name = "GarageApp_lib",
+    actual = "//macapp/Sources/GarageApp:GarageApp_lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageAppVersion",
+    actual = "//macapp/Sources/GarageApp:GarageAppVersion",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageInstaller",
+    actual = "//macapp/package:GarageInstaller",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "GarageNotary",
+    actual = "//macapp/package:GarageNotary",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "install",
+    actual = "//macapp/package:install",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "postgres_output",
+    actual = "//macapp/externals:postgres_output",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "schema_output",
+    actual = "//macapp/externals:schema_output",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "garage",
+    actual = "//macapp/Sources/GarageCLI:garage",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "garage-mcp",
+    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "IngestClient_lib",
+    actual = "//macapp/Sources/IngestClient:IngestClient_lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "LlamaClient_lib",
+    actual = "//macapp/Sources/LlamaClient:LlamaClient_lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "ModelDownloadClient_lib",
+    actual = "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "GarageAppUnitTests",
-    bundle_id = "me.rickmark.garage-rag.GarageAppUnitTests",
-    bundle_name = "GarageAppUnitTests",
-    minimum_os_version = "14.0",
+    actual = "//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests",
     visibility = ["//visibility:public"],
-    deps = [
-        ":GarageAppUnitTests_lib",
-    ],
 )
 
-swift_library(
-    name = "LlamaClientTests_lib",
-    testonly = True,
-    srcs = glob(["Tests/LlamaClientTests/**/*.swift"]),
-    module_name = "LlamaClientTests",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":LlamaClient_lib",
-    ],
-)
-
-macos_unit_test(
-    name = "LlamaClientTests",
-    bundle_id = "me.rickmark.garage-rag.LlamaClientTests",
-    bundle_name = "LlamaClientTests",
-    minimum_os_version = "14.0",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":LlamaClientTests_lib",
-    ],
-)
-
-swift_library(
-    name = "GarageAppUITests_lib",
-    testonly = True,
-    srcs = glob(["Tests/GarageAppUITests/**/*.swift"]),
-    module_name = "GarageAppUITests",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":GarageApp_lib",
-    ],
-)
-
-macos_unit_test(
+alias(
     name = "GarageAppUITests",
-    bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
-    bundle_name = "GarageAppUITests",
-    minimum_os_version = "14.0",
+    actual = "//macapp/Tests/GarageAppUITests:GarageAppUITests",
     visibility = ["//visibility:public"],
-    deps = [
-        ":GarageAppUITests_lib",
-    ],
+)
+
+alias(
+    name = "LlamaClientTests",
+    actual = "//macapp/Tests/LlamaClientTests:LlamaClientTests",
+    visibility = ["//visibility:public"],
 )
 
 alias(
@@ -444,21 +221,6 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-pkgbuild(
-    name = "GarageInstaller",
-    app = ":GarageApp",
-    identifier = "me.rickmark.garage-rag.pkg",
-    install_location = "/Applications",
-    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
-    visibility = ["//visibility:public"],
-)
-
-pkg_install(
-    name = "install",
-    pkg = ":GarageInstaller",
-    visibility = ["//visibility:public"],
-)
-
 alias(
     name = "installer",
     actual = ":GarageInstaller",
@@ -500,11 +262,5 @@ alias(
 alias(
     name = "store.xcarchive",
     actual = ":GarageStore.xcarchive",
-    visibility = ["//visibility:public"],
-)
-
-notarytool(
-    name = "GarageNotary",
-    app = ":GarageApp",
     visibility = ["//visibility:public"],
 )

@@ -7,7 +7,7 @@ swift_library(
     module_name = "LlamaXPCService",
     visibility = ["//visibility:private"],
     deps = [
-        "//macapp:LlamaClient_lib",
+        "//macapp/Sources/LlamaClient:LlamaClient_lib",
     ],
 )
 
@@ -24,7 +24,7 @@ macos_xpc_service(
     }),
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
-    version = "//macapp:GarageAppVersion",
+    version = "//macapp/Sources/GarageApp:GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [
         ":LlamaXPCService_lib",

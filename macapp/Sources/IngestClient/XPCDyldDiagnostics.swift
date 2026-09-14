@@ -132,6 +132,7 @@ public struct XPCDyldDiagnostics: Sendable {
         executableName: String? = nil
     ) -> XPCServiceDiagnosticReport {
         let execName = executableName ?? knownServiceExecutableMap[bundleId] ?? (bundleId.components(separatedBy: ".").last ?? bundleId)
+        logger.info("Starting XPC service diagnosis for bundleId: '\(bundleId, privacy: .public)', executable: '\(execName, privacy: .public)'")
         let (bundleURL, execURL) = locateServiceBundle(bundleId: bundleId, executableName: execName)
 
         let fileManager = FileManager.default
@@ -140,9 +141,18 @@ public struct XPCDyldDiagnostics: Sendable {
         let execExists = execPath.map { fileManager.fileExists(atPath: $0) } ?? false
         let isExec = execPath.map { access($0, X_OK) == 0 } ?? false
 
+        logger.info("Service bundle check for '\(bundleId, privacy: .public)': bundlePath=\(bundleURL?.path ?? "none", privacy: .public) (exists: \(bundleExists)), execPath=\(execPath ?? "none", privacy: .public) (exists: \(execExists), executable: \(isExec))")
+
         // Check for recent crash reports or dyld abort logs
         let crashReport = findRecentCrashReport(executableName: execName, maxAge: 60.0)
         let dyldError = extractDyldError(from: crashReport)
+
+        if crashReport != nil {
+            logger.warning("Recent crash report identified for service '\(bundleId, privacy: .public)'")
+        }
+        if let dyld = dyldError {
+            logger.error("Dyld error detected for service '\(bundleId, privacy: .public)': \(dyld, privacy: .public)")
+        }
 
         // Read recent system / os_log entries for the service
         let recentLogs = readRecentLogs(forExecutableName: execName, bundleId: bundleId)
@@ -173,6 +183,7 @@ public struct XPCDyldDiagnostics: Sendable {
         forServiceBundleId bundleId: String,
         executableName: String? = nil
     ) -> NSError {
+        logger.error("Enriching XPC error for service '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         let report = diagnoseService(bundleId: bundleId, executableName: executableName)
         let nsError = error as NSError
         var userInfo = nsError.userInfo
@@ -225,16 +236,23 @@ public struct XPCDyldDiagnostics: Sendable {
     /// Sets up the Postgres / libpq environment variables and loads libpq if present.
     @discardableResult
     public static func setupPostgresEnvironment() -> String? {
+        logger.info("Setting up Postgres / libpq environment...")
         if let dbURL = ProcessInfo.processInfo.environment["GARAGE_DATABASE_URL"], !dbURL.isEmpty {
             let normalized = ensurePsycopgDatabaseURL(dbURL)
             if normalized != dbURL {
                 setenv("GARAGE_DATABASE_URL", normalized, 1)
+                logger.info("Updated GARAGE_DATABASE_URL to normalized psycopg format: \(normalized, privacy: .public)")
+            } else {
+                logger.debug("GARAGE_DATABASE_URL already in expected format.")
             }
+        } else {
+            logger.debug("GARAGE_DATABASE_URL is unset or empty.")
         }
 
         var candidatePaths: [String] = []
         if let envPath = ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"],
            FileManager.default.fileExists(atPath: envPath) {
+            logger.info("Found GARAGE_LIBPQ_PATH in environment: \(envPath, privacy: .public)")
             candidatePaths.append(envPath)
         }
 
@@ -270,8 +288,7 @@ public struct XPCDyldDiagnostics: Sendable {
         candidatePaths.append(binDir.appendingPathComponent("../postgres/lib/libpq.dylib").path)
         candidatePaths.append(binDir.appendingPathComponent("../postgres/lib/libpq.5.dylib").path)
 
-
-
+        logger.info("Evaluating \(candidatePaths.count) candidate path(s) for Postgres libpq...")
         let (selectedPath, diagnostics) = diagnosePostgresLibraryLoading(candidatePaths: candidatePaths)
         if let path = selectedPath {
             setenv("GARAGE_LIBPQ_PATH", path, 1)
@@ -297,13 +314,16 @@ public struct XPCDyldDiagnostics: Sendable {
         // 1. Environment override if set
         if let envApp = ProcessInfo.processInfo.environment["GARAGE_APP_BUNDLE_PATH"],
            FileManager.default.fileExists(atPath: envApp) {
-            return URL(fileURLWithPath: envApp).standardizedFileURL.resolvingSymlinksInPath()
+            let url = URL(fileURLWithPath: envApp).standardizedFileURL.resolvingSymlinksInPath()
+            logger.info("Resolved main app bundle URL from GARAGE_APP_BUNDLE_PATH env: \(url.path, privacy: .public)")
+            return url
         }
 
         let bundleURL = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
 
         // 2. If bundleURL itself is an .app bundle
         if bundleURL.pathExtension == "app" {
+            logger.debug("Resolved main app bundle URL directly from Bundle.main: \(bundleURL.path, privacy: .public)")
             return bundleURL
         }
 
@@ -311,6 +331,7 @@ public struct XPCDyldDiagnostics: Sendable {
         var scanURL = bundleURL
         while scanURL.path != "/" && scanURL.path != "." {
             if scanURL.pathExtension == "app" && scanURL.lastPathComponent != "Xcode.app" {
+                logger.debug("Resolved main app bundle URL from bundle ancestor scan: \(scanURL.path, privacy: .public)")
                 return scanURL
             }
             scanURL = scanURL.deletingLastPathComponent()
@@ -321,6 +342,7 @@ public struct XPCDyldDiagnostics: Sendable {
             var current = execURL
             while current.path != "/" && current.path != "." {
                 if current.pathExtension == "app" && current.lastPathComponent != "Xcode.app" {
+                    logger.debug("Resolved main app bundle URL from executable ancestor scan: \(current.path, privacy: .public)")
                     return current
                 }
                 current = current.deletingLastPathComponent()
@@ -333,6 +355,7 @@ public struct XPCDyldDiagnostics: Sendable {
             var current = arg0URL
             while current.path != "/" && current.path != "." {
                 if current.pathExtension == "app" && current.lastPathComponent != "Xcode.app" {
+                    logger.debug("Resolved main app bundle URL from CommandLine.arguments[0] ancestor scan: \(current.path, privacy: .public)")
                     return current
                 }
                 current = current.deletingLastPathComponent()
@@ -342,9 +365,11 @@ public struct XPCDyldDiagnostics: Sendable {
         // 6. Standard system fallback locations
         let standardApp = URL(fileURLWithPath: "/Applications/Garage.app")
         if FileManager.default.fileExists(atPath: standardApp.path) {
+            logger.info("Resolved main app bundle URL from standard fallback: \(standardApp.path, privacy: .public)")
             return standardApp
         }
 
+        logger.debug("Falling back to raw Bundle.main URL for main app bundle: \(bundleURL.path, privacy: .public)")
         return bundleURL
     }
 
@@ -427,6 +452,7 @@ public struct XPCDyldDiagnostics: Sendable {
 
     /// Sets DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH to the enclosing directory of Python.framework.
     private static func configureFrameworkEnvironment(forPythonPath path: String) {
+        logger.debug("Configuring framework environment for Python path: \(path, privacy: .public)")
         var current = URL(fileURLWithPath: path)
         while current.path != "/" && current.pathExtension != "framework" {
             current = current.deletingLastPathComponent()
@@ -435,14 +461,21 @@ public struct XPCDyldDiagnostics: Sendable {
             let frameworkContainerDir = current.deletingLastPathComponent().path
             setenv("DYLD_FALLBACK_FRAMEWORK_PATH", frameworkContainerDir, 1)
             setenv("DYLD_FRAMEWORK_PATH", frameworkContainerDir, 1)
+            logger.info("Configured framework environment: DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH = \(frameworkContainerDir, privacy: .public)")
+            fputs("[DYLD_FRAMEWORK_ENV] Set DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH to \(frameworkContainerDir)\n", stderr)
+            fflush(stderr)
+        } else {
+            logger.warning("Could not identify enclosing .framework directory for path: \(path, privacy: .public)")
         }
     }
 
     /// Sets up the Python library environment variables and resolves the active dynamic Python library.
     @discardableResult
     public static func setupPythonEnvironment() -> String? {
+        logger.info("Setting up Python dynamic library environment...")
         if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
            FileManager.default.fileExists(atPath: envPath) {
+            logger.info("Found PYTHON_LIBRARY environment variable: \(envPath, privacy: .public)")
             let handle = dlopen(envPath, RTLD_LAZY | RTLD_LOCAL)
             if let handle = handle {
                 dlclose(handle)
@@ -452,16 +485,20 @@ public struct XPCDyldDiagnostics: Sendable {
                 fputs("[DYLD_PYTHON_LOAD_PATH] Resolved from PYTHON_LIBRARY env: \(envPath)\n", stderr)
                 fflush(stderr)
                 return envPath
+            } else {
+                let errStr = dlerror().map { String(cString: $0) } ?? "Unknown error"
+                logger.warning("Failed to dlopen PYTHON_LIBRARY from environment '\(envPath, privacy: .public)': \(errStr, privacy: .public)")
             }
         }
 
         let candidatePaths = defaultPythonCandidatePaths()
+        logger.info("Evaluating \(candidatePaths.count) candidate path(s) for Python dynamic library...")
         let (selectedPath, diagnostics) = diagnosePythonLibraryLoading(candidatePaths: candidatePaths)
         if let path = selectedPath {
             setenv("PYTHON_LIBRARY", path, 1)
             configureFrameworkEnvironment(forPythonPath: path)
             _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
-            logger.info("Resolved Python dynamic library load path: \(path, privacy: .public)")
+            logger.info("Resolved and linked Python dynamic library load path: \(path, privacy: .public)")
             fputs("[DYLD_PYTHON_LOAD_PATH] Resolved: \(path)\n", stderr)
             fflush(stderr)
             return path
@@ -477,6 +514,7 @@ public struct XPCDyldDiagnostics: Sendable {
     /// Sets up environment variables, dynamically links Python.framework via dlopen, and configures sys.path prior to any PythonKit calls.
     @discardableResult
     public static func initializePythonRuntime() throws -> String {
+        logger.info("Beginning Python runtime initialization and dynamic linking...")
         setupPostgresEnvironment()
         guard let pythonLib = setupPythonEnvironment() else {
             let (_, diagnostics) = diagnosePythonLibraryLoading(candidatePaths: defaultPythonCandidatePaths())
@@ -485,17 +523,22 @@ public struct XPCDyldDiagnostics: Sendable {
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
+            let errMessage = "Could not resolve or link Python.framework in Contents/Frameworks dynamically.\(dyldError)"
+            logger.error("\(errMessage, privacy: .public)\nDiagnostics:\n\(diagSummary, privacy: .public)")
             throw NSError(
                 domain: "me.rickmark.garage.python",
                 code: -1,
                 userInfo: [
-                    NSLocalizedDescriptionKey: "Could not resolve or link Python.framework in Contents/Frameworks dynamically.\(dyldError)",
+                    NSLocalizedDescriptionKey: errMessage,
                     "Diagnostics": diagSummary
                 ]
             )
         }
 
+        logger.info("Loading PythonLibrary via PythonKit...")
         try PythonLibrary.loadLibrary()
+        logger.info("PythonLibrary loaded successfully.")
+
         let sys = try Python.attemptImport("sys")
         let (libPaths, spPaths) = getPythonLibAndSitePackagesPaths()
 
@@ -507,6 +550,7 @@ public struct XPCDyldDiagnostics: Sendable {
         for lib in libPaths.reversed() {
             if Bool(sys.path.__contains__(lib)) != true {
                 sys.path.insert(0, lib)
+                logger.debug("Pretended/inserted stdlib to sys.path: \(lib, privacy: .public)")
             }
         }
 
@@ -518,6 +562,7 @@ public struct XPCDyldDiagnostics: Sendable {
         for sp in spPaths.reversed() {
             if Bool(sys.path.__contains__(sp)) != true {
                 sys.path.insert(0, sp)
+                logger.debug("Pretended/inserted site-packages to sys.path: \(sp, privacy: .public)")
             }
         }
 
@@ -528,6 +573,7 @@ public struct XPCDyldDiagnostics: Sendable {
                 fputs("  [PYTHON_RESOURCE_PATH] \(resPath)\n", stderr)
                 if Bool(sys.path.__contains__(resPath)) != true {
                     sys.path.insert(0, resPath)
+                    logger.debug("Inserted resource path to sys.path: \(resPath, privacy: .public)")
                 }
             }
         }
@@ -563,7 +609,7 @@ public struct XPCDyldDiagnostics: Sendable {
     /// Configures standard streams (stdin, stdout, stderr) in Python's sys module so that
     /// standard output and error are properly connected to file descriptors 0, 1, and 2.
     public static func ensureStandardStreams() {
-
+        logger.debug("Configuring Python standard streams (stdin, stdout, stderr)...")
         do {
             let sys = try Python.attemptImport("sys")
             let io = try Python.attemptImport("io")
@@ -572,24 +618,31 @@ public struct XPCDyldDiagnostics: Sendable {
                 let stdinObj = io.open(0, mode: "r", encoding: "utf-8", errors: "replace", closefd: false)
                 sys.stdin = stdinObj
                 sys.__stdin__ = stdinObj
+                logger.debug("Configured Python sys.stdin to fd 0.")
             }
             if sys.stdout == Python.None || Bool(Python.hasattr(sys.stdout, "write")) != true {
                 let stdoutObj = io.open(1, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
                 sys.stdout = stdoutObj
                 sys.__stdout__ = stdoutObj
+                logger.debug("Configured Python sys.stdout to fd 1.")
             }
             if sys.stderr == Python.None || Bool(Python.hasattr(sys.stderr, "write")) != true {
                 let stderrObj = io.open(2, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
                 sys.stderr = stderrObj
                 sys.__stderr__ = stderrObj
+                logger.debug("Configured Python sys.stderr to fd 2.")
             }
+            logger.info("Python standard streams configured successfully.")
         } catch {
-            fputs("Warning: Could not configure Python standard streams: \(error)\n", stderr)
+            let errStr = "Warning: Could not configure Python standard streams: \(error)"
+            logger.warning("\(errStr, privacy: .public)")
+            fputs("\(errStr)\n", stderr)
         }
     }
 
     /// Resolves candidate standard library and site-packages paths for sys.path configuration.
     public static func getPythonLibAndSitePackagesPaths() -> (libPaths: [String], sitePackagesPaths: [String]) {
+        logger.debug("Resolving candidate standard library and site-packages paths for Python...")
         let mainAppURL = resolveMainAppBundleURL()
         let bundleURL = Bundle.main.bundleURL
         let isXPC = bundleURL.pathExtension == "xpc"
@@ -686,6 +739,7 @@ public struct XPCDyldDiagnostics: Sendable {
             }
         }
 
+        logger.debug("Discovered \(libPaths.count) valid stdlib path(s) and \(spPaths.count) site-packages path(s).")
         return (libPaths, spPaths)
     }
 
@@ -696,14 +750,18 @@ public struct XPCDyldDiagnostics: Sendable {
 
         for path in candidatePaths {
             guard FileManager.default.fileExists(atPath: path) else {
-                logs.append("Candidate '\(path)': NOT FOUND on disk")
+                let msg = "Candidate '\(path)': NOT FOUND on disk"
+                logs.append(msg)
+                logger.debug("\(msg, privacy: .public)")
                 continue
             }
 
             // Attempt dry-run dlopen to inspect dyld link status
             let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)
             if let handle = handle {
-                logs.append("Candidate '\(path)': OK (dlopen succeeded)")
+                let msg = "Candidate '\(path)': OK (dlopen succeeded)"
+                logs.append(msg)
+                logger.debug("\(msg, privacy: .public)")
                 if selectedPath == nil {
                     selectedPath = path
                 }
@@ -715,7 +773,9 @@ public struct XPCDyldDiagnostics: Sendable {
                 } else {
                     errStr = "Unknown dlopen failure"
                 }
-                logs.append("Candidate '\(path)': FAILED dyld load -> \(errStr)")
+                let msg = "Candidate '\(path)': FAILED dyld load -> \(errStr)"
+                logs.append(msg)
+                logger.warning("\(msg, privacy: .public)")
             }
         }
 
@@ -729,14 +789,18 @@ public struct XPCDyldDiagnostics: Sendable {
 
         for path in candidatePaths {
             guard FileManager.default.fileExists(atPath: path) else {
-                logs.append("Postgres candidate '\(path)': NOT FOUND on disk")
+                let msg = "Postgres candidate '\(path)': NOT FOUND on disk"
+                logs.append(msg)
+                logger.debug("\(msg, privacy: .public)")
                 continue
             }
 
             // Attempt dry-run dlopen to inspect dyld link status
             let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)
             if let handle = handle {
-                logs.append("Postgres candidate '\(path)': OK (dlopen succeeded)")
+                let msg = "Postgres candidate '\(path)': OK (dlopen succeeded)"
+                logs.append(msg)
+                logger.debug("\(msg, privacy: .public)")
                 if selectedPath == nil {
                     selectedPath = path
                 }
@@ -748,7 +812,9 @@ public struct XPCDyldDiagnostics: Sendable {
                 } else {
                     errStr = "Unknown dlopen failure"
                 }
-                logs.append("Postgres candidate '\(path)': FAILED dyld load -> \(errStr)")
+                let msg = "Postgres candidate '\(path)': FAILED dyld load -> \(errStr)"
+                logs.append(msg)
+                logger.warning("\(msg, privacy: .public)")
             }
         }
 
@@ -772,16 +838,20 @@ public struct XPCDyldDiagnostics: Sendable {
             "\(bundleId).xpc"
         ]
 
+        logger.debug("Locating service bundle for '\(bundleId, privacy: .public)' (executable: '\(executableName, privacy: .public)') across \(searchRoots.count) search root(s)...")
+
         for root in searchRoots {
             for cand in candidates {
                 let bundleURL = root.appendingPathComponent(cand)
                 let execURL = bundleURL.appendingPathComponent("Contents/MacOS/\(executableName)")
                 if FileManager.default.fileExists(atPath: bundleURL.path) {
+                    logger.info("Found service bundle at: \(bundleURL.path, privacy: .public) (executable: \(execURL.path, privacy: .public))")
                     return (bundleURL, execURL)
                 }
             }
         }
 
+        logger.warning("Could not find service bundle for '\(bundleId, privacy: .public)' in searched roots.")
         return (nil, nil)
     }
 
@@ -814,8 +884,12 @@ public struct XPCDyldDiagnostics: Sendable {
         }
 
         candidateFiles.sort { $0.mtime > $1.mtime }
-        guard let mostRecent = candidateFiles.first else { return nil }
+        guard let mostRecent = candidateFiles.first else {
+            logger.debug("No recent crash reports found for '\(executableName, privacy: .public)' within \(maxAge)s window.")
+            return nil
+        }
 
+        logger.info("Found recent crash report for '\(executableName, privacy: .public)': \(mostRecent.url.lastPathComponent, privacy: .public)")
         if let content = try? String(contentsOf: mostRecent.url, encoding: .utf8) {
             return "File: \(mostRecent.url.lastPathComponent)\n\(content.prefix(2000))"
         }
@@ -868,8 +942,9 @@ public struct XPCDyldDiagnostics: Sendable {
                         }
                     }
                 }
+                logger.debug("Read \(entries.count) matching log entries from OSLogStore for '\(bundleId, privacy: .public)'")
             } catch {
-                // OSLogStore query might be restricted by sandbox
+                logger.debug("OSLogStore query skipped or restricted: \(error.localizedDescription, privacy: .public)")
             }
         }
         return entries
@@ -895,6 +970,7 @@ public struct XPCDyldDiagnostics: Sendable {
                 items.append("\(key)=<unset>")
             }
         }
+        logger.debug("Gathered environment diagnostics (\(items.count) keys tracked).")
         return items.joined(separator: "\n")
     }
 }
