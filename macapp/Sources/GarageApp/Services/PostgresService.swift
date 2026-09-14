@@ -281,13 +281,20 @@ final class PostgresService: ObservableObject {
         }
 
         try FileManager.default.createDirectory(at: Paths.logsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: Paths.pgSocketDir, withIntermediateDirectories: true)
 
         var postgresArguments = [
             "-D", Paths.pgDataDir.path,
             "-p", String(port),
             "-c", "listen_addresses=localhost",
+            "-c", "unix_socket_directories=\(Paths.pgSocketDir.path)",
             "-c", "logging_collector=off",
+            "-c", "log_destination=stderr",
             "-c", "log_line_prefix=%m [%p] ",
+            "-c", "log_min_messages=info",
+            "-c", "log_connections=all",
+            "-c", "log_disconnections=on",
+            "-c", "log_statement=all",
             "-c", "shared_memory_type=mmap",
             "-c", "dynamic_shared_memory_type=mmap",
         ]
