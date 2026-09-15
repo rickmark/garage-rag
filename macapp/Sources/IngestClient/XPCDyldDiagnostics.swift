@@ -266,14 +266,23 @@ public struct XPCDyldDiagnostics: Sendable {
         // 1. Primary path from main app bundle: Contents/Resources/postgres/lib/libpq.dylib
         candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").path)
         candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Resources/postgres/lib/libpq.dylib").path)
+        candidatePaths.append(mainAppURL.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").path)
 
-        // 2. Primary path from Contents/MacOS/<binary>: ../../Resources/postgres/lib/libpq.dylib
-        candidatePaths.append(execURL.appendingPathComponent("../../Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
+        // 2. Relative traversals from execURL and binDir
+        for base in [execURL, binDir, bundleURL] {
+            var current = base
+            for _ in 0..<7 {
+                current = current.deletingLastPathComponent()
+                if current.path == "/" || current.path == "." { break }
+                candidatePaths.append(current.appendingPathComponent("Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
+                candidatePaths.append(current.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
+                candidatePaths.append(current.appendingPathComponent("Contents/Resources/postgres/lib/libpq.dylib").standardizedFileURL.path)
+                candidatePaths.append(current.appendingPathComponent("Contents/Resources/postgres/lib/libpq.5.dylib").standardizedFileURL.path)
+                candidatePaths.append(current.appendingPathComponent("postgres/lib/libpq.dylib").standardizedFileURL.path)
+                candidatePaths.append(current.appendingPathComponent("postgres/lib/libpq.5.dylib").standardizedFileURL.path)
+            }
+        }
 
         if let resURL = Bundle.main.resourceURL {
             candidatePaths.append(resURL.appendingPathComponent("postgres/lib/libpq.dylib").path)
@@ -435,71 +444,73 @@ public struct XPCDyldDiagnostics: Sendable {
         let isXPC = bundleURL.pathExtension == "xpc"
         let parentAppContents = isXPC ? bundleURL.deletingLastPathComponent().deletingLastPathComponent() : bundleURL.appendingPathComponent("Contents")
 
-        // 1. Primary paths from the main bundle path: Contents/Frameworks/Python.framework/Versions/Current/Python
-        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/libpython3.13.dylib").path)
-        candidatePaths.append(mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").path)
+        let relativeFrameworkPaths = [
+            "Contents/Frameworks/Python.framework/Versions/Current/Python",
+            "Contents/Frameworks/Python.framework/Versions/3.13/Python",
+            "Contents/Frameworks/Python.framework/Python",
+            "Contents/Frameworks/Python.framework/Versions/Current/lib/libpython3.13.dylib",
+            "Contents/Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib",
+            "Frameworks/Python.framework/Versions/Current/Python",
+            "Frameworks/Python.framework/Versions/3.13/Python",
+            "Frameworks/Python.framework/Python",
+            "Frameworks/Python.framework/Versions/Current/lib/libpython3.13.dylib",
+            "Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib",
+            "Contents/Resources/python_3_13/Python.framework/Versions/Current/Python",
+            "Contents/Resources/python_3_13/Python.framework/Versions/3.13/Python",
+            "Contents/Resources/python_3_13/Python.framework/Python",
+            "Resources/python_3_13/Python.framework/Versions/Current/Python",
+            "Resources/python_3_13/Python.framework/Versions/3.13/Python",
+            "Resources/python_3_13/Python.framework/Python",
+            "Python.framework/Versions/Current/Python",
+            "Python.framework/Versions/3.13/Python",
+            "Python.framework/Python",
+        ]
 
-        // Main app / helper binary relative (../../Frameworks)
-        candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").standardizedFileURL.path)
+        // 1. Primary paths from the main bundle path, bundle URL, and parent app contents
+        for rel in relativeFrameworkPaths {
+            candidatePaths.append(mainAppURL.appendingPathComponent(rel).path)
+            candidatePaths.append(bundleURL.appendingPathComponent(rel).path)
+            candidatePaths.append(parentAppContents.appendingPathComponent(rel).path)
+        }
 
-        // XPC service relative: Contents/XPCServices/<service>.xpc/Contents/MacOS/<exec> (../../../../Frameworks)
-        candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Python").standardizedFileURL.path)
-        candidatePaths.append(execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").standardizedFileURL.path)
+        // 2. Ancestor directory traversals from execURL, binDir, and bundleURL (up to 7 levels)
+        for base in [execURL, binDir, bundleURL] {
+            var current = base
+            for _ in 0..<7 {
+                current = current.deletingLastPathComponent()
+                if current.path == "/" || current.path == "." { break }
+                for rel in relativeFrameworkPaths {
+                    candidatePaths.append(current.appendingPathComponent(rel).standardizedFileURL.path)
+                }
+            }
+        }
 
-        // Direct bundle URL candidate paths
-        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-
-        // Additional relative candidate traversals
-        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../Frameworks/Python.framework/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/Python").standardizedFileURL.path)
-        candidatePaths.append(binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/Python").standardizedFileURL.path)
-
-        // 2. Bundle frameworks / private frameworks
+        // 3. Bundle frameworks / private frameworks
         if let privFwURL = Bundle.main.privateFrameworksURL {
             candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Versions/Current/Python").path)
             candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
             candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Python").path)
+            candidatePaths.append(privFwURL.appendingPathComponent("Python.framework/Versions/3.13/lib/libpython3.13.dylib").path)
         }
         if let resURL = Bundle.main.resourceURL {
             candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Versions/Current/Python").path)
             candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Versions/3.13/Python").path)
             candidatePaths.append(resURL.appendingPathComponent("python_3_13/Python.framework/Python").path)
+            candidatePaths.append(resURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
+            candidatePaths.append(resURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
+            candidatePaths.append(resURL.appendingPathComponent("Frameworks/Python.framework/Python").path)
         }
 
-        // 3. Parent app contents (from XPC service or app bundle)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Python").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/libpython3.13.dylib").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Python").path)
-
-        // 4. Binary relative
-        candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/Python").path)
-        candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/Current/Python").path)
-        candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
-
-
-
-        return candidatePaths
+        // Deduplicate while preserving discovery order
+        var seen = Set<String>()
+        var deduplicated: [String] = []
+        for path in candidatePaths {
+            if !seen.contains(path) {
+                seen.insert(path)
+                deduplicated.append(path)
+            }
+        }
+        return deduplicated
     }
 
     /// Sets DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH to the enclosing directory of Python.framework.
@@ -513,11 +524,16 @@ public struct XPCDyldDiagnostics: Sendable {
             let frameworkContainerDir = current.deletingLastPathComponent().path
             setenv("DYLD_FALLBACK_FRAMEWORK_PATH", frameworkContainerDir, 1)
             setenv("DYLD_FRAMEWORK_PATH", frameworkContainerDir, 1)
+            let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
             logger.info("Configured framework environment: DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH = \(frameworkContainerDir, privacy: .public)")
             fputs("[DYLD_FRAMEWORK_ENV] Set DYLD_FRAMEWORK_PATH and DYLD_FALLBACK_FRAMEWORK_PATH to \(frameworkContainerDir)\n", stderr)
             fflush(stderr)
         } else {
-            logger.warning("Could not identify enclosing .framework directory for path: \(path, privacy: .public)")
+            let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
+            setenv("DYLD_LIBRARY_PATH", libDir, 1)
+            logger.warning("Could not identify enclosing .framework directory for path: \(path, privacy: .public); set fallback library path to \(libDir, privacy: .public)")
         }
     }
 
@@ -705,72 +721,63 @@ public struct XPCDyldDiagnostics: Sendable {
         var libPaths: [String] = []
         var spPaths: [String] = []
 
-        let libCandidates = [
+        var libCandidates: [URL] = [
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
+            mainAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
+            mainAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
             bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL,
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13"),
             parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/lib/python3.13"),
             binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
             binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-            URL(fileURLWithPath: "/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            URL(fileURLWithPath: "/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-        ]
+            ]
 
-        let spCandidates = [
+        var spCandidates: [URL] = [
             mainAppURL.appendingPathComponent("Contents/Resources/site-packages"),
             mainAppURL.appendingPathComponent("Contents/Resources"),
+            mainAppURL.appendingPathComponent("Resources/site-packages"),
+            mainAppURL.appendingPathComponent("site-packages"),
             bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
             bundleURL.appendingPathComponent("Contents/Resources"),
+            bundleURL.appendingPathComponent("Resources/site-packages"),
+            bundleURL.appendingPathComponent("site-packages"),
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-            execURL.appendingPathComponent("../../../../../Resources/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../Resources/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../../Resources/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../../../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../Resources/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../Resources/site-packages").standardizedFileURL,
             parentAppContents.appendingPathComponent("Resources/site-packages"),
-            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            execURL.appendingPathComponent("../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../../../../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL,
-            binDir.appendingPathComponent("../Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL,
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
             binDir.appendingPathComponent("site-packages"),
+            binDir.appendingPathComponent("Resources/site-packages"),
             binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
             binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-            URL(fileURLWithPath: "/Applications/Garage.app/Contents/Resources/site-packages"),
-            URL(fileURLWithPath: "/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            URL(fileURLWithPath: "/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-        ]
+          ]
+
+        for base in [execURL, binDir, bundleURL] {
+            var current = base
+            for _ in 0..<7 {
+                current = current.deletingLastPathComponent()
+                if current.path == "/" || current.path == "." { break }
+                libCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
+                libCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
+                libCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
+                libCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
+                libCandidates.append(current.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
+                libCandidates.append(current.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
+
+                spCandidates.append(current.appendingPathComponent("Contents/Resources/site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Contents/Resources").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Resources/site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL)
+                spCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL)
+            }
+        }
 
         if let resURL = Bundle.main.resourceURL {
             let sp = resURL.appendingPathComponent("site-packages")

@@ -105,18 +105,6 @@ private func setupPythonEnvironment() {
     candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/Current/Python").path)
     candidatePaths.append(binDir.appendingPathComponent("Python.framework/Versions/3.13/Python").path)
 
-    // 4. System / Homebrew fallbacks
-    candidatePaths.append("/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/Current/Python")
-    candidatePaths.append("/Applications/Garage.app/Contents/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-    candidatePaths.append("/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/Current/Python")
-    candidatePaths.append("/opt/homebrew/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/Current/Python")
-    candidatePaths.append("/usr/local/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/Python")
-    candidatePaths.append("/Library/Frameworks/Python.framework/Versions/Current/Python")
-    candidatePaths.append("/Library/Frameworks/Python.framework/Versions/3.13/Python")
-
     for path in candidatePaths {
         if FileManager.default.fileExists(atPath: path) {
             let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)

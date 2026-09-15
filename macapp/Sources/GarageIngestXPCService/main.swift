@@ -166,7 +166,14 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("GarageIngestXPCService setting main app bundle reference from client pid \(self.connection.processIdentifier): \(bundleURL.path, privacy: .public)")
         XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
-        reply(true, "Main app bundle configured: \(bundleURL.path)")
+        parent.resetInitialization()
+        parent.initializePythonIfNeeded()
+        if let err = parent.initializationError {
+            logger.warning("GarageIngestXPCService app bundle configured but Python initialization encountered error: \(err, privacy: .public)")
+            reply(true, "Main app bundle configured (init warning: \(err))")
+        } else {
+            reply(true, "Main app bundle configured: \(bundleURL.path)")
+        }
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
@@ -457,6 +464,13 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
     private let initLock = NSLock()
     private(set) var initializationError: String? = nil
 
+    func resetInitialization() {
+        initLock.lock()
+        defer { initLock.unlock() }
+        isInitialized = false
+        initializationError = nil
+    }
+
     func initializePythonIfNeeded() {
         initLock.lock()
         defer { initLock.unlock() }
@@ -505,6 +519,8 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             } else {
                 logger.warning("garage_rag.ingest could not be imported during startup pre-warming; will be imported on demand.")
             }
+            initializationError = nil
+            isInitialized = true
         } catch {
             let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
@@ -517,8 +533,6 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             fflush(stderr)
             logger.error("\(errorMsg, privacy: .public)")
         }
-
-        isInitialized = true
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
