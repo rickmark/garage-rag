@@ -287,6 +287,7 @@ final class PostgresService: ObservableObject {
             "-p", String(port),
             "-c", "listen_addresses=localhost",
             "-c", "logging_collector=off",
+            "-c", "unix_socket_directories=",
             "-c", "log_line_prefix=%m [%p] ",
             "-c", "shared_memory_type=mmap",
             "-c", "dynamic_shared_memory_type=mmap",
