@@ -1,5 +1,6 @@
 import XCTest
 import IngestClient
+import PythonXPCService
 @testable import GarageApp
 
 final class MockXPCLogReceiver: NSObject, GarageXPCLogReceiverProtocol {
@@ -288,5 +289,109 @@ final class GarageCommonXPCProtocolTests: XCTestCase {
 
         let candidates = XPCDyldDiagnostics.defaultPythonCandidatePaths()
         XCTAssertTrue(candidates.contains(where: { $0.contains(tempBundleDir.path) }))
+    }
+
+    func testGarageFileLoggerOperations() {
+        let testLogName = "test-logger-\(UUID().uuidString).log"
+        defer { GarageFileLogger.shared.clear(fileName: testLogName) }
+
+        GarageFileLogger.shared.append(
+            fileName: testLogName,
+            text: "Initial message test line 1",
+            stream: "stdout",
+            level: "INFO",
+            source: "TestFileLogger"
+        )
+        GarageFileLogger.shared.append(
+            fileName: testLogName,
+            text: "Error message test line 2",
+            stream: "stderr",
+            level: "ERROR",
+            source: "TestFileLogger"
+        )
+
+        let contents = GarageFileLogger.shared.readLogs(fileName: testLogName)
+        XCTAssertTrue(contents.contains("[INFO] [TestFileLogger] Initial message test line 1"))
+        XCTAssertTrue(contents.contains("[ERROR] [TestFileLogger] Error message test line 2"))
+
+        // Test clear
+        GarageFileLogger.shared.clear(fileName: testLogName)
+        let cleared = GarageFileLogger.shared.readLogs(fileName: testLogName)
+        XCTAssertEqual(cleared, "")
+    }
+
+    func testOutputCaptureMultiReceiverBroadcasting() {
+        let capture = GarageXPCOutputCapture(maxBufferSize: 8192)
+        capture.configure(serviceName: "TestBroadcasterService", logFileName: "test-broadcast-\(UUID().uuidString).log")
+        defer { capture.clear() }
+
+        let receiver1 = MockXPCLogReceiver()
+        let receiver2 = MockXPCLogReceiver()
+
+        capture.addReceiver(receiver1)
+        capture.addReceiver(receiver2)
+
+        capture.appendCustomLog(stream: "stdout", message: "Chunk test stdout line")
+        capture.appendCustomLog(stream: "stderr", message: "Chunk test stderr line")
+        capture.log(source: "TestSource", level: "WARN", message: "Structured warning message")
+
+        XCTAssertEqual(receiver1.receivedStdout.count, 1)
+        XCTAssertTrue(receiver1.receivedStdout[0].contains("Chunk test stdout line"))
+        XCTAssertEqual(receiver2.receivedStdout.count, 1)
+        XCTAssertTrue(receiver2.receivedStdout[0].contains("Chunk test stdout line"))
+
+        XCTAssertEqual(receiver1.receivedStderr.count, 1)
+        XCTAssertTrue(receiver1.receivedStderr[0].contains("Chunk test stderr line"))
+        XCTAssertEqual(receiver2.receivedStderr.count, 1)
+        XCTAssertTrue(receiver2.receivedStderr[0].contains("Chunk test stderr line"))
+
+        XCTAssertEqual(receiver1.receivedLogs.count, 1)
+        XCTAssertEqual(receiver1.receivedLogs[0].message, "Structured warning message")
+        XCTAssertEqual(receiver1.receivedLogs[0].level, "WARN")
+        XCTAssertEqual(receiver2.receivedLogs.count, 1)
+
+        // Remove receiver2
+        capture.removeReceiver(receiver2)
+        capture.log(source: "TestSource", level: "INFO", message: "Second structured message")
+
+        XCTAssertEqual(receiver1.receivedLogs.count, 2)
+        XCTAssertEqual(receiver2.receivedLogs.count, 1)
+    }
+
+    @MainActor
+    func testOSLogStreamServiceXPCAndFileIngestion() {
+        let osLogService = OSLogStreamService()
+        osLogService.clearLogs()
+
+        // 1. Direct XPC stdout ingestion
+        osLogService.receiveXPCStdout("Ingestion process started\nIngestion chunk 1", source: .ingest, pid: 9999)
+        let ingestLogs = osLogService.logs(for: .ingest)
+        XCTAssertTrue(ingestLogs.contains(where: { $0.text == "Ingestion process started" }))
+        XCTAssertTrue(ingestLogs.contains(where: { $0.text == "Ingestion chunk 1" }))
+
+        // 2. Direct XPC stderr ingestion
+        osLogService.receiveXPCStderr("Failed to parse document index 42", source: .embed, pid: 8888)
+        let embedLogs = osLogService.logs(for: .embed)
+        XCTAssertTrue(embedLogs.contains(where: { $0.text == "Failed to parse document index 42" && $0.level == .error }))
+
+        // 3. Direct XPC structured log ingestion
+        osLogService.receiveXPCLog(source: .mcp, level: .warning, message: "MCP server received unsupported tool request", pid: 7777)
+        let mcpLogs = osLogService.logs(for: .mcp)
+        XCTAssertTrue(mcpLogs.contains(where: { $0.text == "MCP server received unsupported tool request" && $0.level == .warning }))
+
+        // 4. File log ingestion
+        let testLogFileName = "test-embed-file-\(UUID().uuidString).log"
+        defer { GarageFileLogger.shared.clear(fileName: testLogFileName) }
+
+        GarageFileLogger.shared.append(
+            fileName: testLogFileName,
+            text: "Batch embedding 128 vectors finished",
+            stream: "stdout",
+            level: "INFO",
+            source: "EmbedService"
+        )
+        osLogService.loadLogsFromFile(fileName: testLogFileName, for: .embed)
+        let reloadedEmbedLogs = osLogService.logs(for: .embed)
+        XCTAssertTrue(reloadedEmbedLogs.contains(where: { $0.text.contains("Batch embedding 128 vectors finished") }))
     }
 }

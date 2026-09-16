@@ -130,12 +130,12 @@ final class GarageViewTests: XCTestCase {
 
     func testLogSourceCases() {
         let cases = LogsView.LogSource.allCases
-        XCTAssertEqual(cases.count, 10)
-        XCTAssertEqual(cases.map(\.rawValue), ["Postgres", "garage CLI", "Ingest", "Backfill", "MCP Server", "gRPC Server", "Llama Service", "Model Downloader", "XPC Services", "Unified Log"])
-        XCTAssertTrue(LogsView.LogSource.ingest.isUnifiedSource)
-        XCTAssertTrue(LogsView.LogSource.xpcServices.isUnifiedSource)
-        XCTAssertTrue(LogsView.LogSource.unifiedLog.isUnifiedSource)
-        XCTAssertTrue(LogsView.LogSource.postgres.isUnifiedSource)
-        XCTAssertTrue(LogsView.LogSource.garage.isUnifiedSource)
+        XCTAssertEqual(cases.count, 9)
+        XCTAssertEqual(cases.map(\.rawValue), ["Unified Log", "Postgres", "garage CLI", "Ingest", "Embed", "MCP Server", "gRPC Server", "Llama Service", "Model Downloader"])
+        XCTAssertNotNil(LogsView.LogSource.ingest.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.grpc.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.unifiedLog.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.postgres.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.garage.osLogPredicate)
     }
 }

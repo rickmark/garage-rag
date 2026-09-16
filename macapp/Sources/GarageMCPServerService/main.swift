@@ -1,12 +1,12 @@
 import Foundation
 import Darwin
 import OSLog
-import IngestClient
+import PythonXPCService
 #if canImport(PythonKit)
 import PythonKit
 #endif
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageMCPServerService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.mcp-server-xpc", category: "GarageMCPServerService")
 
 private func installCrashHandlers() {
     NSSetUncaughtExceptionHandler { exception in
@@ -53,6 +53,10 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     private var isInitialized = false
     private let initLock = NSLock()
     private(set) var initializationError: String? = nil
+    #if canImport(PythonKit)
+    private var isRunningServer = false
+    #endif
+    private let serverLock = NSLock()
 
     private func initializePythonIfNeeded() {
         initLock.lock()
@@ -82,8 +86,20 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageMCPServerServiceProtocol.self)
         newConnection.exportedObject = self
+        GarageXPCOutputCapture.shared.addConnection(newConnection)
+        newConnection.invalidationHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
+        newConnection.interruptionHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
         newConnection.resume()
         return true
     }
@@ -133,13 +149,15 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
     }
 
-    func startServer(options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
+    func startServer(host: String, port: Int, path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         initializePythonIfNeeded()
         if let initErr = initializationError {
             reply(false, "Python initialization error: \(initErr)")
             return
         }
         #if canImport(PythonKit)
+        serverLock.lock()
+        defer { serverLock.unlock() }
         do {
             let os = Python.import("os")
             for (key, value) in options {
@@ -148,18 +166,95 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
                 os.environ["GARAGE_DATABASE_URL"] = PythonObject(XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL))
             }
-            let mcpModule = try Python.attemptImport("garage_rag.mcp_server")
-            reply(true, "MCP server module loaded successfully: \(mcpModule)")
+            let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
+            let success = Bool(mcpModule.start_background_server(
+                host: host,
+                port: port,
+                path: path
+            )) ?? true
+            self.isRunningServer = success
+            logger.info("Garage MCP server started on \(host, privacy: .public):\(port)\(path, privacy: .public)")
+            reply(success, "MCP server started on \(host):\(port)\(path)")
         } catch {
-            reply(false, "Failed to load MCP server module: \(XPCDyldDiagnostics.formatError(error))")
+            let errStr = XPCDyldDiagnostics.formatError(error)
+            logger.error("Failed to start MCP server: \(errStr, privacy: .public)")
+            reply(false, "Failed to start MCP server: \(errStr)")
         }
         #else
         reply(true, "Started without PythonKit")
         #endif
     }
+
+    func stopServer(with reply: @escaping (Bool, String?) -> Void) {
+        serverLock.lock()
+        defer { serverLock.unlock() }
+        #if canImport(PythonKit)
+        do {
+            let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
+            let success = Bool(mcpModule.stop_background_server()) ?? true
+            self.isRunningServer = false
+            logger.info("Garage MCP server stopped")
+            reply(success, "MCP server stopped")
+            return
+        } catch {
+            self.isRunningServer = false
+            reply(true, "MCP server stopped with warning: \(XPCDyldDiagnostics.formatError(error))")
+            return
+        }
+        #else
+        reply(true, "MCP server was not running")
+        #endif
+    }
+
+    func isServerRunning(with reply: @escaping (Bool) -> Void) {
+        serverLock.lock()
+        defer { serverLock.unlock() }
+        #if canImport(PythonKit)
+        do {
+            let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
+            let running = Bool(mcpModule.is_background_server_running()) ?? self.isRunningServer
+            reply(running)
+        } catch {
+            reply(self.isRunningServer)
+        }
+        #else
+        reply(false)
+        #endif
+    }
+
+    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
+        initializePythonIfNeeded()
+        if let initErr = initializationError {
+            reply(1, nil, "Python initialization error: \(initErr)")
+            return
+        }
+        #if canImport(PythonKit)
+        do {
+            let cliRunnerModule = try Python.attemptImport("typer.testing")
+            let appModule = try Python.attemptImport("garage_rag.cli")
+            let runner = cliRunnerModule.CliRunner()
+            var fullArgs: [String] = []
+            if !command.isEmpty {
+                fullArgs.append(command)
+            }
+            fullArgs.append(contentsOf: arguments)
+            let result = runner.invoke(appModule.app, PythonObject(fullArgs))
+            let exitCode = Int32(result.exit_code) ?? 0
+            let stdout = String(result.stdout)
+            let stderr = String(result.stderr)
+            reply(exitCode, stdout, stderr)
+        } catch {
+            let errStr = XPCDyldDiagnostics.formatError(error)
+            reply(1, nil, "Failed to execute command: \(errStr)")
+        }
+        #else
+        reply(0, "Command executed without PythonKit", nil)
+        #endif
+    }
 }
 
 installCrashHandlers()
+GarageXPCOutputCapture.shared.configure(serviceName: "GarageMCPServerService", logFileName: "mcp-server-xpc.log")
 GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageMCPServerService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageMCPServerServiceDelegate()

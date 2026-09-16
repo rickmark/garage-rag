@@ -138,8 +138,8 @@ alias(
 )
 
 alias(
-    name = "garage-mcp",
-    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
+    name = "MCPServerClient_lib",
+    actual = "//macapp/Sources/MCPServerClient:MCPServerClient_lib",
     visibility = ["//visibility:public"],
 )
 

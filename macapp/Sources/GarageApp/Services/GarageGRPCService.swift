@@ -2,6 +2,7 @@ import Foundation
 import GRPC
 import NIO
 import SwiftProtobuf
+import IngestClient
 import proto_garage_proto_swift
 
 public enum GarageGRPCStatus: Equatable {
@@ -46,18 +47,21 @@ final class GarageGRPCService: ObservableObject {
     @Published var port: Int = 50051
 
     private let postgres: PostgresService
-    private let runner = ProcessRunner()
+    private let client: GarageXPCClient
     private var group: EventLoopGroup?
     private var channel: GRPCChannel?
     private var isStopping = false
     private let maxLogLines = 4000
+    private var logPollTask: Task<Void, Never>?
 
-    init(postgres: PostgresService, port: Int = 50051) {
+    init(postgres: PostgresService, port: Int = 50051, client: GarageXPCClient = GarageXPCClient()) {
         self.postgres = postgres
         self.port = port
+        self.client = client
     }
 
     deinit {
+        logPollTask?.cancel()
         try? group?.syncShutdownGracefully()
     }
 
@@ -70,15 +74,54 @@ final class GarageGRPCService: ObservableObject {
 
     func clearLogs() {
         logs.removeAll()
+        Task { [client] in
+            _ = try? await client.clearLogs()
+        }
     }
 
     private func environment() throws -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
+        var env: [String: String] = [:]
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
         }
         return env
+    }
+
+    private func startLogPolling() {
+        logPollTask?.cancel()
+        logPollTask = Task { [weak self, client] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard let (stdout, stderr) = try? await client.fetchBufferedOutput(clearBuffer: true) else {
+                    continue
+                }
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    if let stdout = stdout, !stdout.isEmpty {
+                        for line in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+                            let text = String(line)
+                            if !text.isEmpty {
+                                self.appendLog(LogLine(stream: .stdout, text: text, source: "garage-grpc"))
+                            }
+                        }
+                    }
+                    if let stderr = stderr, !stderr.isEmpty {
+                        for line in stderr.split(separator: "\n", omittingEmptySubsequences: false) {
+                            let text = String(line)
+                            if !text.isEmpty {
+                                self.appendLog(LogLine(stream: .stderr, text: text, source: "garage-grpc"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopLogPolling() {
+        logPollTask?.cancel()
+        logPollTask = nil
     }
 
     func start(maxAttempts: Int = 3, readyTimeout: TimeInterval = 10) async throws {
@@ -88,11 +131,6 @@ final class GarageGRPCService: ObservableObject {
             status = .failed(errorMsg)
             appendLog(LogLine(stream: .stderr, text: errorMsg, source: "garage-grpc"))
             throw GarageGRPCError.databaseNotOnline
-        }
-        guard FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) else {
-            let errorMsg = GarageGRPCError.cliNotFound.localizedDescription
-            status = .failed(errorMsg)
-            throw GarageGRPCError.cliNotFound
         }
 
         var attemptsLeft = max(1, maxAttempts)
@@ -104,31 +142,18 @@ final class GarageGRPCService: ObservableObject {
             status = .starting
             isStopping = false
 
-            var processInstance: Process?
             do {
-                let process = try runner.run(
-                    executable: Paths.garageCLI,
-                    arguments: [
-                        "serve",
-                        "--host", host,
-                        "--port", String(currentPort),
-                    ],
-                    environment: try environment(),
-                    currentDirectory: Paths.garageWorkingDirectory,
-                    source: "garage-grpc"
-                ) { [weak self] line in
-                    self?.appendLog(line)
+                let options = try environment()
+                let result = try await client.startServer(host: host, port: currentPort, options: options)
+                if !result.success {
+                    let launchError = GarageGRPCError.launchFailed(result.message ?? "XPC service failed to start gRPC server")
+                    status = .failed(launchError.localizedDescription)
+                    throw launchError
                 }
-                processInstance = process
-                process.terminationHandler = { [weak self] process in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.status = self.isStopping
-                            ? .stopped
-                            : .failed("garage serve exited with status \(process.terminationStatus)")
-                        self.cleanupChannel()
-                    }
-                }
+                startLogPolling()
+            } catch let error as GarageGRPCError {
+                status = .failed(error.localizedDescription)
+                throw error
             } catch {
                 let launchError = GarageGRPCError.launchFailed(error.localizedDescription)
                 status = .failed(launchError.localizedDescription)
@@ -142,11 +167,7 @@ final class GarageGRPCService: ObservableObject {
             }
 
             attemptsLeft -= 1
-            processInstance?.terminationHandler = nil
-            runner.terminate()
-            for _ in 0..<20 where runner.isRunning {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
+            _ = try? await client.stopServer()
 
             if attemptsLeft > 0 {
                 let newPort = Self.randomPort(excluding: triedPorts)
@@ -167,11 +188,9 @@ final class GarageGRPCService: ObservableObject {
         guard status == .running || status == .starting else { return }
         status = .stopping
         isStopping = true
+        stopLogPolling()
         cleanupChannel()
-        runner.terminate()
-        for _ in 0..<50 where runner.isRunning {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
+        _ = try? await client.stopServer()
         status = .stopped
     }
 
@@ -179,8 +198,11 @@ final class GarageGRPCService: ObservableObject {
     func terminateImmediately() {
         status = .stopping
         isStopping = true
+        stopLogPolling()
         cleanupChannel()
-        runner.terminate()
+        Task { [client] in
+            _ = try? await client.stopServer()
+        }
     }
 
     private func cleanupChannel() {
@@ -222,9 +244,6 @@ final class GarageGRPCService: ObservableObject {
     func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if !runner.isRunning {
-                return false
-            }
             do {
                 let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
                 var pingReq = Garage_PingRequest()

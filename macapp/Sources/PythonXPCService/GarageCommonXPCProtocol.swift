@@ -39,3 +39,32 @@ public protocol GarageCommonXPCServiceProtocol: NSObjectProtocol {
     /// Common gRPC JSON / text invocation over XPC: dispatch an RPC call by method name with JSON request string.
     func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void)
 }
+
+/// Objective-C protocol for MCP Server XPC Service communication.
+@objc(GarageMCPServerServiceProtocol)
+public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol {
+    func startServer(host: String, port: Int, path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
+    func stopServer(with reply: @escaping (Bool, String?) -> Void)
+    func isServerRunning(with reply: @escaping (Bool) -> Void)
+    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void)
+}
+
+/// Objective-C protocol for Garage Core Backend XPC Service communication.
+@objc(GarageXPCServiceProtocol)
+public protocol GarageXPCServiceProtocol: GarageCommonXPCServiceProtocol {
+    func startServer(host: String, port: Int, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
+    func stopServer(with reply: @escaping (Bool, String?) -> Void)
+    func isServerRunning(with reply: @escaping (Bool) -> Void)
+    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void)
+}
+
+public enum GarageMCPConstants {
+    public static let serviceName = "me.rickmark.garage-rag.mcp-server-xpc"
+    public static let machServiceName = "me.rickmark.garage-rag.mcp-server-xpc"
+}
+
+public enum GarageXPCConstants {
+    public static let serviceName = "me.rickmark.garage-rag.xpc"
+    public static let machServiceName = "me.rickmark.garage-rag.xpc"
+}
+

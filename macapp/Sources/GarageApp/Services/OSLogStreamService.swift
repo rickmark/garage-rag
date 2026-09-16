@@ -1,8 +1,9 @@
 import Foundation
 import OSLog
 import Combine
+import PythonXPCService
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "OSLogStreamService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "OSLogStreamService")
 
 /// Time window presets for fetching historical unified logs.
 public enum OSLogTimeWindow: String, CaseIterable, Identifiable, Sendable {
@@ -74,7 +75,7 @@ public final class OSLogStreamService: ObservableObject {
         guard #available(macOS 12.0, *) else { return }
 
         // Broad predicate to capture all garage-related unified logs in one pass
-        let predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
+        let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
 
         streamTask = Task { [weak self] in
             guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else {
@@ -321,5 +322,98 @@ public final class OSLogStreamService: ObservableObject {
             }
             serviceLogs[target] = current
         }
+    }
+
+    // MARK: - Direct XPC Log Streaming
+
+    /// Ingests stdout streamed chunk over XPC from a helper service.
+    public func receiveXPCStdout(_ text: String, source: LogsView.LogSource, pid: Int32? = nil) {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        for line in lines {
+            let str = String(line)
+            let inferredLevel = LogLine.inferLevel(stream: .stdout, text: str)
+            let logLine = LogLine(
+                id: UUID(),
+                date: Date(),
+                stream: .stdout,
+                text: str,
+                source: source.rawValue,
+                level: inferredLevel,
+                pid: pid
+            )
+            appendLog(logLine, for: [source, .unifiedLog])
+        }
+    }
+
+    /// Ingests stderr streamed chunk over XPC from a helper service.
+    public func receiveXPCStderr(_ text: String, source: LogsView.LogSource, pid: Int32? = nil) {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        for line in lines {
+            let str = String(line)
+            let inferredLevel = LogLine.inferLevel(stream: .stderr, text: str)
+            let logLine = LogLine(
+                id: UUID(),
+                date: Date(),
+                stream: .stderr,
+                text: str,
+                source: source.rawValue,
+                level: inferredLevel,
+                pid: pid
+            )
+            appendLog(logLine, for: [source, .unifiedLog])
+        }
+    }
+
+    /// Ingests a structured log entry emitted over XPC from a helper service.
+    public func receiveXPCLog(source: LogsView.LogSource, level: LogLevel, message: String, timestamp: Double = Date().timeIntervalSince1970, pid: Int32? = nil) {
+        let logLine = LogLine(
+            id: UUID(),
+            date: Date(timeIntervalSince1970: timestamp),
+            stream: level == .error ? .stderr : .stdout,
+            text: message,
+            source: source.rawValue,
+            level: level,
+            pid: pid
+        )
+        appendLog(logLine, for: [source, .unifiedLog])
+    }
+
+    // MARK: - Disk File Log Ingestion
+
+    /// Reads persisted logs from the shared App Group / Application Support log file and inserts them.
+    public func loadLogsFromFile(fileName: String, for source: LogsView.LogSource) {
+        let logContent = GarageFileLogger.shared.readLogs(fileName: fileName)
+        guard !logContent.isEmpty else { return }
+
+        let lines = logContent.split(separator: "\n")
+        var collected: [LogLine] = []
+        for line in lines {
+            let text = String(line)
+            guard !text.isEmpty else { continue }
+            let level = LogLine.inferLevel(stream: .stdout, text: text)
+            let stream: LogLine.Stream = level == .error ? .stderr : .stdout
+            collected.append(LogLine(
+                id: UUID(),
+                date: Date(),
+                stream: stream,
+                text: text,
+                source: source.rawValue,
+                level: level
+            ))
+        }
+
+        for item in collected {
+            appendLog(item, for: [source, .unifiedLog])
+        }
+    }
+
+    /// Loads all persisted log files for all XPC helper services.
+    public func loadAllPersistedLogs() {
+        loadLogsFromFile(fileName: "ingest-xpc.log", for: .ingest)
+        loadLogsFromFile(fileName: "embed-xpc.log", for: .embed)
+        loadLogsFromFile(fileName: "mcp-server-xpc.log", for: .mcp)
+        loadLogsFromFile(fileName: "garage-xpc.log", for: .grpc)
+        loadLogsFromFile(fileName: "llama-xpc.log", for: .llama)
+        loadLogsFromFile(fileName: "model-download-xpc.log", for: .modelDownload)
     }
 }

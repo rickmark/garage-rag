@@ -1,4 +1,5 @@
 import Foundation
+import PythonXPCService
 
 /// Objective-C protocol matching the standard `ping` method implemented across all Garage XPC services.
 @objc(GarageGenericXPCPingProtocol)
@@ -8,7 +9,7 @@ public protocol GarageGenericXPCPingProtocol: NSObjectProtocol {
 
 /// Objective-C protocol for receiving progress updates and log entries from GarageIngestXPCService across XPC.
 @objc(GarageIngestProgressReceiverProtocol)
-public protocol GarageIngestProgressReceiverProtocol: NSObjectProtocol {
+public protocol GarageIngestProgressReceiverProtocol: GarageXPCLogReceiverProtocol {
     /// Receive JSON-serialized progress update.
     func didUpdateProgress(progressJson: String)
 
@@ -52,18 +53,6 @@ public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
 public protocol GarageEmbedXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
     func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
-}
-
-/// Objective-C protocol for MCP Server XPC Service communication.
-@objc(GarageMCPServerServiceProtocol)
-public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol {
-    func startServer(options: [String: String], with reply: @escaping (Bool, String?) -> Void)
-}
-
-/// Objective-C protocol for Garage Core Backend XPC Service communication.
-@objc(GarageXPCServiceProtocol)
-public protocol GarageXPCServiceProtocol: GarageCommonXPCServiceProtocol {
-    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void)
 }
 
 public enum IngestXPCConstants {

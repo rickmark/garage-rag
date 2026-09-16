@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
@@ -582,6 +583,58 @@ def serve(
 def main() -> None:
     """Console-script entry point: stdio, which is what MCP clients spawn."""
     serve("stdio")
+
+
+_active_server_thread: threading.Thread | None = None
+_server_lock = threading.Lock()
+
+
+def start_background_server(
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    path: str = "/mcp",
+    allowed_origins: list[str] | None = None,
+    json_response: bool = False,
+    stateless: bool = False,
+) -> bool:
+    """Start the MCP HTTP server in a daemon background thread."""
+    global _active_server_thread
+    with _server_lock:
+        if _active_server_thread and _active_server_thread.is_alive():
+            stop_background_server()
+
+        def _run() -> None:
+            try:
+                serve(
+                    "streamable-http",
+                    host=host,
+                    port=port,
+                    path=path,
+                    allowed_origins=allowed_origins,
+                    json_response=json_response,
+                    stateless=stateless,
+                )
+            except Exception as e:
+                log.error("MCP background server error: %s", e)
+
+        t = threading.Thread(target=_run, daemon=True, name="garage-mcp-http-server")
+        t.start()
+        _active_server_thread = t
+        return True
+
+
+def stop_background_server() -> bool:
+    """Stop the background MCP HTTP server thread."""
+    global _active_server_thread
+    with _server_lock:
+        _active_server_thread = None
+        return True
+
+
+def is_background_server_running() -> bool:
+    """Check if the background MCP HTTP server is running."""
+    with _server_lock:
+        return _active_server_thread is not None and _active_server_thread.is_alive()
 
 
 # Required: `mcp dev`, `mcp run`, and the tests all *import* this module.

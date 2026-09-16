@@ -4,7 +4,7 @@ import Combine
 import OSLog
 import IngestClient
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "AppState")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "AppState")
 
 @MainActor
 final class AppState: ObservableObject {
@@ -74,8 +74,11 @@ final class AppState: ObservableObject {
         let downloadService = modelDownload ?? ModelDownloadService()
         self.modelDownload = downloadService
         self.ingestService = IngestService(client: self.volumeAccess.ingestClient ?? client, postgres: postgres)
-        self.xpcServices = xpcServices ?? XPCServiceManager()
-        self.osLogStreamService = osLogStreamService ?? OSLogStreamService()
+        let xpcMgr = xpcServices ?? XPCServiceManager()
+        let osLogSvc = osLogStreamService ?? OSLogStreamService()
+        xpcMgr.osLogStreamService = osLogSvc
+        self.xpcServices = xpcMgr
+        self.osLogStreamService = osLogSvc
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
@@ -119,6 +122,8 @@ final class AppState: ObservableObject {
         hasLaunched = true
         fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
+        osLogStreamService.loadAllPersistedLogs()
+        xpcServices.startStreamingAllServices()
         Task { await fetchRegisteredSources() }
         Task { await fetchCorpusStats() }
         configureScheduledMaintenance()

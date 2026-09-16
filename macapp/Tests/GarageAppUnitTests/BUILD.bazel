@@ -14,7 +14,9 @@ swift_library(
         "//macapp/Sources/GarageApp:GarageApp_lib",
         "//macapp/Sources/IngestClient:IngestClient_lib",
         "//macapp/Sources/LlamaClient:LlamaClient_lib",
+        "//macapp/Sources/MCPServerClient:MCPServerClient_lib",
         "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )
 

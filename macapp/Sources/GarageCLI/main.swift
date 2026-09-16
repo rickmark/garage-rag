@@ -5,7 +5,7 @@ import OSLog
 import PythonKit
 #endif
 
-private let cliLogger = Logger(subsystem: "me.rickmark.garage", category: "GarageCLI")
+private let cliLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.cli", category: "GarageCLI")
 
 private final class CLIOutputCapturer {
     static let shared = CLIOutputCapturer()

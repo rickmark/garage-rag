@@ -6,6 +6,6 @@ swift_library(
     module_name = "LlamaClient",
     visibility = ["//visibility:public"],
     deps = [
-        "//macapp/Sources/IngestClient:IngestClient_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )

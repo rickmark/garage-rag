@@ -1,11 +1,12 @@
 import Foundation
 import OSLog
 import IngestClient
+import PythonXPCService
 #if canImport(PythonKit)
 import PythonKit
 #endif
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageEmbedXPCService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.embed-xpc", category: "GarageEmbedXPCService")
 
 private func installCrashHandlers() {
     NSSetUncaughtExceptionHandler { exception in
@@ -81,8 +82,20 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
         newConnection.exportedObject = self
+        GarageXPCOutputCapture.shared.addConnection(newConnection)
+        newConnection.invalidationHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
+        newConnection.interruptionHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
         newConnection.resume()
         return true
     }
@@ -221,6 +234,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
 }
 
 installCrashHandlers()
+GarageXPCOutputCapture.shared.configure(serviceName: "GarageEmbedXPCService", logFileName: "embed-xpc.log")
 GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageEmbedXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageEmbedXPCServiceDelegate()

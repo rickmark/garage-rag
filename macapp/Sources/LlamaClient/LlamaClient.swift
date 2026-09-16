@@ -1,5 +1,8 @@
 import Foundation
-import IngestClient
+import OSLog
+import PythonXPCService
+
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "LlamaClient")
 
 public enum LlamaClientError: LocalizedError {
     case serviceUnavailable(String)

@@ -1,7 +1,8 @@
 import Foundation
 import OSLog
+import PythonXPCService
 
-private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest", category: "IngestClient")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "IngestClient")
 
 /// Progress receiver adapter for XPC callbacks.
 private final class IngestProgressReceiver: NSObject, GarageIngestProgressReceiverProtocol {
@@ -28,6 +29,25 @@ private final class IngestProgressReceiver: NSObject, GarageIngestProgressReceiv
 
     func didReceiveLog(message: String, level: Int32) {
         onLog?(message, level)
+    }
+
+    func didReceiveStdout(_ text: String) {
+        onLog?(text, 20)
+    }
+
+    func didReceiveStderr(_ text: String) {
+        onLog?(text, 40)
+    }
+
+    func didReceiveLog(source: String, level: String, message: String, timestamp: Double) {
+        let numericLevel: Int32
+        switch level.uppercased() {
+        case "ERROR", "CRITICAL", "FATAL": numericLevel = 40
+        case "WARN", "WARNING": numericLevel = 30
+        case "DEBUG", "TRACE": numericLevel = 10
+        default: numericLevel = 20
+        }
+        onLog?("[\(source)] \(message)", numericLevel)
     }
 }
 

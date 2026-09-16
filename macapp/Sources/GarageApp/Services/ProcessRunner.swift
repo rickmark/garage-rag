@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "ProcessRunner")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "ProcessRunner")
 
 /// Severity level for log entries, supporting filtering and priority ordering.
 public enum LogLevel: String, CaseIterable, Identifiable, Comparable, Sendable {
@@ -303,7 +303,7 @@ final class ProcessRunner {
             category = source.replacingOccurrences(of: " ", with: "")
         }
 
-        let subLogger = Logger(subsystem: "me.rickmark.garage", category: category)
+        let subLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: category)
         let level = LogLine.inferLevel(stream: stream, text: trimmed)
         switch level {
         case .error:

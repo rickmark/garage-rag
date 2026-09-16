@@ -1,12 +1,12 @@
 import Foundation
 import Darwin
 import OSLog
-import IngestClient
+import PythonXPCService
 #if canImport(PythonKit)
 import PythonKit
 #endif
 
-private let logger = Logger(subsystem: "me.rickmark.garage-rag.xpc", category: "GarageXPCService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.xpc", category: "GarageXPCService")
 
 private func installCrashHandlers() {
     NSSetUncaughtExceptionHandler { exception in
@@ -53,6 +53,9 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
     private var isInitialized = false
     private let initLock = NSLock()
     private(set) var initializationError: String? = nil
+    private var activeServer: PythonObject? = nil
+    private var activeStopEvent: PythonObject? = nil
+    private let serverLock = NSLock()
 
     private func initializePythonIfNeeded() {
         initLock.lock()
@@ -82,8 +85,20 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
         newConnection.exportedObject = self
+        GarageXPCOutputCapture.shared.addConnection(newConnection)
+        newConnection.invalidationHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
+        newConnection.interruptionHandler = { [weak newConnection] in
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
+        }
         newConnection.resume()
         return true
     }
@@ -133,26 +148,88 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
         GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
     }
 
+    func startServer(host: String, port: Int, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
+        initializePythonIfNeeded()
+        if let initErr = initializationError {
+            reply(false, "Python initialization error: \(initErr)")
+            return
+        }
+        serverLock.lock()
+        defer { serverLock.unlock() }
+        do {
+            let os = Python.import("os")
+            for (key, value) in options {
+                os.environ[key] = PythonObject(value)
+            }
+            if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL))
+            }
+            if let server = activeServer {
+                if let stopEvent = activeStopEvent {
+                    _ = stopEvent.set()
+                }
+                _ = server.stop(grace: 1.0)
+                activeServer = nil
+                activeStopEvent = nil
+            }
+            let threading = Python.import("threading")
+            let stopEvent = threading.Event()
+            let serverModule = try Python.attemptImport("garage_rag.service.server")
+            let serverTuple = serverModule.create_grpc_server(host: host, port: port, stop_event: stopEvent)
+            let server = serverTuple[0]
+            _ = server.start()
+            self.activeServer = server
+            self.activeStopEvent = stopEvent
+            logger.info("Garage gRPC server started on \(host, privacy: .public):\(port)")
+            reply(true, "gRPC server started on \(host):\(port)")
+        } catch {
+            let errStr = XPCDyldDiagnostics.formatError(error)
+            logger.error("Failed to start gRPC server: \(errStr, privacy: .public)")
+            reply(false, "Failed to start gRPC server: \(errStr)")
+        }
+    }
+
+    func stopServer(with reply: @escaping (Bool, String?) -> Void) {
+        serverLock.lock()
+        defer { serverLock.unlock() }
+        if let server = activeServer {
+            if let stopEvent = activeStopEvent {
+                _ = stopEvent.set()
+            }
+            _ = server.stop(grace: 1.0)
+            activeServer = nil
+            activeStopEvent = nil
+            logger.info("Garage gRPC server stopped")
+            reply(true, "gRPC server stopped")
+            return
+        }
+        reply(true, "gRPC server was not running")
+    }
+
+    func isServerRunning(with reply: @escaping (Bool) -> Void) {
+        serverLock.lock()
+        defer { serverLock.unlock() }
+        reply(activeServer != nil)
+    }
+
     func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
         initializePythonIfNeeded()
         if let initErr = initializationError {
             reply(1, nil, "Python initialization error: \(initErr)")
             return
         }
-        #if canImport(PythonKit)
         do {
             let serviceModule = try Python.attemptImport("garage_rag.service")
             reply(0, "Service module loaded successfully: \(serviceModule)", nil)
         } catch {
             reply(1, nil, "Failed to load service module: \(XPCDyldDiagnostics.formatError(error))")
         }
-        #else
-        reply(0, "Executed without PythonKit", nil)
-        #endif
+
     }
 }
 
 installCrashHandlers()
+GarageXPCOutputCapture.shared.configure(serviceName: "GarageXPCService", logFileName: "garage-xpc.log")
 GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageXPCServiceDelegate()

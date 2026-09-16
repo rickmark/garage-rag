@@ -9,13 +9,13 @@ public struct LogsView: View {
     public enum LogSource: String, CaseIterable, Identifiable, Sendable, Hashable {
         case unifiedLog = "Unified Log"
         case postgres = "Postgres"
-        case garage = "garage CLI"
+        case garage = "App"
         case ingest = "Ingest"
         case embed = "Embed"
         case mcp = "MCP Server"
         case grpc = "gRPC Server"
-        case llama = "Llama Service"
-        case modelDownload = "Model Downloader"
+        case llama = "LLaMa"
+        case modelDownload = "Downloader"
 
 
         public var id: String { rawValue }

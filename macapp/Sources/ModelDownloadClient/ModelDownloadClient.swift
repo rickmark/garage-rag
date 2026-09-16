@@ -1,5 +1,9 @@
 import Foundation
+import OSLog
 import IngestClient
+import PythonXPCService
+
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "ModelDownloadClient")
 
 /// High-level Swift client for communicating with `ModelDownloadXPCService`.
 public final class ModelDownloadClient: Sendable {

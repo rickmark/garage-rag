@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageGRPCOverXPC")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "GarageGRPCOverXPC")
 
 /// Dispatches and processes gRPC-over-XPC and JSON-RPC calls within Garage XPC helper services.
 public final class GarageGRPCOverXPCDispatcher: @unchecked Sendable {

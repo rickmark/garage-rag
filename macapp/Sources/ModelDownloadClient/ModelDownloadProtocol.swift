@@ -1,5 +1,6 @@
 import Foundation
 import IngestClient
+import PythonXPCService
 
 /// Objective-C compatible protocol for the ModelDownload XPC Service.
 @objc(ModelDownloadXPCServiceProtocol)

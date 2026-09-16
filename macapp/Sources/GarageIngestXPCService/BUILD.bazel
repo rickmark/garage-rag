@@ -44,6 +44,7 @@ swift_library(
         "//ext:PythonKit",
         "//ext/python:python_3_13_framework",
         "//macapp/Sources/IngestClient:IngestClient_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )
 
@@ -65,5 +66,6 @@ macos_xpc_service(
     deps = [
         ":GarageIngestXPCService_lib",
         "//ext/python:python_3_13_framework",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )

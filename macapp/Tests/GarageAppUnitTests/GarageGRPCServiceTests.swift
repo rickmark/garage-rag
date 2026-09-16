@@ -1,5 +1,7 @@
 import XCTest
 import SwiftUI
+import IngestClient
+import PythonXPCService
 import proto_garage_proto_swift
 @testable import GarageApp
 
@@ -149,5 +151,23 @@ final class GarageGRPCServiceTests: XCTestCase {
         let view = SearchView().environmentObject(state)
         let controller = NSHostingController(rootView: view)
         XCTAssertNotNil(controller.view)
+    }
+
+    @MainActor
+    func testGarageXPCClientAndServiceWiring() {
+        let xpcClient = GarageXPCClient()
+        XCTAssertEqual(GarageXPCClient.serviceName, "me.rickmark.garage-rag.xpc")
+        XCTAssertEqual(GarageXPCConstants.serviceName, "me.rickmark.garage-rag.xpc")
+
+        let postgres = PostgresService()
+        let grpcService = GarageGRPCService(postgres: postgres, port: 50051, client: xpcClient)
+        XCTAssertEqual(grpcService.port, 50051)
+        XCTAssertEqual(grpcService.status, .stopped)
+
+        grpcService.clearLogs()
+        XCTAssertTrue(grpcService.logs.isEmpty)
+
+        grpcService.terminateImmediately()
+        XCTAssertEqual(grpcService.status, .stopping)
     }
 }

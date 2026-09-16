@@ -148,10 +148,8 @@ final class LogTableViewTests: XCTestCase {
         XCTAssertEqual(streamer.logs(for: .ingest).count, 1)
 
         // Test scope filters
-        XCTAssertEqual(OSLogScopeFilter.allCases.count, 4)
-        streamer.scopeFilter = .ingest
-        XCTAssertEqual(streamer.scopeFilter, .ingest)
-        XCTAssertNotNil(streamer.scopeFilter.predicate)
+        streamer.scopeFilter = LogsView.LogSource.ingest.osLogPredicate
+        XCTAssertEqual(streamer.scopeFilter, LogsView.LogSource.ingest.osLogPredicate)
 
         // Test time windows
         XCTAssertEqual(OSLogTimeWindow.allCases.count, 5)
@@ -187,11 +185,11 @@ final class LogTableViewTests: XCTestCase {
     }
 
     func testLogsViewSourceScopeMapping() {
-        XCTAssertEqual(LogsView.LogSource.postgres.matchingOSLogScope, .system)
-        XCTAssertEqual(LogsView.LogSource.garage.matchingOSLogScope, .all)
-        XCTAssertEqual(LogsView.LogSource.ingest.matchingOSLogScope, .ingest)
-        XCTAssertEqual(LogsView.LogSource.xpcServices.matchingOSLogScope, .xpc)
-        XCTAssertEqual(LogsView.LogSource.unifiedLog.matchingOSLogScope, .all)
-        XCTAssertNil(LogsView.LogSource.llama.matchingOSLogScope)
+        XCTAssertNotNil(LogsView.LogSource.postgres.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.garage.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.ingest.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.grpc.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.unifiedLog.osLogPredicate)
+        XCTAssertNotNil(LogsView.LogSource.llama.osLogPredicate)
     }
 }

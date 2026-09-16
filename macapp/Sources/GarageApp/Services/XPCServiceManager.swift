@@ -4,8 +4,9 @@ import Darwin
 import IngestClient
 import ModelDownloadClient
 import LlamaClient
+import PythonXPCService
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCServiceManager")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "XPCServiceManager")
 
 /// Represents the outcome of a functional beyond-ping diagnostic test on a service.
 public struct ServiceDiagnosticTestResult: Identifiable, Equatable, Sendable {
@@ -123,6 +124,62 @@ public struct XPCServiceInfo: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Internal adapter to receive streaming logs and stdout/stderr chunks from XPC services.
+private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtocol {
+    private let serviceId: String
+    private weak var manager: XPCServiceManager?
+    private weak var osLogStreamService: OSLogStreamService?
+
+    init(serviceId: String, manager: XPCServiceManager?, osLogStreamService: OSLogStreamService? = nil) {
+        self.serviceId = serviceId
+        self.manager = manager
+        self.osLogStreamService = osLogStreamService
+    }
+
+    private var targetLogSource: LogsView.LogSource {
+        switch serviceId {
+        case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc": return .ingest
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc": return .embed
+        case "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc": return .mcp
+        case "garage-xpc", "me.rickmark.garage-rag.xpc": return .grpc
+        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc": return .llama
+        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc": return .modelDownload
+        default: return .unifiedLog
+        }
+    }
+
+    func didReceiveStdout(_ text: String) {
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.manager?.appendLog(text, stream: .stdout, source: self.serviceId, level: .info)
+            self.osLogStreamService?.receiveXPCStdout(text, source: self.targetLogSource)
+        }
+    }
+
+    func didReceiveStderr(_ text: String) {
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.manager?.appendLog(text, stream: .stderr, source: self.serviceId, level: .error)
+            self.osLogStreamService?.receiveXPCStderr(text, source: self.targetLogSource)
+        }
+    }
+
+    func didReceiveLog(source: String, level: String, message: String, timestamp: Double) {
+        let lvl: LogLevel
+        switch level.uppercased() {
+        case "ERROR", "CRITICAL", "FATAL": lvl = .error
+        case "WARN", "WARNING": lvl = .warning
+        case "DEBUG", "TRACE": lvl = .debug
+        default: lvl = .info
+        }
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.manager?.appendLog(message, stream: lvl == .error ? .stderr : .stdout, source: source, level: lvl)
+            self.osLogStreamService?.receiveXPCLog(source: self.targetLogSource, level: lvl, message: message, timestamp: timestamp)
+        }
+    }
+}
+
 /// Coordinates status checking, real-time pinging, and on-demand restarting for all macOS XPC helper services.
 @MainActor
 public final class XPCServiceManager: ObservableObject {
@@ -134,6 +191,10 @@ public final class XPCServiceManager: ObservableObject {
     @Published public private(set) var testingServiceIds: Set<String> = []
     @Published public private(set) var isTestingAll: Bool = false
     @Published public private(set) var logs: [LogLine] = []
+
+    public weak var osLogStreamService: OSLogStreamService?
+    private var streamingConnections: [String: NSXPCConnection] = [:]
+    private var streamingAdapters: [String: XPCLogReceiverAdapter] = [:]
 
     private let maxLogLines = 4000
 
@@ -384,6 +445,76 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    // MARK: - Live XPC Log Streaming Connections
+
+    /// Starts a continuous background XPC connection to stream logs and output chunks in real-time.
+    public func startStreamingLogs(for serviceId: String) {
+        guard let service = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId }) else { return }
+        let key = service.id
+        if let existing = streamingConnections[key] {
+            existing.invalidate()
+        }
+
+        let bundleId = service.bundleId
+        let connection = NSXPCConnection(serviceName: bundleId)
+        let adapter = XPCLogReceiverAdapter(serviceId: service.id, manager: self, osLogStreamService: osLogStreamService)
+        streamingAdapters[key] = adapter
+
+        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
+        connection.exportedInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
+        connection.exportedObject = adapter
+
+        connection.interruptionHandler = {
+            logger.warning("Live log streaming connection for '\(bundleId, privacy: .public)' was interrupted")
+        }
+        connection.invalidationHandler = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.streamingConnections.removeValue(forKey: key)
+                self?.streamingAdapters.removeValue(forKey: key)
+            }
+        }
+
+        connection.resume()
+        streamingConnections[key] = connection
+
+        // Trigger setAppBundleReference and ping to register the streaming receiver on the service side
+        if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        }) as? GarageCommonXPCServiceProtocol {
+            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            proxy.setAppBundleReference(bundleRef) { _, _ in
+                proxy.ping { _ in
+                    logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
+                }
+            }
+        }
+    }
+
+    /// Starts streaming logs for all known XPC helper services.
+    public func startStreamingAllServices() {
+        for service in services {
+            startStreamingLogs(for: service.id)
+        }
+    }
+
+    /// Stops live log streaming for a given service.
+    public func stopStreamingLogs(for serviceId: String) {
+        let key = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId })?.id ?? serviceId
+        if let connection = streamingConnections.removeValue(forKey: key) {
+            connection.invalidate()
+        }
+        streamingAdapters.removeValue(forKey: key)
+    }
+
+    /// Stops all live log streaming connections.
+    public func stopAllStreaming() {
+        for (_, conn) in streamingConnections {
+            conn.invalidate()
+        }
+        streamingConnections.removeAll()
+        streamingAdapters.removeAll()
+    }
+
     // MARK: - Static XPC Ping Implementation
 
     private final class ContinuationRelay<T>: @unchecked Sendable {
@@ -451,7 +582,10 @@ public final class XPCServiceManager: ObservableObject {
         }
         let bundleId = service.bundleId
         let connection = NSXPCConnection(serviceName: bundleId)
+        let adapter = XPCLogReceiverAdapter(serviceId: service.id, manager: self, osLogStreamService: osLogStreamService)
         connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
+        connection.exportedInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
+        connection.exportedObject = adapter
         connection.resume()
         defer { connection.invalidate() }
 

@@ -43,9 +43,3 @@ codesign(
     }),
     visibility = ["//visibility:public"],
 )
-
-alias(
-    name = "garage-mcp",
-    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
-    visibility = ["//visibility:public"],
-)

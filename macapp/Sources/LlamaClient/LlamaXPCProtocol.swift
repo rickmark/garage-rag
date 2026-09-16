@@ -1,5 +1,5 @@
 import Foundation
-import IngestClient
+import PythonXPCService
 
 /// Objective-C protocol exposed by `LlamaXPCService` over NSXPC.
 @objc(LlamaXPCServiceProtocol)

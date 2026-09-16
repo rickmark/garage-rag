@@ -2,7 +2,7 @@ import Foundation
 import IngestClient
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest", category: "IngestService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "IngestService")
 
 /// Execution strategy for document ingestion.
 enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
@@ -189,7 +189,7 @@ final class IngestService: ObservableObject {
 
             var lastDate = startDate
             var lastPosition = store.position(date: startDate)
-            let predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
+            let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
 
             while !Task.isCancelled {
                 do {
@@ -232,7 +232,7 @@ final class IngestService: ObservableObject {
         guard #available(macOS 12.0, *) else { return }
         guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
         let position = store.position(date: startDate)
-        let predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
+        let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
         if let entries = try? store.getEntries(at: position, matching: predicate) {
             for entry in entries {
                 processOSLogEntry(entry)

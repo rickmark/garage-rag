@@ -1,9 +1,10 @@
 import Foundation
 import IngestClient
+import PythonXPCService
 import OSLog
 import PythonKit
 
-private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest-xpc", category: "GarageIngestXPCService")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.ingest-xpc", category: "GarageIngestXPCService")
 
 // MARK: - Crash and Signal Handling with Dyld Diagnostics
 
@@ -147,7 +148,17 @@ private let globalLogCallback: LogCFunction = { level, cStr in
         logger.info("[Python] \(msg, privacy: .public)")
     }
     let stream = level >= 40 ? "stderr" : "stdout"
-    GarageXPCOutputCapture.shared.appendCustomLog(stream: stream, message: msg)
+    let lvlStr: String
+    switch level {
+    case 10: lvlStr = "DEBUG"
+    case 20: lvlStr = "INFO"
+    case 30: lvlStr = "WARN"
+    case 40: lvlStr = "ERROR"
+    case 50: lvlStr = "FATAL"
+    default: lvlStr = "INFO"
+    }
+    GarageXPCOutputCapture.shared.appendCustomLog(stream: stream, message: msg, source: "IngestPython", level: lvlStr)
+    GarageXPCOutputCapture.shared.log(source: "IngestPython", level: lvlStr, message: msg)
     GarageIngestActiveConnections.shared.sendLog(message: msg, level: level)
 }
 
@@ -561,18 +572,25 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         logger.info("Ingest XPC listener received connection request from PID: \(clientPID), EUID: \(clientEUID), EGID: \(clientEGID)")
 
         GarageIngestActiveConnections.shared.add(newConnection)
+        GarageXPCOutputCapture.shared.addConnection(newConnection)
 
         let handler = GarageIngestXPCConnectionHandler(connection: newConnection, parent: self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageIngestXPCServiceProtocol.self)
         newConnection.exportedObject = handler
         newConnection.remoteObjectInterface = NSXPCInterface(with: GarageIngestProgressReceiverProtocol.self)
 
-        newConnection.invalidationHandler = {
+        newConnection.invalidationHandler = { [weak newConnection] in
             logger.info("Ingest XPC connection invalidated for PID: \(clientPID)")
-            GarageIngestActiveConnections.shared.remove(newConnection)
+            if let conn = newConnection {
+                GarageIngestActiveConnections.shared.remove(conn)
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
         }
-        newConnection.interruptionHandler = {
+        newConnection.interruptionHandler = { [weak newConnection] in
             logger.warning("Ingest XPC connection interrupted for PID: \(clientPID)")
+            if let conn = newConnection {
+                GarageXPCOutputCapture.shared.removeConnection(conn)
+            }
         }
         newConnection.resume()
         logger.info("Ingest XPC connection accepted and resumed for PID: \(clientPID)")
@@ -581,6 +599,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 }
 
 installCrashHandlers()
+GarageXPCOutputCapture.shared.configure(serviceName: "GarageIngestXPCService", logFileName: "ingest-xpc.log")
 GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageIngestXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageIngestXPCServiceDelegate()

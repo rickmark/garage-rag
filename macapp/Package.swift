@@ -17,6 +17,10 @@ let package = Package(
             name: "IngestClient",
             targets: ["IngestClient"]
         ),
+        .library(
+            name: "MCPServerClient",
+            targets: ["MCPServerClient"]
+        ),
     ],
     targets: [
         .target(
@@ -31,9 +35,13 @@ let package = Package(
             name: "IngestClient",
             path: "Sources/IngestClient"
         ),
+        .target(
+            name: "MCPServerClient",
+            path: "Sources/MCPServerClient"
+        ),
         .executableTarget(
             name: "GarageApp",
-            dependencies: ["LlamaClient", "ModelDownloadClient", "IngestClient"],
+            dependencies: ["LlamaClient", "ModelDownloadClient", "IngestClient", "MCPServerClient"],
             path: "Sources/GarageApp"
         ),
         .executableTarget(
@@ -48,6 +56,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "GarageMCPServerService",
+            dependencies: ["MCPServerClient"],
             path: "Sources/GarageMCPServerService"
         ),
         .executableTarget(
@@ -66,7 +75,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GarageAppUnitTests",
-            dependencies: ["GarageApp", "LlamaClient", "ModelDownloadClient", "IngestClient"],
+            dependencies: ["GarageApp", "LlamaClient", "ModelDownloadClient", "IngestClient", "MCPServerClient"],
             path: "Tests/GarageAppUnitTests"
         ),
         .testTarget(

@@ -1,4 +1,5 @@
 import Foundation
+import MCPServerClient
 
 enum GarageMCPStatus: Equatable {
     case stopped
@@ -129,19 +130,20 @@ final class GarageMCPService: ObservableObject {
     let path = "/mcp"
 
     private let postgres: PostgresService
-    private let runner: ProcessRunner
+    private let client: GarageMCPServerClient
     private let defaults: UserDefaults
     private let maxLogLines = 4000
     private var isStopping = false
+    private var logPollTask: Task<Void, Never>?
 
     init(
         postgres: PostgresService,
         port: Int? = nil,
-        runner: ProcessRunner = ProcessRunner(),
+        client: GarageMCPServerClient = GarageMCPServerClient(),
         defaults: UserDefaults = .standard
     ) {
         self.postgres = postgres
-        self.runner = runner
+        self.client = client
         self.defaults = defaults
         if let port {
             self.port = port
@@ -150,6 +152,10 @@ final class GarageMCPService: ObservableObject {
             self.port = (1...65535).contains(savedPort) ? savedPort : Self.defaultPort
         }
         refreshDetectedClients()
+    }
+
+    deinit {
+        logPollTask?.cancel()
     }
 
     var endpoint: URL {
@@ -283,36 +289,31 @@ final class GarageMCPService: ObservableObject {
     // MARK: - Client Registration Actions
 
     private func runCliCommand(_ arguments: [String]) async -> (success: Bool, message: String) {
-        guard FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) else {
-            return (false, GarageMCPError.cliNotFound.localizedDescription)
-        }
-
-        var collected: [String] = []
-        let tempRunner = ProcessRunner()
-        let process: Process
         do {
-            process = try tempRunner.run(
-                executable: Paths.garageCLI,
-                arguments: arguments,
-                environment: (try? environment()) ?? [:],
-                currentDirectory: Paths.garageWorkingDirectory,
-                source: "garage-mcp"
-            ) { [weak self] line in
-                self?.appendLog(line)
-                collected.append(line.text)
-            }
-        } catch {
-            return (false, "Failed to launch CLI: \(error.localizedDescription)")
-        }
-
-        return await withCheckedContinuation { continuation in
-            process.terminationHandler = { proc in
-                DispatchQueue.main.async {
-                    let output = collected.joined(separator: "\n")
-                    let success = proc.terminationStatus == 0
-                    continuation.resume(returning: (success, output.isEmpty ? (success ? "Command succeeded." : "Command failed.") : output))
+            let (exitCode, stdout, stderr) = try await client.executeCommand("", arguments: arguments)
+            if let out = stdout, !out.isEmpty {
+                for line in out.split(separator: "\n", omittingEmptySubsequences: false) {
+                    let text = String(line)
+                    if !text.isEmpty {
+                        appendLog(LogLine(stream: .stdout, text: text, source: "garage-mcp"))
+                    }
                 }
             }
+            if let err = stderr, !err.isEmpty {
+                for line in err.split(separator: "\n", omittingEmptySubsequences: false) {
+                    let text = String(line)
+                    if !text.isEmpty {
+                        appendLog(LogLine(stream: .stderr, text: text, source: "garage-mcp"))
+                    }
+                }
+            }
+            let combined = [stdout, stderr].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+            let success = (exitCode == 0)
+            return (success, combined.isEmpty ? (success ? "Command succeeded." : "Command failed.") : combined)
+        } catch {
+            let errMsg = "XPC command execution failed: \(error.localizedDescription)"
+            appendLog(LogLine(stream: .stderr, text: errMsg, source: "garage-mcp"))
+            return (false, errMsg)
         }
     }
 
@@ -571,6 +572,42 @@ final class GarageMCPService: ObservableObject {
 
     // MARK: - Server Lifecycle
 
+    private func startLogPolling() {
+        logPollTask?.cancel()
+        logPollTask = Task { [weak self, client] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard let (stdout, stderr) = try? await client.fetchBufferedOutput(clearBuffer: true) else {
+                    continue
+                }
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    if let stdout = stdout, !stdout.isEmpty {
+                        for line in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+                            let text = String(line)
+                            if !text.isEmpty {
+                                self.appendLog(LogLine(stream: .stdout, text: text, source: "garage-mcp"))
+                            }
+                        }
+                    }
+                    if let stderr = stderr, !stderr.isEmpty {
+                        for line in stderr.split(separator: "\n", omittingEmptySubsequences: false) {
+                            let text = String(line)
+                            if !text.isEmpty {
+                                self.appendLog(LogLine(stream: .stderr, text: text, source: "garage-mcp"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopLogPolling() {
+        logPollTask?.cancel()
+        logPollTask = nil
+    }
+
     func start(maxAttempts: Int = 3, readyTimeout: TimeInterval = 10) async throws {
         guard status == .stopped || isFailed else { return }
         guard postgres.status == .running else {
@@ -578,10 +615,6 @@ final class GarageMCPService: ObservableObject {
             status = .failed(errorMsg)
             appendLog(LogLine(stream: .stderr, text: errorMsg, source: "garage-mcp"))
             throw GarageMCPError.databaseNotOnline
-        }
-        guard FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) else {
-            status = .failed(GarageMCPError.cliNotFound.localizedDescription)
-            throw GarageMCPError.cliNotFound
         }
 
         var attemptsLeft = max(1, maxAttempts)
@@ -594,32 +627,18 @@ final class GarageMCPService: ObservableObject {
             isStopping = false
             sessionId = nil
 
-            var processInstance: Process?
             do {
-                let process = try runner.run(
-                    executable: Paths.garageCLI,
-                    arguments: [
-                        "mcp-serve",
-                        "--http",
-                        "--host", host,
-                        "--port", String(currentPort),
-                        "--path", path,
-                    ],
-                    environment: try environment(),
-                    currentDirectory: Paths.garageWorkingDirectory,
-                    source: "garage-mcp"
-                ) { [weak self] line in
-                    self?.appendLog(line)
+                let options = try environment()
+                let result = try await client.startServer(host: host, port: currentPort, path: path, options: options)
+                if !result.success {
+                    let launchError = GarageMCPError.launchFailed(result.message ?? "XPC service failed to start MCP server")
+                    status = .failed(launchError.localizedDescription)
+                    throw launchError
                 }
-                processInstance = process
-                process.terminationHandler = { [weak self] process in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.status = self.isStopping
-                            ? .stopped
-                            : .failed("garage-mcp exited with status \(process.terminationStatus)")
-                    }
-                }
+                startLogPolling()
+            } catch let error as GarageMCPError {
+                status = .failed(error.localizedDescription)
+                throw error
             } catch {
                 let launchError = GarageMCPError.launchFailed(error.localizedDescription)
                 status = .failed(launchError.localizedDescription)
@@ -635,11 +654,7 @@ final class GarageMCPService: ObservableObject {
 
             // Startup / loading failed on currentPort
             attemptsLeft -= 1
-            processInstance?.terminationHandler = nil
-            runner.terminate()
-            for _ in 0..<20 where runner.isRunning {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
+            _ = try? await client.stopServer()
 
             if attemptsLeft > 0 {
                 let newPort = Self.randomPort(excluding: triedPorts)
@@ -661,17 +676,19 @@ final class GarageMCPService: ObservableObject {
         status = .stopping
         isStopping = true
         sessionId = nil
-        runner.terminate()
-        for _ in 0..<50 where runner.isRunning {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
+        stopLogPolling()
+        _ = try? await client.stopServer()
         status = .stopped
     }
 
     func terminateImmediately() {
+        status = .stopping
         isStopping = true
         sessionId = nil
-        runner.terminate()
+        stopLogPolling()
+        Task { [client] in
+            _ = try? await client.stopServer()
+        }
     }
 
     private var isFailed: Bool {
@@ -690,15 +707,14 @@ final class GarageMCPService: ObservableObject {
 
     func clearLogs() {
         logs.removeAll()
+        Task { [client] in
+            _ = try? await client.clearLogs()
+        }
     }
 
     private func environment() throws -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
+        var env: [String: String] = [:]
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
-        let libpqURL = Paths.postgresLibDir.appendingPathComponent("libpq.dylib")
-        if FileManager.default.fileExists(atPath: libpqURL.path) {
-            env["GARAGE_LIBPQ_PATH"] = libpqURL.path
-        }
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
         }
@@ -708,7 +724,6 @@ final class GarageMCPService: ObservableObject {
     private func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            guard runner.isRunning else { return false }
             var request = URLRequest(url: endpoint)
             request.timeoutInterval = 1
             do {

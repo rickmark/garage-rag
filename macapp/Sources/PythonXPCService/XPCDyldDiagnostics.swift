@@ -9,7 +9,7 @@ extension PythonError: @retroactive LocalizedError {
     }
 }
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "XPCDyldDiagnostics")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "XPCDyldDiagnostics")
 
 /// Detailed diagnostic report for an XPC helper service, specifically checking for dyld loading,
 /// crash logs, binary presence, and runtime environment problems.

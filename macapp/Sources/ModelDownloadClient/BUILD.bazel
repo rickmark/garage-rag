@@ -7,5 +7,6 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/IngestClient:IngestClient_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )
