@@ -1,8 +1,105 @@
 import Foundation
 import Darwin
+import OSLog
 #if canImport(PythonKit)
 import PythonKit
 #endif
+
+private let cliLogger = Logger(subsystem: "me.rickmark.garage", category: "GarageCLI")
+
+private final class CLIOutputCapturer {
+    static let shared = CLIOutputCapturer()
+    private var origStdout: Int32 = -1
+    private var origStderr: Int32 = -1
+    private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
+    private var stdoutBuffer = Data()
+    private var stderrBuffer = Data()
+    private let lock = NSLock()
+
+    func start() {
+        origStdout = dup(STDOUT_FILENO)
+        origStderr = dup(STDERR_FILENO)
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        self.stdoutPipe = outPipe
+        self.stderrPipe = errPipe
+
+        fflush(stdout)
+        fflush(stderr)
+        dup2(outPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+        dup2(errPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+        let outOrig = origStdout
+        let errOrig = origStderr
+
+        outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            if outOrig >= 0 {
+                data.withUnsafeBytes { ptr in
+                    if let base = ptr.baseAddress {
+                        _ = write(outOrig, base, data.count)
+                    }
+                }
+            }
+            self?.process(data: data, isStderr: false)
+        }
+
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            if errOrig >= 0 {
+                data.withUnsafeBytes { ptr in
+                    if let base = ptr.baseAddress {
+                        _ = write(errOrig, base, data.count)
+                    }
+                }
+            }
+            self?.process(data: data, isStderr: true)
+        }
+    }
+
+    private func process(data: Data, isStderr: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        if isStderr {
+            stderrBuffer.append(data)
+            while let range = stderrBuffer.firstRange(of: Data([0x0A])) {
+                let lineData = stderrBuffer.subdata(in: stderrBuffer.startIndex..<range.lowerBound)
+                stderrBuffer.removeSubrange(stderrBuffer.startIndex..<range.upperBound)
+                if let line = String(data: lineData, encoding: .utf8), !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cliLogger.error("\(line, privacy: .public)")
+                }
+            }
+        } else {
+            stdoutBuffer.append(data)
+            while let range = stdoutBuffer.firstRange(of: Data([0x0A])) {
+                let lineData = stdoutBuffer.subdata(in: stdoutBuffer.startIndex..<range.lowerBound)
+                stdoutBuffer.removeSubrange(stdoutBuffer.startIndex..<range.upperBound)
+                if let line = String(data: lineData, encoding: .utf8), !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cliLogger.info("\(line, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    func flush() {
+        fflush(stdout)
+        fflush(stderr)
+        lock.lock()
+        defer { lock.unlock() }
+        if !stdoutBuffer.isEmpty, let line = String(data: stdoutBuffer, encoding: .utf8), !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cliLogger.info("\(line, privacy: .public)")
+            stdoutBuffer.removeAll()
+        }
+        if !stderrBuffer.isEmpty, let line = String(data: stderrBuffer, encoding: .utf8), !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cliLogger.error("\(line, privacy: .public)")
+            stderrBuffer.removeAll()
+        }
+    }
+}
 
 private func setupPostgresEnvironment() {
     var candidatePaths: [String] = []
@@ -75,6 +172,10 @@ private func setupPythonEnvironment() {
 }
 
 private func runCLI() {
+    CLIOutputCapturer.shared.start()
+    defer {
+        CLIOutputCapturer.shared.flush()
+    }
     setupPostgresEnvironment()
     setupPythonEnvironment()
     #if canImport(PythonKit)
@@ -82,6 +183,7 @@ private func runCLI() {
         try PythonLibrary.loadLibrary()
     } catch {
         fputs("Error: Failed to load Python runtime library: \(error.localizedDescription)\n", stderr)
+        CLIOutputCapturer.shared.flush()
         exit(1)
     }
 
@@ -158,9 +260,11 @@ private func runCLI() {
             }
             fputs("Error executing garage CLI: \(error)\n", stderr)
             fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+            CLIOutputCapturer.shared.flush()
             exit(1)
         }
         let exitCode = Int(cliModule.main_cli()) ?? 0
+        CLIOutputCapturer.shared.flush()
         exit(Int32(exitCode))
     } catch {
         if let tb = try? Python.attemptImport("traceback") {
@@ -170,10 +274,12 @@ private func runCLI() {
         if let sys = try? Python.attemptImport("sys") {
             fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
         }
+        CLIOutputCapturer.shared.flush()
         exit(1)
     }
     #else
     fputs("Error: PythonKit not available\n", stderr)
+    CLIOutputCapturer.shared.flush()
     exit(1)
     #endif
 }

@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestEngine")
+private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest", category: "IngestEngine")
 
 /// Engine handling security-scoped bookmark lifecycle and sandboxed access verification.
 public final class IngestEngine: @unchecked Sendable {

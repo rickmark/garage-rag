@@ -6,7 +6,7 @@ import IngestClient
 import PythonKit
 #endif
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageXPCService")
+private let logger = Logger(subsystem: "me.rickmark.garage-rag.xpc", category: "GarageXPCService")
 
 private func installCrashHandlers() {
     NSSetUncaughtExceptionHandler { exception in

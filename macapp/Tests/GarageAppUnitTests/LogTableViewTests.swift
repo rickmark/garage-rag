@@ -187,10 +187,11 @@ final class LogTableViewTests: XCTestCase {
     }
 
     func testLogsViewSourceScopeMapping() {
+        XCTAssertEqual(LogsView.LogSource.postgres.matchingOSLogScope, .system)
+        XCTAssertEqual(LogsView.LogSource.garage.matchingOSLogScope, .all)
         XCTAssertEqual(LogsView.LogSource.ingest.matchingOSLogScope, .ingest)
         XCTAssertEqual(LogsView.LogSource.xpcServices.matchingOSLogScope, .xpc)
         XCTAssertEqual(LogsView.LogSource.unifiedLog.matchingOSLogScope, .all)
-        XCTAssertNil(LogsView.LogSource.postgres.matchingOSLogScope)
-        XCTAssertNil(LogsView.LogSource.garage.matchingOSLogScope)
+        XCTAssertNil(LogsView.LogSource.llama.matchingOSLogScope)
     }
 }

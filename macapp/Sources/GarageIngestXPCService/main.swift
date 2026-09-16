@@ -3,7 +3,7 @@ import IngestClient
 import OSLog
 import PythonKit
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "GarageIngestXPCService")
+private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest-xpc", category: "GarageIngestXPCService")
 
 // MARK: - Crash and Signal Handling with Dyld Diagnostics
 

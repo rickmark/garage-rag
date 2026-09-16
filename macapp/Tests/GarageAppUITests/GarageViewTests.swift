@@ -135,6 +135,7 @@ final class GarageViewTests: XCTestCase {
         XCTAssertTrue(LogsView.LogSource.ingest.isUnifiedSource)
         XCTAssertTrue(LogsView.LogSource.xpcServices.isUnifiedSource)
         XCTAssertTrue(LogsView.LogSource.unifiedLog.isUnifiedSource)
-        XCTAssertFalse(LogsView.LogSource.postgres.isUnifiedSource)
+        XCTAssertTrue(LogsView.LogSource.postgres.isUnifiedSource)
+        XCTAssertTrue(LogsView.LogSource.garage.isUnifiedSource)
     }
 }

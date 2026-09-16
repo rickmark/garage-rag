@@ -4,29 +4,6 @@ import Combine
 
 private let logger = Logger(subsystem: "me.rickmark.garage", category: "OSLogStreamService")
 
-/// Scope filter for unified logs retrieved from OSLogStore.
-public enum OSLogScopeFilter: String, CaseIterable, Identifiable, Sendable {
-    case all = "All Garage Logs"
-    case ingest = "Ingest"
-    case xpc = "XPC Services"
-    case system = "Unified Subsystem"
-
-    public var id: String { rawValue }
-
-    public var predicate: NSPredicate {
-        switch self {
-        case .all:
-            return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
-        case .ingest:
-            return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR category CONTAINS[c] 'ingest' OR category == 'GarageXPCOutputCapture' OR category == 'IngestService' OR category == 'IngestClient' OR category == 'GarageIngestXPCService' OR process CONTAINS[c] 'GarageIngest'")
-        case .xpc:
-            return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR category CONTAINS[c] 'xpc' OR category CONTAINS[c] 'diagnostics' OR process CONTAINS[c] 'XPC' OR process CONTAINS[c] 'Embed' OR process CONTAINS[c] 'MCPServer' OR process CONTAINS[c] 'Llama' OR process CONTAINS[c] 'ModelDownload'")
-        case .system:
-            return NSPredicate(format: "subsystem == 'me.rickmark.garage'")
-        }
-    }
-}
-
 /// Time window presets for fetching historical unified logs.
 public enum OSLogTimeWindow: String, CaseIterable, Identifiable, Sendable {
     case recent1m = "1 min"
@@ -56,7 +33,7 @@ public final class OSLogStreamService: ObservableObject {
     @Published public private(set) var isStreaming: Bool = false
     @Published public private(set) var isPaused: Bool = false
     @Published public private(set) var lastPolledDate: Date? = nil
-    @Published public var scopeFilter: OSLogScopeFilter = .all
+    @Published public var scopeFilter: NSPredicate? = nil
 
     private var streamTask: Task<Void, Never>? = nil
     private var seenLogKeys: Set<String> = []
@@ -77,7 +54,7 @@ public final class OSLogStreamService: ObservableObject {
 
     /// Returns all accumulated log lines across unified logging.
     public var logs: [LogLine] {
-          []
+        logs(for: .unifiedLog)
     }
 
     /// Returns the accumulated log lines for a specific log source.
@@ -182,18 +159,14 @@ public final class OSLogStreamService: ObservableObject {
     }
 
     /// Drains recent entries from `OSLogStore` within a given time window.
-    public func fetchRecentLogs(for source: LogsView.LogSource? = nil, timeWindow: TimeInterval = 300) {
+    public func fetchRecentLogs(for source: LogsView.LogSource, timeWindow: TimeInterval = 300) {
         guard #available(macOS 12.0, *) else { return }
         let startDate = Date().addingTimeInterval(-timeWindow)
         guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
         let position = store.position(date: startDate)
 
         let predicate: NSPredicate
-        if let source = source, let sourcePredicate = source.osLogPredicate {
-            predicate = sourcePredicate
-        } else {
-            predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
-        }
+        predicate = source.osLogPredicate
 
         do {
             let entries = try store.getEntries(at: position, matching: predicate)
@@ -219,12 +192,26 @@ public final class OSLogStreamService: ObservableObject {
 
     // MARK: - Entry Processing
 
+    public func setPredicate(_ predicate: NSPredicate) {
+        self.scopeFilter = predicate
+    }
+
     /// Target mapping: routes an OSLogEntryLog to the appropriate service log streams.
     public func targetSources(for logEntry: OSLogEntryLog) -> Set<LogsView.LogSource> {
-        var targets: Set<LogsView.LogSource> = []
+        var targets: Set<LogsView.LogSource> = [.unifiedLog]
         let category = logEntry.category.lowercased()
         let process = logEntry.process.lowercased()
         let message = logEntry.composedMessage
+
+        // Postgres
+        if category.contains("postgres") || category.contains("initdb") || category.contains("psql") || category.contains("pg_") || process.contains("postgres") {
+            targets.insert(.postgres)
+        }
+
+        // garage CLI
+        if category.contains("garage-cli") || category.contains("garagecli") || category.contains("garagecliservice") || (category.contains("garage") && !category.contains("ingest") && !category.contains("mcp") && !category.contains("grpc") && !category.contains("llama") && !category.contains("model")) || process.contains("garage_bin") || process == "garage" {
+            targets.insert(.garage)
+        }
 
         // Ingest
         if category.contains("ingest") ||
@@ -239,16 +226,16 @@ public final class OSLogStreamService: ObservableObject {
 
         // Embedding / Backfill
         if category.contains("embed") || category.contains("backfill") || process.contains("embed") {
-            targets.insert(.backfill)
+            targets.insert(.embed)
         }
 
         // MCP Server
-        if category.contains("mcp") || process.contains("mcp") {
+        if category.contains("mcp") || process.contains("mcp") || category.contains("garagemcpservice") {
             targets.insert(.mcp)
         }
 
         // gRPC Server
-        if category.contains("grpc") || process.contains("grpc") {
+        if category.contains("grpc") || process.contains("grpc") || category.contains("garagegrpcservice") {
             targets.insert(.grpc)
         }
 
@@ -261,8 +248,6 @@ public final class OSLogStreamService: ObservableObject {
         if category.contains("modeldownload") || process.contains("modeldownload") {
             targets.insert(.modelDownload)
         }
-
-
 
         return targets
     }

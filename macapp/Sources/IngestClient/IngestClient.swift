@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestClient")
+private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest", category: "IngestClient")
 
 /// Progress receiver adapter for XPC callbacks.
 private final class IngestProgressReceiver: NSObject, GarageIngestProgressReceiverProtocol {

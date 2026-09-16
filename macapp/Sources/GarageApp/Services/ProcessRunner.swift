@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let logger = Logger(subsystem: "me.rickmark.garage", category: "ProcessRunner")
 
 /// Severity level for log entries, supporting filtering and priority ordering.
 public enum LogLevel: String, CaseIterable, Identifiable, Comparable, Sendable {
@@ -237,11 +240,19 @@ final class ProcessRunner {
         do {
             try process.run()
         } catch {
-            return (-1, "failed to launch \(executable.path): \(error.localizedDescription)")
+            let errText = "failed to launch \(executable.path): \(error.localizedDescription)"
+            emitToOSLog(stream: .stderr, text: errText, source: executable.lastPathComponent)
+            return (-1, errText)
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
+        if !output.isEmpty {
+            for rawLine in output.split(separator: "\n") {
+                let lineStr = String(rawLine)
+                emitToOSLog(stream: .stdout, text: lineStr, source: executable.lastPathComponent)
+            }
+        }
         return (process.terminationStatus, output)
     }
 
@@ -258,6 +269,7 @@ final class ProcessRunner {
                 let text = String(data: self[keyPath: buffer], encoding: .utf8) ?? ""
                 self[keyPath: buffer].removeAll()
                 if !text.isEmpty {
+                    Self.emitToOSLog(stream: stream, text: text, source: source)
                     DispatchQueue.main.async {
                         onLine(LogLine(stream: stream, text: text, source: source))
                     }
@@ -270,9 +282,38 @@ final class ProcessRunner {
             let lineData = self[keyPath: buffer].subdata(in: self[keyPath: buffer].startIndex..<range.lowerBound)
             self[keyPath: buffer].removeSubrange(self[keyPath: buffer].startIndex..<range.upperBound)
             let text = String(data: lineData, encoding: .utf8) ?? ""
+            Self.emitToOSLog(stream: stream, text: text, source: source)
             DispatchQueue.main.async {
                 onLine(LogLine(stream: stream, text: text, source: source))
             }
+        }
+    }
+
+    private static func emitToOSLog(stream: LogLine.Stream, text: String, source: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let category: String
+        let normalizedSource = source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedSource.contains("postgres") || normalizedSource.contains("initdb") || normalizedSource.contains("psql") || normalizedSource.contains("pg_") {
+            category = "postgres"
+        } else if normalizedSource.contains("garage") {
+            category = "garage-cli"
+        } else {
+            category = source.replacingOccurrences(of: " ", with: "")
+        }
+
+        let subLogger = Logger(subsystem: "me.rickmark.garage", category: category)
+        let level = LogLine.inferLevel(stream: stream, text: trimmed)
+        switch level {
+        case .error:
+            subLogger.error("\(trimmed, privacy: .public)")
+        case .warning:
+            subLogger.warning("\(trimmed, privacy: .public)")
+        case .info:
+            subLogger.info("\(trimmed, privacy: .public)")
+        case .debug:
+            subLogger.debug("\(trimmed, privacy: .public)")
         }
     }
 

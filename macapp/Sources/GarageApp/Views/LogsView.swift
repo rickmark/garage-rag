@@ -7,10 +7,11 @@ public struct LogsView: View {
     @State private var selectedTimeWindow: OSLogTimeWindow = .recent5m
 
     public enum LogSource: String, CaseIterable, Identifiable, Sendable, Hashable {
+        case unifiedLog = "Unified Log"
         case postgres = "Postgres"
         case garage = "garage CLI"
         case ingest = "Ingest"
-        case backfill = "Backfill"
+        case embed = "Embed"
         case mcp = "MCP Server"
         case grpc = "gRPC Server"
         case llama = "Llama Service"
@@ -19,40 +20,26 @@ public struct LogsView: View {
 
         public var id: String { rawValue }
 
-        public var isUnifiedSource: Bool {
+        public var osLogPredicate: NSPredicate {
             switch self {
-            case .ingest, .backfill, .mcp, .grpc, .llama, .modelDownload:
-                return true
-            case .postgres, .garage:
-                return false
-            }
-        }
-
-        public var osLogPredicate: NSPredicate? {
-            switch self {
+            case .postgres:
+                return NSPredicate(format: "(subsystem == 'me.rickmark.garage-rag.postgres' AND category='postgres')")
+            case .garage:
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage'")
             case .ingest:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND (category CONTAINS[c] 'ingest' OR category == 'GarageXPCOutputCapture' OR category == 'IngestService' OR category == 'IngestClient' OR category == 'GarageIngestXPCService')) OR process CONTAINS[c] 'GarageIngest'")
-            case .llama:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND category CONTAINS[c] 'llama') OR process CONTAINS[c] 'llama'")
-            case .modelDownload:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND category CONTAINS[c] 'modeldownload') OR process CONTAINS[c] 'modeldownload'")
+                return NSPredicate(format: "(subsystem == 'me.rickmark.garage-rag.ingest-xpc' OR subsystem == 'me.rickmark.garage-rag.ingest')")
+            case .embed:
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.embed-xpc'")
             case .mcp:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND category CONTAINS[c] 'mcp') OR process CONTAINS[c] 'mcpserver'")
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.mcp-server-xpc'")
             case .grpc:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND (category CONTAINS[c] 'grpc' OR category CONTAINS[c] 'grpc')) OR process CONTAINS[c] 'grpc'")
-            case .backfill:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage' AND (category CONTAINS[c] 'embed' OR category CONTAINS[c] 'backfill')) OR process CONTAINS[c] 'embed'")
-            case .postgres, .garage:
-                return nil
-            }
-        }
-
-        public var matchingOSLogScope: OSLogScopeFilter? {
-            switch self {
-            case .ingest:
-                return .ingest
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.xpc'")
+            case .llama:
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag'")
+            case .modelDownload:
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.model-download-xpc'")
             default:
-                return nil
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
             }
         }
     }
@@ -62,6 +49,9 @@ public struct LogsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             sourcePickerToolbar
+            Divider()
+
+            osLogStreamingControlsBar
             Divider()
 
             LogTableView(
@@ -88,14 +78,7 @@ public struct LogsView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             Picker("Log Source", selection: $source) {
                 ForEach(LogSource.allCases) { src in
-                    HStack(spacing: 4) {
-                        Text(src.rawValue)
-                        if src.isUnifiedSource {
-                            Image(systemName: "waveform")
-                                .font(.caption2)
-                        }
-                    }
-                    .tag(src)
+                    Text(src.rawValue).tag(src)
                 }
             }
             .pickerStyle(.segmented)
@@ -168,23 +151,16 @@ public struct LogsView: View {
     // MARK: - Streaming Actions
 
     private func configureStreamingForCurrentSource() {
-        if source.isUnifiedSource {
-            if !appState.osLogStreamService.isStreaming {
-                appState.osLogStreamService.startStreaming(since: Date().addingTimeInterval(-300))
-            } else {
-                appState.osLogStreamService.resumeStreaming()
-            }
-            if source == .ingest {
-                appState.ingestService.fetchRecentLogsFromOSLogStore(timeWindow: 300)
-            }
+        appState.osLogStreamService.setPredicate(source.osLogPredicate)
+        if !appState.osLogStreamService.isStreaming {
+            appState.osLogStreamService.startStreaming(since: Date().addingTimeInterval(-300))
+        } else {
+            appState.osLogStreamService.resumeStreaming()
         }
     }
 
     private func fetchHistoricalOSLogs(window: OSLogTimeWindow) {
         appState.osLogStreamService.fetchRecentLogs(for: source, timeWindow: window.interval)
-        if source == .ingest {
-            appState.ingestService.fetchRecentLogsFromOSLogStore(timeWindow: window.interval)
-        }
     }
 
     // MARK: - Status Helpers
@@ -218,33 +194,6 @@ public struct LogsView: View {
     // MARK: - Log Lines Source
 
     private var lines: [LogLine] {
-        switch source {
-        case .postgres:
-            return appState.postgres.logs
-        case .garage:
-            return appState.garage.logs
-        case .ingest:
-            let cliLogs = appState.ingest.logs
-            let osLogs = appState.osLogStreamService.logs(for: .ingest)
-            if cliLogs.isEmpty { return osLogs }
-            if osLogs.isEmpty { return cliLogs }
-            return (cliLogs + osLogs).sorted { $0.date < $1.date }
-        case .backfill:
-            let osLogs = appState.osLogStreamService.logs(for: .backfill)
-            let cliLogs = appState.backfill.logs
-            return osLogs.isEmpty ? cliLogs : (cliLogs + osLogs).sorted { $0.date < $1.date }
-        case .mcp:
-            let osLogs = appState.osLogStreamService.logs(for: .mcp)
-            return osLogs.isEmpty ? appState.mcp.logs : osLogs
-        case .grpc:
-            let osLogs = appState.osLogStreamService.logs(for: .grpc)
-            return osLogs.isEmpty ? appState.grpc.logs : osLogs
-        case .llama:
-            let osLogs = appState.osLogStreamService.logs(for: .llama)
-            return osLogs.isEmpty ? appState.llama.logs : osLogs
-        case .modelDownload:
-            let osLogs = appState.osLogStreamService.logs(for: .modelDownload)
-            return osLogs.isEmpty ? appState.modelDownload.logs : osLogs
-        }
+        appState.osLogStreamService.logs(for: source)
     }
 }

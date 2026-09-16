@@ -2,7 +2,7 @@ import Foundation
 import IngestClient
 import OSLog
 
-private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestService")
+private let logger = Logger(subsystem: "me.rickmark.garage-rag.ingest", category: "IngestService")
 
 /// Execution strategy for document ingestion.
 enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {

@@ -551,20 +551,35 @@ final class AppState: ObservableObject {
 
     func clearLogs(for sourceName: String) {
         switch sourceName {
-        case "Postgres": postgres.clearLogs()
-        case "garage CLI": garage.clearLogs()
+        case "Postgres":
+            postgres.clearLogs()
+            osLogStreamService.clearLogs(for: .postgres)
+        case "garage CLI", "garage":
+            garage.clearLogs()
+            osLogStreamService.clearLogs(for: .garage)
         case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (CLI)":
             ingest.clearLogs()
             ingestService.clearLogs()
-        case "Backfill", "Embedding": backfill.clearLogs()
-        case "MCP Server": mcp.clearLogs()
-        case "gRPC Server": grpc.clearLogs()
-        case "Llama Service", "Llama XPC": llama.clearLogs()
-        case "Model Downloader", "Model Download XPC": modelDownload.clearLogs()
-        case "XPC Services", "XPC Services Manager": xpcServices.clearLogs()
+            osLogStreamService.clearLogs(for: .ingest)
+        case "Embedding":
+            backfill.clearLogs()
+            osLogStreamService.clearLogs(for: .embed)
+        case "MCP Server":
+            mcp.clearLogs()
+            osLogStreamService.clearLogs(for: .mcp)
+        case "gRPC Server":
+            grpc.clearLogs()
+            osLogStreamService.clearLogs(for: .grpc)
+        case "Llama Service", "Llama XPC":
+            llama.clearLogs()
+            osLogStreamService.clearLogs(for: .llama)
+        case "Model Downloader", "Model Download XPC":
+            modelDownload.clearLogs()
+            osLogStreamService.clearLogs(for: .modelDownload)
         case "Unified Log", "Unified Logs", "Unified (OSLog)", "OSLog", "System Log":
             osLogStreamService.clearLogs()
-        default: break
+        default:
+            osLogStreamService.clearLogs()
         }
     }
 
