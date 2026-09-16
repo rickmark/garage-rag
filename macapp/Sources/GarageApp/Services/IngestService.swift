@@ -62,15 +62,23 @@ final class IngestService: ObservableObject {
     private var cliProcess: Process?
     private let maxLogLines = 4000
     private var activeActivity: NSObjectProtocol? = nil
+    private var osLogMonitorTask: Task<Void, Never>? = nil
+    private var seenLogKeys: Set<String> = []
+    private var seenLogKeyQueue: [String] = []
+    private let maxSeenKeys = 2000
 
     init(
         client: IngestClient = IngestClient(),
-        postgres: PostgresService? = nil
+        postgres: PostgresService? = nil,
+        startMonitoring: Bool = true
     ) {
         let savedMode = UserDefaults.standard.string(forKey: "garage.ingest.executionMode")
         self.executionMode = savedMode.flatMap(IngestExecutionMode.init) ?? .xpcService
         self.xpcClient = client
         self.postgres = postgres
+        if startMonitoring {
+            self.startOSLogMonitoring(since: Date().addingTimeInterval(-300))
+        }
     }
 
     var client: IngestClient {
@@ -78,6 +86,22 @@ final class IngestService: ObservableObject {
     }
 
     func appendLog(_ line: LogLine) {
+        let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !textTrimmed.isEmpty else { return }
+
+        let timeBucket = Int(line.date.timeIntervalSince1970)
+        let key = "\(textTrimmed)|\(timeBucket)"
+
+        if seenLogKeys.contains(key) {
+            return
+        }
+        seenLogKeys.insert(key)
+        seenLogKeyQueue.append(key)
+        if seenLogKeyQueue.count > maxSeenKeys {
+            let removed = seenLogKeyQueue.removeFirst()
+            seenLogKeys.remove(removed)
+        }
+
         logs.append(line)
         if logs.count > maxLogLines {
             logs.removeFirst(logs.count - maxLogLines)
@@ -90,12 +114,135 @@ final class IngestService: ObservableObject {
 
     func clearLogs() {
         logs.removeAll()
+        seenLogKeys.removeAll()
+        seenLogKeyQueue.removeAll()
     }
 
     func clearMessages() {
         lastError = nil
         lastSuccess = nil
         latestProgress = nil
+    }
+
+    // MARK: - OSLogStore Monitoring
+
+    private func isRelevantIngestLog(category: String, message: String, process: String) -> Bool {
+        if category.localizedCaseInsensitiveContains("ingest") ||
+            category == "GarageXPCOutputCapture" ||
+            category == "IngestService" ||
+            category == "IngestClient" ||
+            category == "GarageIngestXPCService" ||
+            process.localizedCaseInsensitiveContains("GarageIngest") ||
+            message.hasPrefix("[Python]") {
+            return true
+        }
+        return false
+    }
+
+    private func processOSLogEntry(_ entry: OSLogEntry) {
+        guard let logEntry = entry as? OSLogEntryLog else { return }
+        let category = logEntry.category
+        let message = logEntry.composedMessage
+        let process = logEntry.process
+
+        guard isRelevantIngestLog(category: category, message: message, process: process) else { return }
+
+        let stream: LogLine.Stream = (logEntry.level == .fault || logEntry.level == .error) ? .stderr : .stdout
+        let level: LogLevel
+        switch logEntry.level {
+        case .fault, .error:
+            level = .error
+        case .info, .notice:
+            level = .info
+        case .debug:
+            level = .debug
+        default:
+            level = .info
+        }
+
+        let sourceLabel: String
+        if !category.isEmpty {
+            sourceLabel = category
+        } else if !process.isEmpty {
+            sourceLabel = process
+        } else {
+            sourceLabel = "Ingest (OSLog)"
+        }
+
+        let line = LogLine(
+            id: UUID(),
+            date: logEntry.date,
+            stream: stream,
+            text: message,
+            source: sourceLabel,
+            level: level
+        )
+        appendLog(line)
+    }
+
+    func startOSLogMonitoring(since startDate: Date) {
+        stopOSLogMonitoring()
+
+        guard #available(macOS 12.0, *) else { return }
+        osLogMonitorTask = Task { [weak self] in
+            guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
+
+            var lastDate = startDate
+            var lastPosition = store.position(date: startDate)
+            let predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
+
+            while !Task.isCancelled {
+                do {
+                    let entries = try store.getEntries(at: lastPosition, matching: predicate)
+                    var maxDate = lastDate
+                    var collected: [OSLogEntry] = []
+
+                    for entry in entries {
+                        collected.append(entry)
+                        if entry.date > maxDate {
+                            maxDate = entry.date
+                        }
+                    }
+
+                    if !collected.isEmpty {
+                        await MainActor.run {
+                            for entry in collected {
+                                self?.processOSLogEntry(entry)
+                            }
+                        }
+                    }
+
+                    lastDate = maxDate
+                    lastPosition = store.position(date: lastDate)
+                } catch {
+                    logger.debug("IngestService: OSLogStore polling error: \(error.localizedDescription, privacy: .public)")
+                }
+
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+    }
+
+    func stopOSLogMonitoring() {
+        osLogMonitorTask?.cancel()
+        osLogMonitorTask = nil
+    }
+
+    func drainOSLogs(since startDate: Date) {
+        guard #available(macOS 12.0, *) else { return }
+        guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
+        let position = store.position(date: startDate)
+        let predicate = NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
+        if let entries = try? store.getEntries(at: position, matching: predicate) {
+            for entry in entries {
+                processOSLogEntry(entry)
+            }
+        }
+    }
+
+    public func fetchRecentLogsFromOSLogStore(timeWindow: TimeInterval = 300) {
+        let startDate = Date().addingTimeInterval(-timeWindow)
+        drainOSLogs(since: startDate)
     }
 
     func handleProgress(_ progress: IngestProgressUpdate, sourceLabel: String = "Ingest") {
@@ -178,7 +325,8 @@ final class IngestService: ObservableObject {
         isRunning = true
         activeMode = targetMode
         currentSource = slug
-        startedAt = Date()
+        let runStartDate = Date()
+        startedAt = runStartDate
         lastError = nil
         lastSuccess = nil
 
@@ -197,7 +345,11 @@ final class IngestService: ObservableObject {
         )
         appendLog(startLine)
 
+        startOSLogMonitoring(since: runStartDate.addingTimeInterval(-1.0))
+
         defer {
+            stopOSLogMonitoring()
+            drainOSLogs(since: runStartDate.addingTimeInterval(-1.0))
             isRunning = false
             isCancelling = false
             activeMode = nil
@@ -239,11 +391,21 @@ final class IngestService: ObservableObject {
         }
 
         do {
-            let result = try await selectedClient.ingest(slug: slug, options: effectiveOptions) { [weak self] progress in
-                Task { @MainActor in
-                    self?.handleProgress(progress, sourceLabel: commandLabel)
+            let result = try await selectedClient.ingest(
+                slug: slug,
+                options: effectiveOptions,
+                onLog: { [weak self] message, level in
+                    Task { @MainActor in
+                        let stream: LogLine.Stream = level >= 40 ? .stderr : .stdout
+                        self?.appendLog(LogLine(stream: stream, text: message, source: commandLabel))
+                    }
+                },
+                onProgress: { [weak self] progress in
+                    Task { @MainActor in
+                        self?.handleProgress(progress, sourceLabel: commandLabel)
+                    }
                 }
-            }
+            )
 
             if result.succeeded {
                 let successMsg = result.message ?? "Ingestion finished successfully for \(slug) [\(targetMode.shortTitle)]"

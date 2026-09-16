@@ -23,6 +23,7 @@ final class AppState: ObservableObject {
     let volumeAccess: VolumeAccessService
     @Published var ingestService: IngestService
     let xpcServices: XPCServiceManager
+    @Published var osLogStreamService: OSLogStreamService
     private var cancellables = Set<AnyCancellable>()
 
     /// Output of the most recent manual or scheduled `garage` command,
@@ -66,7 +67,7 @@ final class AppState: ObservableObject {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
     }
 
-    init(llama: LlamaService, volumeAccess: VolumeAccessService? = nil, modelDownload: ModelDownloadService? = nil, xpcServices: XPCServiceManager? = nil) {
+    init(llama: LlamaService, volumeAccess: VolumeAccessService? = nil, modelDownload: ModelDownloadService? = nil, xpcServices: XPCServiceManager? = nil, osLogStreamService: OSLogStreamService? = nil) {
         self.llama = llama
         let client = volumeAccess?.ingestClient ?? IngestClient()
         self.volumeAccess = volumeAccess ?? VolumeAccessService(ingestClient: client)
@@ -74,6 +75,7 @@ final class AppState: ObservableObject {
         self.modelDownload = downloadService
         self.ingestService = IngestService(client: self.volumeAccess.ingestClient ?? client, postgres: postgres)
         self.xpcServices = xpcServices ?? XPCServiceManager()
+        self.osLogStreamService = osLogStreamService ?? OSLogStreamService()
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
@@ -100,6 +102,7 @@ final class AppState: ObservableObject {
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.xpcServices.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        self.osLogStreamService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
 
         do {
             lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil
@@ -553,12 +556,14 @@ final class AppState: ObservableObject {
         case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (CLI)":
             ingest.clearLogs()
             ingestService.clearLogs()
-        case "Backfill": backfill.clearLogs()
+        case "Backfill", "Embedding": backfill.clearLogs()
         case "MCP Server": mcp.clearLogs()
         case "gRPC Server": grpc.clearLogs()
         case "Llama Service", "Llama XPC": llama.clearLogs()
         case "Model Downloader", "Model Download XPC": modelDownload.clearLogs()
         case "XPC Services", "XPC Services Manager": xpcServices.clearLogs()
+        case "Unified Log", "Unified Logs", "Unified (OSLog)", "OSLog", "System Log":
+            osLogStreamService.clearLogs()
         default: break
         }
     }

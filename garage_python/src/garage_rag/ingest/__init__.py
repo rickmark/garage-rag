@@ -74,27 +74,32 @@ class StreamToLog:
 def set_c_log_callback(callback_address: int) -> None:
     """Register a C ABI function pointer (address) for real-time logging to OSLog."""
     global _global_c_log_callback
-    if not callback_address:
-        _global_c_log_callback = None
-    else:
-        callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
-        _global_c_log_callback = callback_type(callback_address)
+    with _c_callback_lock:
+        if not callback_address:
+            _global_c_log_callback = None
+        else:
+            callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
+            _global_c_log_callback = callback_type(callback_address)
 
-        root_logger = logging.getLogger()
-        has_oslog_handler = any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
-        if not has_oslog_handler:
-            handler = OSLogHandler()
-            formatter = logging.Formatter("[%(name)s] %(message)s")
-            handler.setFormatter(formatter)
-            handler.setLevel(logging.DEBUG)
-            root_logger.addHandler(handler)
-            if root_logger.level == logging.NOTSET or root_logger.level > logging.DEBUG:
-                root_logger.setLevel(logging.DEBUG)
+            root_logger = logging.getLogger()
+            has_oslog_handler = any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
+            if not has_oslog_handler:
+                handler = OSLogHandler()
+                formatter = logging.Formatter("[%(name)s] %(message)s")
+                handler.setFormatter(formatter)
+                handler.setLevel(logging.DEBUG)
+                root_logger.addHandler(handler)
+                if root_logger.level == logging.NOTSET or root_logger.level > logging.DEBUG:
+                    root_logger.setLevel(logging.DEBUG)
 
-        if not isinstance(sys.stdout, StreamToLog):
-            sys.stdout = StreamToLog(20, sys.__stdout__, name="stdout")  # INFO
-        if not isinstance(sys.stderr, StreamToLog):
-            sys.stderr = StreamToLog(40, sys.__stderr__, name="stderr")  # ERROR
+            garage_logger = logging.getLogger("garage_rag")
+            garage_logger.setLevel(logging.DEBUG)
+            garage_logger.propagate = True
+
+            if not isinstance(sys.stdout, StreamToLog):
+                sys.stdout = StreamToLog(20, sys.__stdout__, name="stdout")  # INFO
+            if not isinstance(sys.stderr, StreamToLog):
+                sys.stderr = StreamToLog(40, sys.__stderr__, name="stderr")  # ERROR
 
         def custom_excepthook(exc_type, exc_value, exc_traceback):
             import traceback
@@ -229,7 +234,7 @@ def ingest_xpc(
         elif prog.phase in ("scan", "complete"):
             log.info("[%s] (%s) %s", prog.source, prog.phase, prog.message)
         else:
-            log.debug("[%s] (%s %.1f%%) %s", prog.source, prog.phase, prog.progress * 100.0, prog.message)
+            log.info("[%s] (%s %.1f%%) %s", prog.source, prog.phase, prog.progress * 100.0, prog.message)
 
         _notify_c_progress(prog)
         if progress_callback is not None:

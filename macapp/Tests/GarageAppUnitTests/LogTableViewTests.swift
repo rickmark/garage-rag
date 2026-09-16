@@ -118,6 +118,7 @@ final class LogTableViewTests: XCTestCase {
         appState.clearLogs(for: "MCP Server")
         appState.clearLogs(for: "Llama Service")
         appState.clearLogs(for: "Model Downloader")
+        appState.clearLogs(for: "Unified Log")
 
         XCTAssertTrue(appState.postgres.logs.isEmpty)
         XCTAssertTrue(appState.garage.logs.isEmpty)
@@ -125,5 +126,71 @@ final class LogTableViewTests: XCTestCase {
         XCTAssertTrue(appState.backfill.logs.isEmpty)
         XCTAssertTrue(appState.mcp.logs.isEmpty)
         XCTAssertTrue(appState.llama.logs.isEmpty)
+        XCTAssertTrue(appState.osLogStreamService.logs.isEmpty)
+    }
+
+    @MainActor
+    func testOSLogStreamServiceOperations() {
+        let streamer = OSLogStreamService(startStreaming: false)
+        XCTAssertFalse(streamer.isStreaming)
+        XCTAssertFalse(streamer.isPaused)
+
+        // Test appending log entries for specific targets
+        let line1 = LogLine(stream: .stdout, text: "Ingest completed for 10 docs", source: "IngestService", level: .info)
+        streamer.appendLog(line1, for: [.ingest, .unifiedLog])
+        XCTAssertEqual(streamer.logs(for: .ingest).count, 1)
+        XCTAssertEqual(streamer.logs(for: .unifiedLog).count, 1)
+        XCTAssertEqual(streamer.logs(for: .llama).count, 0)
+        XCTAssertEqual(streamer.logs(for: .ingest).first?.text, "Ingest completed for 10 docs")
+
+        // Test deduplication
+        streamer.appendLog(line1, for: [.ingest, .unifiedLog])
+        XCTAssertEqual(streamer.logs(for: .ingest).count, 1)
+
+        // Test scope filters
+        XCTAssertEqual(OSLogScopeFilter.allCases.count, 4)
+        streamer.scopeFilter = .ingest
+        XCTAssertEqual(streamer.scopeFilter, .ingest)
+        XCTAssertNotNil(streamer.scopeFilter.predicate)
+
+        // Test time windows
+        XCTAssertEqual(OSLogTimeWindow.allCases.count, 5)
+        XCTAssertEqual(OSLogTimeWindow.recent5m.interval, 300)
+
+        // Test streaming controls
+        streamer.startStreaming(since: Date().addingTimeInterval(-60))
+        XCTAssertTrue(streamer.isStreaming)
+        XCTAssertFalse(streamer.isPaused)
+
+        streamer.pauseStreaming()
+        XCTAssertTrue(streamer.isPaused)
+
+        streamer.resumeStreaming()
+        XCTAssertFalse(streamer.isPaused)
+
+        streamer.togglePause()
+        XCTAssertTrue(streamer.isPaused)
+
+        streamer.togglePause()
+        XCTAssertFalse(streamer.isPaused)
+
+        streamer.stopStreaming()
+        XCTAssertFalse(streamer.isStreaming)
+
+        // Test per-source clear and fetch
+        streamer.clearLogs(for: .ingest)
+        XCTAssertTrue(streamer.logs(for: .ingest).isEmpty)
+        XCTAssertFalse(streamer.logs(for: .unifiedLog).isEmpty)
+
+        streamer.clearLogs()
+        XCTAssertTrue(streamer.logs(for: .unifiedLog).isEmpty)
+    }
+
+    func testLogsViewSourceScopeMapping() {
+        XCTAssertEqual(LogsView.LogSource.ingest.matchingOSLogScope, .ingest)
+        XCTAssertEqual(LogsView.LogSource.xpcServices.matchingOSLogScope, .xpc)
+        XCTAssertEqual(LogsView.LogSource.unifiedLog.matchingOSLogScope, .all)
+        XCTAssertNil(LogsView.LogSource.postgres.matchingOSLogScope)
+        XCTAssertNil(LogsView.LogSource.garage.matchingOSLogScope)
     }
 }

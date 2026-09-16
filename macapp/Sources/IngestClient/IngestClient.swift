@@ -5,20 +5,29 @@ private let logger = Logger(subsystem: "me.rickmark.garage", category: "IngestCl
 
 /// Progress receiver adapter for XPC callbacks.
 private final class IngestProgressReceiver: NSObject, GarageIngestProgressReceiverProtocol {
-    private let onProgress: @Sendable (IngestProgressUpdate) -> Void
+    private let onProgress: (@Sendable (IngestProgressUpdate) -> Void)?
+    private let onLog: (@Sendable (String, Int32) -> Void)?
     private let engine = IngestEngine.shared
 
-    init(onProgress: @escaping @Sendable (IngestProgressUpdate) -> Void) {
+    init(
+        onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil,
+        onLog: (@Sendable (String, Int32) -> Void)? = nil
+    ) {
         self.onProgress = onProgress
+        self.onLog = onLog
     }
 
     func didUpdateProgress(progressJson: String) {
         if let update = try? engine.deserialize(IngestProgressUpdate.self, from: progressJson) {
             logger.debug("IngestProgressReceiver received update: phase=\(update.phase, privacy: .public), seen=\(update.seen)/\(update.totalItems), msg=\(update.message, privacy: .public)")
-            onProgress(update)
+            onProgress?(update)
         } else {
             logger.warning("IngestProgressReceiver failed to decode progress JSON: \(progressJson, privacy: .public)")
         }
+    }
+
+    func didReceiveLog(message: String, level: Int32) {
+        onLog?(message, level)
     }
 }
 
@@ -207,6 +216,7 @@ public final class IngestClient: Sendable {
     public func ingest(
         slug: String,
         options: IngestOptions = .default,
+        onLog: (@Sendable (String, Int32) -> Void)? = nil,
         onProgress: (@Sendable (IngestProgressUpdate) -> Void)? = nil
     ) async throws -> IngestResult {
         logger.info("IngestClient.ingest called for slug '\(slug, privacy: .public)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))")
@@ -223,7 +233,7 @@ public final class IngestClient: Sendable {
             return IngestResult(succeeded: false, message: errorMsg)
         }
 
-        let receiver: IngestProgressReceiver? = onProgress.map { IngestProgressReceiver(onProgress: $0) }
+        let receiver: IngestProgressReceiver? = (onProgress != nil || onLog != nil) ? IngestProgressReceiver(onProgress: onProgress, onLog: onLog) : nil
 
         do {
             logger.info("Dispatching ingestSource via XPC for '\(slug, privacy: .public)'")
@@ -262,7 +272,7 @@ public final class IngestClient: Sendable {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let result = try await self.ingest(slug: slug, options: options) { progress in
+                    let result = try await self.ingest(slug: slug, options: options, onLog: nil) { progress in
                         continuation.yield(progress)
                     }
                     if !result.succeeded {

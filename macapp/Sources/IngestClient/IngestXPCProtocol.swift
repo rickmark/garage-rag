@@ -6,11 +6,14 @@ public protocol GarageGenericXPCPingProtocol: NSObjectProtocol {
     func ping(with reply: @escaping (String) -> Void)
 }
 
-/// Objective-C protocol for receiving progress updates from GarageIngestXPCService across XPC.
+/// Objective-C protocol for receiving progress updates and log entries from GarageIngestXPCService across XPC.
 @objc(GarageIngestProgressReceiverProtocol)
 public protocol GarageIngestProgressReceiverProtocol: NSObjectProtocol {
     /// Receive JSON-serialized progress update.
     func didUpdateProgress(progressJson: String)
+
+    /// Receive streaming log message from the XPC ingestion process.
+    func didReceiveLog(message: String, level: Int32)
 }
 
 /// Objective-C protocol exposed by GarageIngestXPCService over NSXPC.

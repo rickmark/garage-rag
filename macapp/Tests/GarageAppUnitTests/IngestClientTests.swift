@@ -224,11 +224,23 @@ final class IngestClientTests: XCTestCase {
             }
         }
         let collector = ProgressCollector()
-        let ingestResult = try await client.ingest(slug: "test-source") { progress in
+        let ingestResult = try await client.ingest(slug: "test-source", onProgress: { progress in
             collector.add(progress)
-        }
+        })
         XCTAssertFalse(ingestResult.succeeded)
         XCTAssertTrue(collector.updates.contains(where: { $0.isError }))
+    }
+
+    @MainActor
+    func testIngestServiceOSLogStoreDrainingAndFetch() {
+        let service = IngestService()
+        // Ensure fetchRecentLogsFromOSLogStore executes without crashing
+        service.fetchRecentLogsFromOSLogStore(timeWindow: 60)
+        // Verify logs can be appended and cleared
+        service.appendLog("Sample ingest line", stream: .stdout)
+        XCTAssertFalse(service.logs.isEmpty)
+        service.clearLogs()
+        XCTAssertTrue(service.logs.isEmpty)
     }
 
     func testXPCDyldDiagnosticsReportGeneration() {

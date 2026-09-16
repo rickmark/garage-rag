@@ -104,6 +104,22 @@ final class GarageIngestActiveConnections: @unchecked Sendable {
             receiver.didUpdateProgress(progressJson: jsonString)
         }
     }
+
+    func sendLog(message: String, level: Int32) {
+        let activeConns: [NSXPCConnection]
+        lock.lock()
+        activeConns = Array(connections)
+        lock.unlock()
+
+        for conn in activeConns {
+            guard let receiver = conn.remoteObjectProxyWithErrorHandler({ error in
+                logger.debug("Log forwarding error to PID \(conn.processIdentifier): \(error.localizedDescription, privacy: .public)")
+            }) as? GarageIngestProgressReceiverProtocol else {
+                continue
+            }
+            receiver.didReceiveLog(message: message, level: level)
+        }
+    }
 }
 
 private let globalProgressCallback: ProgressCFunction = { cStr in
@@ -130,6 +146,9 @@ private let globalLogCallback: LogCFunction = { level, cStr in
     default:
         logger.info("[Python] \(msg, privacy: .public)")
     }
+    let stream = level >= 40 ? "stderr" : "stdout"
+    GarageXPCOutputCapture.shared.appendCustomLog(stream: stream, message: msg)
+    GarageIngestActiveConnections.shared.sendLog(message: msg, level: level)
 }
 
 final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServiceProtocol {
