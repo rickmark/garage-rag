@@ -1,6 +1,7 @@
 load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
+# Implementation library for GarageEmbedXPCService
 swift_library(
     name = "GarageEmbedXPCService_lib",
     srcs = glob(["**/*.swift"]),
@@ -48,6 +49,7 @@ swift_library(
     ],
 )
 
+# The actual XPC service binary
 macos_xpc_service(
     name = "GarageEmbedXPCService",
     bundle_id = "me.rickmark.garage-rag.embed-xpc",

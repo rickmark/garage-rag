@@ -723,37 +723,22 @@ public struct XPCDyldDiagnostics: Sendable {
 
         var libCandidates: [URL] = [
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             mainAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            mainAppURL.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
-            parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13"),
-            parentAppContents.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/lib/python3.13"),
-            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13"),
             ]
 
         var spCandidates: [URL] = [
             mainAppURL.appendingPathComponent("Contents/Resources/site-packages"),
-            mainAppURL.appendingPathComponent("Contents/Resources"),
             mainAppURL.appendingPathComponent("Resources/site-packages"),
-            mainAppURL.appendingPathComponent("site-packages"),
             bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
             bundleURL.appendingPathComponent("Contents/Resources"),
             bundleURL.appendingPathComponent("Resources/site-packages"),
-            bundleURL.appendingPathComponent("site-packages"),
             mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            mainAppURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
             parentAppContents.appendingPathComponent("Resources/site-packages"),
             parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            parentAppContents.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
-            binDir.appendingPathComponent("site-packages"),
             binDir.appendingPathComponent("Resources/site-packages"),
             binDir.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
-            binDir.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages"),
           ]
 
         for base in [execURL, binDir, bundleURL] {
@@ -762,20 +747,13 @@ public struct XPCDyldDiagnostics: Sendable {
                 current = current.deletingLastPathComponent()
                 if current.path == "/" || current.path == "." { break }
                 libCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
-                libCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
                 libCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
-                libCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
-                libCandidates.append(current.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/Current/lib/python3.13").standardizedFileURL)
-                libCandidates.append(current.appendingPathComponent("Resources/python_3_13/Python.framework/Versions/3.13/lib/python3.13").standardizedFileURL)
 
                 spCandidates.append(current.appendingPathComponent("Contents/Resources/site-packages").standardizedFileURL)
-                spCandidates.append(current.appendingPathComponent("Contents/Resources").standardizedFileURL)
                 spCandidates.append(current.appendingPathComponent("Resources/site-packages").standardizedFileURL)
                 spCandidates.append(current.appendingPathComponent("site-packages").standardizedFileURL)
                 spCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL)
-                spCandidates.append(current.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL)
                 spCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages").standardizedFileURL)
-                spCandidates.append(current.appendingPathComponent("Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages").standardizedFileURL)
             }
         }
 

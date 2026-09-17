@@ -1,11 +1,32 @@
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
+# Protocol definitions for all XPC services
 swift_library(
-    name = "PythonXPCService_lib",
-    srcs = glob(["**/*.swift"]),
-    module_name = "PythonXPCService",
+    name = "PythonXPCService_protocol",
+    srcs = [
+        "GarageCommonXPCProtocol.swift",
+    ],
+    module_name = "PythonXPCService_protocol",
     visibility = ["//visibility:public"],
     deps = [
+        "//ext:PythonKit",
+    ],
+)
+
+# Shared implementation utilities (dyld diagnostics, output capture, etc.)
+swift_library(
+    name = "PythonXPCService_lib",
+    srcs = [
+        "_Reexport.swift",
+        "GarageFileLogger.swift",
+        "GarageGRPCOverXPC.swift",
+        "GarageXPCOutputCapture.swift",
+        "XPCDyldDiagnostics.swift",
+    ],
+    module_name = "PythonXPCService_lib",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":PythonXPCService_protocol",
         "//ext:PythonKit",
     ],
 )

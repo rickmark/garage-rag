@@ -1,7 +1,7 @@
 import XCTest
 import SwiftUI
 import IngestClient
-import PythonXPCService
+import PythonXPCService_lib
 import proto_garage_proto_swift
 @testable import GarageApp
 

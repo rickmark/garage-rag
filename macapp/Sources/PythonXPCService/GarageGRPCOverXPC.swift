@@ -1,6 +1,7 @@
 import Foundation
 import OSLog
 
+import PythonXPCService_protocol
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "GarageGRPCOverXPC")
 
 /// Dispatches and processes gRPC-over-XPC and JSON-RPC calls within Garage XPC helper services.

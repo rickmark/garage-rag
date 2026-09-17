@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 import Combine
-import PythonXPCService
+import PythonXPCService_lib
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "OSLogStreamService")
 

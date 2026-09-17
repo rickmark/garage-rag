@@ -1,6 +1,7 @@
 load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
+# Implementation library for GarageMCPServerService
 swift_library(
     name = "GarageMCPServerService_lib",
     srcs = glob(["**/*.swift"]),
@@ -47,6 +48,7 @@ swift_library(
     ],
 )
 
+# The actual XPC service binary
 macos_xpc_service(
     name = "GarageMCPServerService",
     bundle_id = "me.rickmark.garage-rag.mcp-server-xpc",
@@ -65,6 +67,5 @@ macos_xpc_service(
     deps = [
         ":GarageMCPServerService_lib",
         "//ext/python:python_3_13_framework",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )

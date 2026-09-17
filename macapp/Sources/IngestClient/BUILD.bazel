@@ -1,11 +1,27 @@
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
+# Protocol definitions for IngestClient
+swift_library(
+    name = "IngestClient_protocol",
+    srcs = [
+        "IngestXPCProtocol.swift",
+    ],
+    module_name = "IngestClient_protocol",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ext:PythonKit",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+    ],
+)
+
+# Implementation library for IngestClient
 swift_library(
     name = "IngestClient_lib",
     srcs = glob(["**/*.swift"]),
     module_name = "IngestClient",
     visibility = ["//visibility:public"],
     deps = [
+        ":IngestClient_protocol",
         "//ext:PythonKit",
         "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],

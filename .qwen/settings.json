@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bazel *)",
+      "Bash(find *)",
+      "Bash(cd *)",
+      "Bash(tail *)",
+      "Bash(xargs *)",
+      "Bash(sed *)",
+      "Bash(head *)",
+      "Bash(timeout *)",
+      "Bash(sort)"
+    ]
+  },
+  "$version": 4
+}

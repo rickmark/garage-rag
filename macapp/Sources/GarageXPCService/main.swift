@@ -1,10 +1,8 @@
 import Foundation
 import Darwin
 import OSLog
-import PythonXPCService
-#if canImport(PythonKit)
+import PythonXPCService_lib
 import PythonKit
-#endif
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.xpc", category: "GarageXPCService")
 
@@ -62,7 +60,6 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
         defer { initLock.unlock() }
         guard !isInitialized else { return }
 
-        #if canImport(PythonKit)
         do {
             logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageXPCService...")
             let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
@@ -80,7 +77,6 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             fflush(stderr)
             logger.error("\(errorMsg, privacy: .public)")
         }
-        #endif
         isInitialized = true
     }
 

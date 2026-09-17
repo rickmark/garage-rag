@@ -35,7 +35,7 @@ public struct LogsView: View {
             case .grpc:
                 return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.xpc'")
             case .llama:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag'")
+                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.llama-xpc'")
             case .modelDownload:
                 return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.model-download-xpc'")
             default:

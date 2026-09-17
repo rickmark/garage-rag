@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 import OSLog
-import PythonXPCService
+import PythonXPCService_lib
 #if canImport(PythonKit)
 import PythonKit
 #endif

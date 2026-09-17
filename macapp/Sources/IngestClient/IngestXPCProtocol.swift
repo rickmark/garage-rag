@@ -1,5 +1,5 @@
 import Foundation
-import PythonXPCService
+import PythonXPCService_protocol
 
 /// Objective-C protocol matching the standard `ping` method implemented across all Garage XPC services.
 @objc(GarageGenericXPCPingProtocol)

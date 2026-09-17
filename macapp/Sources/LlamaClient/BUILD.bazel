@@ -1,11 +1,26 @@
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
+# Protocol definitions for LlamaClient
+swift_library(
+    name = "LlamaClient_protocol",
+    srcs = [
+        "LlamaXPCProtocol.swift",
+    ],
+    module_name = "LlamaClient_protocol",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//macapp/Sources/PythonXPCService:PythonXPCService_protocol",
+    ],
+)
+
+# Implementation library for LlamaClient
 swift_library(
     name = "LlamaClient_lib",
     srcs = glob(["**/*.swift"]),
     module_name = "LlamaClient",
     visibility = ["//visibility:public"],
     deps = [
+        ":LlamaClient_protocol",
         "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
     ],
 )
