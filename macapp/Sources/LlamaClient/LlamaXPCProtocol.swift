@@ -1,5 +1,5 @@
 import Foundation
-import PythonXPCService_lib
+import PythonXPCService_static
 
 /// Objective-C protocol exposed by `LlamaXPCService` over NSXPC.
 @objc(LlamaXPCServiceProtocol)

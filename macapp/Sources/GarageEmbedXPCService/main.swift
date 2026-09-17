@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 import IngestClient
-import PythonXPCService_lib
+import PythonXPCService_static
 #if canImport(PythonKit)
 import PythonKit
 #endif

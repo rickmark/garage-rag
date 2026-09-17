@@ -9,7 +9,7 @@ swift_library(
     visibility = ["//visibility:private"],
     deps = [
         "//macapp/Sources/LlamaClient:LlamaClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
@@ -31,6 +31,6 @@ macos_xpc_service(
     visibility = ["//visibility:public"],
     deps = [
         ":LlamaXPCService_lib",
-        "//ext/llama_cpp",
+        "//ext/python:python_3_13_static",
     ],
 )

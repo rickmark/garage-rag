@@ -9,7 +9,12 @@
       "Bash(sed *)",
       "Bash(head *)",
       "Bash(timeout *)",
-      "Bash(sort)"
+      "Bash(sort)",
+      "Bash(grep *)",
+      "Bash(rm *)",
+      "Bash(cat *)",
+      "Bash(git checkout *)",
+      "Bash(git show *)"
     ]
   },
   "$version": 4

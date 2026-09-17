@@ -10,7 +10,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/IngestClient:IngestClient_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
@@ -23,6 +23,6 @@ swift_library(
     deps = [
         ":ModelDownloadClient_protocol",
         "//macapp/Sources/IngestClient:IngestClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )

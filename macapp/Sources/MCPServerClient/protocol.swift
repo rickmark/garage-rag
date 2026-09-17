@@ -1,4 +1,4 @@
 import Foundation
-@_exported import PythonXPCService_lib
+@_exported import PythonXPCService_static
 
 public typealias MCPServerClient = GarageMCPServerClient

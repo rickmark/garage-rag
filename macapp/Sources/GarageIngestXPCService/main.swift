@@ -1,6 +1,6 @@
 import Foundation
 import IngestClient
-import PythonXPCService_lib
+import PythonXPCService_static
 import OSLog
 import PythonKit
 

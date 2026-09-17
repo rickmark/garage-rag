@@ -30,3 +30,22 @@ swift_library(
         "//ext:PythonKit",
     ],
 )
+
+# Statically linked XPC service library with Python, PythonKit, and OpenSSL
+swift_library(
+    name = "PythonXPCService_static",
+    srcs = [
+        "_Reexport.swift",
+        "GarageFileLogger.swift",
+        "GarageGRPCOverXPC.swift",
+        "GarageXPCOutputCapture.swift",
+        "XPCDyldDiagnostics.swift",
+    ],
+    module_name = "PythonXPCService_static",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":PythonXPCService_protocol",
+        "//ext:PythonKit",
+        "//ext:openssl",  # For libssl.a and libcrypto.a
+    ],
+)

@@ -9,7 +9,7 @@ swift_library(
     visibility = ["//visibility:private"],
     deps = [
         "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
@@ -21,15 +21,13 @@ macos_xpc_service(
     codesignopts = [
         "--options=runtime",
     ],
-    entitlements = select({
-        "//bazel:is_store": ":ModelDownloadXPCService.entitlements",
-        "//conditions:default": None,
-    }),
+    entitlements = ":ModelDownloadXPCService.entitlements",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     version = "//macapp/Sources/GarageApp:GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [
         ":ModelDownloadXPCService_lib",
+        "//ext/python:python_3_13_static",
     ],
 )

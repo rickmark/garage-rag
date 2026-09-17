@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 import IngestClient
-import PythonXPCService_lib
+import PythonXPCService_static
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "ModelDownloadClient")
 

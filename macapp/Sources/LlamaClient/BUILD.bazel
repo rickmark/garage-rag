@@ -21,6 +21,6 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":LlamaClient_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )

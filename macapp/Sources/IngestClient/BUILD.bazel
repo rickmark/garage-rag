@@ -9,8 +9,7 @@ swift_library(
     module_name = "IngestClient_protocol",
     visibility = ["//visibility:public"],
     deps = [
-        "//ext:PythonKit",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
@@ -22,7 +21,6 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":IngestClient_protocol",
-        "//ext:PythonKit",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )

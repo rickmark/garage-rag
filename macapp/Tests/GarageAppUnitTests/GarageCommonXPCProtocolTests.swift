@@ -1,6 +1,6 @@
 import XCTest
 import IngestClient
-import PythonXPCService_lib
+import PythonXPCService_static
 @testable import GarageApp
 
 final class MockXPCLogReceiver: NSObject, GarageXPCLogReceiverProtocol {
