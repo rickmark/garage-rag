@@ -1,3 +1,3 @@
 """db"""
 
-from garage_rag import _libpq  # noqa: F401
+# Note: With static linking, dyld-based libpq loading is no longer needed

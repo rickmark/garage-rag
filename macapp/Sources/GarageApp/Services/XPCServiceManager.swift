@@ -481,7 +481,7 @@ public final class XPCServiceManager: ObservableObject {
         if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }) as? GarageCommonXPCServiceProtocol {
-            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            let bundleRef = Bundle.main.bundleURL
             proxy.setAppBundleReference(bundleRef) { _, _ in
                 proxy.ping { _ in
                     logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
@@ -564,7 +564,7 @@ public final class XPCServiceManager: ObservableObject {
                 return
             }
 
-            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            let bundleRef = Bundle.main.bundleURL
             proxy.setAppBundleReference(bundleRef) { _, _ in
                 proxy.ping { reply in
                     let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
@@ -599,7 +599,7 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                let bundleRef = Bundle.main.bundleURL
                 proxy.setAppBundleReference(bundleRef) { _, _ in
                     proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
                         if let error = error {
@@ -710,7 +710,7 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                let bundleRef = Bundle.main.bundleURL
                 proxy.setAppBundleReference(bundleRef) { _, _ in
                     proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
                         relay.resume(returning: (isOk, output ?? "No output"))
@@ -793,7 +793,7 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
                     return
                 }
-                let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+                let bundleRef = Bundle.main.bundleURL
                 proxy.setAppBundleReference(bundleRef) { _, _ in
                     proxy.ping { reply in relay.resume(returning: reply) }
                 }

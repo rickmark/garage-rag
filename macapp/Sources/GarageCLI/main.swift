@@ -122,53 +122,19 @@ private func setupPostgresEnvironment() {
         candidatePaths.append(resourceURL.appendingPathComponent("postgres/lib/libpq.5.dylib").path)
     }
 
-
-
     for path in candidatePaths {
         if FileManager.default.fileExists(atPath: path) {
             setenv("GARAGE_LIBPQ_PATH", path, 1)
             let libDir = URL(fileURLWithPath: path).deletingLastPathComponent().path
             setenv("DYLD_FALLBACK_LIBRARY_PATH", libDir, 1)
-            _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
             break
         }
     }
 }
 
 private func setupPythonEnvironment() {
-    if let envPath = ProcessInfo.processInfo.environment["PYTHON_LIBRARY"],
-       FileManager.default.fileExists(atPath: envPath) {
-        return
-    }
-
-    var candidatePaths: [String] = []
-    let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    let binDir = execURL.deletingLastPathComponent()
-    let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
-
-    // 2. Inside .app bundle (Contents/Frameworks/Python.framework)
-    candidatePaths.append(bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Python").path)
-
-    for path in candidatePaths {
-        if FileManager.default.fileExists(atPath: path) {
-            let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)
-            if let handle = handle {
-                dlclose(handle)
-                setenv("PYTHON_LIBRARY", path, 1)
-                var current = URL(fileURLWithPath: path)
-                while current.path != "/" && current.pathExtension != "framework" {
-                    current = current.deletingLastPathComponent()
-                }
-                if current.pathExtension == "framework" {
-                    let frameworkContainerDir = current.deletingLastPathComponent().path
-                    setenv("DYLD_FALLBACK_FRAMEWORK_PATH", frameworkContainerDir, 1)
-                    setenv("DYLD_FRAMEWORK_PATH", frameworkContainerDir, 1)
-                }
-                _ = dlopen(path, RTLD_NOW | RTLD_GLOBAL)
-                break
-            }
-        }
-    }
+    // Skip dynamic library loading - use static linking
+    // Only configure site-packages in sys.path
 }
 
 private func runCLI() {

@@ -61,9 +61,7 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
         guard !isInitialized else { return }
 
         do {
-            logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageXPCService...")
-            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
-            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
+            logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.service")
         } catch {
             let errorDetails = XPCDyldDiagnostics.formatError(error)
@@ -116,9 +114,8 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
     }
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("GarageXPCService setting main app bundle reference: \(bundleURL.path, privacy: .public)")
-        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
-        reply(true, "Main app bundle configured: \(bundleURL.path)")
+        _ = bundleURL.startAccessingSecurityScopedResource()
+        reply(true, nil)
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {

@@ -13,7 +13,6 @@ py_library(
     imports = ["../.."],
     visibility = ["//visibility:public"],
     deps = [
-        "//garage_python/src/garage_rag:libpq_helper",
         "//garage_python/src/garage_rag/config",
         "@pypi//pgvector",
         "@pypi//psycopg",

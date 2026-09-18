@@ -167,11 +167,12 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     public init() {}
 
-    /// Passes the main application bundle file reference URL to set the bundle and extend the sandbox.
+    /// Passes the main application bundle URL to set the bundle and extend the sandbox.
     private func ensureAppBundleConfigured(proxy: GarageCommonXPCServiceProtocol) async {
-        let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+        // Use the main bundle URL for sandbox access
+        let bundleURL = Bundle.main.bundleURL
         await withCheckedContinuation { continuation in
-            proxy.setAppBundleReference(bundleRef) { _, _ in
+            proxy.setAppBundleReference(bundleURL) { _, _ in
                 continuation.resume()
             }
         }

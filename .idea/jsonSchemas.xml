@@ -19,6 +19,22 @@
             </SchemaInfo>
           </value>
         </entry>
+        <entry key="Qwen Code Settings">
+          <value>
+            <SchemaInfo>
+              <option name="name" value="Qwen Code Settings" />
+              <option name="relativePathToSchema" value="https://www.schemastore.org/qwen-code-settings.json" />
+              <option name="applicationDefined" value="true" />
+              <option name="patterns">
+                <list>
+                  <Item>
+                    <option name="path" value=".qwen/settings.json" />
+                  </Item>
+                </list>
+              </option>
+            </SchemaInfo>
+          </value>
+        </entry>
       </map>
     </state>
   </component>

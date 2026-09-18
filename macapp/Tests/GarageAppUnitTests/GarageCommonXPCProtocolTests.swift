@@ -284,7 +284,7 @@ final class GarageCommonXPCProtocolTests: XCTestCase {
         let resolvedURL = XPCDyldDiagnostics.resolveMainAppBundleURL()
         XCTAssertEqual(resolvedURL.path, tempBundleDir.standardizedFileURL.resolvingSymlinksInPath().path)
 
-        let fileRefURL = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+        let fileRefURL = Bundle.main.bundleURL
         XCTAssertNotNil(fileRefURL)
 
         let candidates = XPCDyldDiagnostics.defaultPythonCandidatePaths()

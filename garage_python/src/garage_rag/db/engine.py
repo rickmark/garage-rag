@@ -12,7 +12,6 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from garage_rag import _libpq  # noqa: F401
 import psycopg
 from pgvector.psycopg import register_vector
 from sqlalchemy import Engine, Pool, create_engine, event, text

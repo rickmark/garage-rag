@@ -65,9 +65,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
 
         #if canImport(PythonKit)
         do {
-            logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageMCPServerService...")
-            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
-            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
+            logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.mcp_server")
         } catch {
             let errorDetails = XPCDyldDiagnostics.formatError(error)
@@ -121,9 +119,9 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     }
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("GarageMCPServerService setting main app bundle reference: \(bundleURL.path, privacy: .public)")
-        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
-        reply(true, "Main app bundle configured: \(bundleURL.path)")
+        // Start accessing bundle URL to extend sandbox
+        _ = bundleURL.startAccessingSecurityScopedResource()
+        reply(true, nil)
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
@@ -164,7 +162,16 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
                 os.environ[key] = PythonObject(value)
             }
             if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
-                os.environ["GARAGE_DATABASE_URL"] = PythonObject(XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL))
+                // Normalize database URL to ensure psycopg is used
+                var normalized = dbURL
+                if normalized.hasPrefix("postgresql://"), !normalized.hasPrefix("postgresql+psycopg://") {
+                    let suffix = normalized.dropFirst("postgresql://".count)
+                    normalized = "postgresql+psycopg://\(suffix)"
+                } else if normalized.hasPrefix("postgres://") {
+                    let suffix = normalized.dropFirst("postgres://".count)
+                    normalized = "postgresql+psycopg://\(suffix)"
+                }
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(normalized)
             }
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
             let success = Bool(mcpModule.start_background_server(

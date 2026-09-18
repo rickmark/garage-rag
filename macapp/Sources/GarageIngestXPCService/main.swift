@@ -526,9 +526,8 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
         """)
 
         do {
-            logger.info("Initializing Python runtime and linking Python.framework dynamically...")
-            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
-            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
+            logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
+            _ = try? Python.attemptImport("garage_rag.ingest")
 
             logger.info("Importing garage_rag.ingest and setting up logging callbacks...")
             if let ingestModule = try? Python.attemptImport("garage_rag.ingest") {

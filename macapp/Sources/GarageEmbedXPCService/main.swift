@@ -61,9 +61,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
 
         #if canImport(PythonKit)
         do {
-            logger.info("Initializing Python runtime and linking Python.framework dynamically in GarageEmbedXPCService...")
-            let pyLib = try XPCDyldDiagnostics.initializePythonRuntime()
-            logger.info("Python dynamic library successfully loaded via dyld: \(pyLib, privacy: .public)")
+            logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.embed")
         } catch {
             let errorDetails = XPCDyldDiagnostics.formatError(error)
@@ -117,7 +115,8 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
     }
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        // Start accessing the bundle URL to extend sandbox access
+        _ = bundleURL.startAccessingSecurityScopedResource()
         reply(true, nil)
     }
 

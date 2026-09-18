@@ -102,7 +102,7 @@ public final class LlamaClient: @unchecked Sendable {
                 return
             }
 
-            let bundleRef = XPCDyldDiagnostics.resolveMainAppBundleFileReference()
+            let bundleRef = Bundle.main.bundleURL
             proxy.setAppBundleReference(bundleRef) { _, _ in
                 block(proxy, relay)
             }

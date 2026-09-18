@@ -10,6 +10,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/PythonXPCService:PythonXPCService_protocol",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
