@@ -2,9 +2,7 @@ import Foundation
 import Darwin
 import OSLog
 import PythonXPCService_static
-#if canImport(PythonKit)
 import PythonKit
-#endif
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.mcp-server-xpc", category: "GarageMCPServerService")
 
@@ -53,9 +51,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
     private var isInitialized = false
     private let initLock = NSLock()
     private(set) var initializationError: String? = nil
-    #if canImport(PythonKit)
     private var isRunningServer = false
-    #endif
     private let serverLock = NSLock()
 
     private func initializePythonIfNeeded() {
@@ -63,7 +59,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         defer { initLock.unlock() }
         guard !isInitialized else { return }
 
-        #if canImport(PythonKit)
         do {
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.mcp_server")
@@ -78,7 +73,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             fflush(stderr)
             logger.error("\(errorMsg, privacy: .public)")
         }
-        #endif
         isInitialized = true
     }
 
@@ -152,7 +146,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             reply(false, "Python initialization error: \(initErr)")
             return
         }
-        #if canImport(PythonKit)
         serverLock.lock()
         defer { serverLock.unlock() }
         do {
@@ -186,15 +179,11 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             logger.error("Failed to start MCP server: \(errStr, privacy: .public)")
             reply(false, "Failed to start MCP server: \(errStr)")
         }
-        #else
-        reply(true, "Started without PythonKit")
-        #endif
     }
 
     func stopServer(with reply: @escaping (Bool, String?) -> Void) {
         serverLock.lock()
         defer { serverLock.unlock() }
-        #if canImport(PythonKit)
         do {
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
             let success = Bool(mcpModule.stop_background_server()) ?? true
@@ -207,15 +196,11 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             reply(true, "MCP server stopped with warning: \(error.localizedDescription)")
             return
         }
-        #else
-        reply(true, "MCP server was not running")
-        #endif
     }
 
     func isServerRunning(with reply: @escaping (Bool) -> Void) {
         serverLock.lock()
         defer { serverLock.unlock() }
-        #if canImport(PythonKit)
         do {
             let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
             let running = Bool(mcpModule.is_background_server_running()) ?? self.isRunningServer
@@ -223,9 +208,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         } catch {
             reply(self.isRunningServer)
         }
-        #else
-        reply(false)
-        #endif
     }
 
     func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
@@ -234,7 +216,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             reply(1, nil, "Python initialization error: \(initErr)")
             return
         }
-        #if canImport(PythonKit)
         do {
             let cliRunnerModule = try Python.attemptImport("typer.testing")
             let appModule = try Python.attemptImport("garage_rag.cli")
@@ -253,9 +234,6 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             let errStr = error.localizedDescription
             reply(1, nil, "Failed to execute command: \(errStr)")
         }
-        #else
-        reply(0, "Command executed without PythonKit", nil)
-        #endif
     }
 }
 

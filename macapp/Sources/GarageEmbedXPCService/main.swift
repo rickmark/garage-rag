@@ -2,9 +2,7 @@ import Foundation
 import OSLog
 import IngestClient
 import PythonXPCService_static
-#if canImport(PythonKit)
 import PythonKit
-#endif
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.embed-xpc", category: "GarageEmbedXPCService")
 
@@ -59,7 +57,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
         defer { initLock.unlock() }
         guard !isInitialized else { return }
 
-        #if canImport(PythonKit)
         do {
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.embed")
@@ -74,7 +71,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             fflush(stderr)
             logger.error("\(errorMsg, privacy: .public)")
         }
-        #endif
         isInitialized = true
     }
 
@@ -148,7 +144,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             reply(false, "Python initialization error: \(initErr)")
             return
         }
-        #if canImport(PythonKit)
         Task {
             do {
                 let sampleTexts = texts.isEmpty ? ["Garage local retrieval-augmented generation test."] : texts
@@ -186,9 +181,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                 reply(false, errDetails)
             }
         }
-        #else
-        reply(true, "Embedded \(texts.count) test text(s) successfully in mock fallback mode.")
-        #endif
     }
 
     func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void) {
@@ -197,7 +189,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             reply(false, "Python initialization error: \(initErr)")
             return
         }
-        #if canImport(PythonKit)
         Task {
             do {
                 let embedModule = try Python.attemptImport("garage_rag.embed")
@@ -225,9 +216,6 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                 reply(false, errDetails)
             }
         }
-        #else
-        reply(true, "Mock embedBatches succeeded")
-        #endif
     }
 }
 
