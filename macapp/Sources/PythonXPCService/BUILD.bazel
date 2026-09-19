@@ -17,11 +17,11 @@ swift_library(
 swift_library(
     name = "PythonXPCService_lib",
     srcs = [
-        "_Reexport.swift",
         "GarageFileLogger.swift",
         "GarageGRPCOverXPC.swift",
         "GarageXPCOutputCapture.swift",
         "XPCSitePathSetup.swift",
+        "_Reexport.swift",
     ],
     module_name = "PythonXPCService_lib",
     visibility = ["//visibility:public"],
@@ -35,11 +35,11 @@ swift_library(
 swift_library(
     name = "PythonXPCService_static",
     srcs = [
-        "_Reexport.swift",
         "GarageFileLogger.swift",
         "GarageGRPCOverXPC.swift",
         "GarageXPCOutputCapture.swift",
         "XPCSitePathSetup.swift",
+        "_Reexport.swift",
     ],
     module_name = "PythonXPCService_static",
     visibility = ["//visibility:public"],
@@ -47,5 +47,6 @@ swift_library(
         ":PythonXPCService_protocol",
         "//ext:PythonKit",
         "//ext:openssl",  # For libssl.a and libcrypto.a
+        "//ext/postgres:libpq",  # For static libpq.a
     ],
 )

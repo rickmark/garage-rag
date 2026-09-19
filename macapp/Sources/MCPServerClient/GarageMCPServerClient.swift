@@ -23,12 +23,10 @@ public final class GarageMCPServerClient: @unchecked Sendable {
         connection.remoteObjectInterface = NSXPCInterface(with: GarageMCPServerServiceProtocol.self)
 
         connection.interruptionHandler = {
-            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
-            logger.warning("GarageMCPServerClient NSXPCConnection to '\(name, privacy: .public)' was interrupted. Diagnostics: \(report.shortSummary, privacy: .public)")
+            logger.warning("GarageMCPServerClient NSXPCConnection to '\(name, privacy: .public)' was interrupted.")
         }
         connection.invalidationHandler = {
-            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
-            logger.info("GarageMCPServerClient NSXPCConnection to '\(name, privacy: .public)' was invalidated. Diagnostics: \(report.shortSummary, privacy: .public)")
+            logger.info("GarageMCPServerClient NSXPCConnection to '\(name, privacy: .public)' was invalidated.")
         }
 
         connection.resume()
@@ -71,9 +69,8 @@ public final class GarageMCPServerClient: @unchecked Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let relay = ContinuationRelay(continuation)
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                let enrichedError = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: self.customServiceName ?? GarageMCPServerClient.serviceName)
-                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? GarageMCPServerClient.serviceName, privacy: .public)': \(enrichedError.localizedDescription, privacy: .public)")
-                relay.resume(throwing: enrichedError)
+                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? GarageMCPServerClient.serviceName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                relay.resume(throwing: error)
             }) as? GarageMCPServerServiceProtocol else {
                 let err = NSError(domain: "GarageMCPServerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for GarageMCPServerService"])
                 relay.resume(throwing: err)

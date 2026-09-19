@@ -64,12 +64,11 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.service")
         } catch {
-            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageXPCService: \(errorDetails)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageXPCService: \(error.localizedDescription)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -155,7 +154,15 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
                 os.environ[key] = PythonObject(value)
             }
             if let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] {
-                os.environ["GARAGE_DATABASE_URL"] = PythonObject(XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL))
+                var normalized = dbURL
+                if normalized.hasPrefix("postgresql://"), !normalized.hasPrefix("postgresql+psycopg://") {
+                    let suffix = normalized.dropFirst("postgresql://".count)
+                    normalized = "postgresql+psycopg://\(suffix)"
+                } else if normalized.hasPrefix("postgres://") {
+                    let suffix = normalized.dropFirst("postgres://".count)
+                    normalized = "postgresql+psycopg://\(suffix)"
+                }
+                os.environ["GARAGE_DATABASE_URL"] = PythonObject(normalized)
             }
             if let server = activeServer {
                 if let stopEvent = activeStopEvent {
@@ -176,7 +183,7 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             logger.info("Garage gRPC server started on \(host, privacy: .public):\(port)")
             reply(true, "gRPC server started on \(host):\(port)")
         } catch {
-            let errStr = XPCDyldDiagnostics.formatError(error)
+            let errStr = error.localizedDescription
             logger.error("Failed to start gRPC server: \(errStr, privacy: .public)")
             reply(false, "Failed to start gRPC server: \(errStr)")
         }
@@ -215,7 +222,7 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
             let serviceModule = try Python.attemptImport("garage_rag.service")
             reply(0, "Service module loaded successfully: \(serviceModule)", nil)
         } catch {
-            reply(1, nil, "Failed to load service module: \(XPCDyldDiagnostics.formatError(error))")
+            reply(1, nil, "Failed to load service module: \(error.localizedDescription)")
         }
 
     }

@@ -88,9 +88,8 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
     }
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("Setting main app bundle reference: \(bundleURL.path, privacy: .public)")
-        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
-        reply(true, "Main app bundle configured: \(bundleURL.path)")
+        _ = bundleURL.startAccessingSecurityScopedResource()
+        reply(true, nil)
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {

@@ -312,8 +312,7 @@ public final class XPCServiceManager: ObservableObject {
             appendLog("[\(services[index].name)] Active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms): \(result.response)", source: services[index].id, level: .info, pid: result.pid)
             return newState
         } catch {
-            let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
-            let errorMsg = enriched.localizedDescription
+            let errorMsg = error.localizedDescription
             logger.warning("XPC service '\(bundleId, privacy: .public)' ping failed: \(errorMsg, privacy: .public)")
             let newState = XPCServiceState.unreachable(error: errorMsg)
             services[index].state = newState
@@ -553,14 +552,12 @@ public final class XPCServiceManager: ObservableObject {
             let relay = ContinuationRelay(continuation)
 
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
-                logger.error("XPC remote object proxy error for service '\(bundleId, privacy: .public)': \(enriched.localizedDescription, privacy: .public)")
-                relay.resume(throwing: enriched)
+                logger.error("XPC remote object proxy error for service '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                relay.resume(throwing: error)
             }) as? GarageCommonXPCServiceProtocol else {
                 let err = NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for \(bundleId)"])
-                let enriched = XPCDyldDiagnostics.enrichXPCError(err, forServiceBundleId: bundleId)
-                logger.error("\(enriched.localizedDescription, privacy: .public)")
-                relay.resume(throwing: enriched)
+                logger.error("\(err.localizedDescription, privacy: .public)")
+                relay.resume(throwing: err)
                 return
             }
 
@@ -703,8 +700,7 @@ public final class XPCServiceManager: ObservableObject {
             let (success, details): (Bool, String) = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
                 guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
-                    relay.resume(throwing: enriched)
+                    relay.resume(throwing: error)
                 }) as? GarageEmbedXPCServiceProtocol else {
                     relay.resume(throwing: NSError(domain: "EmbedTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Embed XPC proxy"]))
                     return
@@ -787,8 +783,7 @@ public final class XPCServiceManager: ObservableObject {
             let pingResponse: String = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
                 guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    let enriched = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: bundleId)
-                    relay.resume(throwing: enriched)
+                    relay.resume(throwing: error)
                 }) as? LlamaXPCServiceProtocol else {
                     relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
                     return
@@ -861,10 +856,7 @@ public final class XPCServiceManager: ObservableObject {
         let startTime = CFAbsoluteTimeGetCurrent()
         let bundleId = "me.rickmark.garage-rag.ingest-xpc"
 
-        // 1. Diagnose dynamic linking, Python library discovery, bundle structure
-        let diagReport = XPCDyldDiagnostics.diagnoseService(bundleId: bundleId, executableName: "GarageIngestXPCService")
-
-        // 2. Perform XPC Ping
+        // 1. Perform XPC Ping
         var pingResult: String?
         var pingErr: Error?
         do {
@@ -875,23 +867,13 @@ public final class XPCServiceManager: ObservableObject {
         }
 
         let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-        let isSuccess = pingErr == nil && (diagReport.bundleExists || diagReport.executableExists)
+        let isSuccess = pingErr == nil
 
         var lines: [String] = []
         lines.append("Ingest XPC Ping: \(pingResult ?? "Failed (\(pingErr?.localizedDescription ?? "unknown"))")")
-        lines.append("Bundle Status: \(diagReport.bundleExists ? "Found" : "Not Found") at \(diagReport.bundlePath ?? "none")")
-        lines.append("Executable: \(diagReport.executableExists ? "Valid (executable: \(diagReport.isExecutable))" : "Missing")")
-        if let dyld = diagReport.dyldErrorDetails {
-            lines.append("dyld Status: \(dyld)")
-        } else {
-            lines.append("dyld Status: OK (no dyld load failures detected)")
-        }
-        if let env = diagReport.environmentSummary {
-            lines.append("\nEnvironment Variables:\n\(env)")
-        }
         lines.append("\nLatency: \(String(format: "%.2f", elapsed)) ms")
 
-        let summary = isSuccess ? "Ingest Python pipeline & dyld validation succeeded in \(String(format: "%.1f", elapsed))ms" : "Ingest service check failed: \(pingErr?.localizedDescription ?? diagReport.shortSummary)"
+        let summary = isSuccess ? "Ingest service check completed in \(String(format: "%.1f", elapsed))ms" : "Ingest service check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
 
         return ServiceDiagnosticTestResult(
             serviceId: "ingest-xpc",

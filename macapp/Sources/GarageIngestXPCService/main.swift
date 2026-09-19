@@ -195,7 +195,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("GarageIngestXPCService setting main app bundle reference from client pid \(self.connection.processIdentifier): \(bundleURL.path, privacy: .public)")
-        XPCDyldDiagnostics.setMainAppBundleURL(bundleURL)
+        setenv("GARAGE_APP_BUNDLE_PATH", bundleURL.standardizedFileURL.resolvingSymlinksInPath().path, 1)
         parent.resetInitialization()
         parent.initializePythonIfNeeded()
         if let err = parent.initializationError {
@@ -266,7 +266,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
             }
             reply(true)
         } catch {
-            let errorDetails = XPCDyldDiagnostics.formatError(error)
+            let errorDetails = error.localizedDescription
             logger.error("Failed to invoke Python cancel_ingest: \(errorDetails, privacy: .public)")
             reply(false)
         }
@@ -288,7 +288,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
     private func applyEnvironmentConfig(databaseUrl: String?, lmStudioApiToken: String?) -> (Bool, String?) {
         if let dbURL = databaseUrl, !dbURL.isEmpty {
-            let normalized = XPCDyldDiagnostics.ensurePsycopgDatabaseURL(dbURL)
+            let normalized = XPCSitePathSetup.ensurePsycopgDatabaseURL(dbURL)
             setenv("GARAGE_DATABASE_URL", normalized, 1)
             if parent.initializationError == nil {
                 if let os = try? Python.attemptImport("os") {
@@ -401,7 +401,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 logger.info("\(successMsg, privacy: .public)")
                 reply(true, successMsg)
             } catch {
-                let errorDetails = XPCDyldDiagnostics.formatError(error)
+                let errorDetails = error.localizedDescription
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let errorMsg = "Failed to run ingest for \(slug) after \(duration)s: \(errorDetails)"
                 logger.error("\(errorMsg, privacy: .public)")
@@ -478,7 +478,7 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
                 logger.info("\(successMsg, privacy: .public)")
                 reply(true, successMsg)
             } catch {
-                let errorDetails = XPCDyldDiagnostics.formatError(error)
+                let errorDetails = error.localizedDescription
                 let duration = String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime)
                 let errorMsg = "Failed to run ingest for \(source) after \(duration)s: \(errorDetails)"
                 logger.error("\(errorMsg, privacy: .public)")
@@ -551,7 +551,7 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
             initializationError = nil
             isInitialized = true
         } catch {
-            let errorDetails = XPCDyldDiagnostics.formatError(error)
+            let errorDetails = error.localizedDescription
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"

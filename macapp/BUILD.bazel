@@ -179,9 +179,18 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# Primary alias used by the build and tests to reference the main executable.
 alias(
     name = "macapp",
-    actual = ":GarageApp",
+    # The macOS application binary is produced by the developer_id_macos_application rule above.
+    actual = ":Garage.app",
+    visibility = ["//visibility:public"],
+)
+
+# Preserve a bundle‑level alias for any consumers that still expect the .app package.
+alias(
+    name = "macapp_bundle",
+    actual = ":Garage.app",
     visibility = ["//visibility:public"],
 )
 

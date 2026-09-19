@@ -1,3 +1,5 @@
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 load("//bazel:rpath.bzl", "install_name")
 
@@ -116,5 +118,78 @@ done
 install_name(
     name = "postgres_rpath",
     dep = ":postgres",
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "libpq_a",
+    srcs = [":postgres"],
+    outs = ["libpq.a"],
+    cmd = """
+for f in $(locations :postgres); do
+    if [ "$$(basename "$$f")" = "libpq.a" ]; then
+        cp "$$f" "$@"
+        break
+    fi
+done
+""",
+)
+
+genrule(
+    name = "libpgcommon_a",
+    srcs = [":postgres"],
+    outs = ["libpgcommon.a"],
+    cmd = """
+for f in $(locations :postgres); do
+    if [ "$$(basename "$$f")" = "libpgcommon.a" ]; then
+        cp "$$f" "$@"
+        break
+    fi
+done
+""",
+)
+
+genrule(
+    name = "libpgport_a",
+    srcs = [":postgres"],
+    outs = ["libpgport.a"],
+    cmd = """
+for f in $(locations :postgres); do
+    if [ "$$(basename "$$f")" = "libpgport.a" ]; then
+        cp "$$f" "$@"
+        break
+    fi
+done
+""",
+)
+
+cc_import(
+    name = "libpq_import",
+    static_library = ":libpq_a",
+    visibility = ["//visibility:private"],
+)
+
+cc_import(
+    name = "libpgcommon_import",
+    static_library = ":libpgcommon_a",
+    visibility = ["//visibility:private"],
+)
+
+cc_import(
+    name = "libpgport_import",
+    static_library = ":libpgport_a",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libpq",
+    deps = [
+        ":libpq_import",
+        ":libpgcommon_import",
+        ":libpgport_import",
+        "//ext:libicu",
+        "//ext:libreadline",
+        "//ext:libzlib",
+    ],
     visibility = ["//visibility:public"],
 )

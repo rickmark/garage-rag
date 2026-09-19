@@ -68,12 +68,11 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.mcp_server")
         } catch {
-            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageMCPServerService: \(errorDetails)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageMCPServerService: \(error.localizedDescription)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -183,7 +182,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             logger.info("Garage MCP server started on \(host, privacy: .public):\(port)\(path, privacy: .public)")
             reply(success, "MCP server started on \(host):\(port)\(path)")
         } catch {
-            let errStr = XPCDyldDiagnostics.formatError(error)
+            let errStr = error.localizedDescription
             logger.error("Failed to start MCP server: \(errStr, privacy: .public)")
             reply(false, "Failed to start MCP server: \(errStr)")
         }
@@ -205,7 +204,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             return
         } catch {
             self.isRunningServer = false
-            reply(true, "MCP server stopped with warning: \(XPCDyldDiagnostics.formatError(error))")
+            reply(true, "MCP server stopped with warning: \(error.localizedDescription)")
             return
         }
         #else
@@ -251,7 +250,7 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
             let stderr = String(result.stderr)
             reply(exitCode, stdout, stderr)
         } catch {
-            let errStr = XPCDyldDiagnostics.formatError(error)
+            let errStr = error.localizedDescription
             reply(1, nil, "Failed to execute command: \(errStr)")
         }
         #else

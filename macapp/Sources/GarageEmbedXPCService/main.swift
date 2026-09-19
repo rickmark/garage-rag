@@ -64,12 +64,11 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
             _ = try? Python.attemptImport("garage_rag.embed")
         } catch {
-            let errorDetails = XPCDyldDiagnostics.formatError(error)
             var dyldError = ""
             if let errCStr = dlerror() {
                 dyldError = "\ndyld error: \(String(cString: errCStr))"
             }
-            let errorMsg = "Failed to initialize Python environment in GarageEmbedXPCService: \(errorDetails)\(dyldError)"
+            let errorMsg = "Failed to initialize Python environment in GarageEmbedXPCService: \(error.localizedDescription)\(dyldError)"
             initializationError = errorMsg
             fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
             fflush(stderr)
@@ -182,7 +181,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                 }
                 reply(true, details)
             } catch {
-                let errDetails = "Embed execution failed: \(XPCDyldDiagnostics.formatError(error))"
+                let errDetails = "Embed execution failed: \(error.localizedDescription)"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
             }
@@ -221,7 +220,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                     reply(false, "embed_via_grpc not found in garage_rag.embed")
                 }
             } catch {
-                let errDetails = "Embed via gRPC failed: \(XPCDyldDiagnostics.formatError(error))"
+                let errDetails = "Embed via gRPC failed: \(error.localizedDescription)"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
             }

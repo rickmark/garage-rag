@@ -23,12 +23,10 @@ public final class GarageXPCClient: @unchecked Sendable {
         connection.remoteObjectInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
 
         connection.interruptionHandler = {
-            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
-            logger.warning("GarageXPCClient NSXPCConnection to '\(name, privacy: .public)' was interrupted. Diagnostics: \(report.shortSummary, privacy: .public)")
+            logger.warning("GarageXPCClient NSXPCConnection to '\(name, privacy: .public)' was interrupted.")
         }
         connection.invalidationHandler = {
-            let report = XPCDyldDiagnostics.diagnoseService(bundleId: name)
-            logger.info("GarageXPCClient NSXPCConnection to '\(name, privacy: .public)' was invalidated. Diagnostics: \(report.shortSummary, privacy: .public)")
+            logger.info("GarageXPCClient NSXPCConnection to '\(name, privacy: .public)' was invalidated.")
         }
 
         connection.resume()
@@ -71,9 +69,8 @@ public final class GarageXPCClient: @unchecked Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let relay = ContinuationRelay(continuation)
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                let enrichedError = XPCDyldDiagnostics.enrichXPCError(error, forServiceBundleId: self.customServiceName ?? GarageXPCClient.serviceName)
-                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? GarageXPCClient.serviceName, privacy: .public)': \(enrichedError.localizedDescription, privacy: .public)")
-                relay.resume(throwing: enrichedError)
+                logger.error("XPC remote object proxy error for service '\(self.customServiceName ?? GarageXPCClient.serviceName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                relay.resume(throwing: error)
             }) as? GarageXPCServiceProtocol else {
                 let err = NSError(domain: "GarageXPCClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for GarageXPCService"])
                 relay.resume(throwing: err)

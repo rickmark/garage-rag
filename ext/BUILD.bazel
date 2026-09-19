@@ -7,6 +7,12 @@ alias(
 )
 
 alias(
+    name = "libpq",
+    actual = "//ext/postgres:libpq",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "pgvector",
     actual = "//ext/pgvector:pgvector",
     visibility = ["//visibility:public"],
