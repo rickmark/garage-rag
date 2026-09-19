@@ -5,6 +5,6 @@
 #ifndef GARAGE_PYTHONBINDING_H
 #define GARAGE_PYTHONBINDING_H
 
-#import <Python.h>
+#import <Python/Python.h>
 
 #endif //GARAGE_PYTHONBINDING_H
