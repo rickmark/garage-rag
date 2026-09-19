@@ -30,6 +30,7 @@ swift_library(
         "//ext:PythonKit",
         "//ext:openssl",  # For libssl.a and libcrypto.a
         "//ext/postgres:libpq",  # For static libpq.a
-        "//ext/python:python_3_13_static",  # libpython3.13.a
+        "//ext/python:python_3_13",  # libpython3.13.a
     ],
+    alwayslink = True,
 )

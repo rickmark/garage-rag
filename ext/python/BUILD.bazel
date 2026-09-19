@@ -21,11 +21,6 @@ configure_make(
         "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
         "-DTIME=\\\"\\\\\\\"00:00:00\\\\\\\"\\\"",
     ],
-    deps = [
-        "//ext:libreadline",
-        "//ext:libzlib",
-        "//ext:openssl",
-    ],
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
@@ -54,6 +49,11 @@ find $$INSTALLDIR/Python.framework -type f \\( -perm -111 -o -name "*.dylib" -o 
 done
 """,
     visibility = ["//visibility:public"],
+    deps = [
+        "//ext:libreadline",
+        "//ext:libzlib",
+        "//ext:openssl",
+    ],
 )
 
 configure_make(
@@ -73,11 +73,6 @@ configure_make(
         "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
         "-DTIME=\\\"\\\\\\\"00:00:00\\\\\\\"\\\"",
     ],
-    deps = [
-        "//ext:libreadline",
-        "//ext:libzlib",
-        "//ext:openssl",
-    ],
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
@@ -92,6 +87,11 @@ configure_make(
         "libpython3.13.a",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        "//ext:libreadline",
+        "//ext:libzlib",
+        "//ext:openssl",
+    ],
 )
 
 alias(
@@ -115,10 +115,10 @@ copy_to_directory(
         "**/Versions/3.13/lib/python3.13/test",
     ],
     include_srcs_patterns = [
-        "python_3_13/Python.framework/Versions/3.13/**",
+        "python_3_13/Python.framework/**",
     ],
     replace_prefixes = {
-        "python_3_13/Python.framework": "",
+        "python_3_13": "",
     },
 )
 

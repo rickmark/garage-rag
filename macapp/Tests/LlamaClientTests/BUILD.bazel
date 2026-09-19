@@ -8,7 +8,7 @@ swift_library(
     module_name = "LlamaClientTests",
     visibility = ["//visibility:public"],
     deps = [
-        "//macapp/Sources/LlamaClient:LlamaClient_lib",
+        "//macapp/Sources/LlamaClient",
     ],
 )
 

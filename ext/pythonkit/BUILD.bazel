@@ -4,9 +4,30 @@ load("//bazel:codesign.bzl", "codesign")
 
 swift_library(
     name = "PythonKit_swift",
-    srcs = ["@PythonKit//:pythonkit_swift"],
+    srcs = glob([
+        "*.swift",
+    ]),
+    copts = [
+        "-import-objc-header",
+        "$(location :BindingPython.h)",
+        "-F",
+        "$(location //ext/python:python_framework)/..",
+        "-I",
+        "$(location //ext/python:python_framework)/Headers",
+        "-Xcc",
+        "-F$(location //ext/python:python_framework)/..",
+        "-Xcc",
+        "-I$(location //ext/python:python_framework)/Headers",
+    ],
     module_name = "PythonKit",
+    swiftc_inputs = [
+        ":BindingPython.h",
+        "//ext/python:python_framework",
+    ],
     visibility = ["//visibility:public"],
+    deps = [
+        "//ext/python:python_3_13_framework",
+    ],
 )
 
 alias(

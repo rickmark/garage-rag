@@ -256,6 +256,7 @@ codesign_file() {
 }
 
 if [ "$kind" = "dir" ]; then
+    rm -rf "$output"
     mkdir -p "$output"
     # If one of the inputs matches the output directory basename, copy only that input
     matched_input=""
@@ -296,7 +297,11 @@ if [ "$kind" = "dir" ]; then
                 if [[ "$input_path" == *.dSYM* ]]; then
                     continue
                 fi
-                tar -cf - -C "$input_path" . | (cd "$output" && tar -xf -)
+                if [ -d "$input_path/$(basename "$output")" ]; then
+                    tar -cf - -C "$input_path/$(basename "$output")" . | (cd "$output" && tar -xf -)
+                else
+                    tar -cf - -C "$input_path" . | (cd "$output" && tar -xf -)
+                fi
             else
                 if [[ "$input_path" == *.dSYM* ]]; then
                     continue
@@ -311,14 +316,12 @@ if [ "$kind" = "dir" ]; then
     find "$output" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
 
     if [ -d "$output/Versions" ]; then
-        rm -rf "$output/bin" "$output/bazel-out" "$output/Contents" 2>/dev/null || true
+        rm -rf "$output/bin" "$output/bazel-out" "$output/Contents" "$output/Versions/Current" 2>/dev/null || true
         find "$output" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
         find "$output" -name "*.app" -exec rm -rf {} + 2>/dev/null || true
-        if [ ! -e "$output/Versions/Current" ]; then
-            latest_ver="$(ls -1 "$output/Versions" | grep -v Current | tail -n 1)"
-            if [ -n "$latest_ver" ]; then
-                (cd "$output/Versions" && ln -sf "$latest_ver" Current)
-            fi
+        latest_ver="$(ls -1 "$output/Versions" | grep -v Current | tail -n 1)"
+        if [ -n "$latest_ver" ]; then
+            (cd "$output/Versions" && ln -sf "$latest_ver" Current)
         fi
         for link_target in Python Headers Resources; do
             if [ -e "$output/Versions/Current/$link_target" ]; then
@@ -394,10 +397,10 @@ fi
         progress_message = "Codesigning {}".format(ctx.label),
     )
 
-    output_files = [output_zip] if (ctx.attr.is_framework and output_zip) else [output]
+    output_files = [output]
     default_info_kwargs = {
         "files": depset(output_files),
-        "runfiles": ctx.runfiles(),
+        "runfiles": ctx.runfiles(files = output_files),
     }
     if not is_dir:
         default_info_kwargs["executable"] = output

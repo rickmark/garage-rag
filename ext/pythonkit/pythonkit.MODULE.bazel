@@ -1,8 +1,0 @@
-git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
-
-git_repository(
-    name = "PythonKit",
-    build_file = "@//ext/pythonkit:PythonKit.BUILD.bazel",
-    commit = "0a5685138e807c39cdffffbf44c53493e457e06a",
-    remote = "https://github.com/rickmark/PythonKit.git",
-)
