@@ -9,19 +9,19 @@ swift_library(
     module_name = "LlamaClient_protocol",
     visibility = ["//visibility:public"],
     deps = [
+        "//macapp/Sources/PythonXPCService",
         "//macapp/Sources/PythonXPCService:PythonXPCService_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
     ],
 )
 
 # Implementation library for LlamaClient
 swift_library(
-    name = "LlamaClient_lib",
+    name = "LlamaClient",
     srcs = glob(["**/*.swift"]),
     module_name = "LlamaClient",
     visibility = ["//visibility:public"],
     deps = [
         ":LlamaClient_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/PythonXPCService",
     ],
 )

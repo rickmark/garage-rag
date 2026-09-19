@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 import OSLog
-import PythonXPCService_static
+import PythonXPCService
 import PythonKit
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.mcp-server-xpc", category: "GarageMCPServerService")

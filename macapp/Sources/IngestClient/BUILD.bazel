@@ -9,18 +9,18 @@ swift_library(
     module_name = "IngestClient_protocol",
     visibility = ["//visibility:public"],
     deps = [
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/PythonXPCService",
     ],
 )
 
 # Implementation library for IngestClient
 swift_library(
-    name = "IngestClient_lib",
+    name = "IngestClient",
     srcs = glob(["**/*.swift"]),
     module_name = "IngestClient",
     visibility = ["//visibility:public"],
     deps = [
         ":IngestClient_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/PythonXPCService",
     ],
 )

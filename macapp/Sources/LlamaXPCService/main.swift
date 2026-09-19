@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import OSLog
 import LlamaClient
-import PythonXPCService_static
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.llama-xpc", category: "LlamaXPCService")
 

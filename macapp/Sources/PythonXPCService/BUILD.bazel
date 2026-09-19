@@ -13,27 +13,9 @@ swift_library(
     ],
 )
 
-# Shared implementation utilities (output capture, site-path setup)
-swift_library(
-    name = "PythonXPCService_lib",
-    srcs = [
-        "GarageFileLogger.swift",
-        "GarageGRPCOverXPC.swift",
-        "GarageXPCOutputCapture.swift",
-        "XPCSitePathSetup.swift",
-        "_Reexport.swift",
-    ],
-    module_name = "PythonXPCService_lib",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":PythonXPCService_protocol",
-        "//ext:PythonKit",
-    ],
-)
-
 # Statically linked XPC service library with Python, PythonKit, and OpenSSL
 swift_library(
-    name = "PythonXPCService_static",
+    name = "PythonXPCService",
     srcs = [
         "GarageFileLogger.swift",
         "GarageGRPCOverXPC.swift",
@@ -41,12 +23,13 @@ swift_library(
         "XPCSitePathSetup.swift",
         "_Reexport.swift",
     ],
-    module_name = "PythonXPCService_static",
+    module_name = "PythonXPCService",
     visibility = ["//visibility:public"],
     deps = [
         ":PythonXPCService_protocol",
         "//ext:PythonKit",
         "//ext:openssl",  # For libssl.a and libcrypto.a
         "//ext/postgres:libpq",  # For static libpq.a
+        "//ext/python:python_3_13_static",  # libpython3.13.a
     ],
 )

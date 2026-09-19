@@ -26,11 +26,11 @@ swift_library(
     module_name = "GarageApp",
     visibility = ["//visibility:public"],
     deps = [
-        "//macapp/Sources/IngestClient:IngestClient_lib",
-        "//macapp/Sources/LlamaClient:LlamaClient_lib",
-        "//macapp/Sources/MCPServerClient:MCPServerClient_lib",
-        "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/IngestClient",
+        "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/MCPServerClient",
+        "//macapp/Sources/ModelDownloadClient",
+        "//macapp/Sources/PythonXPCService",
         "//proto:garage_proto_swift",
     ],
 )

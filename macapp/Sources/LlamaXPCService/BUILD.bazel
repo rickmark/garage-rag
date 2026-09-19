@@ -8,8 +8,8 @@ swift_library(
     module_name = "LlamaXPCService",
     visibility = ["//visibility:private"],
     deps = [
-        "//macapp/Sources/LlamaClient:LlamaClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/PythonXPCService",
     ],
 )
 

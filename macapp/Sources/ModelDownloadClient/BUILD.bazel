@@ -10,19 +10,19 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/IngestClient:IngestClient_protocol",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/PythonXPCService",
     ],
 )
 
 # Implementation library for ModelDownloadClient
 swift_library(
-    name = "ModelDownloadClient_lib",
+    name = "ModelDownloadClient",
     srcs = glob(["**/*.swift"]),
     module_name = "ModelDownloadClient",
     visibility = ["//visibility:public"],
     deps = [
         ":ModelDownloadClient_protocol",
-        "//macapp/Sources/IngestClient:IngestClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/IngestClient",
+        "//macapp/Sources/PythonXPCService",
     ],
 )

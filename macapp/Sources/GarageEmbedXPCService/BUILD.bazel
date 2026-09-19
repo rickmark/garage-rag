@@ -8,8 +8,8 @@ swift_library(
     module_name = "GarageEmbedXPCService",
     visibility = ["//visibility:private"],
     deps = [
-        "//macapp/Sources/IngestClient:IngestClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_static",
+        "//macapp/Sources/IngestClient",
+        "//macapp/Sources/PythonXPCService",
     ],
 )
 

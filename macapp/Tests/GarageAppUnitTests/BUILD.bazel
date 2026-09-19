@@ -12,11 +12,11 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/GarageApp:GarageApp_lib",
-        "//macapp/Sources/IngestClient:IngestClient_lib",
-        "//macapp/Sources/LlamaClient:LlamaClient_lib",
-        "//macapp/Sources/MCPServerClient:MCPServerClient_lib",
-        "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_lib",
+        "//macapp/Sources/IngestClient",
+        "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/MCPServerClient",
+        "//macapp/Sources/ModelDownloadClient",
+        "//macapp/Sources/PythonXPCService",
     ],
 )
 

@@ -4,7 +4,7 @@ import Darwin
 import IngestClient
 import ModelDownloadClient
 import LlamaClient
-import PythonXPCService_static
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "XPCServiceManager")
 
