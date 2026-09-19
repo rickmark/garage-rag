@@ -23,6 +23,8 @@
 // `PyReference` definition
 //===----------------------------------------------------------------------===//
 
+public typealias PyObjectPointer = UnsafeMutablePointer<PyObject>
+
 /// Typealias used when passing or returning a `PyObject` pointer with
 /// implied ownership.
 @usableFromInline
@@ -880,28 +882,25 @@ public extension PythonObject {
 /// Return true if the specified objects an instance of the low-level Python
 /// type descriptor passed in as 'type'.
 private func isType(_ object: PythonObject,
-                    type: PyObjectPointer) -> Bool {
-    let typePyRef = PythonObject(type)
-
-    let result = Python.isinstance(object, typePyRef)
+                    type: PythonObject) -> Bool {
+    let result = Python.isinstance(object, type)
 
     // We cannot use the normal failable Bool initializer from `PythonObject`
     // here because would cause an infinite loop.
     let pyObject = result.ownedPyObject
     defer { Py_DecRef(pyObject) }
 
-    // Anything not equal to `Py_ZeroStruct` is truthy.
-    return pyObject != _Py_ZeroStruct
+    return PyObject_IsTrue(pyObject) != 0
 }
 
 extension Bool : PythonConvertible, ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        guard isType(pythonObject, type: PyBool_Type) else { return nil }
+        guard isType(pythonObject, type: Python.bool) else { return nil }
 
         let pyObject = pythonObject.ownedPyObject
         defer { Py_DecRef(pyObject) }
 
-        self = pyObject == _Py_TrueStruct
+        self = PyObject_IsTrue(pyObject) != 0
     }
 
     public var pythonObject: PythonObject {
@@ -915,7 +914,7 @@ extension String : PythonConvertible, ConvertibleFromPython {
         let pyObject = pythonObject.ownedPyObject
         defer { Py_DecRef(pyObject) }
 
-        guard let cString = PyString_AsString(pyObject) else {
+        guard let cString = PyUnicode_AsUTF8(pyObject) else {
             PyErr_Clear()
             return nil
         }
@@ -924,10 +923,8 @@ extension String : PythonConvertible, ConvertibleFromPython {
 
     public var pythonObject: PythonObject {
         _ = Python // Ensure Python is initialized.
-        let v = utf8CString.withUnsafeBufferPointer {
-            // 1 is subtracted from the C string length to trim the trailing null
-            // character (`\0`).
-            PyString_FromStringAndSize($0.baseAddress, $0.count - 1)!
+        let v = utf8CString.withUnsafeBufferPointer { (buffer: UnsafeBufferPointer<CChar>) -> PyObjectPointer in
+            PyUnicode_FromStringAndSize(buffer.baseAddress, buffer.count - 1)!
         }
         return PythonObject(consuming: v)
     }
@@ -957,10 +954,10 @@ fileprivate extension PythonObject {
 
 extension Int : PythonConvertible, ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        // `PyInt_AsLong` return -1 and sets an error if the Python object is not
+        // `PyLong_AsLong` return -1 and sets an error if the Python object is not
         // integer compatible.
         guard let value = pythonObject.converted(
-            withError: -1, by: PyInt_AsLong) else {
+            withError: -1, by: PyLong_AsLong) else {
                 return nil
         }
         self = value
@@ -968,17 +965,17 @@ extension Int : PythonConvertible, ConvertibleFromPython {
 
     public var pythonObject: PythonObject {
         _ = Python // Ensure Python is initialized.
-        return PythonObject(consuming: PyInt_FromLong(self))
+        return PythonObject(consuming: PyLong_FromLong(self))
     }
 }
 
 extension UInt : PythonConvertible, ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        // `PyInt_AsUnsignedLongMask` isn't documented as such, but in fact it does
+        // `PyLong_AsUnsignedLongMask` isn't documented as such, but in fact it does
         // return -1 and set an error if the Python object is not integer
         // compatible.
         guard let value = pythonObject.converted(
-            withError: ~0, by: PyInt_AsUnsignedLongMask) else {
+            withError: ~0, by: PyLong_AsUnsignedLongMask) else {
                 return nil
         }
         self = value
@@ -986,7 +983,7 @@ extension UInt : PythonConvertible, ConvertibleFromPython {
 
     public var pythonObject: PythonObject {
         _ = Python // Ensure Python is initialized.
-        return PythonObject(consuming: PyInt_FromSize_t(self))
+        return PythonObject(consuming: PyLong_FromUnsignedLong(self))
     }
 }
 
@@ -1232,7 +1229,7 @@ extension Range : PythonConvertible where Bound : PythonConvertible {
 
 extension Range : ConvertibleFromPython where Bound : ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        guard isType(pythonObject, type: PySlice_Type) else { return nil }
+        guard isType(pythonObject, type: Python.slice) else { return nil }
         guard let lowerBound = Bound(pythonObject.start),
             let upperBound = Bound(pythonObject.stop) else {
                 return nil
@@ -1252,7 +1249,7 @@ extension PartialRangeFrom : PythonConvertible where Bound : PythonConvertible {
 extension PartialRangeFrom : ConvertibleFromPython
 where Bound : ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        guard isType(pythonObject, type: PySlice_Type) else { return nil }
+        guard isType(pythonObject, type: Python.slice) else { return nil }
         guard let lowerBound = Bound(pythonObject.start) else { return nil }
         guard pythonObject.stop == Python.None,
             pythonObject.step == Python.None else {
@@ -1272,7 +1269,7 @@ extension PartialRangeUpTo : PythonConvertible where Bound : PythonConvertible {
 extension PartialRangeUpTo : ConvertibleFromPython
 where Bound : ConvertibleFromPython {
     public init?(_ pythonObject: PythonObject) {
-        guard isType(pythonObject, type: PySlice_Type) else { return nil }
+        guard isType(pythonObject, type: Python.slice) else { return nil }
         guard let upperBound = Bound(pythonObject.stop) else { return nil }
         guard pythonObject.start == Python.None,
             pythonObject.step == Python.None else {
@@ -1809,14 +1806,17 @@ extension PythonFunction : PythonConvertible {
         }
 
         let destructor: @convention(c) (PyObjectPointer?) -> Void = { capsulePointer in
-            let funcPointer = PyCapsule_GetPointer(capsulePointer, nil)
+            guard let capsulePointer = capsulePointer,
+                  let funcPointer = PyCapsule_GetPointer(capsulePointer, nil) else {
+                return
+            }
             Unmanaged<PyFunction>.fromOpaque(funcPointer).release()
         }
         let funcPointer = Unmanaged.passRetained(function).toOpaque()
         let capsulePointer = PyCapsule_New(
             funcPointer,
             nil,
-            unsafeBitCast(destructor, to: OpaquePointer.self)
+            destructor
         )
 
         var methodDefinition: UnsafeMutablePointer<PyMethodDef>
@@ -1832,7 +1832,7 @@ extension PythonFunction : PythonConvertible {
             nil
         )
 
-        return PythonObject(consuming: pyFuncPointer)
+        return PythonObject(consuming: pyFuncPointer!)
     }
 }
 
@@ -1842,16 +1842,10 @@ fileprivate extension PythonFunction {
         // `utf8Start` is a property of StaticString, thus, it has a stable pointer.
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
-        let methodImplementationPointer = unsafeBitCast(
-            PythonFunction.sharedMethodImplementation, to: OpaquePointer.self)
-
-        /// The standard calling convention. See Python C API docs
-        let METH_VARARGS = 0x0001 as Int32
-
         let pointer = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 1)
         pointer.pointee = PyMethodDef(
             ml_name: namePointer,
-            ml_meth: methodImplementationPointer,
+            ml_meth: PythonFunction.sharedMethodImplementation,
             ml_flags: METH_VARARGS,
             ml_doc: nil
         )
@@ -1865,7 +1859,7 @@ fileprivate extension PythonFunction {
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
         let methodImplementationPointer = unsafeBitCast(
-            PythonFunction.sharedMethodWithKeywordsImplementation, to: OpaquePointer.self)
+            PythonFunction.sharedMethodWithKeywordsImplementation, to: PyCFunction.self)
 
         /// A combination of flags that supports `**kwargs`. See Python C API docs
         let METH_VARARGS = 0x0001 as Int32
@@ -1885,11 +1879,12 @@ fileprivate extension PythonFunction {
     private static let sharedMethodImplementation: @convention(c) (
         PyObjectPointer?, PyObjectPointer?
     ) -> PyObjectPointer? = { context, argumentsPointer in
-        guard let argumentsPointer = argumentsPointer, let capsulePointer = context else {
+        guard let argumentsPointer = argumentsPointer,
+              let capsulePointer = context,
+              let funcPointer = PyCapsule_GetPointer(capsulePointer, nil) else {
             return nil
         }
 
-        let funcPointer = PyCapsule_GetPointer(capsulePointer, nil)
         let function = Unmanaged<PyFunction>.fromOpaque(funcPointer).takeUnretainedValue()
 
         do {
@@ -1904,11 +1899,12 @@ fileprivate extension PythonFunction {
     private static let sharedMethodWithKeywordsImplementation: @convention(c) (
         PyObjectPointer?, PyObjectPointer?, PyObjectPointer?
     ) -> PyObjectPointer? = { context, argumentsPointer, keywordArgumentsPointer in
-        guard let argumentsPointer = argumentsPointer, let capsulePointer = context else {
+        guard let argumentsPointer = argumentsPointer,
+              let capsulePointer = context,
+              let funcPointer = PyCapsule_GetPointer(capsulePointer, nil) else {
             return nil
         }
 
-        let funcPointer = PyCapsule_GetPointer(capsulePointer, nil)
         let function = Unmanaged<PyFunction>.fromOpaque(funcPointer).takeUnretainedValue()
 
         do {
@@ -1930,7 +1926,7 @@ fileprivate extension PythonFunction {
         if let pythonObject = swiftError as? PythonObject {
             if Bool(Python.isinstance(pythonObject, Python.BaseException))! {
                 // We are an instance of an Exception class type. Set the exception class to the object's type:
-                PyErr_SetString(Python.type(pythonObject).ownedPyObject, pythonObject.description)
+                PyErr_SetString(Python.type(pythonObject).borrowedPyObject, pythonObject.description)
             } else {
                 // Assume an actual class type was thrown (rather than an instance)
                 // Crashes if it was neither a subclass of BaseException nor an instance of one.
@@ -1938,32 +1934,16 @@ fileprivate extension PythonFunction {
                 // We *could* check to see whether `pythonObject` is a class here and fall back
                 // to the default case of setting a generic Exception, below, but we also want
                 // people to write valid code.
-                PyErr_SetString(pythonObject.ownedPyObject, pythonObject.description)
+                PyErr_SetString(pythonObject.borrowedPyObject, pythonObject.description)
             }
         } else {
             // Make a generic Python Exception based on the Swift Error:
-            PyErr_SetString(Python.Exception.ownedPyObject, "\(type(of: swiftError)) raised in Swift: \(swiftError)")
+            PyErr_SetString(Python.Exception.borrowedPyObject, "\(type(of: swiftError)) raised in Swift: \(swiftError)")
         }
     }
 }
 
 extension PythonObject: Error {}
-
-// From Python's C Headers:
-struct PyMethodDef {
-    /// The name of the built-in function/method
-    var ml_name: UnsafePointer<Int8>
-
-    /// The C function that implements it.
-    /// Since this accepts multiple function signatures, the Swift type must be opaque here.
-    var ml_meth: OpaquePointer
-
-    /// Combination of METH_xxx flags, which mostly describe the args expected by the C func
-    var ml_flags: Int32
-
-    /// The __doc__ attribute, or NULL
-    var ml_doc: UnsafePointer<Int8>?
-}
 
 //===----------------------------------------------------------------------===//
 // PythonInstanceMethod - create functions that can be bound to a Python object
@@ -1989,7 +1969,7 @@ public struct PythonInstanceMethod {
 extension PythonInstanceMethod : PythonConvertible {
     public var pythonObject: PythonObject {
         let pyFuncPointer = function.pythonObject.ownedPyObject
-        let methodPointer = PyInstanceMethod_New(pyFuncPointer)
+        let methodPointer = PyInstanceMethod_New(pyFuncPointer)!
         return PythonObject(consuming: methodPointer)
     }
 }

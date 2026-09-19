@@ -75,7 +75,7 @@ resolve_rlocation() {{
 }}
 
 TMP_DIR="$(mktemp -d "${{TMPDIR:-/tmp}}/macho_arch_test.XXXXXX")"
-trap 'rm -rf "$TMP_DIR"' EXIT
+trap 'chmod -R u+w "$TMP_DIR" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
 
 resolved_inputs=()
 for sp in "${{input_short_paths[@]}}"; do
@@ -92,7 +92,8 @@ mkdir -p "$STAGE_DIR"
 
 for item in "${{resolved_inputs[@]}}"; do
     if [ -d "$item" ]; then
-        cp -R "$item" "$STAGE_DIR/"
+        mkdir -p "$STAGE_DIR/$(basename "$item")"
+        tar -chf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)
     elif [[ "$item" == *.zip ]]; then
         /usr/bin/unzip -q -o "$item" -d "$STAGE_DIR"
     else

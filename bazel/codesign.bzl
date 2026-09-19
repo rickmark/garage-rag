@@ -30,18 +30,20 @@ def _codesign_impl(ctx):
     if not inputs:
         fail("{}: 'src', 'dep', or 'srcs' must be specified and non-empty".format(ctx.label))
 
+    out_name = ctx.attr.out if ctx.attr.out else ctx.label.name
     is_dir = False
     if ctx.attr.src and ctx.attr.src[DefaultInfo].files_to_run and ctx.attr.src[DefaultInfo].files_to_run.executable:
         is_dir = False
     elif ctx.attr.dep and ctx.attr.dep[DefaultInfo].files_to_run and ctx.attr.dep[DefaultInfo].files_to_run.executable:
         is_dir = False
+    elif ctx.attr.is_framework or out_name.endswith(".framework"):
+        is_dir = True
     elif len(inputs) == 1:
         input_file = inputs[0]
         is_dir = input_file.is_directory
     else:
         is_dir = True
 
-    out_name = ctx.attr.out if ctx.attr.out else ctx.label.name
     if is_dir:
         output = ctx.actions.declare_directory(out_name)
     else:
