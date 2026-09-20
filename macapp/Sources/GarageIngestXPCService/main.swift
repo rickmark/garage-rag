@@ -195,7 +195,9 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
 
     func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
         logger.info("GarageIngestXPCService setting main app bundle reference from client pid \(self.connection.processIdentifier): \(bundleURL.path, privacy: .public)")
+        _ = bundleURL.startAccessingSecurityScopedResource()
         setenv("GARAGE_APP_BUNDLE_PATH", bundleURL.standardizedFileURL.resolvingSymlinksInPath().path, 1)
+        XPCSitePathSetup.setupSitePath()
         parent.resetInitialization()
         parent.initializePythonIfNeeded()
         if let err = parent.initializationError {
@@ -543,26 +545,21 @@ final class GarageIngestXPCServiceDelegate: NSObject, NSXPCListenerDelegate {
 
         do {
             logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
-            _ = try? Python.attemptImport("garage_rag.ingest")
+            XPCSitePathSetup.setupSitePath()
+            let ingestModule = try Python.attemptImport("garage_rag.ingest")
+            logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
 
-            logger.info("Importing garage_rag.ingest and setting up logging callbacks...")
-            if let ingestModule = try? Python.attemptImport("garage_rag.ingest") {
-                logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
+            // Register C callbacks
+            let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
+            if ingestModule.set_c_progress_callback != Python.None {
+                ingestModule.set_c_progress_callback(cFuncPtr)
+                logger.info("Registered C progress callback with garage_rag.ingest")
+            }
 
-                // Register C callbacks
-                let cFuncPtr = unsafeBitCast(globalProgressCallback, to: Int.self)
-                if ingestModule.set_c_progress_callback != Python.None {
-                    ingestModule.set_c_progress_callback(cFuncPtr)
-                    logger.info("Registered C progress callback with garage_rag.ingest")
-                }
-
-                let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
-                if ingestModule.set_c_log_callback != Python.None {
-                    ingestModule.set_c_log_callback(cLogFuncPtr)
-                    logger.info("Registered C log callback with garage_rag.ingest")
-                }
-            } else {
-                logger.warning("garage_rag.ingest could not be imported during startup pre-warming; will be imported on demand.")
+            let cLogFuncPtr = unsafeBitCast(globalLogCallback, to: Int.self)
+            if ingestModule.set_c_log_callback != Python.None {
+                ingestModule.set_c_log_callback(cLogFuncPtr)
+                logger.info("Registered C log callback with garage_rag.ingest")
             }
             initializationError = nil
             isInitialized = true

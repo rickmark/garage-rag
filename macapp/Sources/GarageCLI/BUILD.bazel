@@ -33,7 +33,7 @@ codesign(
     src = ":garage_bin",
     entitlements = select({
         "//bazel:is_store": "//macapp/externals:GarageServer.entitlements",
-        "//conditions:default": "//macapp/externals:GarageServer.entitlements",
+        "//conditions:default": None,
     }),
     options = ["runtime"],
     signing_identity = select({

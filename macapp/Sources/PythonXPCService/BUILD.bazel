@@ -53,6 +53,8 @@ macos_framework(
         "-F$(location //ext/pythonkit:PythonKit)/..",
         "-framework",
         "PythonKit",
+        "-framework",
+        "SystemConfiguration",
     ],
     minimum_os_version = "14.0",
     version = "//macapp/Sources/GarageApp:GarageAppVersion",
@@ -68,7 +70,6 @@ codesign(
     out = "PythonXPCService.framework",
     is_framework = True,
     signing_identity = select({
-        "//bazel:is_adhoc": "-",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),

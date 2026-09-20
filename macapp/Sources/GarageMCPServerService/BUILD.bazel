@@ -22,10 +22,10 @@ macos_xpc_service(
     ],
     bundle_id = "me.rickmark.garage-rag.mcp-server-xpc",
     bundle_name = "GarageMCPServerService",
-    codesignopts = [
-        "--options=runtime",
-    ],
-    entitlements = ":GarageMCPServerService.entitlements",
+    entitlements = select({
+        "//bazel:is_store": ":GarageMCPServerService.entitlements",
+        "//conditions:default": None,
+    }),
     infoplists = ["Info.plist"],
     linkopts = [
         "-F$(location //ext/python:python_framework)/..",

@@ -36,12 +36,11 @@ codesign(
     out = "postgres",
     entitlements = select({
         "//bazel:is_store": "//macapp/externals:GarageServer.entitlements",
-        "//conditions:default": "//macapp/externals:GarageServer.entitlements",
+        "//conditions:default": None,
     }),
     options = ["runtime"],
     parent_dir = "postgres",
     signing_identity = select({
-        "//bazel:is_adhoc": "-",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),
@@ -61,15 +60,40 @@ copy_to_directory(
 )
 
 copy_to_directory(
-    name = "site-python",
+    name = "site-python-only",
     srcs = [
         "//ext/python:python_3_13",
+    ],
+    include_srcs_patterns = [
+        "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13/**",
+    ],
+    replace_prefixes = {
+        "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13": "",
+    },
+)
+
+copy_to_directory(
+    name = "site-python-raw",
+    srcs = [
+        ":site-python-only",
         "//garage_python:site-packages",
     ],
+    out = "site-python-raw",
+    replace_prefixes = {
+        "garage_python/site-packages": "site-packages",
+        "site-python-only": "",
+    },
+    visibility = ["//visibility:public"],
+)
+
+codesign(
+    name = "site-python",
+    src = ":site-python-raw",
     out = "site-python",
-    root_paths = [
-        "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13",
-        "garage_python/site-packages",
-    ],
+    options = ["runtime"],
+    signing_identity = select({
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
     visibility = ["//visibility:public"],
 )

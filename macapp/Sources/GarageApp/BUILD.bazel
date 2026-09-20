@@ -58,7 +58,10 @@ macos_application(
     codesignopts = [
         "--options=runtime",  # This enables the Hardened Runtime flag
     ],
-    entitlements = ":Garage.entitlements",
+    entitlements = select({
+        "//bazel:is_store": ":Garage.entitlements",
+        "//conditions:default": None,
+    }),
     executable_name = "GarageApp",
     frameworks = [
         "//ext/pythonkit:PythonKit_framework",

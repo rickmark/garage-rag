@@ -23,10 +23,10 @@ macos_xpc_service(
     ],
     bundle_id = "me.rickmark.garage-rag.ingest-xpc",
     bundle_name = "GarageIngestXPCService",
-    codesignopts = [
-        "--options=runtime",
-    ],
-    entitlements = ":GarageIngestXPCService.entitlements",
+    entitlements = select({
+        "//bazel:is_store": ":GarageIngestXPCService.entitlements",
+        "//conditions:default": None,
+    }),
     infoplists = ["Info.plist"],
     linkopts = [
         "-F$(location //ext/python:python_framework)/..",

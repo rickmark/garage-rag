@@ -126,14 +126,18 @@ public struct PythonObject {
 
 // Make `print(python)` print a pretty form of the `PythonObject`.
 extension PythonObject : CustomStringConvertible {
-    /// A textual description of this `PythonObject`, produced by `Python.str`.
+    /// A textual description of this `PythonObject`, produced by `PyObject_Str`.
     public var description: String {
-        // The `str` function is used here because it is designed to return
-        // human-readable descriptions of Python objects. The Python REPL also uses
-        // it for printing descriptions.
-        // `repr` is not used because it is not designed to be readable and takes
-        // too long for large objects.
-        return String(Python.str(self))!
+        guard let pyStr = PyObject_Str(borrowedPyObject) else {
+            PyErr_Clear()
+            return "<unprintable PythonObject>"
+        }
+        defer { Py_DecRef(pyStr) }
+        guard let cStr = PyUnicode_AsUTF8(pyStr) else {
+            PyErr_Clear()
+            return "<unprintable PythonObject>"
+        }
+        return String(cString: cStr)
     }
 }
 
@@ -793,75 +797,191 @@ public struct PythonInterface {
     /// A dictionary of the Python builtins.
     public let builtins: PythonObject
 
-    private static var pythonHomeWChar: UnsafeMutablePointer<wchar_t>? = nil
+    private static let initializationLock = NSRecursiveLock()
 
     /// Resolves the path to the Python framework directory or bundled Python home.
     public static func findPythonHome() -> String? {
         let fileManager = FileManager.default
 
-        let bundlePath = URL(fileURLWithPath: Bundle.main.bundlePath)
-        let appBundlePath = bundlePath.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-
-        let candidatePath = appBundlePath.appendingPathComponent("Resources/site-python").path
-        logger.debug("findPythonHome: checking candidate at '\(candidatePath, privacy: .public)' (bundlePath: '\(bundlePath.path, privacy: .public)')")
-
-        if fileManager.fileExists(atPath: candidatePath) {
-            logger.info("findPythonHome: found site-python at '\(candidatePath, privacy: .public)'")
-            return candidatePath
-        }
-
-        let directResourcesCandidate = bundlePath.appendingPathComponent("Resources/site-python").path
-        if fileManager.fileExists(atPath: directResourcesCandidate) {
-            logger.info("findPythonHome: found site-python at '\(directResourcesCandidate, privacy: .public)'")
-            return directResourcesCandidate
-        }
-
-        let directSitePythonCandidate = bundlePath.appendingPathComponent("site-python").path
-        if fileManager.fileExists(atPath: directSitePythonCandidate) {
-            logger.info("findPythonHome: found site-python at '\(directSitePythonCandidate, privacy: .public)'")
-            return directSitePythonCandidate
-        }
-
-        logger.warning("findPythonHome: site-python candidate does not exist at '\(candidatePath, privacy: .public)', returning default candidate")
-        return candidatePath
-    }
-
-    /// Configures the Python home path via `Py_SetPythonHome` before Python initialization.
-    public static func setupPythonHome() {
-        if Py_IsInitialized() != 0 {
-            logger.debug("setupPythonHome: Python runtime is already initialized, skipping")
-            return
-        }
-        guard let homePath = findPythonHome() else {
-            logger.error("setupPythonHome: findPythonHome returned nil")
-            return
-        }
-        logger.info("setupPythonHome: setting PYTHONHOME environment variable and Py_SetPythonHome to '\(homePath, privacy: .public)'")
-        setenv("PYTHONHOME", homePath, 1)
-        homePath.withCString { cStr in
-            if let decoded = Py_DecodeLocale(cStr, nil) {
-                pythonHomeWChar = decoded
-                Py_SetPythonHome(decoded)
-                logger.info("setupPythonHome: Py_SetPythonHome successfully configured")
-            } else {
-                logger.error("setupPythonHome: Py_DecodeLocale failed for path '\(homePath, privacy: .public)'")
+        // 1. Check environment variables
+        let envKeys = ["GARAGE_PYTHON_HOME", "PYTHONHOME", "GARAGE_APP_BUNDLE_PATH"]
+        for key in envKeys {
+            if let envVal = ProcessInfo.processInfo.environment[key], !envVal.isEmpty {
+                let envURL = URL(fileURLWithPath: envVal).standardizedFileURL.resolvingSymlinksInPath()
+                if fileManager.fileExists(atPath: envURL.appendingPathComponent("lib/python3.13/os.py").path) {
+                    logger.info("findPythonHome: using environment \(key, privacy: .public) directly at '\(envURL.path, privacy: .public)'")
+                    return envURL.path
+                }
+                let candidates = [
+                    envURL.appendingPathComponent("Contents/Resources/site-python"),
+                    envURL.appendingPathComponent("Resources/site-python"),
+                    envURL.appendingPathComponent("site-python")
+                ]
+                for c in candidates {
+                    if fileManager.fileExists(atPath: c.appendingPathComponent("lib/python3.13/os.py").path) || fileManager.fileExists(atPath: c.path) {
+                        logger.info("findPythonHome: found site-python via \(key, privacy: .public) at '\(c.path, privacy: .public)'")
+                        return c.path
+                    }
+                }
             }
         }
+
+        var baseURLs: [URL] = []
+        if let mainResourceURL = Bundle.main.resourceURL {
+            baseURLs.append(mainResourceURL)
+        }
+        baseURLs.append(Bundle.main.bundleURL)
+        baseURLs.append(URL(fileURLWithPath: Bundle.main.bundlePath))
+        if let execURL = Bundle.main.executableURL {
+            baseURLs.append(execURL)
+        }
+        if !CommandLine.arguments.isEmpty {
+            baseURLs.append(URL(fileURLWithPath: CommandLine.arguments[0]))
+        }
+
+        let frameworkBundle = Bundle(for: PyReference.self)
+        if let fwResourceURL = frameworkBundle.resourceURL {
+            baseURLs.append(fwResourceURL)
+        }
+        baseURLs.append(frameworkBundle.bundleURL)
+        baseURLs.append(URL(fileURLWithPath: frameworkBundle.bundlePath))
+        if let fwExecURL = frameworkBundle.executableURL {
+            baseURLs.append(fwExecURL)
+        }
+
+        let cwdURL = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+        baseURLs.append(cwdURL)
+
+        if let runfilesDir = ProcessInfo.processInfo.environment["RUNFILES_DIR"] {
+            baseURLs.append(URL(fileURLWithPath: runfilesDir))
+        }
+
+        var candidateURLs: [URL] = []
+        for base in baseURLs {
+            let stdBase = base.standardizedFileURL.resolvingSymlinksInPath()
+            var current = stdBase
+            for _ in 0..<6 {
+                candidateURLs.append(current.appendingPathComponent("Contents/Resources/site-python"))
+                candidateURLs.append(current.appendingPathComponent("Resources/site-python"))
+                candidateURLs.append(current.appendingPathComponent("site-python"))
+                candidateURLs.append(current.appendingPathComponent("macapp/externals/site-python"))
+                candidateURLs.append(current.appendingPathComponent("bazel-bin/macapp/externals/site-python"))
+                candidateURLs.append(current.appendingPathComponent("_main/macapp/externals/site-python"))
+                if current.lastPathComponent == "site-python" {
+                    candidateURLs.append(current)
+                }
+                let parent = current.deletingLastPathComponent()
+                if parent.path == current.path || parent.path == "/" {
+                    break
+                }
+                current = parent
+            }
+        }
+
+        for candidate in candidateURLs {
+            let path = candidate.standardized.path
+            logger.debug("findPythonHome: checking candidate at '\(path, privacy: .public)'")
+            if fileManager.fileExists(atPath: path) {
+                logger.info("findPythonHome: found site-python at '\(path, privacy: .public)'")
+                return path
+            }
+        }
+
+        logger.info("findPythonHome: no site-python directory found, returning nil for default runtime behavior")
+        return nil
     }
 
-    init() {
-        logger.info("PythonInterface.init: initializing Python runtime...")
-        Self.setupPythonHome()
-        Py_Initialize()   // Initialize Python
-        if Py_IsInitialized() == 0 {
-            logger.fault("PythonInterface.init: Py_Initialize() failed; Python runtime is not initialized")
-        } else {
-            logger.info("PythonInterface.init: Py_Initialize() succeeded")
+    /// Initializes the Python runtime once per process using PyConfig and a mutex.
+    public static func initializePython() {
+        if Py_IsInitialized() != 0 {
+            return
         }
-        builtins = PythonObject(PyEval_GetBuiltins())
+        initializationLock.lock()
+        defer { initializationLock.unlock() }
+
+        if Py_IsInitialized() != 0 {
+            logger.debug("initializePython: Python runtime is already initialized, skipping")
+            return
+        }
+
+        logger.info("initializePython: initializing Python runtime with PyConfig...")
+
+        var config = PyConfig()
+
+        withUnsafeMutablePointer(to: &config) { configPtr in
+
+            if let homePath = findPythonHome() {
+                logger.info("initializePython: setting PYTHONHOME environment variable and PyConfig.home to '\(homePath, privacy: .public)'")
+                setenv("PYTHONHOME", homePath, 1)
+
+                let fileManager = FileManager.default
+                let libPath = "\(homePath)"
+                let dynloadPath = "\(homePath)/lib-dynload"
+                let sitePackagesPath = "\(homePath)/site-packages"
+                let pythonPathComponents = [libPath, dynloadPath, sitePackagesPath].filter {
+                    fileManager.fileExists(atPath: $0)
+                }
+                let pythonPath = pythonPathComponents.joined(separator: ":")
+                if !pythonPath.isEmpty {
+                    logger.info("initializePython: setting PYTHONPATH environment variable and PyConfig.pythonpath_env to '\(pythonPath, privacy: .public)'")
+                    setenv("PYTHONPATH", pythonPath, 1)
+                }
+            } else {
+                logger.warning("initializePython: findPythonHome returned nil")
+            }
+
+            Py_Initialize()
+        }
+
+        if Py_IsInitialized() == 0 {
+            logger.fault("initializePython: Py_IsInitialized() returned 0 after initialization")
+        } else {
+            logger.info("initializePython: Python runtime successfully initialized")
+            if let sysModule = PyImport_ImportModule("sys") {
+                let sys = PythonObject(consuming: sysModule)
+                if let homePath = findPythonHome() {
+                    let requiredPaths = [
+                        "\(homePath)/lib/python3.13",
+                        "\(homePath)/lib/python3.13/lib-dynload",
+                        "\(homePath)/lib/python3.13/site-packages",
+                        homePath
+                    ]
+                    let existingPaths = Array<String>(sys.path) ?? []
+                    for reqPath in requiredPaths.reversed() {
+                        if FileManager.default.fileExists(atPath: reqPath) && !existingPaths.contains(reqPath) {
+                            logger.info("initializePython: prepending '\(reqPath, privacy: .public)' to sys.path")
+                            sys.path.insert(0, reqPath)
+                        }
+                    }
+                }
+                logger.info("initializePython: sys.path: \(sys.path, privacy: .public)")
+                if let paths = Array<String>(sys.path) {
+                    for (index, path) in paths.enumerated() {
+                        logger.info("initializePython: sys.path[\(index)]: \(path, privacy: .public)")
+                    }
+                }
+                if let prefix = String(sys[dynamicMember: "prefix"]) {
+                    logger.info("initializePython: sys.prefix: \(prefix, privacy: .public)")
+                }
+                if let execPrefix = String(sys.exec_prefix) {
+                    logger.info("initializePython: sys.exec_prefix: \(execPrefix, privacy: .public)")
+                }
+                if let basePrefix = String(sys.base_prefix) {
+                    logger.info("initializePython: sys.base_prefix: \(basePrefix, privacy: .public)")
+                }
+                if let baseExecPrefix = String(sys.base_exec_prefix) {
+                    logger.info("initializePython: sys.base_exec_prefix: \(baseExecPrefix, privacy: .public)")
+                }
+                if let executable = String(sys.executable) {
+                    logger.info("initializePython: sys.executable: \(executable, privacy: .public)")
+                }
+            } else {
+                logger.error("initializePython: failed to import 'sys' module to log paths")
+            }
+        }
 
         // Runtime Fixes:
-        logger.debug("PythonInterface.init: running Python runtime setup script...")
+        logger.debug("initializePython: running Python runtime setup script...")
         let scriptResult = PyRun_SimpleString("""
             import sys
             import os
@@ -877,10 +997,38 @@ public struct PythonInterface {
                 sys.executable = os.path.join(sys.exec_prefix, "bin", executable_name)
             """)
         if scriptResult != 0 {
-            logger.error("PythonInterface.init: PyRun_SimpleString runtime fixes failed with code \(scriptResult)")
+            logger.error("initializePython: PyRun_SimpleString runtime fixes failed with code \(scriptResult)")
         } else {
-            logger.debug("PythonInterface.init: runtime setup script completed successfully")
+            logger.debug("initializePython: runtime setup script completed successfully")
         }
+    }
+
+    /// Configures the Python home path before Python initialization.
+    public static func setupPythonHome() {
+        initializePython()
+        if Py_IsInitialized() != 0, let homePath = findPythonHome() {
+            if let sysModule = PyImport_ImportModule("sys") {
+                let sys = PythonObject(consuming: sysModule)
+                let requiredPaths = [
+                    "\(homePath)/lib/python3.13",
+                    "\(homePath)/lib/python3.13/lib-dynload",
+                    "\(homePath)/lib/python3.13/site-packages",
+                    homePath
+                ]
+                let existingPaths = Array<String>(sys.path) ?? []
+                for reqPath in requiredPaths.reversed() {
+                    if FileManager.default.fileExists(atPath: reqPath) && !existingPaths.contains(reqPath) {
+                        logger.info("setupPythonHome: prepending '\(reqPath, privacy: .public)' to sys.path")
+                        sys.path.insert(0, reqPath)
+                    }
+                }
+            }
+        }
+    }
+
+    init() {
+        Self.initializePython()
+        builtins = PythonObject(PyEval_GetBuiltins())
     }
 
     public func attemptImport(_ name: String) throws -> PythonObject {
@@ -996,7 +1144,7 @@ extension Bool : PythonConvertible, ConvertibleFromPython {
     }
 
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return PythonObject(consuming: PyBool_FromLong(self ? 1 : 0))
     }
 }
@@ -1014,7 +1162,7 @@ extension String : PythonConvertible, ConvertibleFromPython {
     }
 
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         let v = utf8CString.withUnsafeBufferPointer { (buffer: UnsafeBufferPointer<CChar>) -> PyObjectPointer in
             PyUnicode_FromStringAndSize(buffer.baseAddress, buffer.count - 1)!
         }
@@ -1056,7 +1204,7 @@ extension Int : PythonConvertible, ConvertibleFromPython {
     }
 
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return PythonObject(consuming: PyLong_FromLong(self))
     }
 }
@@ -1074,7 +1222,7 @@ extension UInt : PythonConvertible, ConvertibleFromPython {
     }
 
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return PythonObject(consuming: PyLong_FromUnsignedLong(self))
     }
 }
@@ -1091,7 +1239,7 @@ extension Double : PythonConvertible, ConvertibleFromPython {
     }
 
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return PythonObject(consuming: PyFloat_FromDouble(self))
     }
 }
@@ -1241,7 +1389,7 @@ where Wrapped : ConvertibleFromPython {
 // associated type does.
 extension Array : PythonConvertible where Element : PythonConvertible {
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         let list = PyList_New(count)!
         for (index, element) in enumerated() {
             // `PyList_SetItem` steals the reference of the object stored.
@@ -1266,7 +1414,7 @@ extension Array : ConvertibleFromPython where Element : ConvertibleFromPython {
 extension Dictionary : PythonConvertible
 where Key : PythonConvertible, Value : PythonConvertible {
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         let dict = PyDict_New()!
         for (key, value) in self {
             let k = key.ownedPyObject
@@ -1314,7 +1462,7 @@ where Key : ConvertibleFromPython, Value : ConvertibleFromPython {
 
 extension Range : PythonConvertible where Bound : PythonConvertible {
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return Python.slice(lowerBound, upperBound, Python.None)
     }
 }
@@ -1333,7 +1481,7 @@ extension Range : ConvertibleFromPython where Bound : ConvertibleFromPython {
 
 extension PartialRangeFrom : PythonConvertible where Bound : PythonConvertible {
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return Python.slice(lowerBound, Python.None, Python.None)
     }
 }
@@ -1353,7 +1501,7 @@ where Bound : ConvertibleFromPython {
 
 extension PartialRangeUpTo : PythonConvertible where Bound : PythonConvertible {
     public var pythonObject: PythonObject {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         return Python.slice(Python.None, upperBound, Python.None)
     }
 }
@@ -1676,7 +1824,7 @@ extension PythonObject : ExpressibleByArrayLiteral, ExpressibleByDictionaryLiter
     // differs from Python's key uniquing semantics, which silently override an
     // existing key with the next one it encounters.
     public init(dictionaryLiteral elements: (PythonObject, PythonObject)...) {
-        _ = Python // Ensure Python is initialized.
+        PythonInterface.initializePython()
         let dict = PyDict_New()!
         for (key, value) in elements {
             let k = key.ownedPyObject

@@ -16,25 +16,25 @@ swift_library(
 # The actual XPC service binary
 macos_xpc_service(
     name = "ModelDownloadXPCService",
-    bundle_id = "me.rickmark.garage-rag.model-download-xpc",
-    bundle_name = "ModelDownloadXPCService",
     additional_linker_inputs = [
         "//ext/python:python_framework",
         "//ext/pythonkit:PythonKit",
         "//macapp/Sources/PythonXPCService:PythonXPCService_signed",
     ],
+    bundle_id = "me.rickmark.garage-rag.model-download-xpc",
+    bundle_name = "ModelDownloadXPCService",
     codesignopts = [
         "--options=runtime",
     ],
-    entitlements = ":ModelDownloadXPCService.entitlements",
+    entitlements = select({
+        "//bazel:is_store": ":ModelDownloadXPCService.entitlements",
+        "//conditions:default": None,
+    }),
     infoplists = ["Info.plist"],
     linkopts = [
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
-        "-F$(location //ext/pythonkit:PythonKit)/..",
-        "-framework",
-        "PythonKit",
         "-F$(location //macapp/Sources/PythonXPCService:PythonXPCService_signed)/..",
         "-framework",
         "PythonXPCService",

@@ -129,7 +129,6 @@ codesign(
     out = "Python.framework",
     is_framework = True,
     signing_identity = select({
-        "//bazel:is_adhoc": "-",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),
