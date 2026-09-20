@@ -10,9 +10,6 @@ swift_library(
     ],
     module_name = "PythonXPCService_protocol",
     visibility = ["//visibility:public"],
-    deps = [
-        "//ext:PythonKit",
-    ],
 )
 
 swift_library(
@@ -44,6 +41,7 @@ macos_framework(
     name = "PythonXPCService_framework",
     additional_linker_inputs = [
         "//ext/python:python_framework",
+        "//ext/pythonkit:PythonKit",
     ],
     bundle_id = "me.rickmark.garage-rag.PythonXPCService",
     bundle_name = "PythonXPCService",
@@ -52,6 +50,9 @@ macos_framework(
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
+        "-F$(location //ext/pythonkit:PythonKit)/..",
+        "-framework",
+        "PythonKit",
     ],
     minimum_os_version = "14.0",
     version = "//macapp/Sources/GarageApp:GarageAppVersion",

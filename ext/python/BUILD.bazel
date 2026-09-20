@@ -135,3 +135,15 @@ codesign(
     }),
     visibility = ["//visibility:public"],
 )
+
+apple_dynamic_framework_import(
+    name = "Python",
+    framework_imports = [":python_framework"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "python_framework_import",
+    actual = ":Python",
+    visibility = ["//visibility:public"],
+)
