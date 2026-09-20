@@ -110,13 +110,6 @@ private func runCLI() {
         CLIOutputCapturer.shared.flush()
     }
     setupPythonEnvironment()
-    do {
-        try PythonLibrary.loadLibrary()
-    } catch {
-        fputs("Error: Failed to load Python runtime library: \(error.localizedDescription)\n", stderr)
-        CLIOutputCapturer.shared.flush()
-        exit(1)
-    }
 
     let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let binDir = execURL.deletingLastPathComponent()

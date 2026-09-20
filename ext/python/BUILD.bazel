@@ -83,6 +83,7 @@ configure_make(
         "python3",
         "python3-config",
     ],
+    out_include_dir = "include/python3.13",
     out_static_libs = [
         "libpython3.13.a",
     ],
