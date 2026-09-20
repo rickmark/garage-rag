@@ -21,7 +21,10 @@
 
 import Foundation
 import Darwin
+import OSLog
 @_exported import PythonBinding
+
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "PythonKit")
 
 //===----------------------------------------------------------------------===//
 // `PyReference` definition
@@ -265,7 +268,9 @@ private func throwPythonErrorIfPresent() throws {
     // The value for the exception may not be set but the type always should be.
     let resultObject = PythonObject(consuming: value ?? type!)
     let tracebackObject = traceback.flatMap { PythonObject(consuming: $0) }
-    throw PythonError.exception(resultObject, traceback: tracebackObject)
+    let error = PythonError.exception(resultObject, traceback: tracebackObject)
+    logger.error("Python exception: \(error.description, privacy: .public)")
+    throw error
 }
 
 /// A `PythonObject` wrapper that enables throwing method calls.
@@ -797,30 +802,67 @@ public struct PythonInterface {
         let bundlePath = URL(fileURLWithPath: Bundle.main.bundlePath)
         let appBundlePath = bundlePath.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
+        let candidatePath = appBundlePath.appendingPathComponent("Resources/site-python").path
+        logger.debug("findPythonHome: checking candidate at '\(candidatePath, privacy: .public)' (bundlePath: '\(bundlePath.path, privacy: .public)')")
 
-        return appBundlePath.appendingPathComponent("Resources/site-python").path
+        if fileManager.fileExists(atPath: candidatePath) {
+            logger.info("findPythonHome: found site-python at '\(candidatePath, privacy: .public)'")
+            return candidatePath
+        }
+
+        let directResourcesCandidate = bundlePath.appendingPathComponent("Resources/site-python").path
+        if fileManager.fileExists(atPath: directResourcesCandidate) {
+            logger.info("findPythonHome: found site-python at '\(directResourcesCandidate, privacy: .public)'")
+            return directResourcesCandidate
+        }
+
+        let directSitePythonCandidate = bundlePath.appendingPathComponent("site-python").path
+        if fileManager.fileExists(atPath: directSitePythonCandidate) {
+            logger.info("findPythonHome: found site-python at '\(directSitePythonCandidate, privacy: .public)'")
+            return directSitePythonCandidate
+        }
+
+        logger.warning("findPythonHome: site-python candidate does not exist at '\(candidatePath, privacy: .public)', returning default candidate")
+        return candidatePath
     }
 
     /// Configures the Python home path via `Py_SetPythonHome` before Python initialization.
     public static func setupPythonHome() {
-        guard Py_IsInitialized() == 0 else { return }
-        guard let homePath = findPythonHome() else { return }
+        if Py_IsInitialized() != 0 {
+            logger.debug("setupPythonHome: Python runtime is already initialized, skipping")
+            return
+        }
+        guard let homePath = findPythonHome() else {
+            logger.error("setupPythonHome: findPythonHome returned nil")
+            return
+        }
+        logger.info("setupPythonHome: setting PYTHONHOME environment variable and Py_SetPythonHome to '\(homePath, privacy: .public)'")
         setenv("PYTHONHOME", homePath, 1)
         homePath.withCString { cStr in
             if let decoded = Py_DecodeLocale(cStr, nil) {
                 pythonHomeWChar = decoded
                 Py_SetPythonHome(decoded)
+                logger.info("setupPythonHome: Py_SetPythonHome successfully configured")
+            } else {
+                logger.error("setupPythonHome: Py_DecodeLocale failed for path '\(homePath, privacy: .public)'")
             }
         }
     }
 
     init() {
+        logger.info("PythonInterface.init: initializing Python runtime...")
         Self.setupPythonHome()
         Py_Initialize()   // Initialize Python
+        if Py_IsInitialized() == 0 {
+            logger.fault("PythonInterface.init: Py_Initialize() failed; Python runtime is not initialized")
+        } else {
+            logger.info("PythonInterface.init: Py_Initialize() succeeded")
+        }
         builtins = PythonObject(PyEval_GetBuiltins())
 
         // Runtime Fixes:
-        PyRun_SimpleString("""
+        logger.debug("PythonInterface.init: running Python runtime setup script...")
+        let scriptResult = PyRun_SimpleString("""
             import sys
             import os
 
@@ -834,13 +876,31 @@ public struct PythonInterface {
                 executable_name = "python{}.{}".format(sys.version_info.major, sys.version_info.minor)
                 sys.executable = os.path.join(sys.exec_prefix, "bin", executable_name)
             """)
+        if scriptResult != 0 {
+            logger.error("PythonInterface.init: PyRun_SimpleString runtime fixes failed with code \(scriptResult)")
+        } else {
+            logger.debug("PythonInterface.init: runtime setup script completed successfully")
+        }
     }
 
     public func attemptImport(_ name: String) throws -> PythonObject {
+        logger.debug("attemptImport: importing module '\(name, privacy: .public)'...")
         guard let module = PyImport_ImportModule(name) else {
-            try throwPythonErrorIfPresent()
+            logger.error("attemptImport: failed to import module '\(name, privacy: .public)'")
+            if PyErr_Occurred() != nil {
+                var type: PyObjectPointer?
+                var value: PyObjectPointer?
+                var traceback: PyObjectPointer?
+                PyErr_Fetch(&type, &value, &traceback)
+                let resultObject = PythonObject(consuming: value ?? type!)
+                let tracebackObject = traceback.flatMap { PythonObject(consuming: $0) }
+                let pyErr = PythonError.exception(resultObject, traceback: tracebackObject)
+                logger.error("attemptImport: Python exception while importing '\(name, privacy: .public)': \(pyErr.description, privacy: .public)")
+                throw pyErr
+            }
             throw PythonError.invalidModule(name)
         }
+        logger.info("attemptImport: successfully imported module '\(name, privacy: .public)'")
         return PythonObject(consuming: module)
     }
 
@@ -1955,6 +2015,7 @@ fileprivate extension PythonFunction {
     }
 
     private static func setPythonError(swiftError: Error) {
+        logger.error("Converting Swift error to Python exception: \(swiftError.localizedDescription, privacy: .public)")
         if let pythonObject = swiftError as? PythonObject {
             if Bool(Python.isinstance(pythonObject, Python.BaseException))! {
                 // We are an instance of an Exception class type. Set the exception class to the object's type:

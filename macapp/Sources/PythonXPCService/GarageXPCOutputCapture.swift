@@ -163,6 +163,11 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         // Write to log file
         GarageFileLogger.shared.append(fileName: currentFile, text: text, stream: "stdout", level: "INFO", source: currentSource)
 
+        // Log to unified logging
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            logger.info("[\(currentSource, privacy: .public)] \(line, privacy: .public)")
+        }
+
         // Stream to registered receivers
         primaryReceiver?.didReceiveStdout(text)
         for r in receivers {
@@ -203,6 +208,11 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
         // Write to log file
         GarageFileLogger.shared.append(fileName: currentFile, text: text, stream: "stderr", level: "ERROR", source: currentSource)
+
+        // Log to unified logging
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            logger.error("[\(currentSource, privacy: .public)] \(line, privacy: .public)")
+        }
 
         // Stream to registered receivers
         primaryReceiver?.didReceiveStderr(text)
@@ -250,6 +260,18 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
         // Write to log file
         GarageFileLogger.shared.append(fileName: currentFile, text: message, stream: level == "ERROR" ? "stderr" : "stdout", level: level, source: src, timestamp: Date(timeIntervalSince1970: timestamp))
+
+        // Log to unified logging
+        switch level.uppercased() {
+        case "ERROR", "CRITICAL", "FATAL":
+            logger.error("[\(src, privacy: .public)] \(message, privacy: .public)")
+        case "WARN", "WARNING":
+            logger.warning("[\(src, privacy: .public)] \(message, privacy: .public)")
+        case "DEBUG", "TRACE":
+            logger.debug("[\(src, privacy: .public)] \(message, privacy: .public)")
+        default:
+            logger.info("[\(src, privacy: .public)] \(message, privacy: .public)")
+        }
 
         // Broadcast structured log
         primaryReceiver?.didReceiveLog(source: src, level: level, message: message, timestamp: timestamp)
