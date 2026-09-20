@@ -1,4 +1,5 @@
 import Foundation
+import PythonKit
 
 /// Simple site-python path setup - no dynamic library loading.
 /// Only configures Python's sys.path to include the bundled site-packages.
@@ -6,7 +7,7 @@ public struct XPCSitePathSetup {
     /// Sets up Python's sys.path with the bundled site-packages.
     /// This is used instead of dynamic library loading - PythonKit uses static linking.
     public static func setupSitePath() {
-        // site-packages are bundled - PythonKit handles dynamic linking internally
+        PythonInterface.setupPythonHome()
     }
     
     /// Normalizes database URLs to ensure psycopg is used.

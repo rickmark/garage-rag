@@ -96,18 +96,6 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-alias(
-    name = "PythonKit_framework",
-    actual = "//ext/pythonkit:PythonKit_framework",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "pythonkit_framework",
-    actual = "//ext/pythonkit:PythonKit_framework",
-    visibility = ["//visibility:public"],
-)
-
 macho_test(
     name = "postgres_arch_test",
     src = ":postgres",

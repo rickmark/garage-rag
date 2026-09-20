@@ -59,3 +59,17 @@ copy_to_directory(
     },
     visibility = ["//visibility:public"],
 )
+
+copy_to_directory(
+    name = "site-python",
+    srcs = [
+        "//ext/python:python_3_13",
+        "//garage_python:site-packages",
+    ],
+    out = "site-python",
+    root_paths = [
+        "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13",
+        "garage_python/site-packages",
+    ],
+    visibility = ["//visibility:public"],
+)

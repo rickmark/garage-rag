@@ -19,6 +19,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Foundation
+import Darwin
 @_exported import PythonBinding
 
 //===----------------------------------------------------------------------===//
@@ -786,7 +788,34 @@ public struct PythonInterface {
     /// A dictionary of the Python builtins.
     public let builtins: PythonObject
 
+    private static var pythonHomeWChar: UnsafeMutablePointer<wchar_t>? = nil
+
+    /// Resolves the path to the Python framework directory or bundled Python home.
+    public static func findPythonHome() -> String? {
+        let fileManager = FileManager.default
+
+        let bundlePath = URL(fileURLWithPath: Bundle.main.bundlePath)
+        let appBundlePath = bundlePath.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+
+        return appBundlePath.appendingPathComponent("Resources/site-python").path
+    }
+
+    /// Configures the Python home path via `Py_SetPythonHome` before Python initialization.
+    public static func setupPythonHome() {
+        guard Py_IsInitialized() == 0 else { return }
+        guard let homePath = findPythonHome() else { return }
+        setenv("PYTHONHOME", homePath, 1)
+        homePath.withCString { cStr in
+            if let decoded = Py_DecodeLocale(cStr, nil) {
+                pythonHomeWChar = decoded
+                Py_SetPythonHome(decoded)
+            }
+        }
+    }
+
     init() {
+        Self.setupPythonHome()
         Py_Initialize()   // Initialize Python
         builtins = PythonObject(PyEval_GetBuiltins())
 

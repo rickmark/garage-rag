@@ -7,6 +7,19 @@ class PythonRuntimeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Python.versionInfo.minor, 0)
     }
 
+    func testStandardLibraryModules() {
+        let os = try? Python.attemptImport("os")
+        XCTAssertNotNil(os)
+        let sys = try? Python.attemptImport("sys")
+        XCTAssertNotNil(sys)
+        let json = try? Python.attemptImport("json")
+        XCTAssertNotNil(json)
+        let math = try? Python.attemptImport("math")
+        XCTAssertNotNil(math)
+        let platform = try? Python.attemptImport("platform")
+        XCTAssertNotNil(platform)
+    }
+
     func testPythonList() {
         let list: PythonObject = [0, 1, 2]
         XCTAssertEqual("[0, 1, 2]", list.description)

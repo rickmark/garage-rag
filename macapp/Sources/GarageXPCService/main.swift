@@ -4,48 +4,7 @@ import OSLog
 import PythonXPCService
 import PythonKit
 
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.xpc", category: "GarageXPCService")
-
-private func installCrashHandlers() {
-    NSSetUncaughtExceptionHandler { exception in
-        let callStack = exception.callStackSymbols.joined(separator: "\n  ")
-        let msg = "CRITICAL: Uncaught NSException '\(exception.name.rawValue)': \(exception.reason ?? "none")\nUserInfo: \(String(describing: exception.userInfo))\nCall Stack:\n  \(callStack)\n"
-        fputs(msg, stderr)
-        fflush(stderr)
-        logger.fault("CRITICAL: Uncaught NSException '\(exception.name.rawValue, privacy: .public)': \(exception.reason ?? "none", privacy: .public)\nUserInfo: \(String(describing: exception.userInfo), privacy: .public)\nCall Stack:\n  \(callStack, privacy: .public)")
-    }
-
-    let fatalSignals: [Int32] = [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGPIPE]
-    for sig in fatalSignals {
-        signal(sig) { signum in
-            let sigName: String
-            switch signum {
-            case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault)"
-            case SIGBUS: sigName = "SIGBUS (Bus Error)"
-            case SIGABRT: sigName = "SIGABRT (Abort)"
-            case SIGILL: sigName = "SIGILL (Illegal Instruction)"
-            case SIGFPE: sigName = "SIGFPE (Floating Point Exception)"
-            case SIGTRAP: sigName = "SIGTRAP (Trace/BPT Trap)"
-            case SIGPIPE: sigName = "SIGPIPE (Broken Pipe)"
-            default: sigName = "Signal \(signum)"
-            }
-
-            var dyldMsg = ""
-            if let errCStr = dlerror() {
-                dyldMsg = " | dyld error: \(String(cString: errCStr))"
-            }
-
-            let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
-            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
-            fputs(msg, stderr)
-            fflush(stderr)
-            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
-
-            signal(signum, SIG_DFL)
-            raise(signum)
-        }
-    }
-}
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "GarageXPCService")
 
 final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPCServiceProtocol {
     private var isInitialized = false
@@ -78,20 +37,10 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        logger.info("Accepting incoming connection...")
         newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         newConnection.exportedInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
         newConnection.exportedObject = self
-        GarageXPCOutputCapture.shared.addConnection(newConnection)
-        newConnection.invalidationHandler = { [weak newConnection] in
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.interruptionHandler = { [weak newConnection] in
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
         newConnection.resume()
         return true
     }
@@ -228,12 +177,9 @@ final class GarageXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageXPC
     }
 }
 
-installCrashHandlers()
-GarageXPCOutputCapture.shared.configure(serviceName: "GarageXPCService", logFileName: "garage-xpc.log")
-GarageXPCOutputCapture.shared.startCapturing()
 logger.info("GarageXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
 let delegate = GarageXPCServiceDelegate()
 let listener = NSXPCListener.service()
 listener.delegate = delegate
 listener.resume()
-RunLoop.main.run()
+dispatchMain()
