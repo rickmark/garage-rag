@@ -95,6 +95,7 @@ public final class GarageFileLogger: @unchecked Sendable {
         if !formattedData.isEmpty {
             _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: formattedData)
+            try? handle.synchronize()
         }
     }
 
@@ -102,6 +103,10 @@ public final class GarageFileLogger: @unchecked Sendable {
     public func readLogs(fileName: String, maxBytes: Int = 512 * 1024) -> String {
         lock.lock()
         defer { lock.unlock() }
+
+        if let existing = fileHandles[fileName] {
+            try? existing.synchronize()
+        }
 
         let fileURL = Self.logsDirectoryURL.appendingPathComponent(fileName)
         guard FileManager.default.fileExists(atPath: fileURL.path),

@@ -566,7 +566,7 @@ final class AppState: ObservableObject {
             ingest.clearLogs()
             ingestService.clearLogs()
             osLogStreamService.clearLogs(for: .ingest)
-        case "Embedding":
+        case "Embedding", "Backfill":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
         case "MCP Server":
@@ -581,6 +581,8 @@ final class AppState: ObservableObject {
         case "Model Downloader", "Model Download XPC":
             modelDownload.clearLogs()
             osLogStreamService.clearLogs(for: .modelDownload)
+        case "XPC Services", "XPC Service", "XPC":
+            xpcServices.clearLogs()
         case "Unified Log", "Unified Logs", "Unified (OSLog)", "OSLog", "System Log":
             osLogStreamService.clearLogs()
         default:

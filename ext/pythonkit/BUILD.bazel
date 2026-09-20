@@ -1,4 +1,4 @@
-load("@rules_apple//apple:macos.bzl", "macos_framework")
+load("@rules_apple//apple:macos.bzl", "macos_framework", "macos_unit_test")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 load("//bazel:codesign.bzl", "codesign")
 
@@ -36,19 +36,19 @@ alias(
 
 macos_framework(
     name = "PythonKit_framework",
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
     bundle_id = "me.rickmark.garage-rag.PythonKit",
     bundle_name = "PythonKit",
     infoplists = ["Info.plist"],
-    minimum_os_version = "14.0",
-    version = "//macapp:GarageAppVersion",
     linkopts = [
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
     ],
-    additional_linker_inputs = [
-        "//ext/python:python_framework",
-    ],
+    minimum_os_version = "14.0",
+    version = "//macapp:GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [
         ":PythonKit_swift",
@@ -66,4 +66,46 @@ codesign(
         "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     }),
     visibility = ["//visibility:public"],
+)
+
+swift_library(
+    name = "PythonKitTests_lib",
+    testonly = True,
+    srcs = glob(["Tests/**/*.swift"]),
+    copts = [
+        "-F",
+        "$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
+        "-Xcc",
+        "-I$(location //ext/python:python_framework)/Headers",
+    ],
+    module_name = "PythonKitTests",
+    swiftc_inputs = [
+        "//ext/python:python_framework",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":PythonKit_swift",
+    ],
+)
+
+macos_unit_test(
+    name = "PythonKitTests",
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
+    bundle_id = "me.rickmark.garage-rag.PythonKitTests",
+    bundle_name = "PythonKitTests",
+    linkopts = [
+        "-F$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
+    ],
+    minimum_os_version = "14.0",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":PythonKitTests_lib",
+        "//ext/python:python_framework",
+    ],
 )

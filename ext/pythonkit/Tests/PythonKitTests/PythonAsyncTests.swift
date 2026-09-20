@@ -9,6 +9,7 @@ final class PythonAsyncTests: XCTestCase {
         return (versionMajor == 3 && versionMinor >= 13) || versionMajor > 3
     }
 
+    @MainActor
     func testAsyncSleep() async throws {
         guard canUseAsyncPython else { return }
         let sleep = Python.import("asyncio").sleep
@@ -16,6 +17,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(result, Python.None)
     }
 
+    @MainActor
     func testAsyncFunctionWithReturn() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -33,6 +35,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(Int(sumResult), 42)
     }
 
+    @MainActor
     func testAsyncFunctionWithKeywords() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -52,6 +55,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(String(result), "Hello, Swift!")
     }
 
+    @MainActor
     func testAsyncFunctionWithCallback() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -86,6 +90,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(callbackValue, "processed: sample_input")
     }
 
+    @MainActor
     func testAsyncFunctionWithMultipleCallbacks() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -126,6 +131,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(totalCount, 3)
     }
 
+    @MainActor
     func testAsyncFunctionException() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -150,6 +156,7 @@ final class PythonAsyncTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testAwaitResultDirectlyOnCoroutine() async throws {
         guard canUseAsyncPython else { return }
         let builtins = Python.import("builtins")
@@ -168,6 +175,7 @@ final class PythonAsyncTests: XCTestCase {
         XCTAssertEqual(Int(result), 99)
     }
 
+    @MainActor
     func testAwaitResultOnNonAwaitable() async throws {
         guard canUseAsyncPython else { return }
         let number: PythonObject = 42

@@ -139,25 +139,25 @@ alias(
 
 alias(
     name = "MCPServerClient_lib",
-    actual = "//macapp/Sources/MCPServerClient:MCPServerClient_lib",
+    actual = "//macapp/Sources/MCPServerClient:MCPServerClient",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "IngestClient_lib",
-    actual = "//macapp/Sources/IngestClient:IngestClient_lib",
+    actual = "//macapp/Sources/IngestClient:IngestClient",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "LlamaClient_lib",
-    actual = "//macapp/Sources/LlamaClient:LlamaClient_lib",
+    actual = "//macapp/Sources/LlamaClient:LlamaClient",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "ModelDownloadClient_lib",
-    actual = "//macapp/Sources/ModelDownloadClient:ModelDownloadClient_lib",
+    actual = "//macapp/Sources/ModelDownloadClient:ModelDownloadClient",
     visibility = ["//visibility:public"],
 )
 

@@ -283,13 +283,9 @@ public struct ThrowingPythonObject {
     /// Synchronous Python callables are returned unchanged so the async
     /// overload can be used with callables whose implementation is selected
     /// dynamically.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     fileprivate func awaitResult(_ result: PythonObject) async throws -> PythonObject {
-        let gstate = PyGILState_Ensure()
-        defer {
-            PyGILState_Release(gstate)
-        }
-
         let inspect = Python.import("inspect")
         let isAwaitable = try inspect.isawaitable.throwing.callSynchronously(
             withArguments: [result])
@@ -327,6 +323,7 @@ public struct ThrowingPythonObject {
     ///
     /// If the call returns a Python awaitable, it is resolved before the
     /// result is returned. Synchronous callables are also supported.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     @discardableResult
     public func dynamicallyCall(
@@ -339,6 +336,7 @@ public struct ThrowingPythonObject {
     ///
     /// If the call returns a Python awaitable, it is resolved before the
     /// result is returned. Synchronous callables are also supported.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     @discardableResult
     public func dynamicallyCall(
@@ -352,6 +350,7 @@ public struct ThrowingPythonObject {
     ///
     /// If the call returns a Python awaitable, it is resolved before the
     /// result is returned. Synchronous callables are also supported.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     @discardableResult
     public func dynamicallyCall(
@@ -363,6 +362,7 @@ public struct ThrowingPythonObject {
 
     /// Asynchronously calls `self` with dynamically constructed positional
     /// and keyword arguments.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     @discardableResult
     public func dynamicallyCall(
@@ -716,6 +716,7 @@ public extension PythonObject {
     /// Resolves `self` if it is a Python awaitable object (such as a coroutine,
     /// Task, or Future), returning the completed result. If `self` is not
     /// awaitable, returns `self`.
+    @MainActor
     @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
     func awaitResult() async throws -> PythonObject {
         return try await throwing.awaitResult(self)
