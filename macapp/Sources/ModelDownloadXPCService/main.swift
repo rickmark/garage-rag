@@ -93,6 +93,14 @@ final class ModelDownloadXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Mo
         reply(true, nil)
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        let downloads = engine.listDownloads()
+        let active = downloads.filter { $0.status == .downloading }.count
+        let summary = "Model downloader service is healthy (\(active) active downloads)"
+        let details = "Total tasks: \(downloads.count), Active: \(active)"
+        reply(true, summary, details)
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

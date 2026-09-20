@@ -206,6 +206,22 @@ final class GarageIngestXPCConnectionHandler: NSObject, GarageIngestXPCServicePr
         }
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        parent.initializePythonIfNeeded()
+        if let initErr = parent.initializationError {
+            reply(false, "Python initialization error", initErr)
+            return
+        }
+        do {
+            let ingestModule = try Python.attemptImport("garage_rag.ingest")
+            let summary = "Ingest module verified"
+            let details = "Successfully loaded ingest module: \(ingestModule)"
+            reply(true, summary, details)
+        } catch {
+            reply(false, "Failed to load ingest module", error.localizedDescription)
+        }
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

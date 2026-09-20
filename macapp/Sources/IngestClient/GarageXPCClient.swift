@@ -102,6 +102,14 @@ public final class GarageXPCClient: @unchecked Sendable {
         }
     }
 
+    public func runDiagnostic() async throws -> (success: Bool, summary: String?, details: String?) {
+        try await performRemoteCall { proxy, relay in
+            proxy.runDiagnostic { success, summary, details in
+                relay.resume(returning: (success, summary, details))
+            }
+        }
+    }
+
     public func startServer(host: String, port: Int, options: [String: String]) async throws -> (success: Bool, message: String?) {
         try await performRemoteCall { proxy, relay in
             proxy.startServer(host: host, port: port, options: options) { success, message in

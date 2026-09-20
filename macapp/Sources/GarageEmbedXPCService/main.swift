@@ -115,6 +115,22 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
         reply(true, nil)
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        initializePythonIfNeeded()
+        if let initErr = initializationError {
+            reply(false, "Python initialization error", initErr)
+            return
+        }
+        do {
+            let embedModule = try Python.attemptImport("garage_rag.embed")
+            let summary = "Embed module verified"
+            let details = "Successfully loaded embed module: \(embedModule)"
+            reply(true, summary, details)
+        } catch {
+            reply(false, "Failed to load embed module", error.localizedDescription)
+        }
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

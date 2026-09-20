@@ -927,34 +927,60 @@ public final class XPCServiceManager: ObservableObject {
         let startTime = CFAbsoluteTimeGetCurrent()
         let bundleId = "me.rickmark.garage-rag.xpc"
 
-        var pingResult: String?
-        var pingErr: Error?
         do {
-            let (_, _, response) = try await Self.performXPCPing(bundleId: bundleId)
-            pingResult = response
+            let connection = NSXPCConnection(serviceName: bundleId)
+            connection.remoteObjectInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+
+            let (success, summaryText, detailsText): (Bool, String, String) = try await withCheckedThrowingContinuation { continuation in
+                let relay = ContinuationRelay(continuation)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    relay.resume(throwing: error)
+                }) as? GarageXPCServiceProtocol else {
+                    relay.resume(throwing: NSError(domain: "GarageXPCTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create GarageXPC proxy"]))
+                    return
+                }
+
+                let bundleRef = Bundle.main.bundleURL
+                proxy.setAppBundleReference(bundleRef) { _, _ in
+                    proxy.runDiagnostic { isOk, sum, det in
+                        relay.resume(returning: (isOk, sum ?? (isOk ? "Garage backend healthy" : "Diagnostic failed"), det ?? ""))
+                    }
+                }
+            }
+
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            var lines: [String] = []
+            lines.append("Garage Core Backend XPC: \(summaryText)")
+            lines.append("Coordination: CLI dispatch, daemon lifecycle, and SQLite/Postgres backend interfaces")
+            if !detailsText.isEmpty {
+                lines.append("Details: \(detailsText)")
+            }
+            lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
+
+            return ServiceDiagnosticTestResult(
+                serviceId: "garage-xpc",
+                testName: "Garage Backend Core Coordination Test",
+                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                isSuccess: success,
+                durationMs: elapsed,
+                summary: "\(summaryText) in \(String(format: "%.1f", elapsed))ms",
+                details: lines.joined(separator: "\n"),
+                errorMessage: success ? nil : summaryText
+            )
         } catch {
-            pingErr = error
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            return ServiceDiagnosticTestResult(
+                serviceId: "garage-xpc",
+                testName: "Garage Backend Core Coordination Test",
+                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                isSuccess: false,
+                durationMs: elapsed,
+                summary: "Garage backend helper check failed: \(error.localizedDescription)",
+                details: "Error: \(error.localizedDescription)\nLatency: \(String(format: "%.2f", elapsed)) ms",
+                errorMessage: error.localizedDescription
+            )
         }
-
-        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-        let isSuccess = pingErr == nil
-
-        var lines: [String] = []
-        lines.append("Garage Core Backend XPC: \(pingResult ?? "Unreachable (\(pingErr?.localizedDescription ?? "error"))")")
-        lines.append("Coordination: CLI dispatch, daemon lifecycle, and SQLite/Postgres backend interfaces")
-        lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
-
-        let summary = isSuccess ? "Garage backend helper responded in \(String(format: "%.1f", elapsed))ms" : "Garage backend helper check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
-
-        return ServiceDiagnosticTestResult(
-            serviceId: "garage-xpc",
-            testName: "Garage Backend Core Coordination Test",
-            testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
-            isSuccess: isSuccess,
-            durationMs: elapsed,
-            summary: summary,
-            details: lines.joined(separator: "\n"),
-            errorMessage: pingErr?.localizedDescription
-        )
     }
 }

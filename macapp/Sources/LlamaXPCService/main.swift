@@ -92,6 +92,13 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
         reply(true, nil)
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        let status = engine.currentModelPath != nil ? "model_loaded" : "idle"
+        let summary = "Llama inference engine is healthy (\(status))"
+        let details = "Status: \(status), Model: \(engine.currentModelPath ?? "none")"
+        reply(true, summary, details)
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)

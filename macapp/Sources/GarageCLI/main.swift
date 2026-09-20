@@ -117,19 +117,10 @@ private func runCLI() {
 
     do {
         let sys = try Python.attemptImport("sys")
-        let pythonLibCandidates = [
-            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13"),
-        ]
 
-        for libURL in pythonLibCandidates {
-            if FileManager.default.fileExists(atPath: libURL.path) {
-                sys.path.insert(0, libURL.path)
-            }
-        }
 
         let sitePackagesCandidates = [
-            bundleURL.appendingPathComponent("Contents/Resources/site-packages"),
-            bundleURL.appendingPathComponent("Contents/Frameworks/Python.framework/Versions/Current/lib/python3.13/site-packages"),
+            bundleURL.appendingPathComponent("Contents/Resources/site-python"),
         ]
 
         for spURL in sitePackagesCandidates {

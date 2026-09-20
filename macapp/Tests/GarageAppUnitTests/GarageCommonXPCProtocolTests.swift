@@ -42,6 +42,10 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
         reply(true, nil)
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        reply(true, "Mock diagnostic passed", "All systems operational in mock service")
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         reply(logsStdout, logsStderr)
     }
@@ -266,6 +270,19 @@ final class GarageCommonXPCProtocolTests: XCTestCase {
 
         await fulfillment(of: [expectation], timeout: 2.0)
         XCTAssertNotNil(mockService.receivedAppBundleURL)
+    }
+
+    func testMockCommonXPCServiceRunDiagnostic() async throws {
+        let mockService = MockCommonXPCService()
+        let expectation = expectation(description: "runDiagnostic")
+        mockService.runDiagnostic { success, summary, details in
+            XCTAssertTrue(success)
+            XCTAssertEqual(summary, "Mock diagnostic passed")
+            XCTAssertEqual(details, "All systems operational in mock service")
+            expectation.fulfill()
+        }
+
+        await fulfillment(of: [expectation], timeout: 2.0)
     }
 
     func testGarageFileLoggerOperations() {

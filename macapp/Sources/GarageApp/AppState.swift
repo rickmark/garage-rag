@@ -269,6 +269,7 @@ final class AppState: ObservableObject {
             try await postgres.resetDatabase()
             if postgres.status == .running {
                 try? await mcp.start()
+                try? await grpc.start()
                 await fetchRegisteredModels()
                 await fetchRegisteredSources()
                 await fetchCorpusStats()
@@ -290,8 +291,13 @@ final class AppState: ObservableObject {
             await fetchRegisteredModels()
             await fetchRegisteredSources()
             await fetchCorpusStats()
-            if postgres.status == .running && mcp.status == .stopped {
-                try? await mcp.start()
+            if postgres.status == .running {
+                if mcp.status == .stopped {
+                    try? await mcp.start()
+                }
+                if grpc.status == .stopped {
+                    try? await grpc.start()
+                }
             }
             lastCommandSucceeded = true
             lastCommandOutput = "Applied schema migrations successfully."
@@ -303,6 +309,16 @@ final class AppState: ObservableObject {
 
     func checkPendingMigrations() {
         postgres.refreshPendingMigrations()
+        if postgres.status == .running {
+            Task {
+                if mcp.status == .stopped {
+                    try? await mcp.start()
+                }
+                if grpc.status == .stopped {
+                    try? await grpc.start()
+                }
+            }
+        }
     }
 
     @discardableResult

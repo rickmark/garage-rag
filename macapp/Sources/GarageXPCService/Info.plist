@@ -14,6 +14,22 @@
     <string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <key>OSLogPreferences</key>
+    <dict>
+        <key>me.rickmark.garage-rag.xpc</key>
+        <dict>
+            <key>DEFAULT-OPTIONS</key>
+            <dict>
+                <key>Level</key>
+                <dict>
+                    <key>Persist</key>
+                    <string>Inherit</string>
+                    <key>Enable</key>
+                    <string>Inherit</string>
+                </dict>
+            </dict>
+        </dict>
+    </dict>
     <key>XPCService</key>
     <dict>
         <key>JoinExistingSession</key>

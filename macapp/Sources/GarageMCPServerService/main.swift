@@ -117,6 +117,22 @@ final class GarageMCPServerServiceDelegate: NSObject, NSXPCListenerDelegate, Gar
         reply(true, nil)
     }
 
+    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
+        initializePythonIfNeeded()
+        if let initErr = initializationError {
+            reply(false, "Python initialization error", initErr)
+            return
+        }
+        do {
+            let mcpModule = try Python.attemptImport("garage_rag.mcp_server")
+            let summary = "MCP server module verified"
+            let details = "Successfully loaded MCP server module: \(mcpModule)"
+            reply(true, summary, details)
+        } catch {
+            reply(false, "Failed to load MCP server module", error.localizedDescription)
+        }
+    }
+
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
         let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
         reply(out, err)
