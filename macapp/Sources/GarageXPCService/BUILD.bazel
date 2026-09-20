@@ -17,13 +17,13 @@ swift_library(
 # The actual XPC service binary
 macos_xpc_service(
     name = "GarageXPCService",
-    bundle_id = "me.rickmark.garage-rag.xpc",
-    bundle_name = "GarageXPCService",
     additional_linker_inputs = [
         "//ext/python:python_framework",
         "//ext/pythonkit:PythonKit",
         "//macapp/Sources/PythonXPCService:PythonXPCService_signed",
     ],
+    bundle_id = "me.rickmark.garage-rag.xpc",
+    bundle_name = "GarageXPCService",
     codesignopts = [
         "--options=runtime",
     ],
@@ -33,9 +33,6 @@ macos_xpc_service(
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
-        "-F$(location //ext/pythonkit:PythonKit)/..",
-        "-framework",
-        "PythonKit",
         "-F$(location //macapp/Sources/PythonXPCService:PythonXPCService_signed)/..",
         "-framework",
         "PythonXPCService",
