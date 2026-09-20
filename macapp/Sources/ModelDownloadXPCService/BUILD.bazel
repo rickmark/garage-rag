@@ -28,6 +28,5 @@ macos_xpc_service(
     visibility = ["//visibility:public"],
     deps = [
         ":ModelDownloadXPCService_lib",
-        "//ext/python:python_3_13_static",
     ],
 )

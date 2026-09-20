@@ -62,6 +62,7 @@ macos_application(
     executable_name = "GarageApp",
     frameworks = [
         "//ext/pythonkit:PythonKit_framework",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_framework",
     ],
     infoplists = [":Info.plist"],
     minimum_os_version = "14.0",
