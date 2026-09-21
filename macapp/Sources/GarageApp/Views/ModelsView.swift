@@ -188,6 +188,19 @@ struct ModelsView: View {
         unifiedModels.filter { $0.isRegistered && $0.provider == .llamaXPC && !isModelFileDownloaded(item: $0) }
     }
 
+    /// Presets from `models.json` that aren't registered yet, with featured presets surfaced first.
+    private var unregisteredPresetModels: [ModelPresetEntry] {
+        let registeredSlugs = Set(appState.registeredModels.map(\.slug))
+        return appState.presetModels
+            .filter { !registeredSlugs.contains($0.slug) }
+            .sorted { lhs, rhs in
+                if lhs.featured != rhs.featured {
+                    return lhs.featured && !rhs.featured
+                }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -651,14 +664,22 @@ struct ModelsView: View {
 
                 if configMode == .preset {
                     Picker("Preset Model", selection: $selectedPresetSlug) {
-                        ForEach(appState.presetModels) { preset in
-                            Text(preset.name).tag(preset.slug)
+                        ForEach(unregisteredPresetModels) { preset in
+                            Text(preset.featured ? "★ \(preset.name)" : preset.name).tag(preset.slug)
                         }
                     }
                     .onChange(of: selectedPresetSlug) { _, newSlug in
                         if let preset = appState.presetModels.first(where: { $0.slug == newSlug }) {
                             applyPreset(preset)
                         }
+                    }
+                    .onChange(of: unregisteredPresetModels) { _, available in
+                        guard !available.contains(where: { $0.slug == selectedPresetSlug }), let first = available.first else { return }
+                        applyPreset(first)
+                    }
+                    .onAppear {
+                        guard !unregisteredPresetModels.contains(where: { $0.slug == selectedPresetSlug }), let first = unregisteredPresetModels.first else { return }
+                        applyPreset(first)
                     }
 
                     if !showAdvancedSettings {

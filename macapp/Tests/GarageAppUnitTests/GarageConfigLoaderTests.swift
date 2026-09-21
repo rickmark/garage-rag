@@ -247,6 +247,54 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(presets[1].effectiveDims, 768)
     }
 
+    func testLoadModelPresetsFromJSONWithFeaturedMetadata() throws {
+        let json = """
+        [
+            {
+                "name": "BGE-M3 (Embeddings)",
+                "model_id": "BAAI/bge-m3",
+                "slug": "bge-m3",
+                "model_ref": "bge-m3",
+                "provider": "llama_xpc",
+                "native_dims": 1024,
+                "default_dims": 1024,
+                "context_size": 8192,
+                "description": "Strong general-purpose embedding model.",
+                "use_cases": ["Semantic search", "Hybrid retrieval"],
+                "featured": true
+            },
+            {
+                "name": "Nomic Embed Text",
+                "model_id": "nomic-ai/nomic-embed-text-v1.5",
+                "slug": "nomic-embed-text",
+                "model_ref": "nomic-embed-text",
+                "provider": "llama_xpc",
+                "native_dims": 768,
+                "default_dims": 768,
+                "context_size": 8192
+            }
+        ]
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_models_featured_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let presets = GarageConfigLoader.loadModelPresets(fileURL: tempURL)
+        XCTAssertEqual(presets.count, 2)
+
+        let bge = presets[0]
+        XCTAssertTrue(bge.featured)
+        XCTAssertEqual(bge.description, "Strong general-purpose embedding model.")
+        XCTAssertEqual(bge.useCases, ["Semantic search", "Hybrid retrieval"])
+
+        // Entries without the new fields decode with safe defaults.
+        let nomic = presets[1]
+        XCTAssertFalse(nomic.featured)
+        XCTAssertNil(nomic.description)
+        XCTAssertNil(nomic.useCases)
+    }
+
     func testLoadModelPresetsFallbackToDefault() {
         let fakeURL = URL(fileURLWithPath: "/tmp/non_existent_models_\(UUID().uuidString).json")
         let presets = GarageConfigLoader.loadModelPresets(fileURL: fakeURL)
@@ -257,7 +305,11 @@ final class GarageConfigLoaderTests: XCTestCase {
         if let mxbai = presets.first(where: { $0.slug == "mxbai-embed-xsmall" }) {
             XCTAssertEqual(mxbai.effectiveDims, 384)
             XCTAssertEqual(mxbai.sha256, "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44")
+            XCTAssertTrue(mxbai.featured)
         }
+
+        let featuredSlugs = Set(presets.filter { $0.featured }.map(\.slug))
+        XCTAssertEqual(featuredSlugs, ["bge-m3", "nomic-embed-text", "mxbai-embed-xsmall"])
     }
 
     func testEmbeddingVectorStatsCalculation() {

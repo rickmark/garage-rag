@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     static weak var shared: AppState?
     private static let scheduledMaintenanceEnabledKey = "scheduledMaintenanceEnabled"
     private static let scheduledMaintenanceIntervalKey = "scheduledMaintenanceInterval"
+    private static let maintenanceTriggeringCommands: Set<String> = ["add-source", "register-model"]
 
     let postgres = PostgresService()
     let garage: GarageCLIService
@@ -508,6 +509,11 @@ final class AppState: ObservableObject {
         let result = await garage.run(arguments)
         lastCommandOutput = result.lines.map(\.text).joined(separator: "\n")
         lastCommandSucceeded = result.succeeded
+
+        if result.succeeded, let command = arguments.first, Self.maintenanceTriggeringCommands.contains(command) {
+            Task { [weak self] in await self?.triggerMaintenanceIfEnabled() }
+        }
+
         return result.succeeded
     }
 
@@ -730,6 +736,13 @@ final class AppState: ObservableObject {
         let backfillSucceeded = await runBackfill(["backfill"])
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded
+    }
+
+    /// Kicks off ingest + embedding backfill for all sources when the user has enabled
+    /// automatic maintenance, e.g. right after a new source or model is registered.
+    func triggerMaintenanceIfEnabled() async {
+        guard scheduledMaintenanceEnabled else { return }
+        await runScheduledMaintenance()
     }
 
     private func performDatabaseOperation(_ operation: () throws -> Void) {

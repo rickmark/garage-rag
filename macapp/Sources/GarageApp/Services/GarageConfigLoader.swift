@@ -73,6 +73,12 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     public let downloadModelId: String?
     public let downloadFile: String?
     public let sha256: String?
+    /// Short human-readable summary of what this model is good for, shown in preset pickers.
+    public let description: String?
+    /// Example use cases surfaced alongside the description (e.g. "Semantic search", "Chat / Q&A").
+    public let useCases: [String]?
+    /// Marks this preset as one of the small set of recommended defaults offered when no model is registered yet.
+    public let featured: Bool
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -86,6 +92,9 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         case downloadModelId = "download_model_id"
         case downloadFile = "download_file"
         case sha256
+        case description
+        case useCases = "use_cases"
+        case featured
     }
 
     public init(
@@ -99,7 +108,10 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         contextSize: Int? = 8192,
         downloadModelId: String? = nil,
         downloadFile: String? = nil,
-        sha256: String? = nil
+        sha256: String? = nil,
+        description: String? = nil,
+        useCases: [String]? = nil,
+        featured: Bool = false
     ) {
         self.name = name
         self.modelId = modelId
@@ -112,6 +124,28 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         self.downloadModelId = downloadModelId
         self.downloadFile = downloadFile
         self.sha256 = sha256
+        self.description = description
+        self.useCases = useCases
+        self.featured = featured
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        modelId = try container.decodeIfPresent(String.self, forKey: .modelId)
+        slug = try container.decode(String.self, forKey: .slug)
+        let decodedModelRef = try container.decodeIfPresent(String.self, forKey: .modelRef)
+        modelRef = decodedModelRef ?? slug
+        provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "llama_xpc"
+        nativeDims = try container.decodeIfPresent(Int.self, forKey: .nativeDims)
+        defaultDims = try container.decodeIfPresent(Int.self, forKey: .defaultDims)
+        contextSize = try container.decodeIfPresent(Int.self, forKey: .contextSize) ?? 8192
+        downloadModelId = try container.decodeIfPresent(String.self, forKey: .downloadModelId)
+        downloadFile = try container.decodeIfPresent(String.self, forKey: .downloadFile)
+        sha256 = try container.decodeIfPresent(String.self, forKey: .sha256)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        useCases = try container.decodeIfPresent([String].self, forKey: .useCases)
+        featured = try container.decodeIfPresent(Bool.self, forKey: .featured) ?? false
     }
 
     public var effectiveDims: Int {
@@ -232,7 +266,10 @@ public enum GarageConfigLoader {
             contextSize: 8192,
             downloadModelId: "gpustack/bge-m3-GGUF",
             downloadFile: "bge-m3-Q8_0.gguf",
-            sha256: "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167"
+            sha256: "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167",
+            description: "Strong general-purpose multilingual embedding model with a long context window. A solid default for hybrid document search.",
+            useCases: ["Semantic search", "Hybrid retrieval", "Multilingual corpora"],
+            featured: true
         ),
         ModelPresetEntry(
             name: "Nomic Embed Text",
@@ -245,7 +282,10 @@ public enum GarageConfigLoader {
             contextSize: 8192,
             downloadModelId: "nomic-ai/nomic-embed-text-v1.5-GGUF",
             downloadFile: "nomic-embed-text-v1.5.Q8_0.gguf",
-            sha256: "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
+            sha256: "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7",
+            description: "Efficient English-focused embedding model with good accuracy per dimension. Fast to run on modest hardware.",
+            useCases: ["Semantic search", "Personal document archives"],
+            featured: true
         ),
         ModelPresetEntry(
             name: "mxbai Embed XSmall",
@@ -258,7 +298,10 @@ public enum GarageConfigLoader {
             contextSize: 512,
             downloadModelId: "mixedbread-ai/mxbai-embed-xsmall-v1",
             downloadFile: "gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
-            sha256: "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44"
+            sha256: "21f9f06af9e4e895fcdcbf6c0d57ca1996fe22da54ecb6cc5f7733d785412d44",
+            description: "Compact, low-memory embedding model that's quick to download and embed with. Ideal for a lightweight first-time setup.",
+            useCases: ["Quick start / low-resource machines", "Semantic search"],
+            featured: true
         ),
         ModelPresetEntry(
             name: "mxbai Embed Large",
