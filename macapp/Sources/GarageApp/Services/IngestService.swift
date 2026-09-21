@@ -114,6 +114,10 @@ final class IngestService: ObservableObject {
 
     func appendLogs(_ lines: [LogLine]) {
         guard !lines.isEmpty else { return }
+
+        var accepted: [LogLine] = []
+        accepted.reserveCapacity(lines.count)
+
         for line in lines {
             let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !textTrimmed.isEmpty else { continue }
@@ -126,13 +130,23 @@ final class IngestService: ObservableObject {
             }
             seenLogKeys.insert(key)
             seenLogKeyQueue.append(key)
-            if seenLogKeyQueue.count > maxSeenKeys {
-                let removed = seenLogKeyQueue.removeFirst()
+            accepted.append(line)
+        }
+
+        if seenLogKeyQueue.count > maxSeenKeys {
+            let overflow = seenLogKeyQueue.count - maxSeenKeys
+            for removed in seenLogKeyQueue.prefix(overflow) {
                 seenLogKeys.remove(removed)
             }
-
-            logs.append(line)
+            seenLogKeyQueue.removeFirst(overflow)
         }
+
+        guard !accepted.isEmpty else { return }
+
+        // Single @Published mutation for the whole batch instead of one per line - each mutation triggers a
+        // reflection-based Combine objectWillChange publish, which is what stalls the main thread when a burst
+        // (e.g. Dropbox source scans) drains hundreds or thousands of lines into one appendLogs call.
+        logs.append(contentsOf: accepted)
         if logs.count > maxLogLines {
             logs.removeFirst(logs.count - maxLogLines)
         }
@@ -299,11 +313,13 @@ final class IngestService: ObservableObject {
     func handleProgressBatch(_ updates: [IngestProgressUpdate], sourceLabel: String = "Ingest") {
         guard !updates.isEmpty else { return }
         var progressLogs: [LogLine] = []
+        var mergedProgressBySource = progressBySource
+        var newCurrentSource: String? = nil
+
         for progress in updates {
-            self.latestProgress = progress
-            self.progressBySource[progress.source] = progress
-            if self.currentSource == nil || self.currentSource == "*" {
-                self.currentSource = progress.source
+            mergedProgressBySource[progress.source] = progress
+            if newCurrentSource == nil && (self.currentSource == nil || self.currentSource == "*") {
+                newCurrentSource = progress.source
             }
 
             logger.debug("IngestService progress (\(sourceLabel, privacy: .public)): phase=\(progress.phase, privacy: .public), msg=\(progress.message, privacy: .public)")
@@ -317,6 +333,14 @@ final class IngestService: ObservableObject {
                 )
                 progressLogs.append(line)
             }
+        }
+
+        // Assign each @Published property once for the whole batch rather than once per update - see appendLogs
+        // for why: bursty sources (e.g. Dropbox scans) can hand this hundreds of updates at a time.
+        latestProgress = updates.last
+        progressBySource = mergedProgressBySource
+        if let newCurrentSource {
+            currentSource = newCurrentSource
         }
         if !progressLogs.isEmpty {
             appendLogs(progressLogs)
