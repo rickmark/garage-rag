@@ -1,7 +1,6 @@
 """Tests for ingest_xpc synchronous and progress functionality."""
 
 from unittest.mock import MagicMock, patch
-import pytest
 
 from garage_rag.ingest import (
     IngestProgress,
@@ -166,6 +165,7 @@ def test_ingest_xpc_cancellation():
 def test_set_c_log_callback():
     import ctypes
     import logging
+
     from garage_rag.ingest import set_c_log_callback
 
     logs_received = []
@@ -202,10 +202,11 @@ def test_ingest_xpc_with_grpc_options():
     def fake_ingest_source(gateway, slug, **kwargs):
         return mock_counters, mock_walk_stats, mock_budget
 
-    with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source), \
-         patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
-         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
-
+    with (
+        patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source),
+        patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls,
+        patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls,
+    ):
         mock_gw = MagicMock()
         mock_gw_cls.return_value = mock_gw
 
@@ -223,9 +224,10 @@ def test_ingest_xpc_with_grpc_options():
 
 
 def test_test_read_documents_via_grpc_helper():
-    with patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
-         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
-
+    with (
+        patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls,
+        patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls,
+    ):
         mock_gw = MagicMock()
         mock_gw.test_read_documents.return_value = {
             "status": "ok",

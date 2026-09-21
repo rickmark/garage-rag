@@ -27,6 +27,4 @@ def get_embedder(provider: str, model_ref: str) -> Embedder:
         return LMStudioEmbedder(model_ref)
     if provider == "llama_xpc":
         return LlamaXPCEmbedder(model_ref)
-    raise ValueError(
-        f"unknown embedding provider {provider!r}; supported: {', '.join(sorted(PROVIDERS))}"
-    )
+    raise ValueError(f"unknown embedding provider {provider!r}; supported: {', '.join(sorted(PROVIDERS))}")

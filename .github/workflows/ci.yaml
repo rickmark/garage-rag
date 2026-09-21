@@ -3,7 +3,10 @@ name: CI
 # Runs the Aspect CLI tasks on ephemeral GitHub-hosted runners. Each task is its
 # own job so results show up as separate status checks. The Aspect CLI version is
 # pinned by .aspect/version.axl; `setup-aspect` installs it and wires the GitHub
-# Actions cache. See https://aspect.build/docs/cli/tasks-ci
+# Actions cache (disk cache, repository cache, and the Bazelisk/Aspect CLI binaries
+# themselves), so a warm cache skips re-downloading and re-building from scratch on
+# every run. See https://aspect.build/docs/cli/tasks-ci and
+# https://github.com/aspect-build/setup-aspect
 on:
   push:
     branches: [main]
@@ -23,33 +26,27 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install aspect-build/aspect/aspect bazelisk
+      - uses: aspect-build/setup-aspect@60664fabf0aa15152c69d0ee72c9a660416c7a36 # v2026.38.2
+        with:
+          disk-cache: true
       - run: aspect test --task:name test -- //...
 
   gazelle:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install aspect-build/aspect/aspect bazelisk
+      - uses: aspect-build/setup-aspect@60664fabf0aa15152c69d0ee72c9a660416c7a36 # v2026.38.2
+        with:
+          disk-cache: true
       - run: aspect gazelle --task:name gazelle
 
   buildifier:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install aspect-build/aspect/aspect bazelisk
+      - uses: aspect-build/setup-aspect@60664fabf0aa15152c69d0ee72c9a660416c7a36 # v2026.38.2
+        with:
+          disk-cache: true
       - run: aspect buildifier --task:name buildifier
 
 
@@ -57,21 +54,17 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install aspect-build/aspect/aspect bazelisk
+      - uses: aspect-build/setup-aspect@60664fabf0aa15152c69d0ee72c9a660416c7a36 # v2026.38.2
+        with:
+          disk-cache: true
       - run: aspect format --task:name format
 
   lint:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install aspect-build/aspect/aspect bazelisk
+      - uses: aspect-build/setup-aspect@60664fabf0aa15152c69d0ee72c9a660416c7a36 # v2026.38.2
+        with:
+          disk-cache: true
       - run: aspect lint --task:name lint -- //...
 

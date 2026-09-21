@@ -120,9 +120,7 @@ def _git_attribution(path: Path, self_identity: SelfIdentity) -> Attribution | N
         return None
 
     owner = remote_owner(repo.remote)
-    self_commits = sum(
-        t.commits for t in tallies if self_identity.matches(name=t.name, email=t.email)
-    )
+    self_commits = sum(t.commits for t in tallies if self_identity.matches(name=t.name, email=t.email))
     total_commits = sum(t.commits for t in tallies) or 1
 
     authors: list[AttributedAuthor] = []
@@ -172,9 +170,7 @@ def _git_attribution(path: Path, self_identity: SelfIdentity) -> Attribution | N
     )
 
 
-def _metadata_attribution(
-    author_hints: list[str], self_identity: SelfIdentity
-) -> Attribution | None:
+def _metadata_attribution(author_hints: list[str], self_identity: SelfIdentity) -> Attribution | None:
     """Attribution from embedded document metadata."""
     if not author_hints:
         return None
@@ -192,9 +188,7 @@ def _metadata_attribution(
 
     # Somebody else's name in the metadata means collected, not written.
     if any(self_identity.matches(name=hint) for hint in author_hints):
-        return Attribution(
-            trust=TrustTier.AUTHORED, authors=authors, evidence="document-metadata:self"
-        )
+        return Attribution(trust=TrustTier.AUTHORED, authors=authors, evidence="document-metadata:self")
     return Attribution(
         trust=TrustTier.REFERENCE,
         authors=authors,

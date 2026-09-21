@@ -209,13 +209,13 @@ cc_import(
 
 cc_library(
     name = "libpq",
+    visibility = ["//visibility:public"],
     deps = [
-        ":libpq_import",
         ":libpgcommon_import",
         ":libpgport_import",
+        ":libpq_import",
         "//ext:libicu",
         "//ext:libreadline",
         "//ext:libzlib",
     ],
-    visibility = ["//visibility:public"],
 )

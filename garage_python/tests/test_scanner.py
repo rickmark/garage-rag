@@ -8,14 +8,12 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.db.models import CorpusClass, Source, TrustTier
-from garage_rag.ingest.pipeline import IngestCounters, ingest_source
+from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import (
-    SourceScanResult,
     scan_feed,
     scan_filesystem,
     scan_git,
@@ -23,7 +21,7 @@ from garage_rag.ingest.scanner import (
     scan_source,
     scan_sqlite,
 )
-from garage_rag.proto.garage_pb2 import IngestRequest, ScanRequest
+from garage_rag.proto.garage_pb2 import ScanRequest
 from garage_rag.service.server import GarageRpcServicer
 
 runner = CliRunner()
@@ -32,6 +30,7 @@ runner = CliRunner()
 # ---------------------------------------------------------------------------
 # 1. Filesystem Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_filesystem_nonexistent_path(tmp_path: Path) -> None:
     non_existent = tmp_path / "does_not_exist"
@@ -85,11 +84,14 @@ def test_scan_filesystem_directory(tmp_path: Path) -> None:
 # 2. Git Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_git_repository(tmp_path: Path) -> None:
     # Initialize a git repository
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test User"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True, capture_output=True
+    )
 
     (tmp_path / "README.md").write_text("# Readme", encoding="utf-8")
     (tmp_path / "main.py").write_text("print('main')", encoding="utf-8")
@@ -118,6 +120,7 @@ def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 3. SQLite Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_sqlite_database(tmp_path: Path) -> None:
     db_file = tmp_path / "test.db"
@@ -165,6 +168,7 @@ def test_scan_sqlite_directory(tmp_path: Path) -> None:
 # 4. Maildir Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_maildir(tmp_path: Path) -> None:
     # Standard maildir structure: cur, new, tmp
     cur_dir = tmp_path / "cur"
@@ -193,6 +197,7 @@ def test_scan_maildir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 5. Feed Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
     # RSS 2.0 Feed
@@ -243,6 +248,7 @@ def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
 # 6. Source Dispatcher Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_source_dispatcher(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("test", encoding="utf-8")
 
@@ -274,6 +280,7 @@ def test_scan_source_dispatcher(tmp_path: Path) -> None:
 # 7. Pipeline Scan Phase Integration Tests
 # ---------------------------------------------------------------------------
 
+
 def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
     (tmp_path / "doc1.txt").write_text("Content 1", encoding="utf-8")
     (tmp_path / "doc2.txt").write_text("Content 2", encoding="utf-8")
@@ -298,8 +305,7 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
     def on_progress(counters, budget, total_items=0, phase="ingest", scan_result=None):
         progress_events.append((phase, total_items, counters.seen))
 
-    with patch("garage_rag.ingest.pipeline.ensure_self_author"), \
-         patch("garage_rag.ingest.pipeline.ingest_one"):
+    with patch("garage_rag.ingest.pipeline.ingest_one"):
         counters, walk_stats, budget = ingest_source(
             mock_session_factory,
             "test-slug",
@@ -317,6 +323,7 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 8. gRPC Servicer Scan & Ingest Tests
 # ---------------------------------------------------------------------------
+
 
 def test_grpc_scan_rpc(tmp_path: Path) -> None:
     (tmp_path / "file1.txt").write_text("file 1", encoding="utf-8")
@@ -339,7 +346,7 @@ def test_grpc_scan_rpc(tmp_path: Path) -> None:
         mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = src
         mock_session.query.return_value.order_by.return_value.all.return_value = [src]
         mock_session.__enter__.return_value = mock_session
-        mock_factory.return_value = mock_session_factory = MagicMock(return_value=mock_session)
+        mock_factory.return_value = MagicMock(return_value=mock_session)
 
         req = ScanRequest(source="rpc-source")
         resp = servicer.Scan(req, mock_context)
@@ -354,6 +361,7 @@ def test_grpc_scan_rpc(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 9. CLI Scan Command Tests
 # ---------------------------------------------------------------------------
+
 
 def test_cli_scan_command(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("Hello", encoding="utf-8")

@@ -24,7 +24,6 @@ from garage_rag.proto.garage_pb2 import (
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
     CheckDocumentStatResponse,
-    ChunkEmbeddingItem,
     CommandRequest,
     CommandStatus,
     ConfigImportSourcesRequest,
@@ -37,8 +36,6 @@ from garage_rag.proto.garage_pb2 import (
     ConfigSchemaResponse,
     ConfigShowRequest,
     ConfigShowResponse,
-    DocumentAuthorPayload,
-    DocumentChunkPayload,
     DropModelRequest,
     DropModelResponse,
     EmbeddingChunkItem,
@@ -146,6 +143,7 @@ class GarageRpcServicer(GarageServiceServicer):
         is_ready = True
         try:
             from sqlalchemy import text
+
             from garage_rag.db.engine import get_engine
             from garage_rag.db.migrate import has_pending_migrations
 
@@ -249,9 +247,7 @@ class GarageRpcServicer(GarageServiceServicer):
         with session_scope() as session:
             sources = session.query(Source).order_by(Source.id).all()
             doc_counts = dict(
-                session.query(Document.source_id, func.count(Document.id))
-                .group_by(Document.source_id)
-                .all()
+                session.query(Document.source_id, func.count(Document.id)).group_by(Document.source_id).all()
             )
             proto_sources: list[SourceInfo] = [
                 SourceInfo(
@@ -335,12 +331,7 @@ class GarageRpcServicer(GarageServiceServicer):
             if source is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.slug}")
 
-            count = (
-                session.query(func.count(Document.id))
-                .filter(Document.source_id == source.id)
-                .scalar()
-                or 0
-            )
+            count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
 
             session.delete(source)
 
@@ -450,7 +441,8 @@ class GarageRpcServicer(GarageServiceServicer):
 
             summary = (
                 f"Ingested {source_slug}: seen {counters.seen:,}/{counters.total_items:,} {counters.item_type}, "
-                f"indexed {counters.indexed:,}, skipped {counters.skipped:,}, failed {counters.failed:,}, chunks {counters.chunks_written:,}"
+                f"indexed {counters.indexed:,}, skipped {counters.skipped:,}, failed {counters.failed:,}, "
+                f"chunks {counters.chunks_written:,}"
             )
             yield IngestStatus(
                 source=source_slug,
@@ -484,7 +476,9 @@ class GarageRpcServicer(GarageServiceServicer):
         )
 
         with session_scope() as session:
-            targets = [get_model(session, request.model)] if request.model and request.model != "*" else list_models(session)
+            targets = (
+                [get_model(session, request.model)] if request.model and request.model != "*" else list_models(session)
+            )
             if not targets:
                 context.abort(grpc.StatusCode.NOT_FOUND, "no models registered")
 
@@ -1049,12 +1043,8 @@ class GarageRpcServicer(GarageServiceServicer):
             session.flush()
             run_id = run.id
 
-            default_class = (
-                src.default_class.value if hasattr(src.default_class, "value") else str(src.default_class)
-            )
-            default_trust = (
-                src.default_trust.value if hasattr(src.default_trust, "value") else str(src.default_trust)
-            )
+            default_class = src.default_class.value if hasattr(src.default_class, "value") else str(src.default_class)
+            default_trust = src.default_trust.value if hasattr(src.default_trust, "value") else str(src.default_trust)
 
             return BeginIngestSessionResponse(
                 source_id=src.id,
@@ -1291,9 +1281,7 @@ class GarageRpcServicer(GarageServiceServicer):
             # Record seen
             if request.run_id:
                 session.execute(
-                    pg_insert(IngestSeen)
-                    .values(run_id=request.run_id, uri=request.uri)
-                    .on_conflict_do_nothing()
+                    pg_insert(IngestSeen).values(run_id=request.run_id, uri=request.uri).on_conflict_do_nothing()
                 )
 
             return PersistDocumentResponse(success=True, chunks_written=chunks_written)
@@ -1328,6 +1316,7 @@ class GarageRpcServicer(GarageServiceServicer):
     ) -> GetEmbeddingBatchesResponse:
         """Fetch pending unembedded text chunks for a target embedding model."""
         from sqlalchemy import text
+
         from garage_rag.db.emb_tables import get_model
         from garage_rag.db.engine import session_scope
         from garage_rag.embed.ollama import assert_safe_table, count_pending
@@ -1366,10 +1355,7 @@ class GarageRpcServicer(GarageServiceServicer):
                 """
             )
             rows = session.execute(sql, {"limit": fetch_limit}).all()
-            chunk_items = [
-                EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1])
-                for r in rows
-            ]
+            chunk_items = [EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1]) for r in rows]
             has_more = (pending_total - len(chunk_items)) > 0
             return GetEmbeddingBatchesResponse(
                 model_slug=model.slug,
@@ -1390,6 +1376,7 @@ class GarageRpcServicer(GarageServiceServicer):
     ) -> UpdateEmbeddingsResponse:
         """Upsert computed embedding vectors for the given model table."""
         from sqlalchemy import text
+
         from garage_rag.db.emb_tables import get_model
         from garage_rag.db.engine import session_scope
         from garage_rag.embed.ollama import _adapt, _plan_from_row, assert_safe_table
@@ -1424,8 +1411,7 @@ class GarageRpcServicer(GarageServiceServicer):
             )
 
             params = [
-                {"chunk_id": item.chunk_id, "embedding": _adapt(list(item.vector), plan)}
-                for item in request.embeddings
+                {"chunk_id": item.chunk_id, "embedding": _adapt(list(item.vector), plan)} for item in request.embeddings
             ]
             session.execute(insert_sql, params)
             return UpdateEmbeddingsResponse(success=True, count=len(params))

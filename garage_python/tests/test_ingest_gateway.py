@@ -5,16 +5,15 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from garage_rag.db.models import CorpusClass, IngestState, Source, TrustTier
 from garage_rag.ingest.gateway import (
     AuthorPayload,
     ChunkPayload,
-    ExistingDocStat,
     GrpcIngestStorageGateway,
     SqlAlchemyIngestStorageGateway,
-    get_storage_gateway,
 )
 from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
@@ -28,7 +27,6 @@ from garage_rag.proto.garage_pb2 import (
     PersistDocumentRequest,
     PersistDocumentResponse,
     PersistScanRequest,
-    PersistScanResponse,
 )
 from garage_rag.service.client import GarageClient
 from garage_rag.service.server import GarageRpcServicer, create_grpc_server
@@ -58,8 +56,10 @@ def test_grpc_database_facade_servicer_methods():
     mock_source.default_trust = TrustTier.AUTHORED
     mock_source.allow_cloud_enrichment = False
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.attribute.resolver.ensure_self_author"):
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+    ):
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source
         mock_session.query.return_value.filter_by.return_value.all.return_value = [mock_source]
@@ -141,12 +141,13 @@ def test_grpc_ingest_storage_gateway():
     client = GarageClient(in_process=True)
     gateway = GrpcIngestStorageGateway(client)
 
-    with patch.object(client, "begin_ingest_session") as mock_begin, \
-         patch.object(client, "persist_scan") as mock_scan, \
-         patch.object(client, "check_document_stat") as mock_stat, \
-         patch.object(client, "persist_document") as mock_doc, \
-         patch.object(client, "finalize_ingest_session") as mock_final:
-
+    with (
+        patch.object(client, "begin_ingest_session") as mock_begin,
+        patch.object(client, "persist_scan") as mock_scan,
+        patch.object(client, "check_document_stat") as mock_stat,
+        patch.object(client, "persist_document") as mock_doc,
+        patch.object(client, "finalize_ingest_session") as mock_final,
+    ):
         mock_begin.return_value = BeginIngestSessionResponse(
             source_id=1,
             slug="grpc-src",
@@ -233,12 +234,13 @@ def test_ingest_source_with_grpc_gateway(tmp_path: Path):
     client = GarageClient(in_process=True)
     gateway = GrpcIngestStorageGateway(client)
 
-    with patch.object(client, "begin_ingest_session") as mock_begin, \
-         patch.object(client, "persist_scan") as mock_scan, \
-         patch.object(client, "check_document_stat") as mock_stat, \
-         patch.object(client, "persist_document") as mock_doc, \
-         patch.object(client, "finalize_ingest_session") as mock_final:
-
+    with (
+        patch.object(client, "begin_ingest_session") as mock_begin,
+        patch.object(client, "persist_scan") as mock_scan,
+        patch.object(client, "check_document_stat") as mock_stat,
+        patch.object(client, "persist_document") as mock_doc,
+        patch.object(client, "finalize_ingest_session") as mock_final,
+    ):
         mock_begin.return_value = BeginIngestSessionResponse(
             source_id=1,
             slug="mock-slug",
@@ -285,11 +287,12 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
     mock_source.default_trust = TrustTier.AUTHORED
     mock_source.allow_cloud_enrichment = False
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.ingest.scanner.persist_scan_result"), \
-         patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author:
-
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.ingest.scanner.persist_scan_result"),
+        patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author,
+    ):
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source
         mock_session.query.return_value.filter_by.return_value.all.return_value = [mock_source]
@@ -379,10 +382,14 @@ def test_sqlalchemy_storage_gateway_hash_types():
 
     mock_doc = MagicMock()
     mock_session.query.return_value.filter_by.return_value.one_or_none.side_effect = [
-        mock_source, mock_doc,  # replace_document call 1
-        mock_source, mock_doc,  # replace_document call 2
-        mock_source, mock_doc,  # refresh_metadata call 1
-        mock_source, mock_doc,  # refresh_metadata call 2
+        mock_source,
+        mock_doc,  # replace_document call 1
+        mock_source,
+        mock_doc,  # replace_document call 2
+        mock_source,
+        mock_doc,  # refresh_metadata call 1
+        mock_source,
+        mock_doc,  # refresh_metadata call 2
     ]
 
     gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: mock_session)

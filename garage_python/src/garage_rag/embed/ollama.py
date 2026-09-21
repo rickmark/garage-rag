@@ -66,9 +66,7 @@ class OllamaEmbedder:
 
         vectors = response.get("embeddings") if isinstance(response, dict) else response.embeddings
         if not vectors or len(vectors) != len(texts):
-            raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors or [])} vectors for {len(texts)} inputs"
-            )
+            raise EmbeddingError(f"{self.model_ref} returned {len(vectors or [])} vectors for {len(texts)} inputs")
         return [list(v) for v in vectors]
 
     def probe_dims(self) -> int:
@@ -92,9 +90,7 @@ def _adapt(values: list[float], plan: StoragePlan):
     return HalfVector(reduced) if plan.storage_kind == "halfvec" else reduced
 
 
-def _pending_chunk_batches(
-    session: Session, table: str, batch_size: int
-) -> Iterator[list[tuple[int, str]]]:
+def _pending_chunk_batches(session: Session, table: str, batch_size: int) -> Iterator[list[tuple[int, str]]]:
     """Yield batches of (chunk_id, text) that ``table`` has no vector for.
 
     Re-queried each iteration rather than held open: the anti-join shrinks as
@@ -122,10 +118,7 @@ def count_pending(session: Session, model: EmbeddingModel) -> int:
     table = assert_safe_table(model.table_name)
     return int(
         session.execute(
-            text(
-                f"SELECT count(*) FROM chunks c "
-                f"LEFT JOIN {table} e ON e.chunk_id = c.id WHERE e.chunk_id IS NULL"
-            )
+            text(f"SELECT count(*) FROM chunks c LEFT JOIN {table} e ON e.chunk_id = c.id WHERE e.chunk_id IS NULL")
         ).scalar_one()
     )
 
@@ -156,8 +149,7 @@ def backfill_model(
         return state
 
     insert_sql = text(
-        f"INSERT INTO {table} (chunk_id, embedding) VALUES (:chunk_id, :embedding) "
-        "ON CONFLICT (chunk_id) DO NOTHING"
+        f"INSERT INTO {table} (chunk_id, embedding) VALUES (:chunk_id, :embedding) ON CONFLICT (chunk_id) DO NOTHING"
     )
 
     for batch in _pending_chunk_batches(session, table, size):
@@ -173,10 +165,7 @@ def backfill_model(
 
         session.execute(
             insert_sql,
-            [
-                {"chunk_id": cid, "embedding": _adapt(vec, plan)}
-                for cid, vec in zip(ids, vectors, strict=True)
-            ],
+            [{"chunk_id": cid, "embedding": _adapt(vec, plan)} for cid, vec in zip(ids, vectors, strict=True)],
         )
         session.commit()
 

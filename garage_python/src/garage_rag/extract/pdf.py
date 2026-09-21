@@ -101,11 +101,7 @@ def _plumber_page_text(path: Path, page_index: int) -> str:
         # Tables carry meaning that flat text extraction destroys.
         try:
             for table in page.extract_tables() or []:
-                rows = [
-                    " | ".join((cell or "").strip() for cell in row)
-                    for row in table
-                    if any(cell for cell in row)
-                ]
+                rows = [" | ".join((cell or "").strip() for cell in row) for row in table if any(cell for cell in row)]
                 if rows:
                     parts.append("\n".join(rows))
         except Exception as exc:  # noqa: BLE001

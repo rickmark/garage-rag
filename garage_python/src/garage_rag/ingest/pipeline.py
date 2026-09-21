@@ -25,14 +25,13 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from garage_rag.attribute.resolver import (
     Attribution,
     SelfIdentity,
-    ensure_self_author,
     get_or_create_author,
     resolve,
 )
@@ -42,8 +41,6 @@ from garage_rag.db.models import (
     CorpusClass,
     Document,
     DocumentAuthor,
-    IngestRun,
-    IngestSeen,
     IngestState,
     Source,
 )
@@ -58,7 +55,6 @@ from garage_rag.ingest.gateway import (
     ChunkPayload,
     IngestStorageGateway,
     SourceContext,
-    SqlAlchemyIngestStorageGateway,
     get_storage_gateway,
 )
 from garage_rag.ingest.materialize import MaterializationBudget, ensure_local
@@ -175,15 +171,10 @@ def ingest_one(
         session = gateway_or_session
         source = source_or_context
         # Legacy session path fallback if called with raw Session
-        existing = (
-            session.query(Document).filter_by(source_id=source.id, uri=candidate.uri).one_or_none()
-        )
+        existing = session.query(Document).filter_by(source_id=source.id, uri=candidate.uri).one_or_none()
         if existing is not None and not force and not candidate.placeholder:
             same_size = existing.byte_size == candidate.size
-            same_mtime = (
-                existing.mtime is not None
-                and abs((existing.mtime - candidate.mtime).total_seconds()) < 1.0
-            )
+            same_mtime = existing.mtime is not None and abs((existing.mtime - candidate.mtime).total_seconds()) < 1.0
             if same_size and same_mtime and existing.state == IngestState.OK:
                 counters.skipped += 1
                 return
@@ -324,10 +315,7 @@ def ingest_one(
     # --- step 1: skip on unchanged stat, without opening the file -----------
     if existing_stat.exists and not force and not candidate.placeholder:
         same_size = existing_stat.byte_size == candidate.size
-        same_mtime = (
-            existing_stat.mtime > 0
-            and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
-        )
+        same_mtime = existing_stat.mtime > 0 and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
         if same_size and same_mtime and existing_stat.state.upper() == "OK":
             log.debug("Skipped %s: stat matches existing document in DB", candidate.uri)
             counters.skipped += 1
@@ -356,7 +344,9 @@ def ingest_one(
             candidate.path,
             source_allows_cloud=bool(source_ctx.allow_cloud_enrichment),
         )
-        log.debug("Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text))
+        log.debug(
+            "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
+        )
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
         log.warning("Extraction failed for %s: %s", candidate.uri, exc)
@@ -649,7 +639,8 @@ def ingest_source(
         )
 
         log.info(
-            "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, placeholders=%d, chunks=%d, errors=%d",
+            "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, "
+            "placeholders=%d, chunks=%d, errors=%d",
             source_slug,
             counters.total_items,
             counters.seen,

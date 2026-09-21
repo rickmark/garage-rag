@@ -61,9 +61,7 @@ class LMStudioEmbedder:
 
         vectors = [item.embedding for item in response.data]
         if len(vectors) != len(texts):
-            raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors)} vectors for {len(texts)} inputs"
-            )
+            raise EmbeddingError(f"{self.model_ref} returned {len(vectors)} vectors for {len(texts)} inputs")
         return vectors
 
     def probe_dims(self) -> int:

@@ -8,10 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from garage_rag.db.models import CorpusClass, TrustTier
-from garage_rag.ingest.gateway import ExistingDocStat, IngestStorageGateway, SourceContext
+from garage_rag.ingest.gateway import IngestStorageGateway, SourceContext
 from garage_rag.ingest.materialize import MaterializationBudget
 from garage_rag.ingest.pipeline import IngestCounters, ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
@@ -135,10 +133,11 @@ def test_no_worker_threads_before_initialize_and_scan_completes():
         events.append((f"ingest_one_{cand.uri}", threading.get_ident()))
         time.sleep(0.01)
 
-    with patch("garage_rag.ingest.pipeline.scan_source", side_effect=fake_scan_source), \
-         patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)), \
-         patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one):
-
+    with (
+        patch("garage_rag.ingest.pipeline.scan_source", side_effect=fake_scan_source),
+        patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)),
+        patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one),
+    ):
         counters, walk_stats, budget = ingest_source(
             gateway=mock_gw,
             source_slug="test-src",
@@ -209,10 +208,11 @@ def test_ingest_source_multithreaded_execution():
 
     candidates = [_make_candidate(i) for i in range(16)]
 
-    with patch("garage_rag.ingest.pipeline.scan_source", return_value=scan_res), \
-         patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)), \
-         patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one):
-
+    with (
+        patch("garage_rag.ingest.pipeline.scan_source", return_value=scan_res),
+        patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)),
+        patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one),
+    ):
         counters, walk_stats, budget = ingest_source(
             gateway=mock_gw,
             source_slug="test-src",
@@ -268,10 +268,11 @@ def test_ingest_source_cancellation_multithreaded():
 
     candidates = [_make_candidate(i) for i in range(50)]
 
-    with patch("garage_rag.ingest.pipeline.scan_source", return_value=scan_res), \
-         patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)), \
-         patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one):
-
+    with (
+        patch("garage_rag.ingest.pipeline.scan_source", return_value=scan_res),
+        patch("garage_rag.ingest.pipeline.walk", return_value=iter(candidates)),
+        patch("garage_rag.ingest.pipeline.ingest_one", side_effect=fake_ingest_one),
+    ):
         counters, walk_stats, budget = ingest_source(
             gateway=mock_gw,
             source_slug="test-src",

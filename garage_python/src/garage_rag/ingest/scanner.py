@@ -38,7 +38,6 @@ from garage_rag.ingest.walker import (
     is_dependency_path,
     is_diagnostic_dir,
     is_diagnostic_file,
-    walk,
 )
 
 log = logging.getLogger(__name__)
@@ -81,6 +80,7 @@ ScanResult = SourceScanResult
 # 1. Filesystem scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_filesystem(
     root: Path,
     *,
@@ -103,12 +103,7 @@ def scan_filesystem(
         )
 
     if root.is_file():
-        if not is_indexable(root):
-            count = 0
-        elif not include_code and is_code_path(root):
-            count = 0
-        else:
-            count = 1
+        count = 0 if not is_indexable(root) or not include_code and is_code_path(root) else 1
         return SourceScanResult(
             source_slug=source_slug,
             kind="filesystem",
@@ -184,6 +179,7 @@ def scan_filesystem(
 # ---------------------------------------------------------------------------
 # 2. Git scanner
 # ---------------------------------------------------------------------------
+
 
 def scan_git(
     root: Path,
@@ -264,6 +260,7 @@ def scan_git(
 # 3. SQLite scanner
 # ---------------------------------------------------------------------------
 
+
 def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int]]:
     """Count user table rows in a single SQLite database."""
     total_rows = 0
@@ -273,9 +270,7 @@ def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int]]:
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
             tables = [row[0] for row in cursor.fetchall()]
             for table in tables:
                 try:
@@ -353,6 +348,7 @@ def scan_sqlite(
 # 4. Maildir scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_maildir(
     root: Path,
     *,
@@ -374,7 +370,7 @@ def scan_maildir(
     message_count = 0
     folder_count = 0
 
-    for parent_str, dirnames, filenames in os.walk(str(root), followlinks=False):
+    for parent_str, _dirnames, filenames in os.walk(str(root), followlinks=False):
         parent_name = os.path.basename(parent_str).lower()
         is_maildir_box = parent_name in ("cur", "new", "tmp")
         folder_count += 1
@@ -383,9 +379,7 @@ def scan_maildir(
             if _is_hidden(filename):
                 continue
             lower_name = filename.lower()
-            if is_maildir_box:
-                message_count += 1
-            elif lower_name.endswith((".eml", ".emlx", ".msg", ".mbox")):
+            if is_maildir_box or lower_name.endswith((".eml", ".emlx", ".msg", ".mbox")):
                 message_count += 1
 
     return SourceScanResult(
@@ -402,6 +396,7 @@ def scan_maildir(
 # ---------------------------------------------------------------------------
 # 5. Feed scanner
 # ---------------------------------------------------------------------------
+
 
 def _count_feed_items(file_path: Path) -> int:
     """Count items/entries in an XML or JSON feed file."""
@@ -492,6 +487,7 @@ def scan_feed(
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
+
 
 def scan_source(
     source: Source | Any,

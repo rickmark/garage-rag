@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from garage_rag.embed.xpc import embed_via_grpc
@@ -44,13 +45,14 @@ def test_servicer_get_embedding_batches_and_update():
     mock_model.storage_kind = "vector"
     mock_model.index_kind = "hnsw"
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.db.emb_tables.get_model", return_value=mock_model), \
-         patch("garage_rag.embed.ollama.count_pending", return_value=2), \
-         patch("garage_rag.embed.ollama.assert_safe_table", return_value="emb_test_model"), \
-         patch("garage_rag.embed.ollama._plan_from_row"), \
-         patch("garage_rag.embed.ollama._adapt", side_effect=lambda v, p: v):
-
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.db.emb_tables.get_model", return_value=mock_model),
+        patch("garage_rag.embed.ollama.count_pending", return_value=2),
+        patch("garage_rag.embed.ollama.assert_safe_table", return_value="emb_test_model"),
+        patch("garage_rag.embed.ollama._plan_from_row"),
+        patch("garage_rag.embed.ollama._adapt", side_effect=lambda v, p: v),
+    ):
         mock_session = MagicMock()
         mock_scope.return_value.__enter__.return_value = mock_session
         mock_session.execute.return_value.all.return_value = [(10, "Hello chunk 1"), (11, "Hello chunk 2")]
@@ -109,9 +111,10 @@ def test_embed_via_grpc_workflow():
         [0.4, 0.5, 0.6],
     ]
 
-    with patch("garage_rag.embed.xpc.GarageClient", return_value=mock_client), \
-         patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder) as mock_get_embedder:
-
+    with (
+        patch("garage_rag.embed.xpc.GarageClient", return_value=mock_client),
+        patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder) as mock_get_embedder,
+    ):
         result = embed_via_grpc(
             model_slug="mxbai-embed-xsmall",
             batch_size=10,
@@ -165,14 +168,15 @@ def test_embed_via_live_grpc_server(grpc_server):
         [0.4, 0.5, 0.6],
     ]
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.db.emb_tables.get_model", return_value=mock_model), \
-         patch("garage_rag.embed.ollama.count_pending", side_effect=[2, 0]), \
-         patch("garage_rag.embed.ollama.assert_safe_table", return_value="emb_test_live_model"), \
-         patch("garage_rag.embed.ollama._plan_from_row"), \
-         patch("garage_rag.embed.ollama._adapt", side_effect=lambda v, p: v), \
-         patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder):
-
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.db.emb_tables.get_model", return_value=mock_model),
+        patch("garage_rag.embed.ollama.count_pending", side_effect=[2, 0]),
+        patch("garage_rag.embed.ollama.assert_safe_table", return_value="emb_test_live_model"),
+        patch("garage_rag.embed.ollama._plan_from_row"),
+        patch("garage_rag.embed.ollama._adapt", side_effect=lambda v, p: v),
+        patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder),
+    ):
         mock_scope.return_value.__enter__.return_value = mock_session
 
         result = embed_via_grpc(

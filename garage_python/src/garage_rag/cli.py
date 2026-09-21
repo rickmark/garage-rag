@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import namedtuple
-
 import json
 import logging
 import os
@@ -41,7 +39,7 @@ from garage_rag.db.emb_tables import (
     resolve_spec,
     set_default_model,
 )
-from garage_rag.db.engine import reset_engine, session_scope
+from garage_rag.db.engine import session_scope
 from garage_rag.db.migrate import apply_migrations, schema_summary
 from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
 
@@ -555,12 +553,7 @@ def remove_source(
         if source is None:
             console.print(f"[yellow]no such source[/yellow]: {slug}")
             raise typer.Exit(code=1)
-        count = (
-            session.query(func.count(Document.id))
-            .filter(Document.source_id == source.id)
-            .scalar()
-            or 0
-        )
+        count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
         if not yes:
             typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
         # Cascades through chunks into every per-model embedding table.
@@ -573,11 +566,7 @@ def list_sources() -> None:
     """List registered sources."""
     with session_scope() as session:
         sources = session.query(Source).order_by(Source.id).all()
-        doc_counts = dict(
-            session.query(Document.source_id, func.count(Document.id))
-            .group_by(Document.source_id)
-            .all()
-        )
+        doc_counts = dict(session.query(Document.source_id, func.count(Document.id)).group_by(Document.source_id).all())
     if not sources:
         console.print("[yellow]no sources registered[/yellow]")
         return
@@ -612,6 +601,7 @@ def scan(
 ) -> None:
     """Scan sources and count items by source type before ingesting."""
     import json
+
     from garage_rag.db.engine import get_session_factory
     from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
@@ -723,11 +713,14 @@ def ingest(
                     return
                 pct_str = f" [{(progress_counters.seen / total_items * 100):.1f}%]" if total_items > 0 else ""
                 status_msg = (
-                    f"{slug}:{pct_str} scanned {progress_counters.seen:,}/{total_items:,} | ingested {progress_counters.indexed:,} "
+                    f"{slug}:{pct_str} scanned {progress_counters.seen:,}/{total_items:,} | "
+                    f"ingested {progress_counters.indexed:,} "
                     f"(skipped {progress_counters.skipped:,}, failed {progress_counters.failed:,}){note}"
                 )
                 status.update(status_msg)
-                if not console.is_terminal and (progress_counters.seen - last_reported >= 50 or progress_counters.seen == total_items):
+                if not console.is_terminal and (
+                    progress_counters.seen - last_reported >= 50 or progress_counters.seen == total_items
+                ):
                     last_reported = progress_counters.seen
                     console.print(status_msg)
 
@@ -887,7 +880,9 @@ def mcp_install(
         typer.Option(
             "--target",
             "-t",
-            help="project | claude-desktop | claude-code-user | lmstudio | cursor | vscode | windsurf | zed | all | any",
+            help=(
+                "project | claude-desktop | claude-code-user | lmstudio | cursor | vscode | windsurf | zed | all | any"
+            ),
         ),
     ] = "project",
     path: Annotated[
@@ -937,7 +932,7 @@ def mcp_install(
     if http is True and stdio is True:
         raise typer.BadParameter("choose either --http or --stdio")
 
-    use_http = True if http is not False and not stdio else False
+    use_http = bool(http is not False and not stdio)
 
     targets = client_targets()
     is_multi_install = all_configs or target in ("all", "any", "found", "all-found")
@@ -948,7 +943,9 @@ def mcp_install(
         if found:
             chosen_list = list(found.values())
         else:
-            console.print("[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]")
+            console.print(
+                "[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]"
+            )
             chosen_list = [targets["project"], targets["claude-desktop"]]
     elif path is not None:
         chosen_list = [ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())]
@@ -973,7 +970,8 @@ def mcp_install(
         )
         console.print(f"  url     : {url}")
         console.print(
-            "  [dim]the client connects to this URL; run `garage mcp-serve --http` or use the macOS app to keep it up[/dim]"
+            "  [dim]the client connects to this URL; run `garage mcp-serve --http` "
+            "or use the macOS app to keep it up[/dim]"
         )
     else:
         settings = get_settings()
@@ -1045,7 +1043,9 @@ def mcp_install(
             console.print(f"  backup: {result.backup.name}")
 
     if not dry_run:
-        console.print("\nRestart client(s), then try asking: [cyan]what does my reference material say about secure boot?[/cyan]")
+        console.print(
+            "\nRestart client(s), then try asking: [cyan]what does my reference material say about secure boot?[/cyan]"
+        )
 
 
 @app.command("mcp-uninstall")
@@ -1103,9 +1103,9 @@ def mcp_test(
 ) -> None:
     """Test the MCP server and tool execution."""
     import time
+
     from garage_rag.config import get_settings
     from garage_rag.mcp_server.server import (
-        rag_get_document,
         rag_list_authors,
         rag_list_sources,
         rag_search,
@@ -1118,7 +1118,7 @@ def mcp_test(
     route = path_route or settings.mcp_http_path
     target_url = url or f"http://{target_host}:{target_port}{route}"
 
-    console.print(f"[bold]Testing MCP Server & Tools[/bold]\n")
+    console.print("[bold]Testing MCP Server & Tools[/bold]\n")
 
     # 1. Local tool execution test
     console.print("[cyan]Testing local MCP tool handlers:[/cyan]")
@@ -1180,23 +1180,28 @@ def mcp_test(
     try:
         req = urllib.request.Request(
             target_url,
-            data=json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "garage-cli-test", "version": "1.0"},
-                },
-            }).encode("utf-8"),
+            data=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "garage-cli-test", "version": "1.0"},
+                    },
+                }
+            ).encode("utf-8"),
             headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         )
         t0 = time.perf_counter()
         with urllib.request.urlopen(req, timeout=3) as resp:
             http_latency = (time.perf_counter() - t0) * 1000
             status_code = resp.getcode()
-            console.print(f"  [green]HTTP {status_code}[/green] ({http_latency:.1f}ms) - MCP server endpoint reachable and responding")
+            console.print(
+                f"  [green]HTTP {status_code}[/green] ({http_latency:.1f}ms) - "
+                "MCP server endpoint reachable and responding"
+            )
     except Exception as exc:
         console.print(f"  [yellow]HTTP endpoint not active[/yellow]: {exc}")
         console.print("  [dim]Start the MCP server with `garage mcp-serve --http` or from the macOS app.[/dim]")
@@ -1463,25 +1468,24 @@ def serve(
 
 def main_cli() -> int:
     """Main CLI entrypoint."""
-    import io
     import sys
 
     # Ensure stdin, stdout, and stderr are attached and valid for CLI execution
     if sys.stdin is None or not hasattr(sys.stdin, "read"):
         try:
-            sys.stdin = io.open(0, mode="r", encoding="utf-8", errors="replace", closefd=False)
+            sys.stdin = open(0, encoding="utf-8", errors="replace", closefd=False)  # noqa: SIM115
             sys.__stdin__ = sys.stdin
         except Exception:
             pass
     if sys.stdout is None or not hasattr(sys.stdout, "write"):
         try:
-            sys.stdout = io.open(1, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)
+            sys.stdout = open(1, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)  # noqa: SIM115
             sys.__stdout__ = sys.stdout
         except Exception:
             pass
     if sys.stderr is None or not hasattr(sys.stderr, "write"):
         try:
-            sys.stderr = io.open(2, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)
+            sys.stderr = open(2, mode="w", buffering=1, encoding="utf-8", errors="replace", closefd=False)  # noqa: SIM115
             sys.__stderr__ = sys.stderr
         except Exception:
             pass

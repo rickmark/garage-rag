@@ -12,7 +12,7 @@ def parse_args():
     parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
     parser.add_argument("-o", "--output", dest="output", required=True, help="Output file path")
     parser.add_argument("--pex-file", dest="pex_file", required=True, help="Input PEX file")
-    
+
     # Scie options
     parser.add_argument("--scie", dest="scie", default="none", choices=["none", "eager", "lazy"])
     parser.add_argument("--scie-python-version", dest="scie_python_version", default="3.13")
@@ -165,27 +165,31 @@ def build_scie_from_pex(pex_path, output_path, options):
             platforms_str = ", ".join(f'"{p}"' for p in platforms)
             lines.append(f"platforms = [{platforms_str}]")
 
-        lines.extend([
-            "",
-            "[[lift.interpreters]]",
-            'id = "cpython"',
-            'provider = "PythonBuildStandalone"',
-            f'version = "{py_ver}"',
-            f'lazy = {"true" if is_lazy else "false"}',
-        ])
+        lines.extend(
+            [
+                "",
+                "[[lift.interpreters]]",
+                'id = "cpython"',
+                'provider = "PythonBuildStandalone"',
+                f'version = "{py_ver}"',
+                f"lazy = {'true' if is_lazy else 'false'}",
+            ]
+        )
 
         if options.scie_pbs_release:
             lines.append(f'release = "{options.scie_pbs_release}"')
 
-        lines.extend([
-            "",
-            "[[lift.files]]",
-            f'name = "{dest_pex_name}"',
-            "",
-            "[[lift.commands]]",
-            'exe = "#{cpython:python}"',
-            f'args = ["{{{dest_pex_name}}}"]',
-        ])
+        lines.extend(
+            [
+                "",
+                "[[lift.files]]",
+                f'name = "{dest_pex_name}"',
+                "",
+                "[[lift.commands]]",
+                'exe = "#{cpython:python}"',
+                f'args = ["{{{dest_pex_name}}}"]',
+            ]
+        )
 
         env_items = {}
         for env_item in (options.inject_env or []) + (options.scie_env or []):
@@ -224,11 +228,7 @@ def build_scie_from_pex(pex_path, output_path, options):
 
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-        is_macos_fat = (
-            "macos-aarch64" in platforms
-            and "macos-x86_64" in platforms
-            and sys.platform == "darwin"
-        )
+        is_macos_fat = "macos-aarch64" in platforms and "macos-x86_64" in platforms and sys.platform == "darwin"
 
         if is_macos_fat:
             arm64_bin = os.path.join(dest_dir, f"{app_name}-macos-aarch64")
@@ -240,14 +240,17 @@ def build_scie_from_pex(pex_path, output_path, options):
 
             clang_cmd = [
                 "clang",
-                "-arch", "arm64",
-                "-arch", "x86_64",
-                f"-DAPP_NAME=\"{app_name}\"",
-                f"-DARM64_SCIE_PATH=\"{arm64_bin}\"",
-                f"-DX86_64_SCIE_PATH=\"{x86_64_bin}\"",
+                "-arch",
+                "arm64",
+                "-arch",
+                "x86_64",
+                f'-DAPP_NAME="{app_name}"',
+                f'-DARM64_SCIE_PATH="{arm64_bin}"',
+                f'-DX86_64_SCIE_PATH="{x86_64_bin}"',
                 "-O2",
                 launcher_src,
-                "-o", output_path,
+                "-o",
+                output_path,
             ]
             compile_res = subprocess.run(clang_cmd, capture_output=True, text=True)
             if compile_res.returncode != 0:

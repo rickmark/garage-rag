@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -74,17 +75,11 @@ def reconcile_source(
     run = latest_complete_run(session, source.id)
     if run is None:
         result.refused = True
-        result.reason = (
-            "no completed scan on record; run a full `garage ingest` (without "
-            "--limit) before reconciling"
-        )
+        result.reason = "no completed scan on record; run a full `garage ingest` (without --limit) before reconciling"
         return result
 
     result.total_documents = (
-        session.query(func.count(Document.id))
-        .filter(Document.source_id == source.id)
-        .scalar()
-        or 0
+        session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
     )
 
     ids = [
@@ -92,9 +87,7 @@ def reconcile_source(
         for row in session.query(Document.id)
         .filter(
             Document.source_id == source.id,
-            ~session.query(IngestSeen.uri)
-            .filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri)
-            .exists(),
+            ~session.query(IngestSeen.uri).filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri).exists(),
         )
         .all()
     ]
@@ -128,26 +121,15 @@ def prune_old_runs(session: Session, *, keep: int = 10) -> int:
     ``ingest_seen`` holds one row per file per run, so unbounded history would
     grow faster than the corpus itself.
     """
-    ranked = (
-        session.query(
-            IngestRun.id.label("id"),
-            func.row_number()
-            .over(
-                partition_by=IngestRun.source_id,
-                order_by=IngestRun.started_at.desc(),
-            )
-            .label("rn"),
+    ranked = session.query(
+        IngestRun.id.label("id"),
+        func.row_number()
+        .over(
+            partition_by=IngestRun.source_id,
+            order_by=IngestRun.started_at.desc(),
         )
-        .subquery()
-    )
-    ids_to_delete = (
-        session.query(ranked.c.id)
-        .filter(ranked.c.rn > keep)
-        .scalar_subquery()
-    )
-    deleted = (
-        session.query(IngestRun)
-        .filter(IngestRun.id.in_(ids_to_delete))
-        .delete(synchronize_session=False)
-    )
+        .label("rn"),
+    ).subquery()
+    ids_to_delete = session.query(ranked.c.id).filter(ranked.c.rn > keep).scalar_subquery()
+    deleted = session.query(IngestRun).filter(IngestRun.id.in_(ids_to_delete)).delete(synchronize_session=False)
     return int(deleted or 0)

@@ -172,6 +172,6 @@ class TestKnownModels:
             assert spec.provider == "llama_xpc", f"{slug} must default to llama_xpc provider"
 
     def test_known_models_have_model_id(self) -> None:
-        for slug, spec in KNOWN_MODELS.items():
+        for spec in KNOWN_MODELS.values():
             assert spec.model_id is not None
             assert "/" in spec.model_id

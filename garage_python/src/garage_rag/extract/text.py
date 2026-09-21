@@ -93,9 +93,7 @@ def extract_markdown(path: Path) -> ExtractResult:
     meta: dict = {"encoding": encoding}
     if front:
         # Keep only JSON-safe scalars; frontmatter can hold arbitrary YAML.
-        meta["frontmatter"] = {
-            k: v for k, v in front.items() if isinstance(v, (str, int, float, bool))
-        }
+        meta["frontmatter"] = {k: v for k, v in front.items() if isinstance(v, (str, int, float, bool))}
 
     return ExtractResult(
         text=text,

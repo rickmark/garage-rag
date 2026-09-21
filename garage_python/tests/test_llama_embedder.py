@@ -88,5 +88,6 @@ def test_llama_embedder_empty_and_error():
 
     failing_embedder = LlamaXPCEmbedder(model_ref="bad-model", client=FailingClient())
     from garage_rag.embed.ollama import EmbeddingError
+
     with pytest.raises(EmbeddingError, match="llama_xpc embed failed"):
         failing_embedder.embed(["hello"])

@@ -78,15 +78,11 @@ def _as_list(value: object) -> object:
 # Filter parameters accept either one value or several. The union is what puts
 # both shapes in the published input schema; the validator normalizes them.
 ClassFilter = Annotated[
-    list[Literal["document", "code", "communication"]]
-    | Literal["document", "code", "communication"]
-    | None,
+    list[Literal["document", "code", "communication"]] | Literal["document", "code", "communication"] | None,
     BeforeValidator(_as_list),
 ]
 TrustFilter = Annotated[
-    list[Literal["authored", "reference", "received"]]
-    | Literal["authored", "reference", "received"]
-    | None,
+    list[Literal["authored", "reference", "received"]] | Literal["authored", "reference", "received"] | None,
     BeforeValidator(_as_list),
 ]
 SourceFilter = Annotated[list[str] | str | None, BeforeValidator(_as_list)]
@@ -194,9 +190,7 @@ class CorpusStats:
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def rag_search(
-    query: Annotated[
-        str, Field(description="Natural-language question or keywords to search for.")
-    ],
+    query: Annotated[str, Field(description="Natural-language question or keywords to search for.")],
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum hits to return.")] = 10,
     mode: Annotated[
         Literal["hybrid", "vector", "fts"],
@@ -233,9 +227,7 @@ def rag_search(
         SourceFilter,
         Field(description="Restrict to these source slugs. Accepts one value or a list."),
     ] = None,
-    author: Annotated[
-        str | None, Field(description="Restrict to documents by this author (substring match).")
-    ] = None,
+    author: Annotated[str | None, Field(description="Restrict to documents by this author (substring match).")] = None,
 ) -> SearchResult:
     """Search the personal corpus with hybrid semantic + keyword retrieval.
 
@@ -282,16 +274,12 @@ def rag_search(
 
 @mcp.tool()
 def rag_get_document(
-    document_id: Annotated[
-        int | None, Field(description="Document id, as returned by rag_search.")
-    ] = None,
+    document_id: Annotated[int | None, Field(description="Document id, as returned by rag_search.")] = None,
     location: Annotated[
         str | None,
         Field(description="Path of the document; '~' is accepted. Used when no id is given."),
     ] = None,
-    max_chars: Annotated[
-        int, Field(ge=500, le=200_000, description="Truncate content beyond this length.")
-    ] = 20_000,
+    max_chars: Annotated[int, Field(ge=500, le=200_000, description="Truncate content beyond this length.")] = 20_000,
 ) -> DocumentResult:
     """Fetch a document's full extracted text, to read past a search snippet."""
     if document_id is None and not location:
@@ -317,12 +305,7 @@ def rag_get_document(
                 .all()
             )
         ]
-        chunk_count = (
-            session.query(func.count(Chunk.id))
-            .filter(Chunk.document_id == doc.id)
-            .scalar()
-            or 0
-        )
+        chunk_count = session.query(func.count(Chunk.id)).filter(Chunk.document_id == doc.id).scalar() or 0
 
     content = doc.content or ""
     truncated = len(content) > max_chars
@@ -399,9 +382,7 @@ def rag_list_authors(
                 Author.display_name,
                 Author.is_self,
                 func.count(func.distinct(DocumentAuthor.document_id)).label("documents"),
-                func.array_agg(func.distinct(identity_expr))
-                .filter(AuthorIdentity.id.is_not(None))
-                .label("identities"),
+                func.array_agg(func.distinct(identity_expr)).filter(AuthorIdentity.id.is_not(None)).label("identities"),
             )
             .outerjoin(DocumentAuthor, DocumentAuthor.author_id == Author.id)
             .outerjoin(AuthorIdentity, AuthorIdentity.author_id == Author.id)
@@ -434,19 +415,11 @@ def rag_stats() -> CorpusStats:
     content, and whether embeddings are complete enough for semantic search.
     """
     with session_scope() as session:
-        documents = int(
-            session.query(func.count(Document.id))
-            .filter(Document.state == IngestState.OK)
-            .scalar()
-            or 0
-        )
+        documents = int(session.query(func.count(Document.id)).filter(Document.state == IngestState.OK).scalar() or 0)
         chunks = int(session.query(func.count(Chunk.id)).scalar() or 0)
         authors = int(session.query(func.count(Author.id)).scalar() or 0)
         pending = int(
-            session.query(func.count(Document.id))
-            .filter(Document.state == IngestState.PLACEHOLDER)
-            .scalar()
-            or 0
+            session.query(func.count(Document.id)).filter(Document.state == IngestState.PLACEHOLDER).scalar() or 0
         )
         overview = corpus_overview(session)
 
@@ -686,8 +659,7 @@ def start_background_server(
                 server.should_exit = True
                 thread.join(timeout=2.0)
                 _active_server_error = _active_server_error or (
-                    f"MCP server did not start listening on {host}:{port} "
-                    f"within {STARTUP_WAIT_SECONDS:.0f}s"
+                    f"MCP server did not start listening on {host}:{port} within {STARTUP_WAIT_SECONDS:.0f}s"
                 )
             else:
                 _active_server_error = _active_server_error or (

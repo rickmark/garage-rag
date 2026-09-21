@@ -180,16 +180,12 @@ def extract_image(
                 meta["ocr_escalated"] = True
                 meta["cloud_model"] = settings.cloud_ocr_model
         else:
-            meta["ocr_escalation_skipped"] = (
-                "cloud disabled" if not cloud_enabled() else "source disallows cloud"
-            )
+            meta["ocr_escalation_skipped"] = "cloud disabled" if not cloud_enabled() else "source disallows cloud"
 
     if len(text) < settings.ocr_min_chars:
         # Reported as a failure, not indexed as an empty document: most images in
         # a code tree are icons and genuinely contain nothing.
-        raise ExtractionError(
-            f"no usable text in image (confidence {confidence:.0f}, {len(text)} chars): {path}"
-        )
+        raise ExtractionError(f"no usable text in image (confidence {confidence:.0f}, {len(text)} chars): {path}")
 
     return ExtractResult(
         text=text,

@@ -35,6 +35,10 @@ def config(ctx: ConfigContext):
     if is_ci:
         ctx.traits[BazelTrait].extra_flags.extend([
             "--config=ci",
+            # CI runners have no Developer ID signing identity installed, so
+            # codesigning with the default //bazel:universal_developer_id
+            # platform fails. Ad-hoc sign instead, matching local dev builds.
+            "--platforms=//bazel:adhoc",
         ])
 
     # Enable artifact uploads for testlogs, profile, and BEP.

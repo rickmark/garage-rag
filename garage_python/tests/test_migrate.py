@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import psycopg
-from garage_rag.db.engine import get_engine, reset_engine
+
 from garage_rag.db.migrate import (
     apply_migrations,
     database_exists,
@@ -24,10 +24,7 @@ def test_to_psycopg_conninfo() -> None:
         to_psycopg_conninfo("postgresql://user:pass@localhost:5432/test")
         == "postgresql://user:pass@localhost:5432/test"
     )
-    assert (
-        to_psycopg_conninfo("host=localhost port=5432 dbname=rag")
-        == "host=localhost port=5432 dbname=rag"
-    )
+    assert to_psycopg_conninfo("host=localhost port=5432 dbname=rag") == "host=localhost port=5432 dbname=rag"
 
 
 def test_migration_files_uses_supplied_schema_directory(tmp_path: Path) -> None:
@@ -68,17 +65,19 @@ def test_apply_migrations_without_session(tmp_path: Path) -> None:
     mock_conn.__enter__.return_value = mock_conn
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
-        with patch("garage_rag.db.engine.reset_engine") as mock_reset:
-            applied = apply_migrations(
-                schema_dir=tmp_path,
-                database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
-            )
+    with (
+        patch("psycopg.connect", return_value=mock_conn) as mock_connect,
+        patch("garage_rag.db.engine.reset_engine") as mock_reset,
+    ):
+        applied = apply_migrations(
+            schema_dir=tmp_path,
+            database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
+        )
 
-            assert mock_connect.call_count == 2
-            mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
-            assert applied == ["001_extensions.sql", "003_core.sql"]
-            mock_reset.assert_called_once()
+        assert mock_connect.call_count == 2
+        mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        assert applied == ["001_extensions.sql", "003_core.sql"]
+        mock_reset.assert_called_once()
 
 
 def test_apply_migrations_with_session(tmp_path: Path) -> None:
@@ -133,10 +132,13 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
     # Scenario 1: schema_migrations does not exist
     mock_cursor.fetchone.return_value = (False,)
     with patch("psycopg.connect", return_value=mock_conn):
-        assert has_pending_migrations(
-            database_url="postgresql://user:pass@localhost:5432/testdb",
-            schema_dir=tmp_path,
-        ) is True
+        assert (
+            has_pending_migrations(
+                database_url="postgresql://user:pass@localhost:5432/testdb",
+                schema_dir=tmp_path,
+            )
+            is True
+        )
         pending = pending_migrations(
             database_url="postgresql://user:pass@localhost:5432/testdb",
             schema_dir=tmp_path,
@@ -147,10 +149,13 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
     mock_cursor.fetchone.return_value = (True,)
     mock_cursor.fetchall.return_value = [("001_extensions",)]
     with patch("psycopg.connect", return_value=mock_conn):
-        assert has_pending_migrations(
-            database_url="postgresql://user:pass@localhost:5432/testdb",
-            schema_dir=tmp_path,
-        ) is True
+        assert (
+            has_pending_migrations(
+                database_url="postgresql://user:pass@localhost:5432/testdb",
+                schema_dir=tmp_path,
+            )
+            is True
+        )
         pending = pending_migrations(
             database_url="postgresql://user:pass@localhost:5432/testdb",
             schema_dir=tmp_path,
@@ -161,10 +166,13 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
     mock_cursor.fetchone.return_value = (True,)
     mock_cursor.fetchall.return_value = [("001_extensions",), ("002_types",), ("003_core",)]
     with patch("psycopg.connect", return_value=mock_conn):
-        assert has_pending_migrations(
-            database_url="postgresql://user:pass@localhost:5432/testdb",
-            schema_dir=tmp_path,
-        ) is False
+        assert (
+            has_pending_migrations(
+                database_url="postgresql://user:pass@localhost:5432/testdb",
+                schema_dir=tmp_path,
+            )
+            is False
+        )
         pending = pending_migrations(
             database_url="postgresql://user:pass@localhost:5432/testdb",
             schema_dir=tmp_path,

@@ -62,10 +62,10 @@ py_scie_binary(
 
 python_site_packages(
     name = "site-packages-raw",
+    visibility = ["//visibility:public"],
     deps = [
         "//garage_python/src:garage_rag",
     ],
-    visibility = ["//visibility:public"],
 )
 
 codesign(

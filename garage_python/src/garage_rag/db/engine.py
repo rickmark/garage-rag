@@ -14,7 +14,7 @@ from contextlib import contextmanager
 
 import psycopg
 from pgvector.psycopg import register_vector
-from sqlalchemy import Engine, Pool, create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from garage_rag.config import get_settings

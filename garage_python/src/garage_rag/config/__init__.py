@@ -44,9 +44,7 @@ USER_CONFIG_FILENAME = ".garage.json"
 # Published schema. Written into every config's ``$schema`` key so editors can
 # resolve it without a local copy -- which matters because the config lives in
 # $HOME while the schema is a build artifact of this repository.
-SCHEMA_URL = (
-    "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json"
-)
+SCHEMA_URL = "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json"
 
 # Directory names that are never worth indexing. Skipping these at the walker
 # level is what keeps ~/Developer at ~18k documents instead of ~192k.
@@ -191,10 +189,7 @@ class SourceSpec(BaseModel):
     )
     allow_cloud_enrichment: bool = Field(
         default=False,
-        description=(
-            "Permit the cloud OCR fallback for this source. Never honoured for "
-            "communication sources."
-        ),
+        description=("Permit the cloud OCR fallback for this source. Never honoured for communication sources."),
     )
     enabled: bool = Field(default=True, description="Set false to skip this source.")
 
@@ -238,6 +233,7 @@ class Settings(BaseModel):
         if isinstance(v, str):
             return ensure_psycopg_database_url(v)
         return v
+
     hnsw_ef_search: int = Field(
         default=100,
         description="HNSW probe width at query time. Higher is better recall, slower.",
@@ -291,17 +287,14 @@ class Settings(BaseModel):
     chunk_overlap: int = Field(
         default=150,
         description=(
-            "Characters repeated between adjacent prose chunks, so a sentence "
-            "spanning a boundary is still retrievable."
+            "Characters repeated between adjacent prose chunks, so a sentence spanning a boundary is still retrievable."
         ),
     )
     code_chunk_size: int = Field(
         default=1200,
         description="Target characters per code chunk. Larger, to keep functions intact.",
     )
-    code_chunk_overlap: int = Field(
-        default=100, description="Characters repeated between adjacent code chunks."
-    )
+    code_chunk_overlap: int = Field(default=100, description="Characters repeated between adjacent code chunks.")
     comms_window_minutes: int = Field(
         default=30,
         description=(
@@ -323,12 +316,8 @@ class Settings(BaseModel):
             "mean hundreds of gigabytes. Bounded by the limits below."
         ),
     )
-    materialize_limit: int = Field(
-        default=2000, description="Files materialized per run; 0 means unlimited."
-    )
-    materialize_max_bytes: int = Field(
-        default=20 * 1024**3, description="Byte budget per run; 0 means unlimited."
-    )
+    materialize_limit: int = Field(default=2000, description="Files materialized per run; 0 means unlimited.")
+    materialize_max_bytes: int = Field(default=20 * 1024**3, description="Byte budget per run; 0 means unlimited.")
     materialize_timeout_seconds: float = Field(
         default=120.0,
         description=(
@@ -346,9 +335,7 @@ class Settings(BaseModel):
         ),
     )
     mcp_port: int = Field(default=8787, description="Port for the HTTP transport.")
-    mcp_http_path: str = Field(
-        default="/mcp", description="HTTP route the MCP endpoint is served on."
-    )
+    mcp_http_path: str = Field(default="/mcp", description="HTTP route the MCP endpoint is served on.")
 
     # ---- quality guards -------------------------------------------------
     max_chunks_per_document: int = Field(
@@ -376,8 +363,7 @@ class Settings(BaseModel):
     ocr_min_chars: int = Field(
         default=16,
         description=(
-            "Below this many characters an image is treated as having no text. "
-            "Most images in a source tree are icons."
+            "Below this many characters an image is treated as having no text. Most images in a source tree are icons."
         ),
     )
     extract_workers: int = Field(
@@ -394,9 +380,7 @@ class Settings(BaseModel):
         default="claude-opus-4-8",
         description="Model used for the vision OCR fallback.",
     )
-    cloud_ocr_max_images: int = Field(
-        default=500, description="Cap on images escalated to the cloud per run."
-    )
+    cloud_ocr_max_images: int = Field(default=500, description="Cap on images escalated to the cloud per run.")
     api_key_file: str | None = Field(
         default=None,
         description=(
@@ -576,10 +560,7 @@ def flatten(document: dict[str, Any]) -> dict[str, Any]:
         for key, value in body.items():
             field = mapping.get(key)
             if field is None:
-                raise ConfigError(
-                    f"unknown key {key!r} in section {section!r}; "
-                    f"expected one of: {', '.join(mapping)}"
-                )
+                raise ConfigError(f"unknown key {key!r} in section {section!r}; expected one of: {', '.join(mapping)}")
             flat[field] = value
     return flat
 
@@ -606,8 +587,7 @@ def nest(
 
     if settings.sources:
         document["sources"] = [
-            spec.model_dump(by_alias=True, exclude_defaults=not include_defaults)
-            for spec in settings.sources
+            spec.model_dump(by_alias=True, exclude_defaults=not include_defaults) for spec in settings.sources
         ]
     return document
 
@@ -619,10 +599,7 @@ def load_config(path: Path | None = None, *, required: bool = False) -> Settings
     if resolved is None or not resolved.is_file():
         if required or path is not None:
             searched = ", ".join(str(p) for p in ([resolved] if path else candidate_paths()))
-            raise ConfigError(
-                f"no config file found (looked at: {searched}); "
-                "create one with 'garage config init'"
-            )
+            raise ConfigError(f"no config file found (looked at: {searched}); create one with 'garage config init'")
         # No file at all: defaults are a usable configuration.
         return _apply_database_url_environment(Settings())
 
@@ -678,9 +655,7 @@ def json_schema() -> dict[str, Any]:
     documentation lives, since JSON has no comments.
     """
     fields = Settings.model_fields
-    properties: dict[str, Any] = {
-        "$schema": {"type": "string", "description": "Path or URL to this schema."}
-    }
+    properties: dict[str, Any] = {"$schema": {"type": "string", "description": "Path or URL to this schema."}}
 
     type_map: dict[Any, str] = {
         str: "string",
