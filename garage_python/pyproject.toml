@@ -84,7 +84,7 @@ python_version = "3.13"
 warn_unused_ignores = true
 exclude = ["garage_pb2\\.py$", "garage_pb2_grpc\\.py$"]
 
-[tool.ty]
+[tool.ty.src]
 exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
 
 [tool.ty.rules]
