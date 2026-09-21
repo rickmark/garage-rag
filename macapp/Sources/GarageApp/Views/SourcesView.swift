@@ -16,20 +16,8 @@ struct SourcesView: View {
     @State private var allowCloud = false
     @State private var includeCodeInSource = false
 
-    // Arbitrary Ingest Parameters State
-    @State private var customSourceSlug: String = "*"
-    @State private var customSourceInput: String = ""
-    @State private var customIncludeCode: Bool = false
-    @State private var customForce: Bool = false
-    @State private var customLimitEnabled: Bool = false
-    @State private var customLimitValue: Int = 10
-    @State private var customArbitraryArgs: String = ""
-    @State private var customGrpcHost: String = ""
-    @State private var customGrpcPort: String = ""
-    @State private var showAdvancedOptions: Bool = false
-    @State private var showCopiedAlert: Bool = false
-
     @State private var busy = false
+    @State private var ingestAutoDismissTask: Task<Void, Never>?
 
     private let kinds = ["filesystem", "git", "sqlite", "maildir", "feed"]
     private let classes = ["document", "code", "communication"]
@@ -60,7 +48,6 @@ struct SourcesView: View {
                 diskAccessSection
                 ingestProgressSection
                 configuredSourcesSection
-                runIngestWithCustomParametersSection
                 addOrUpdateSourceSection
                 scheduledMaintenanceSection
                 ingestOutputSection
@@ -208,11 +195,6 @@ struct SourcesView: View {
                                     }
                                     .controlSize(.small)
                                     .disabled(appState.ingestService.isCancelling)
-                                } else {
-                                    Button("Dismiss") {
-                                        appState.ingestService.clearMessages()
-                                    }
-                                    .controlSize(.small)
                                 }
                             }
 
@@ -263,6 +245,15 @@ struct SourcesView: View {
                         }
                     }
                     .padding(8)
+                }
+                .onChange(of: appState.ingestService.isRunning) { _, isRunning in
+                    ingestAutoDismissTask?.cancel()
+                    guard !isRunning else { return }
+                    ingestAutoDismissTask = Task {
+                        try? await Task.sleep(nanoseconds: 4_000_000_000)
+                        guard !Task.isCancelled else { return }
+                        appState.ingestService.clearMessages()
+                    }
                 }
             }
         }
@@ -752,239 +743,6 @@ struct SourcesView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    // MARK: - Run Ingest with Arbitrary Parameters Section
-
-    private var runIngestWithCustomParametersSection: some View {
-        GroupBox("Run Ingest with Arbitrary Parameters") {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Execute the ingest command with standard options, quick presets, or arbitrary CLI parameters across any execution mode (XPC Helper or CLI Process).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                // Presets Bar
-                HStack(spacing: 8) {
-                    Text("Presets:")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-
-                    Button("All Sources (Default)") {
-                        applyIngestPreset(.allSourcesDefault)
-                    }
-                    .controlSize(.small)
-
-                    Button("Trial Run (Limit 10)") {
-                        applyIngestPreset(.trialRun10)
-                    }
-                    .controlSize(.small)
-
-                    Button("Force Re-index All") {
-                        applyIngestPreset(.forceAll)
-                    }
-                    .controlSize(.small)
-
-                    Button("Include Code") {
-                        applyIngestPreset(.includeCodeAll)
-                    }
-                    .controlSize(.small)
-
-                    Spacer()
-
-                    Button("Reset Parameters") {
-                        resetCustomIngestParameters()
-                    }
-                    .controlSize(.small)
-                }
-
-                Divider()
-
-                // Source Selection & Mode
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                    GridRow {
-                        Text("Target Source:")
-                            .font(.caption.bold())
-                            .frame(width: 130, alignment: .leading)
-
-                        HStack(spacing: 8) {
-                            Picker("Source", selection: $customSourceSlug) {
-                                Text("* (All Registered Sources)").tag("*")
-                                Divider()
-                                ForEach(appState.registeredSources) { src in
-                                    Text("\(src.slug) (\(src.kind))").tag(src.slug)
-                                }
-                                Divider()
-                                Text("Custom Slug / Path…").tag("__custom__")
-                            }
-                            .frame(maxWidth: 240)
-
-                            if customSourceSlug == "__custom__" {
-                                TextField("Enter slug or path (e.g. apple-sms, ~/Documents)", text: $customSourceInput)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: 280)
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                // Standard Options & Toggles
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Standard Options:")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 20) {
-                        Toggle("Include Code (--include-code)", isOn: $customIncludeCode)
-                            .help("Also index programming source code files, not just documents.")
-
-                        Toggle("Force Re-extract (--force)", isOn: $customForce)
-                            .help("Re-extract and re-chunk files even if unchanged since previous ingest.")
-
-                        HStack(spacing: 6) {
-                            Toggle("Limit (--limit):", isOn: $customLimitEnabled)
-                            if customLimitEnabled {
-                                TextField("10", value: $customLimitValue, format: .number)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 70)
-                                Stepper("", value: $customLimitValue, in: 1...1_000_000)
-                                    .labelsHidden()
-                            }
-                        }
-                    }
-                }
-
-                // Arbitrary Parameters Text Input
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Arbitrary Parameters / Extra CLI Flags:")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("e.g. --limit 50 --force --include-code --grpc-port 50051")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    TextField("Enter arbitrary parameters or CLI arguments (e.g. --limit 20 --force)", text: $customArbitraryArgs)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-
-                    Text("Arbitrary flags entered here are parsed and passed directly to the ingest engine or CLI subprocess. Quotes and escapes are supported.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                // Advanced gRPC options (collapsible)
-                DisclosureGroup("Advanced gRPC & Service Options", isExpanded: $showAdvancedOptions) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 16) {
-                            HStack(spacing: 6) {
-                                Text("gRPC Host:")
-                                    .font(.caption.bold())
-                                TextField("127.0.0.1", text: $customGrpcHost)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 140)
-                            }
-
-                            HStack(spacing: 6) {
-                                Text("gRPC Port:")
-                                    .font(.caption.bold())
-                                TextField("50051", text: $customGrpcPort)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 80)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                // Live Command Preview & Copy
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Generated Command Preview:")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button(action: {
-                            copyPreviewToClipboard()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: showCopiedAlert ? "checkmark" : "doc.on.doc")
-                                Text(showCopiedAlert ? "Copied!" : "Copy Command")
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-
-                    HStack {
-                        Text(generatedCommandLinePreview)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .textSelection(.enabled)
-                        Spacer()
-                    }
-                    .padding(8)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-
-                // Run & Action Row
-                HStack(spacing: 12) {
-                    if appState.ingestService.isRunning {
-                        Button(action: {
-                            Task { await appState.cancelIngest() }
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "xmark.circle.fill")
-                                Text(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                        .disabled(appState.ingestService.isCancelling)
-
-                        ProgressView().controlSize(.small)
-
-                        Text("Ingestion is currently running (\(appState.ingestService.currentSource ?? "source"))…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button(action: {
-                            runCustomIngest()
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "play.fill")
-                                Text("Run Ingest Command")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(notReady || isCustomSlugInvalid)
-
-                        if busy {
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-
-                    Spacer()
-
-                    if let lastSuccess = appState.ingestService.lastSuccess {
-                        Text(lastSuccess)
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                            .lineLimit(1)
-                    } else if let lastError = appState.ingestService.lastError {
-                        Text(lastError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .padding(10)
-        }
-    }
-
     // MARK: - Add / Update Source Section
 
     private var addOrUpdateSourceSection: some View {
@@ -1271,136 +1029,4 @@ struct SourcesView: View {
         }
     }
 
-    // MARK: - Arbitrary Parameters Helpers
-
-    private enum IngestCustomPreset {
-        case allSourcesDefault
-        case trialRun10
-        case forceAll
-        case includeCodeAll
-    }
-
-    private func applyIngestPreset(_ preset: IngestCustomPreset) {
-        switch preset {
-        case .allSourcesDefault:
-            customSourceSlug = "*"
-            customIncludeCode = false
-            customForce = false
-            customLimitEnabled = false
-            customArbitraryArgs = ""
-        case .trialRun10:
-            customSourceSlug = "*"
-            customIncludeCode = false
-            customForce = false
-            customLimitEnabled = true
-            customLimitValue = 10
-            customArbitraryArgs = ""
-        case .forceAll:
-            customSourceSlug = "*"
-            customIncludeCode = false
-            customForce = true
-            customLimitEnabled = false
-            customArbitraryArgs = ""
-        case .includeCodeAll:
-            customSourceSlug = "*"
-            customIncludeCode = true
-            customForce = false
-            customLimitEnabled = false
-            customArbitraryArgs = ""
-        }
-    }
-
-    private func resetCustomIngestParameters() {
-        customSourceSlug = "*"
-        customSourceInput = ""
-        customIncludeCode = false
-        customForce = false
-        customLimitEnabled = false
-        customLimitValue = 10
-        customArbitraryArgs = ""
-        customGrpcHost = ""
-        customGrpcPort = ""
-    }
-
-    private var effectiveCustomSlug: String {
-        if customSourceSlug == "__custom__" {
-            let trimmed = customSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? "*" : trimmed
-        }
-        return customSourceSlug
-    }
-
-    private var isCustomSlugInvalid: Bool {
-        if customSourceSlug == "__custom__" {
-            return customSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        return false
-    }
-
-    private var parsedExtraArguments: [String] {
-        CommandLineParser.splitArguments(customArbitraryArgs)
-    }
-
-    private var generatedCommandLinePreview: String {
-        var parts = ["garage", "ingest"]
-        let slug = effectiveCustomSlug
-        parts.append(contentsOf: ["--source", slug])
-        if customIncludeCode {
-            parts.append("--include-code")
-        }
-        if customForce {
-            parts.append("--force")
-        }
-        if customLimitEnabled {
-            parts.append(contentsOf: ["--limit", "\(customLimitValue)"])
-        }
-        let host = customGrpcHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !host.isEmpty {
-            parts.append(contentsOf: ["--grpc-host", host])
-        }
-        let portStr = customGrpcPort.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let port = Int(portStr), port > 0 {
-            parts.append(contentsOf: ["--grpc-port", "\(port)"])
-        }
-        if !customArbitraryArgs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append(contentsOf: parsedExtraArguments)
-        }
-        return parts.joined(separator: " ")
-    }
-
-    private func copyPreviewToClipboard() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(generatedCommandLinePreview, forType: .string)
-        showCopiedAlert = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            showCopiedAlert = false
-        }
-    }
-
-    private func runCustomIngest() {
-        busy = true
-        let slug = effectiveCustomSlug
-        let limit = customLimitEnabled ? customLimitValue : nil
-        let host = customGrpcHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = Int(customGrpcPort.trimmingCharacters(in: .whitespacesAndNewlines))
-        let extraArgs = parsedExtraArguments
-
-        let options = IngestOptions(
-            includeCode: customIncludeCode,
-            limit: limit,
-            force: customForce,
-            grpcHost: host.isEmpty ? nil : host,
-            grpcPort: port,
-            extraArguments: extraArgs
-        )
-
-        Task {
-            _ = await appState.ingestSource(
-                slug: slug,
-                options: options
-            )
-            busy = false
-        }
-    }
 }

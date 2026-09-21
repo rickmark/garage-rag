@@ -218,6 +218,11 @@ public struct DocumentsView: View {
                     .background(Color.secondary.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                 Spacer()
+                if doc.factCount > 0 {
+                    Text("\(doc.factCount) fact\(doc.factCount == 1 ? "" : "s")")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
                 Text("\(doc.chunkCount) chunk\(doc.chunkCount == 1 ? "" : "s")")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
@@ -321,6 +326,7 @@ public struct DocumentsView: View {
                     if !detail.mime.isEmpty { metaField("MIME", detail.mime) }
                     if !detail.chunker.isEmpty { metaField("Chunker", detail.chunker) }
                     metaField("Chunks", "\(detail.chunks.count)")
+                    if !detail.facts.isEmpty { metaField("Facts", "\(detail.facts.count)") }
                     Spacer()
                 }
 
@@ -343,6 +349,22 @@ public struct DocumentsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    if !detail.facts.isEmpty {
+                        Text("Facts")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        ForEach(detail.facts) { fact in
+                            factCard(fact)
+                        }
+
+                        Divider()
+                            .padding(.vertical, 4)
+
+                        Text("Chunks")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                    }
+
                     ForEach(detail.chunks) { chunk in
                         chunkCard(chunk)
                     }
@@ -361,6 +383,34 @@ public struct DocumentsView: View {
             Text(value)
                 .font(.caption)
         }
+    }
+
+    private func factCard(_ fact: DocumentFactItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "lightbulb.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+                Text(fact.factClass.capitalized)
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
+                Spacer()
+                if !fact.extractor.isEmpty {
+                    Text(fact.extractor)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                Button("Copy") { copyToPasteboard(fact.fact) }
+                    .controlSize(.mini)
+            }
+            Text(fact.fact)
+                .font(.callout)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func chunkCard(_ chunk: DocumentChunkItem) -> some View {

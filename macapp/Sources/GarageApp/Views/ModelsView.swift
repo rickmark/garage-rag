@@ -28,14 +28,11 @@ struct ModelsView: View {
     @State private var busy: Bool = false
     @State private var lmStudioToken: String = ""
 
-    // Llama model linking & configuration state
-    @State private var modelPath: String = ""
+    // Llama model loading configuration state
     @State private var modelAlias: String = "bge-m3"
     @State private var contextSize: Int = 8192
     @State private var gpuLayers: Int = 33
     @State private var cpuThreads: Int = 4
-    @State private var showAdvancedConfig: Bool = false
-    @State private var customConfigJson: String = "{}"
     @State private var showUnloadConfirmation: Bool = false
 
     // Testing Playground state
@@ -44,6 +41,7 @@ struct ModelsView: View {
     @State private var testEmbeddingDimensions: String = ""
     @State private var showCopiedAlert: Bool = false
     @State private var searchText: String = ""
+    @State private var registeringPresetSlug: String? = nil
 
     private var llama: LlamaService {
         appState.llama
@@ -184,10 +182,6 @@ struct ModelsView: View {
         }
     }
 
-    private var unlinkedRegisteredLlamaModels: [UnifiedModelItem] {
-        unifiedModels.filter { $0.isRegistered && $0.provider == .llamaXPC && !isModelFileDownloaded(item: $0) }
-    }
-
     /// Presets from `models.json` that aren't registered yet, with featured presets surfaced first.
     private var unregisteredPresetModels: [ModelPresetEntry] {
         let registeredSlugs = Set(appState.registeredModels.map(\.slug))
@@ -209,13 +203,13 @@ struct ModelsView: View {
                 // Section 1: Registered Models List & Status
                 modelCatalogSection
 
+                // Section 1.5: Available Models (Not Yet Registered)
+                if !unregisteredPresetModels.isEmpty {
+                    availableModelsSection
+                }
+
                 // Section 2: Model Configuration & Registration (Preset or Custom)
                 configurationSection
-
-                // Section 3: Link & Load Llama GGUF Model (only shown for registered models without connected GGUF files)
-                if !unlinkedRegisteredLlamaModels.isEmpty || !modelPath.isEmpty {
-                    linkLlamaModelSection
-                }
 
                 // Section 4: Non-Truncated Embedding Testing & Inspection
                 embeddingInspectionSection
@@ -483,15 +477,6 @@ struct ModelsView: View {
                         .disabled(modelDownload.isBusy)
                     }
 
-                    // Link action: ONLY for models which are registered, but to which there is no connected gguf file for llama xpc to load
-                    if item.isRegistered && item.provider == .llamaXPC && !isDownloaded {
-                        Button("Link GGUF…") {
-                            linkModelFile(for: item)
-                        }
-                        .controlSize(.small)
-                        .disabled(llama.isBusy)
-                    }
-
                     // Load Model into Llama XPC
                     if isDownloaded, let dl = downloadedInfo {
                         if isActiveInLlama {
@@ -552,12 +537,6 @@ struct ModelsView: View {
                         if let expectedSha = item.effectiveSha256 {
                             Button("Copy Expected SHA-256") {
                                 modelDownload.copyToClipboard(text: expectedSha)
-                            }
-                        }
-
-                        if item.isRegistered && item.provider == .llamaXPC && !isDownloaded {
-                            Button("Link Local GGUF File…") {
-                                linkModelFile(for: item)
                             }
                         }
 
@@ -635,7 +614,7 @@ struct ModelsView: View {
                         Spacer()
                     }
 
-                    if totalChunks > 0 {
+                    if totalChunks > 0 && remaining > 0 {
                         ProgressView(value: progressFraction)
                             .progressViewStyle(.linear)
                     }
@@ -648,6 +627,90 @@ struct ModelsView: View {
         .padding(10)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Section 1.5: Available Models (Not Yet Registered)
+
+    private var availableModelsSection: some View {
+        GroupBox("Available Models (Not Yet Registered)") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Presets from models.json that aren't registered yet. Register one to enable embedding and search with it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 8) {
+                    ForEach(unregisteredPresetModels) { preset in
+                        availablePresetCard(preset)
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func availablePresetCard(_ preset: ModelPresetEntry) -> some View {
+        let isRegistering = registeringPresetSlug == preset.slug
+
+        return HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(preset.name)
+                        .font(.subheadline.bold())
+                    if preset.featured {
+                        badgeText("FEATURED", bg: Color.green.opacity(0.15), fg: .green)
+                    }
+                    if preset.effectiveDims > 0 {
+                        badgeText("\(preset.effectiveDims) DIMS", bg: Color.blue.opacity(0.12), fg: .blue)
+                    }
+                }
+
+                if let description = preset.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let useCases = preset.useCases, !useCases.isEmpty {
+                    Text("Use cases: \(useCases.joined(separator: ", "))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                registerPreset(preset)
+            } label: {
+                if isRegistering {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Register")
+                }
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .disabled(registeringPresetSlug != nil || notReady)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func registerPreset(_ preset: ModelPresetEntry) {
+        registeringPresetSlug = preset.slug
+        var args = ["register-model", preset.slug, "--provider", preset.provider ?? "llama_xpc"]
+        if preset.effectiveDims > 0 {
+            args += ["--dims", "\(preset.effectiveDims)"]
+        }
+        if let ref = preset.modelRef, !ref.isEmpty, ref != preset.slug {
+            args += ["--model-ref", ref]
+        }
+        Task {
+            await appState.runGarage(args)
+            await appState.fetchRegisteredModels()
+            registeringPresetSlug = nil
+        }
     }
 
     // MARK: - Section 2: Model Configuration & Registration
@@ -810,153 +873,6 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 3: Link & Load Llama Model
-
-    private var linkLlamaModelSection: some View {
-        GroupBox("Link & Load Llama Model (GGUF)") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Link and load a local GGUF model into the Llama XPC service for a registered model.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if !unlinkedRegisteredLlamaModels.isEmpty {
-                    Picker("Registered Target Model", selection: $modelAlias) {
-                        ForEach(unlinkedRegisteredLlamaModels) { model in
-                            Text("\(model.name) (\(model.slug))").tag(model.slug)
-                        }
-                    }
-                    .onChange(of: modelAlias) { _, newAlias in
-                        if let selected = unlinkedRegisteredLlamaModels.first(where: { $0.slug == newAlias }) {
-                            contextSize = selected.contextSize ?? 8192
-                        }
-                    }
-                }
-
-                if let activeModelId = llama.activeModelId, llama.health?.status != "no_model_loaded" {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Active Loaded Model: \(activeModelId)")
-                                .font(.headline)
-                            if let first = llama.models.first {
-                                Text("Owned by: \(first.ownedBy) • Created: \(formattedDate(first.created))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Button("Unload Model") {
-                            showUnloadConfirmation = true
-                        }
-                        .tint(.red)
-                        .disabled(llama.isBusy)
-                    }
-                    Divider()
-                }
-
-                LabeledContent("Model File Path") {
-                    HStack {
-                        TextField("/path/to/model.gguf", text: $modelPath)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Browse…") {
-                            chooseModelFile()
-                        }
-                    }
-                }
-
-                if !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let targetSha = unlinkedRegisteredLlamaModels.first(where: { $0.slug == modelAlias })?.effectiveSha256
-                        ?? appState.presetModels.first(where: { $0.slug == modelAlias })?.sha256
-                    let isVerifyingFile = modelDownload.isVerifying(path: modelPath)
-                    let fileVerification = modelDownload.verificationResult(for: modelPath)
-
-                    HStack(spacing: 8) {
-                        Button {
-                            Task {
-                                await modelDownload.verifyModelFile(path: modelPath, expectedSha256: targetSha)
-                            }
-                        } label: {
-                            if isVerifyingFile {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Label("Verify File SHA-256", systemImage: "checkmark.shield")
-                            }
-                        }
-                        .controlSize(.small)
-                        .disabled(isVerifyingFile)
-
-                        if let res = fileVerification {
-                            if res.isValid {
-                                Label(targetSha != nil ? "SHA-256 Verified (\(res.computedSha256.prefix(12))...)" : "SHA-256: \(res.computedSha256.prefix(16))...", systemImage: "checkmark.seal.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                            } else {
-                                Label("Checksum Mismatch: \(res.errorMessage ?? "Invalid")", systemImage: "xmark.seal.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                        Spacer()
-                    }
-                }
-
-                LabeledContent("Model Alias") {
-                    TextField("alias (e.g. \(slug.isEmpty ? "bge-m3" : slug))", text: $modelAlias)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                HStack(spacing: 20) {
-                    LabeledContent("Context Size") {
-                        Picker("", selection: $contextSize) {
-                            Text("2048").tag(2048)
-                            Text("4096").tag(4096)
-                            Text("8192").tag(8192)
-                            Text("16384").tag(16384)
-                            Text("32768").tag(32768)
-                        }
-                        .frame(width: 100)
-                    }
-
-                    LabeledContent("GPU Layers") {
-                        Stepper("\(gpuLayers)", value: $gpuLayers, in: 0...99)
-                            .frame(width: 100)
-                    }
-
-                    LabeledContent("Threads") {
-                        Stepper("\(cpuThreads)", value: $cpuThreads, in: 1...16)
-                            .frame(width: 90)
-                    }
-                }
-
-                Toggle("Advanced JSON Configuration", isOn: $showAdvancedConfig)
-
-                if showAdvancedConfig {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Custom config passed to llama-server:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: $customConfigJson)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(height: 70)
-                            .border(Color.secondary.opacity(0.3), width: 1)
-                    }
-                }
-
-                HStack {
-                    Button("Load Model into Llama XPC Service") {
-                        loadCurrentModel()
-                    }
-                    .disabled(modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || llama.isBusy)
-                    .buttonStyle(.borderedProminent)
-
-                    if llama.isBusy {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
     // MARK: - Section 4: Non-Truncated Embedding Testing & Inspection
 
     private var embeddingInspectionSection: some View {
@@ -979,10 +895,7 @@ struct ModelsView: View {
                             if let dimsVal = matched.dims {
                                 testEmbeddingDimensions = "\(dimsVal)"
                             }
-                            if let dl = getDownloadedInfo(item: matched) {
-                                modelPath = dl.path
-                                modelAlias = matched.slug
-                            }
+                            modelAlias = matched.slug
                         }
                     }
                 }
@@ -1363,10 +1276,7 @@ struct ModelsView: View {
 
     private func selectForTesting(item: UnifiedModelItem) {
         selectedTestModelSlug = item.slug
-        if let dl = getDownloadedInfo(item: item) {
-            modelPath = dl.path
-            modelAlias = item.slug
-        }
+        modelAlias = item.slug
         if let dimsVal = item.dims {
             testEmbeddingDimensions = "\(dimsVal)"
         }
@@ -1381,9 +1291,6 @@ struct ModelsView: View {
         provider = ModelProvider.from(string: preset.provider)
         modelAlias = preset.slug
         contextSize = preset.contextSize ?? 8192
-        if let dl = modelDownload.downloadedModel(for: preset.effectiveFilename ?? "") {
-            modelPath = dl.path
-        }
     }
 
     private func populateForm(from item: UnifiedModelItem) {
@@ -1394,9 +1301,6 @@ struct ModelsView: View {
         provider = item.provider
         modelAlias = item.slug
         contextSize = item.contextSize ?? 8192
-        if let dl = getDownloadedInfo(item: item) {
-            modelPath = dl.path
-        }
         if let preset = item.presetEntry {
             configMode = .preset
             selectedPresetSlug = preset.slug
@@ -1445,54 +1349,6 @@ struct ModelsView: View {
         }
     }
 
-    private func linkModelFile(for item: UnifiedModelItem) {
-        modelAlias = item.slug
-        contextSize = item.contextSize ?? 8192
-        chooseModelFile()
-    }
-
-    private func chooseModelFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = []
-        panel.title = "Select GGUF Model File"
-        panel.message = "Choose a .gguf model file to link and load."
-
-        if panel.runModal() == .OK, let url = panel.url {
-            modelPath = url.path
-            if modelAlias.isEmpty {
-                modelAlias = url.deletingPathExtension().lastPathComponent
-            }
-        }
-    }
-
-    private func loadCurrentModel() {
-        var config: [String: Any] = [
-            "n_ctx": contextSize,
-            "n_gpu_layers": gpuLayers,
-            "threads": cpuThreads,
-        ]
-
-        if showAdvancedConfig, !customConfigJson.isEmpty {
-            if let data = customConfigJson.data(using: .utf8),
-               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                for (k, v) in parsed {
-                    config[k] = v
-                }
-            }
-        }
-
-        Task {
-            await llama.loadModel(
-                path: modelPath,
-                alias: modelAlias.isEmpty ? nil : modelAlias,
-                config: config
-            )
-        }
-    }
-
     private func copyVectorToClipboard(vector: [Float]) {
         if let data = try? JSONSerialization.data(withJSONObject: vector, options: []),
            let jsonStr = String(data: data, encoding: .utf8) {
@@ -1508,14 +1364,6 @@ struct ModelsView: View {
         NSPasteboard.general.setString(formatted, forType: .string)
     }
 
-    private func formattedDate(_ epochSeconds: Int64) -> String {
-        guard epochSeconds > 0 else { return "Unknown" }
-        let date = Date(timeIntervalSince1970: TimeInterval(epochSeconds))
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
 }
 
 // MARK: - Embedding Vector Statistics Model

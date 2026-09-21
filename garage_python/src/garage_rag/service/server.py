@@ -42,6 +42,7 @@ from garage_rag.proto.garage_pb2 import (
     DocumentChunkInfo,
     DocumentChunkPayload,
     DocumentDetail,
+    DocumentFactInfo,
     DocumentSummary,
     DropModelRequest,
     DropModelResponse,
@@ -252,7 +253,7 @@ class GarageRpcServicer(GarageServiceServicer):
         from sqlalchemy import func, or_
 
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Chunk, Document, Source
+        from garage_rag.db.models import Chunk, Document, Fact, Source
 
         with session_scope() as session:
             query = session.query(Document).join(Source, Document.source_id == Source.id)
@@ -280,12 +281,19 @@ class GarageRpcServicer(GarageServiceServicer):
 
             doc_ids = [d.id for d in documents]
             chunk_counts: dict[int, int] = {}
+            fact_counts: dict[int, int] = {}
             slugs_by_doc_id: dict[int, str] = {}
             if doc_ids:
                 chunk_counts = dict(
                     session.query(Chunk.document_id, func.count(Chunk.id))
                     .filter(Chunk.document_id.in_(doc_ids))
                     .group_by(Chunk.document_id)
+                    .all()
+                )
+                fact_counts = dict(
+                    session.query(Fact.document_id, func.count(Fact.id))
+                    .filter(Fact.document_id.in_(doc_ids))
+                    .group_by(Fact.document_id)
                     .all()
                 )
                 slugs_by_doc_id = dict(
@@ -309,6 +317,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     chunk_count=chunk_counts.get(d.id, 0),
                     state=str(d.state),
                     ingested_at=d.ingested_at.isoformat() if d.ingested_at else "",
+                    fact_count=fact_counts.get(d.id, 0),
                 )
                 for d in documents
             ]
@@ -322,7 +331,7 @@ class GarageRpcServicer(GarageServiceServicer):
     def GetDocument(self, request: GetDocumentRequest, context: grpc.ServicerContext) -> GetDocumentResponse:
         """Fetch a single document's metadata and its chunks."""
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Chunk, Document, Source
+        from garage_rag.db.models import Chunk, Document, Fact, Source
 
         with session_scope() as session:
             document = session.get(Document, request.document_id)
@@ -337,6 +346,13 @@ class GarageRpcServicer(GarageServiceServicer):
                 session.query(Chunk)
                 .filter(Chunk.document_id == document.id)
                 .order_by(Chunk.ord.asc())
+                .all()
+            )
+
+            facts = (
+                session.query(Fact)
+                .filter(Fact.document_id == document.id)
+                .order_by(Fact.ord.asc())
                 .all()
             )
 
@@ -382,10 +398,25 @@ class GarageRpcServicer(GarageServiceServicer):
                 for c in chunks
             ]
 
+            proto_facts = [
+                DocumentFactInfo(
+                    id=f.id,
+                    ord=f.ord,
+                    fact=f.fact,
+                    fact_class=f.fact_class or "",
+                    attributes_json=json.dumps(f.attributes) if f.attributes else "",
+                    char_start=f.char_start or 0,
+                    char_end=f.char_end or 0,
+                    extractor=f.extractor or "",
+                )
+                for f in facts
+            ]
+
         return GetDocumentResponse(
             document=detail,
             chunks=proto_chunks,
-            formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks",
+            formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks, {len(proto_facts)} facts",
+            facts=proto_facts,
         )
 
     # -----------------------------------------------------------------------

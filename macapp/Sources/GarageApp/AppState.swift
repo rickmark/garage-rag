@@ -63,6 +63,7 @@ final class AppState: ObservableObject {
     private var commandInProgress = false
     private var hasLaunched = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
+    private var pendingMaintenanceTask: Task<Void, Never>?
 
     convenience init() {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
@@ -511,7 +512,7 @@ final class AppState: ObservableObject {
         lastCommandSucceeded = result.succeeded
 
         if result.succeeded, let command = arguments.first, Self.maintenanceTriggeringCommands.contains(command) {
-            Task { [weak self] in await self?.triggerMaintenanceIfEnabled() }
+            scheduleDebouncedMaintenanceTrigger()
         }
 
         return result.succeeded
@@ -743,6 +744,19 @@ final class AppState: ObservableObject {
     func triggerMaintenanceIfEnabled() async {
         guard scheduledMaintenanceEnabled else { return }
         await runScheduledMaintenance()
+    }
+
+    /// Debounces `triggerMaintenanceIfEnabled()` so a rapid burst of add-source/
+    /// register-model calls (e.g. "Add All") coalesces into a single run that
+    /// starts once the burst settles, rather than each add racing `runGarage`'s
+    /// `commandInProgress` guard against the scan/ingest the previous add kicked off.
+    private func scheduleDebouncedMaintenanceTrigger() {
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.triggerMaintenanceIfEnabled()
+        }
     }
 
     private func performDatabaseOperation(_ operation: () throws -> Void) {

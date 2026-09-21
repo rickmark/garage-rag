@@ -190,6 +190,7 @@ message DocumentSummary {
     int32 chunk_count = 10;
     string state = 11;
     string ingested_at = 12;
+    int32 fact_count = 13;
 }
 
 message ListDocumentsRequest {
@@ -223,6 +224,17 @@ message DocumentAuthorInfo {
     float confidence = 3;
 }
 
+message DocumentFactInfo {
+    int64 id = 1;
+    int32 ord = 2;
+    string fact = 3;
+    string fact_class = 4;
+    string attributes_json = 5;
+    int32 char_start = 6;
+    int32 char_end = 7;
+    string extractor = 8;
+}
+
 message DocumentDetail {
     int64 id = 1;
     string uri = 2;
@@ -251,6 +263,7 @@ message GetDocumentResponse {
     DocumentDetail document = 1;
     repeated DocumentChunkInfo chunks = 2;
     string formatted_output = 3;
+    repeated DocumentFactInfo facts = 4;
 }
 
 // ---------------------------------------------------------------------------
