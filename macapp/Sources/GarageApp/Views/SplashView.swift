@@ -258,6 +258,12 @@ struct SplashView: View {
         }
     }
 
+    /// e.g. "Last checked Sep 21, 2026 at 4:07 PM." — nil before the first check.
+    private var lastUpdateCheckDescription: String? {
+        guard let date = updater.lastUpdateCheckDate else { return nil }
+        return "Last checked \(date.formatted(date: .abbreviated, time: .shortened))."
+    }
+
     private var footer: some View {
         HStack {
             Toggle("Show this window at launch", isOn: $showAtLaunch)
