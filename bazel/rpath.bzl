@@ -13,13 +13,14 @@ def _install_name(ctx):
 
     files = []
     destinations = []
-    for file in ctx.attr.dep[DefaultInfo].files.to_list():
-        destination = _relative_path(file)
-        if destination:
-            files.append(file)
-            destinations.append(destination)
+    for dep in ctx.attr.deps:
+        for file in dep[DefaultInfo].files.to_list():
+            destination = _relative_path(file)
+            if destination:
+                files.append(file)
+                destinations.append(destination)
     if not files:
-        fail("{} does not produce runtime files in bin, include, lib, or share".format(ctx.attr.dep.label))
+        fail("{} does not produce runtime files in bin, include, lib, or share".format(ctx.label))
 
     output = ctx.actions.declare_directory(ctx.label.name)
     arguments = ctx.actions.args()
@@ -94,7 +95,7 @@ done
 install_name = rule(
     implementation = _install_name,
     attrs = {
-        "dep": attr.label(mandatory = True, doc = "Dependency whose bin, lib, and share outputs are bundled."),
+        "deps": attr.label_list(mandatory = True, doc = "Dependencies whose bin, lib, and share outputs are bundled together."),
         "_macos_constraint": attr.label(default = Label("@platforms//os:macos")),
     },
 )

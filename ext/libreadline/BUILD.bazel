@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
 
 configure_make(
     name = "libreadline",
@@ -17,5 +18,39 @@ configure_make(
     out_static_libs = [
         "libreadline.a",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# Shared build, consumed only by //ext/postgres:postgres; see //ext/libicu:libicu_shared.
+configure_make(
+    name = "libreadline_shared",
+    configure_command = "configure",
+    configure_options = [
+        "--disable-static",
+        "--enable-shared",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
+    },
+    lib_source = "@libreadline//:libreadline_source",
+    out_shared_libs = [
+        "libreadline.8.dylib",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+extract_foreign_cc_file(
+    name = "libreadline_dylib",
+    out = "lib/libreadline.8.dylib",
+    filename = "libreadline.8.dylib",
+    target = ":libreadline_shared",
+)
+
+filegroup(
+    name = "libreadline_dylibs",
+    srcs = [":libreadline_dylib"],
     visibility = ["//visibility:public"],
 )

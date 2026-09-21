@@ -109,16 +109,21 @@ done
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//ext:libicu",
-        "//ext:libreadline",
-        "//ext:libzlib",
+        "//ext/libicu:libicu_shared",
+        "//ext/libreadline:libreadline_shared",
+        "//ext/libzlib:libzlib_shared",
     ],
 )
 
 install_name(
     name = "postgres_rpath",
-    dep = ":postgres",
     visibility = ["//visibility:public"],
+    deps = [
+        ":postgres",
+        "//ext/libicu:libicu_dylibs",
+        "//ext/libreadline:libreadline_dylibs",
+        "//ext/libzlib:libzlib_dylibs",
+    ],
 )
 
 genrule(
@@ -166,6 +171,13 @@ done
 # Standalone client library, embedded into the app as `Contents/Frameworks/libpq.dylib`
 # (signed by //macapp/externals:libpq) and loaded by psycopg through ctypes. The install
 # name is normalised to `@rpath/libpq.dylib` so the same binary works from any location.
+#
+# This copy is pulled straight from :postgres's raw output and only its own install name
+# gets rewritten - unlike postgres/lib (see :postgres_rpath), it does NOT bundle or rewrite
+# references to the icu/readline/zlib dylibs those binaries link against. libpq itself has
+# never linked any of the three (they're pulled in by the backend/psql/pg_dump instead), so
+# this should stay a no-op; the check below turns a wrong assumption there into a loud build
+# failure instead of a silent Contents/Frameworks dlopen failure at app launch.
 genrule(
     name = "libpq_dylib",
     srcs = [":postgres"],
@@ -185,6 +197,18 @@ fi
 cp -L "$$src" "$@"
 chmod u+w "$@"
 /usr/bin/install_name_tool -id "@rpath/libpq.dylib" "$@"
+otool_deps="$$(otool -L "$@" | tail -n +2)"
+while IFS= read -r dependency; do
+    [ -z "$$dependency" ] && continue
+    name="$$(basename "$${dependency%% *}")"
+    case "$$name" in
+        libicu*.dylib|libreadline*.dylib|libz.*.dylib|libz.dylib)
+            echo "libpq_dylib: libpq.dylib unexpectedly depends on $$name now that //ext/postgres:postgres links icu/readline/zlib as dylibs." >&2
+            echo "libpq_dylib: this standalone Contents/Frameworks copy does not bundle it; package $$name alongside libpq.dylib (or make this dep static again) before shipping." >&2
+            exit 1
+            ;;
+    esac
+done <<< "$$otool_deps"
 """,
     visibility = ["//visibility:public"],
 )
@@ -209,13 +233,13 @@ cc_import(
 
 cc_library(
     name = "libpq",
+    visibility = ["//visibility:public"],
     deps = [
-        ":libpq_import",
         ":libpgcommon_import",
         ":libpgport_import",
+        ":libpq_import",
         "//ext:libicu",
         "//ext:libreadline",
         "//ext:libzlib",
     ],
-    visibility = ["//visibility:public"],
 )
