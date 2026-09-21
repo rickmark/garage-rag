@@ -107,6 +107,7 @@ struct SplashView: View {
                 supportCard
                 hireCard
                 updateCard
+                bugReportCard
             }
             .padding(.horizontal, 28)
 
@@ -225,6 +226,36 @@ struct SplashView: View {
     private var lastUpdateCheckDescription: String? {
         guard let date = updater.lastUpdateCheckDate else { return nil }
         return "Last checked \(date.formatted(date: .abbreviated, time: .shortened))."
+    }
+
+    private var bugReportCard: some View {
+        card(symbol: "ladybug.fill", tint: .red, title: "Something not working?") {
+            Text("""
+                Garage can put a bug report together for you: what went wrong in your words, plus the \
+                version, service state, and log lines a fix needs. It is assembled on this Mac and shown \
+                to you in full before any of it goes anywhere.
+                """)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button {
+                    // ContentView owns both sheets and swaps this one out for
+                    // the reporter, so there is nothing to dismiss here.
+                    NotificationCenter.default.post(name: .garageShowBugReport, object: nil)
+                } label: {
+                    Label("Report a bug", systemImage: "ladybug")
+                }
+                .accessibilityIdentifier("splash.reportBug")
+
+                Button {
+                    openURL(BugReportLinks.troubleshooting)
+                } label: {
+                    Label("Troubleshooting guide", systemImage: "book")
+                }
+                .accessibilityIdentifier("splash.troubleshooting")
+            }
+        }
     }
 
     private var footer: some View {

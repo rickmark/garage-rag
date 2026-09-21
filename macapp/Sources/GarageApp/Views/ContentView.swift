@@ -28,9 +28,25 @@ enum AppSection: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    /// The modal dialogs the main window can put up. Modelled as one piece of
+    /// state rather than a flag per sheet: SwiftUI presents a single sheet per
+    /// view, and the bug reporter can be asked for while the splash is up.
+    enum ActiveSheet: Identifiable, Equatable {
+        case splash
+        case bugReport(BugReportContext)
+
+        var id: String {
+            switch self {
+            case .splash: "splash"
+            case .bugReport: "bugReport"
+            }
+        }
+    }
+
     @EnvironmentObject private var appState: AppState
     @State private var selection: AppSection? = .status
-    @State private var isSplashPresented = false
+    @State private var activeSheet: ActiveSheet?
+    @State private var pendingPresentation: Task<Void, Never>?
     @AppStorage(SplashPreferences.showAtLaunchKey) private var showSplashAtLaunch = true
 
     var body: some View {
@@ -41,20 +57,37 @@ struct ContentView: View {
                 mainWindow
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            BugNub()
+                .padding(.bottom, 48)
+        }
         .onAppear(perform: presentSplashAtLaunchIfNeeded)
         .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in
-            isSplashPresented = true
+            present(.splash)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowBugReport)) { notification in
+            let context = (notification.object as? BugReportContext) ?? BugReportContext()
+            present(.bugReport(context))
         }
         .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
-            isSplashPresented = false
+            // Close through our own state first: tearing the window down in
+            // AppKit while a sheet is up is what left the splash stranded.
+            pendingPresentation?.cancel()
+            pendingPresentation = nil
+            activeSheet = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: .garageShowFirstRun)) { _ in
             // The sender starts the assistant on `appState`; this window only
-            // gets its splash sheet out of the way.
-            isSplashPresented = false
+            // gets its sheets out of the way.
+            pendingPresentation?.cancel()
+            pendingPresentation = nil
+            activeSheet = nil
         }
-        .sheet(isPresented: $isSplashPresented) {
-            SplashView()
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .splash: SplashView()
+            case .bugReport(let context): BugReportView(context: context)
+            }
         }
     }
 
@@ -80,6 +113,31 @@ struct ContentView: View {
         }
     }
 
+    /// Swapping one sheet for another has to go through `nil`, otherwise
+    /// AppKit is still tearing the first one down when the second is asked to
+    /// appear and neither ends up on screen.
+    ///
+    /// Any deferred presentation is cancelled first: a second request
+    /// arriving inside that window would otherwise be overwritten when the
+    /// earlier task woke up and applied its now-stale sheet, reopening the
+    /// wrong dialog or the wrong log context.
+    private func present(_ sheet: ActiveSheet) {
+        pendingPresentation?.cancel()
+        pendingPresentation = nil
+
+        guard let current = activeSheet, current != sheet else {
+            activeSheet = sheet
+            return
+        }
+        activeSheet = nil
+        pendingPresentation = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            // `try?` swallows the cancellation error, so check it directly.
+            guard !Task.isCancelled else { return }
+            activeSheet = sheet
+        }
+    }
+
     /// Shows the splash once per launch unless the user turned it off (or we
     /// are running under XCTest, where a modal sheet would get in the way).
     /// The setup assistant takes the whole window on a fresh install, so the
@@ -92,6 +150,6 @@ struct ContentView: View {
               !SplashLaunchGate.hasPresented else { return }
         SplashLaunchGate.hasPresented = true
         guard !appState.firstRun.isActive, !appState.firstRun.shouldPresentAtLaunch else { return }
-        isSplashPresented = true
+        activeSheet = .splash
     }
 }

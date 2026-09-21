@@ -28,6 +28,16 @@ struct GarageApp: App {
                     showSplash()
                 }
             }
+            CommandGroup(replacing: .help) {
+                Button("Garage Support Guide") {
+                    NSWorkspace.shared.open(BugReportLinks.troubleshooting)
+                }
+                Divider()
+                Button("Report a Bug…") {
+                    showDialog(.garageShowBugReport)
+                }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+            }
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesButton(updater: appState.updater)
                 Button("Setup Assistant…") {
@@ -56,11 +66,22 @@ struct GarageApp: App {
 
     /// Brings the main window forward and asks it to present the splash.
     private func showSplash() {
+        showDialog(.garageShowSplash)
+    }
+
+    /// Menu commands fire with no window context, so surface the main window
+    /// before asking `ContentView` to put a sheet on it.
+    private func showDialog(_ notification: Notification.Name) {
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows where window.title == "Garage" {
             window.makeKeyAndOrderFront(nil)
         }
-        NotificationCenter.default.post(name: .garageShowSplash, object: nil)
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+
+    /// Brings the main window forward and re-runs the first-run setup assistant.
+    private func showFirstRun() {
+        showDialog(.garageShowFirstRun)
     }
 
     /// Re-runs the setup assistant: opens the main window (recreating it when a
