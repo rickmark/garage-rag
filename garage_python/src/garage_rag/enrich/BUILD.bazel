@@ -5,12 +5,17 @@ py_library(
     srcs = [
         "__init__.py",
         "egress.py",
+        "facts.py",
+        "llama_xpc_provider.py",
     ],
     imports = ["../.."],
     visibility = ["//visibility:public"],
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//anthropic",
+        "@pypi//langextract",
+        "@pypi//sqlalchemy",
     ],
 )

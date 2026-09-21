@@ -27,6 +27,8 @@ dependencies = [
     # OCR
     "pytesseract>=0.3.13",
     "pillow>=11.0",
+    # fact extraction from documents (https://github.com/google/langextract)
+    "langextract>=1.7.0",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
     "mcp[cli]==2.1.0",
     # plumbing

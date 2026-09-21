@@ -13,6 +13,7 @@ public struct DocumentListItem: Identifiable, Hashable, Sendable {
     public let lang: String
     public let byteSize: Int64
     public let chunkCount: Int
+    public let factCount: Int
     public let state: String
     public let ingestedAt: String
 
@@ -27,6 +28,7 @@ public struct DocumentListItem: Identifiable, Hashable, Sendable {
         self.lang = summary.lang
         self.byteSize = summary.byteSize
         self.chunkCount = Int(summary.chunkCount)
+        self.factCount = Int(summary.factCount)
         self.state = summary.state
         self.ingestedAt = summary.ingestedAt
     }
@@ -67,6 +69,29 @@ public struct DocumentChunkItem: Identifiable, Hashable, Sendable {
     }
 }
 
+/// A single fact extracted from a document, as returned by the gRPC GetDocument endpoint.
+public struct DocumentFactItem: Identifiable, Hashable, Sendable {
+    public let id: Int64
+    public let ord: Int
+    public let fact: String
+    public let factClass: String
+    public let attributesJSON: String
+    public let charStart: Int
+    public let charEnd: Int
+    public let extractor: String
+
+    public init(fact: Garage_DocumentFactInfo) {
+        self.id = fact.id
+        self.ord = Int(fact.ord)
+        self.fact = fact.fact
+        self.factClass = fact.factClass
+        self.attributesJSON = fact.attributesJson
+        self.charStart = Int(fact.charStart)
+        self.charEnd = Int(fact.charEnd)
+        self.extractor = fact.extractor
+    }
+}
+
 /// Author attribution for a document.
 public struct DocumentAuthorItem: Identifiable, Hashable, Sendable {
     public var id: String { "\(name)_\(role)" }
@@ -101,6 +126,7 @@ public struct DocumentDetailItem: Identifiable, Hashable, Sendable {
     public let ingestedAt: String
     public let authors: [DocumentAuthorItem]
     public let chunks: [DocumentChunkItem]
+    public let facts: [DocumentFactItem]
 
     public init(response: Garage_GetDocumentResponse) {
         let document = response.document
@@ -122,6 +148,7 @@ public struct DocumentDetailItem: Identifiable, Hashable, Sendable {
         self.ingestedAt = document.ingestedAt
         self.authors = document.authors.map { DocumentAuthorItem(author: $0) }
         self.chunks = response.chunks.map { DocumentChunkItem(chunk: $0) }
+        self.facts = response.facts.map { DocumentFactItem(fact: $0) }
     }
 
     public var displayTitle: String {

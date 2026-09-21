@@ -104,6 +104,11 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.BackfillRequest.SerializeToString,
                 response_deserializer=garage__pb2.BackfillStatus.FromString,
                 _registered_method=True)
+        self.EnrichFacts = channel.unary_stream(
+                '/garage.GarageService/EnrichFacts',
+                request_serializer=garage__pb2.EnrichFactsRequest.SerializeToString,
+                response_deserializer=garage__pb2.EnrichFactsStatus.FromString,
+                _registered_method=True)
         self.Reconcile = channel.unary_unary(
                 '/garage.GarageService/Reconcile',
                 request_serializer=garage__pb2.ReconcileRequest.SerializeToString,
@@ -322,6 +327,12 @@ class GarageServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Backfill(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EnrichFacts(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -556,6 +567,11 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.Backfill,
                     request_deserializer=garage__pb2.BackfillRequest.FromString,
                     response_serializer=garage__pb2.BackfillStatus.SerializeToString,
+            ),
+            'EnrichFacts': grpc.unary_stream_rpc_method_handler(
+                    servicer.EnrichFacts,
+                    request_deserializer=garage__pb2.EnrichFactsRequest.FromString,
+                    response_serializer=garage__pb2.EnrichFactsStatus.SerializeToString,
             ),
             'Reconcile': grpc.unary_unary_rpc_method_handler(
                     servicer.Reconcile,
@@ -1041,6 +1057,33 @@ class GarageService:
             '/garage.GarageService/Backfill',
             garage__pb2.BackfillRequest.SerializeToString,
             garage__pb2.BackfillStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnrichFacts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/garage.GarageService/EnrichFacts',
+            garage__pb2.EnrichFactsRequest.SerializeToString,
+            garage__pb2.EnrichFactsStatus.FromString,
             options,
             channel_credentials,
             insecure,

@@ -848,6 +848,56 @@ def backfill(
             console.print(f"  {row.slug}: {summary}")
 
 
+@app.command(name="enrich-facts")
+def enrich_facts(
+    source: Annotated[str, typer.Option("--source", "-s", help='Source slug, or "*" for all sources.')] = "*",
+    document_id: Annotated[int | None, typer.Option("--document-id", help="Extract facts for just this one document, ignoring --source.")] = None,
+    model: Annotated[str | None, typer.Option("--model", "-m", help="Fact-distillation model slug/ref. Default: gemma2:2b.")] = None,
+    provider: Annotated[str, typer.Option("--provider", help='Inference backend: "ollama" (default, real inference) or "llama_xpc".')] = "ollama",
+) -> None:
+    """Distill documents into atomic facts. Re-extraction replaces a document's prior facts."""
+    from garage_rag.enrich.facts import DEFAULT_MODEL_ID, extract_and_store_facts
+
+    model_id = model or DEFAULT_MODEL_ID
+
+    with session_scope() as session:
+        if document_id:
+            document = session.get(Document, document_id)
+            documents = [document] if document else []
+            if not documents:
+                console.print(f"[red]document {document_id} not found[/red]")
+                raise typer.Exit(code=1)
+        else:
+            query = session.query(Document)
+            if source and source != "*":
+                query = query.join(Source, Document.source_id == Source.id).filter(Source.slug == source)
+            documents = query.order_by(Document.id).all()
+
+        if not documents:
+            console.print("[yellow]no documents to enrich[/yellow]")
+            raise typer.Exit(code=1)
+
+        console.print(f"[cyan]enriching[/cyan] {len(documents):,} document(s) via [cyan]{provider}[/cyan]/{model_id}")
+        failed = 0
+        total_facts = 0
+        with console.status("enriching...") as status:
+            for i, document in enumerate(documents, start=1):
+                status.update(f"{i}/{len(documents)}: {document.uri or document.id}")
+                try:
+                    facts = extract_and_store_facts(session, document, model_id=model_id, provider=provider)
+                    session.commit()
+                    total_facts += len(facts)
+                except Exception as exc:
+                    session.rollback()
+                    failed += 1
+                    console.print(f"  [red]{document.uri or document.id}[/red]: {exc}")
+
+        summary = f"{len(documents) - failed}/{len(documents)} documents enriched, {total_facts:,} facts extracted"
+        if failed:
+            summary += f", [red]{failed} failed[/red]"
+        console.print(summary)
+
+
 @app.command()
 def reconcile(
     source: Annotated[str, typer.Option("--source", "-s", help="Source slug.")],

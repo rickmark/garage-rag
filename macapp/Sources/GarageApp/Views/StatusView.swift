@@ -621,6 +621,10 @@ struct StatusView: View {
                 Text("Embedding…")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.blue)
+            } else if stats.unembeddedChunks == 0 && stats.totalChunks > 0 {
+                Text("Complete")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.green)
             } else {
                 Text("\(stats.unembeddedChunks)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))

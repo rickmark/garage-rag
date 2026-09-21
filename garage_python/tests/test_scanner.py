@@ -161,6 +161,27 @@ def test_scan_sqlite_directory(tmp_path: Path) -> None:
     assert res.details["databases_count"] == 2
 
 
+def test_scan_sqlite_apple_messages_counts_threads_not_messages(tmp_path: Path) -> None:
+    db_file = tmp_path / "chat.db"
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT);")
+    cursor.execute("CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT);")
+    cursor.execute("CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);")
+    cursor.executemany("INSERT INTO chat (guid) VALUES (?);", [("chat1",), ("chat2",)])
+    cursor.executemany(
+        "INSERT INTO message (text) VALUES (?);",
+        [(f"msg{i}",) for i in range(50)],
+    )
+    cursor.executemany("INSERT INTO handle (id) VALUES (?);", [("+15551234",)])
+    conn.commit()
+    conn.close()
+
+    res = scan_sqlite(db_file, source_slug="apple-sms")
+    assert res.item_count == 2  # threads (chats), not the 50 messages + 1 handle
+    assert res.item_type == "threads"
+
+
 # ---------------------------------------------------------------------------
 # 4. Maildir Scanner Tests
 # ---------------------------------------------------------------------------

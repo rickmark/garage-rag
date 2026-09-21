@@ -42,10 +42,13 @@ from garage_rag.proto.garage_pb2 import (
     DocumentChunkInfo,
     DocumentChunkPayload,
     DocumentDetail,
+    DocumentFactInfo,
     DocumentSummary,
     DropModelRequest,
     DropModelResponse,
     EmbeddingChunkItem,
+    EnrichFactsRequest,
+    EnrichFactsStatus,
     ExtractChunk,
     ExtractRequest,
     ExtractResponse,
@@ -252,7 +255,7 @@ class GarageRpcServicer(GarageServiceServicer):
         from sqlalchemy import func, or_
 
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Chunk, Document, Source
+        from garage_rag.db.models import Chunk, Document, Fact, Source
 
         with session_scope() as session:
             query = session.query(Document).join(Source, Document.source_id == Source.id)
@@ -280,12 +283,19 @@ class GarageRpcServicer(GarageServiceServicer):
 
             doc_ids = [d.id for d in documents]
             chunk_counts: dict[int, int] = {}
+            fact_counts: dict[int, int] = {}
             slugs_by_doc_id: dict[int, str] = {}
             if doc_ids:
                 chunk_counts = dict(
                     session.query(Chunk.document_id, func.count(Chunk.id))
                     .filter(Chunk.document_id.in_(doc_ids))
                     .group_by(Chunk.document_id)
+                    .all()
+                )
+                fact_counts = dict(
+                    session.query(Fact.document_id, func.count(Fact.id))
+                    .filter(Fact.document_id.in_(doc_ids))
+                    .group_by(Fact.document_id)
                     .all()
                 )
                 slugs_by_doc_id = dict(
@@ -309,6 +319,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     chunk_count=chunk_counts.get(d.id, 0),
                     state=str(d.state),
                     ingested_at=d.ingested_at.isoformat() if d.ingested_at else "",
+                    fact_count=fact_counts.get(d.id, 0),
                 )
                 for d in documents
             ]
@@ -322,7 +333,7 @@ class GarageRpcServicer(GarageServiceServicer):
     def GetDocument(self, request: GetDocumentRequest, context: grpc.ServicerContext) -> GetDocumentResponse:
         """Fetch a single document's metadata and its chunks."""
         from garage_rag.db.engine import session_scope
-        from garage_rag.db.models import Chunk, Document, Source
+        from garage_rag.db.models import Chunk, Document, Fact, Source
 
         with session_scope() as session:
             document = session.get(Document, request.document_id)
@@ -337,6 +348,13 @@ class GarageRpcServicer(GarageServiceServicer):
                 session.query(Chunk)
                 .filter(Chunk.document_id == document.id)
                 .order_by(Chunk.ord.asc())
+                .all()
+            )
+
+            facts = (
+                session.query(Fact)
+                .filter(Fact.document_id == document.id)
+                .order_by(Fact.ord.asc())
                 .all()
             )
 
@@ -382,10 +400,25 @@ class GarageRpcServicer(GarageServiceServicer):
                 for c in chunks
             ]
 
+            proto_facts = [
+                DocumentFactInfo(
+                    id=f.id,
+                    ord=f.ord,
+                    fact=f.fact,
+                    fact_class=f.fact_class or "",
+                    attributes_json=json.dumps(f.attributes) if f.attributes else "",
+                    char_start=f.char_start or 0,
+                    char_end=f.char_end or 0,
+                    extractor=f.extractor or "",
+                )
+                for f in facts
+            ]
+
         return GetDocumentResponse(
             document=detail,
             chunks=proto_chunks,
-            formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks",
+            formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks, {len(proto_facts)} facts",
+            facts=proto_facts,
         )
 
     # -----------------------------------------------------------------------
@@ -701,6 +734,74 @@ class GarageRpcServicer(GarageServiceServicer):
                     progress_message=f"{row.slug}: {summary}",
                     formatted_output=f"{row.slug}: {summary}",
                 )
+
+    def EnrichFacts(self, request: EnrichFactsRequest, context: grpc.ServicerContext) -> Iterator[EnrichFactsStatus]:
+        """Distill documents into facts, streaming EnrichFactsStatus events per document."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Document, Source
+        from garage_rag.enrich.facts import DEFAULT_MODEL_ID, DEFAULT_PROVIDER, extract_and_store_facts
+
+        model_id = request.model_id or DEFAULT_MODEL_ID
+        provider = request.provider or DEFAULT_PROVIDER
+
+        with session_scope() as session:
+            if request.document_id:
+                documents = [session.get(Document, request.document_id)]
+                documents = [d for d in documents if d is not None]
+                if not documents:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"document {request.document_id} not found")
+            else:
+                query = session.query(Document)
+                if request.source and request.source != "*":
+                    query = query.join(Source, Document.source_id == Source.id).filter(Source.slug == request.source)
+                documents = query.order_by(Document.id).all()
+
+            total = len(documents)
+            processed = 0
+            failed = 0
+
+            if total == 0:
+                yield EnrichFactsStatus(
+                    total=0,
+                    is_complete=True,
+                    progress=1.0,
+                    progress_message="No documents to enrich.",
+                    formatted_output="No documents to enrich.",
+                )
+                return
+
+            for document in documents:
+                try:
+                    facts = extract_and_store_facts(session, document, model_id=model_id, provider=provider)
+                    session.commit()
+                    processed += 1
+                    yield EnrichFactsStatus(
+                        document_uri=document.uri or "",
+                        document_id=document.id,
+                        total=total,
+                        processed=processed,
+                        facts_extracted=len(facts),
+                        failed=failed,
+                        is_complete=processed + failed == total,
+                        progress=(processed + failed) / total,
+                        progress_message=f"{document.uri or document.id}: {len(facts)} facts",
+                        formatted_output=f"{processed + failed}/{total} documents, {len(facts)} facts extracted",
+                    )
+                except Exception as exc:
+                    session.rollback()
+                    failed += 1
+                    yield EnrichFactsStatus(
+                        document_uri=document.uri or "",
+                        document_id=document.id,
+                        total=total,
+                        processed=processed,
+                        failed=failed,
+                        is_complete=processed + failed == total,
+                        progress=(processed + failed) / total,
+                        error_message=str(exc),
+                        progress_message=f"{document.uri or document.id}: failed ({exc})",
+                        formatted_output=f"{processed + failed}/{total} documents, {failed} failed",
+                    )
 
     def Reconcile(self, request: ReconcileRequest, context: grpc.ServicerContext) -> ReconcileResponse:
         """Delete documents whose source files no longer exist."""

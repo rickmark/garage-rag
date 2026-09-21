@@ -209,6 +209,19 @@ public struct GarageConfigFile: Codable {
     public let models: [ModelPresetEntry]?
 }
 
+/// The on-disk shape of `models.json`: presets grouped by what they're used for,
+/// rather than one flat list. `text_embedding` feeds the embedding model
+/// picker; `fact_distil` feeds the (generative) fact-distillation model picker.
+private struct ModelsManifest: Codable {
+    let textEmbedding: [ModelPresetEntry]?
+    let factDistil: [ModelPresetEntry]?
+
+    enum CodingKeys: String, CodingKey {
+        case textEmbedding = "text_embedding"
+        case factDistil = "fact_distil"
+    }
+}
+
 /// Utility for discovering and parsing Garage configuration files and model presets.
 public enum GarageConfigLoader {
     /// Candidate file URLs where `garage.json` / `.garage.json` might reside.
@@ -459,45 +472,78 @@ public enum GarageConfigLoader {
         ),
     ]
 
-    /// Loads model presets from models.json or configuration files.
+    /// Built-in fallback presets for fact distillation (used when models.json is missing).
+    public static let defaultFactDistilPresets: [ModelPresetEntry] = [
+        ModelPresetEntry(
+            name: "Gemma 2 2B Instruct",
+            modelId: "google/gemma-2-2b-it",
+            slug: "gemma2-2b",
+            modelRef: "gemma2-2b",
+            provider: "llama_xpc",
+            nativeDims: nil,
+            defaultDims: nil,
+            contextSize: 8192,
+            downloadModelId: "bartowski/gemma-2-2b-it-GGUF",
+            downloadFile: "gemma-2-2b-it-Q4_K_M.gguf",
+            sha256: "e0aee85060f168f0f2d8473d7ea41ce2f3230c1bc1374847505ea599288a7787",
+            description: "Compact instruction-tuned model used to distill documents into atomic facts for the enrichment pipeline.",
+            useCases: ["Fact extraction / distillation"],
+            featured: true
+        ),
+    ]
+
+    /// Loads text-embedding model presets from models.json or configuration files.
     public static func loadModelPresets(fileURL: URL? = nil) -> [ModelPresetEntry] {
-        if let explicit = fileURL, FileManager.default.fileExists(atPath: explicit.path) {
-            if let parsed = decodeModelPresets(from: explicit), !parsed.isEmpty {
-                return parsed
-            }
-        }
-
-        // Try standard models.json path
-        let modelsPath = Paths.modelsJSON
-        if FileManager.default.fileExists(atPath: modelsPath.path) {
-            if let parsed = decodeModelPresets(from: modelsPath), !parsed.isEmpty {
-                return parsed
-            }
-        }
-
-        // Try candidate config files
-        for url in candidateConfigFiles {
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            if let parsed = decodeModelPresets(from: url), !parsed.isEmpty {
-                return parsed
-            }
-        }
-
-        return defaultPresets
+        loadModelManifest(fileURL: fileURL).textEmbedding ?? defaultPresets
     }
 
-    private static func decodeModelPresets(from url: URL) -> [ModelPresetEntry]? {
+    /// Loads fact-distillation model presets (generative models used to glean facts
+    /// out of documents) from models.json's `fact_distil` section.
+    public static func loadFactDistilPresets(fileURL: URL? = nil) -> [ModelPresetEntry] {
+        loadModelManifest(fileURL: fileURL).factDistil ?? defaultFactDistilPresets
+    }
+
+    /// Resolves models.json (or a candidate config file) into its two preset
+    /// groups. Returns `nil` for a group that no source provided at all, so
+    /// callers can distinguish "found the file, group was empty" from
+    /// "never found a file" and fall back to built-in defaults only for the
+    /// latter.
+    private static func loadModelManifest(fileURL: URL?) -> (textEmbedding: [ModelPresetEntry]?, factDistil: [ModelPresetEntry]?) {
+        var candidates: [URL] = []
+        if let explicit = fileURL {
+            candidates.append(explicit)
+        }
+        candidates.append(Paths.modelsJSON)
+        candidates.append(contentsOf: candidateConfigFiles)
+
+        for url in candidates {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            if let manifest = decodeModelManifest(from: url) {
+                return manifest
+            }
+        }
+
+        return (nil, nil)
+    }
+
+    private static func decodeModelManifest(from url: URL) -> (textEmbedding: [ModelPresetEntry]?, factDistil: [ModelPresetEntry]?)? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
 
-        // 1. Try decoding array of ModelPresetEntry directly (e.g. models.json)
-        if let list = try? decoder.decode([ModelPresetEntry].self, from: data), !list.isEmpty {
-            return list
+        // 1. Current models.json shape: presets grouped by use (text_embedding / fact_distil).
+        if let manifest = try? decoder.decode(ModelsManifest.self, from: data),
+           !(manifest.textEmbedding ?? []).isEmpty || !(manifest.factDistil ?? []).isEmpty {
+            return (manifest.textEmbedding, manifest.factDistil)
         }
 
-        // 2. Try decoding GarageConfigFile with models array
+        // 2. Legacy flat array of ModelPresetEntry (pre-grouping models.json).
+        if let list = try? decoder.decode([ModelPresetEntry].self, from: data), !list.isEmpty {
+            return (list, nil)
+        }
+
+        // 3. garage.json with an embedded `models` array.
         if let config = try? decoder.decode(GarageConfigFile.self, from: data), let models = config.models, !models.isEmpty {
-            return models
+            return (models, nil)
         }
 
         return nil

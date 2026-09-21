@@ -48,6 +48,17 @@ py_test(
 )
 
 py_test(
+    name = "test_facts",
+    srcs = ["test_facts.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/enrich",
+        "@pypi//langextract",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_lmstudio",
     srcs = ["test_lmstudio.py"],
     deps = [
@@ -199,6 +210,7 @@ test_suite(
         ":test_dedicated_rpcs",
         ":test_egress_block",
         ":test_embed_xpc",
+        ":test_facts",
         ":test_grpc_serialization",
         ":test_grpc_server",
         ":test_ingest_gateway",
