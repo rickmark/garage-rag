@@ -1,3 +1,9 @@
+# Every target here signs with the "Developer ID Application/Installer: Richard
+# Penwell" identities and notarizes through the "Primary" keychain profile, so
+# none of them can be built anywhere but a machine holding those credentials.
+# They are tagged `manual` to keep `//...` (and therefore CI) out of them; build
+# them by name, e.g. `aspect build //macapp:installer`.
+
 load("//bazel:lipo.bzl", "macos_lipo_app")
 load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
@@ -8,6 +14,7 @@ macos_lipo_app(
     app = "//macapp/Sources/GarageApp:GarageApp",
     arch = "arm64",
     signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -16,6 +23,7 @@ macos_lipo_app(
     app = "//macapp/Sources/GarageApp:GarageApp",
     arch = "x86_64",
     signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -24,6 +32,7 @@ notarytool(
     name = "GarageAppNotary_arm64",
     app = ":GarageApp_arm64",
     keychain_profile = "Primary",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -31,6 +40,7 @@ notarytool(
     name = "GarageAppNotary_x86_64",
     app = ":GarageApp_x86_64",
     keychain_profile = "Primary",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -41,6 +51,7 @@ notarytool(
         ":GarageApp_x86_64",
     ],
     keychain_profile = "Primary",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -51,6 +62,7 @@ pkgbuild(
     identifier = "me.rickmark.garage-rag.pkg",
     install_location = "/Applications",
     signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -60,6 +72,7 @@ pkgbuild(
     identifier = "me.rickmark.garage-rag.pkg",
     install_location = "/Applications",
     signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -69,6 +82,7 @@ filegroup(
         ":GarageInstaller_arm64",
         ":GarageInstaller_x86_64",
     ],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -77,6 +91,7 @@ notarytool(
     name = "GarageInstallerNotary_arm64",
     keychain_profile = "Primary",
     pkg = ":GarageInstaller_arm64",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -84,6 +99,7 @@ notarytool(
     name = "GarageInstallerNotary_x86_64",
     keychain_profile = "Primary",
     pkg = ":GarageInstaller_x86_64",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -94,6 +110,7 @@ notarytool(
         ":GarageInstaller_arm64",
         ":GarageInstaller_x86_64",
     ],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -108,6 +125,7 @@ notarytool(
         ":GarageInstallerNotary_arm64",
         ":GarageInstallerNotary_x86_64",
     ],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -120,11 +138,13 @@ filegroup(
         ":GarageInstaller_arm64",
         ":GarageInstaller_x86_64",
     ],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 pkg_install(
     name = "install",
     pkg = ":GarageInstaller_arm64",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )

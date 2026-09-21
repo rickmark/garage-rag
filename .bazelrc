@@ -37,3 +37,9 @@ build:developer_id --platforms=//bazel:universal_developer_id --macos_cpus=arm64
 build:universal --platforms=//bazel:universal_developer_id --macos_cpus=arm64,x86_64
 build:appstore --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64 --compilation_mode=opt
 build:store --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64
+
+# Ephemeral CI runners have no Developer ID identity in their keychain, so the
+# default `universal_developer_id` platform can't codesign there. `--config=ci`
+# is added automatically by .aspect/config.axl when CI is set; point it at the
+# adhoc platform, which signs with "-" (see the //bazel:is_adhoc selects).
+build:ci --platforms=//bazel:adhoc

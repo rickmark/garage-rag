@@ -13,9 +13,11 @@ py_library(
     imports = ["../.."],
     visibility = ["//visibility:public"],
     deps = [
+        "//garage_python/src/garage_rag/attribute",
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/extract",
         "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/mcp_server",
@@ -23,7 +25,6 @@ py_library(
         "//garage_python/src/garage_rag/search",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//grpcio",
-        "@pypi//rich",
         "@pypi//sqlalchemy",
     ],
 )

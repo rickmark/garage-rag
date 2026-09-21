@@ -1,3 +1,8 @@
+# The gRPC client lives in //garage_python/src/garage_rag/service, which depends
+# back on this package. Both directions are function-local imports at runtime, so
+# keep the Bazel dep graph acyclic by not materializing this one.
+# gazelle:python_ignore_dependencies garage_rag.service.client
+
 load("@aspect_rules_py//py:defs.bzl", "py_library")
 
 py_library(
