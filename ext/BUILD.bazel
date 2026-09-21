@@ -77,6 +77,18 @@ alias(
 )
 
 alias(
+    name = "Sparkle",
+    actual = "//ext/sparkle:Sparkle",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sparkle",
+    actual = ":Sparkle",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "PythonKit",
     actual = "//ext/pythonkit:PythonKit_swift",
     visibility = ["//visibility:public"],

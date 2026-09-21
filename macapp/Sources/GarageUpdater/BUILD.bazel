@@ -1,0 +1,22 @@
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+# `srcs` is listed rather than globbed because the two backend files define the
+# same `UpdaterBackend` and exactly one of them may be compiled: the Sparkle one
+# for Developer ID (and local ad-hoc) builds, the inert one for the App Store.
+# The same select keeps `@sparkle` out of the App Store build's graph entirely.
+swift_library(
+    name = "GarageUpdater",
+    srcs = [
+        "UpdaterConfiguration.swift",
+        "UpdaterService.swift",
+    ] + select({
+        "//bazel:is_store": ["AppStoreUpdaterBackend.swift"],
+        "//conditions:default": ["SparkleUpdaterBackend.swift"],
+    }),
+    module_name = "GarageUpdater",
+    visibility = ["//visibility:public"],
+    deps = select({
+        "//bazel:is_store": [],
+        "//conditions:default": ["//ext/sparkle:Sparkle"],
+    }),
+)

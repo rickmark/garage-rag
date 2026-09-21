@@ -163,6 +163,67 @@ unless `LC_ALL=C` is set in its environment (`PostgresService.swift` does
 this). Locale initialization on this platform spins up threads before
 postgres's fork-safety check runs.
 
+## Auto-update (Developer ID only)
+
+Developer ID builds update themselves through [Sparkle](https://sparkle-project.org),
+vendored as a prebuilt framework in `//ext/sparkle`. App Store builds embed no
+Sparkle at all — Apple rejects apps that update themselves — so the whole thing
+is behind `select()`s on `//bazel:is_store`:
+
+- `//macapp/Sources/GarageUpdater` compiles `SparkleUpdaterBackend.swift` for
+  Developer ID (and local ad-hoc) builds and the inert `AppStoreUpdaterBackend.swift`
+  for the store, which is also what keeps `@sparkle` out of that dependency graph.
+- `Sparkle.plist` (SUFeedURL, SUPublicEDKey, SUScheduledCheckInterval) is merged
+  into the app's `Info.plist` for the same configurations.
+
+The app never shows a disabled "Check for Updates…"; when the running build
+can't update itself the item is absent and the splash explains why instead.
+
+### One-time signing key setup
+
+Sparkle verifies every downloaded update against an EdDSA public key baked into
+the app, so the key pair has to exist before the first release:
+
+```bash
+aspect run //ext/sparkle:generate_keys
+```
+
+That stores the private key in your login Keychain — it is never committed — and
+prints the public key. Paste it into `macapp/Sources/GarageApp/Sparkle.plist` in
+place of `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`. Until you do, the app reports
+"This build was made without a Sparkle signing key" rather than fetching a feed
+it could not verify.
+
+### Cutting a release
+
+1. `aspect build //macapp/package:GarageApp` stages and signs the app, producing
+   `bazel-bin/macapp/package/GarageApp.zip` — a zip of `Garage.app`, which is
+   exactly the shape Sparkle wants to download. This is also the step that
+   re-signs Sparkle's nested code (see below).
+2. `aspect run //macapp/package:notarize_all` submits that archive and the
+   installer `.pkg` to the notary service.
+3. Copy the archive into a release directory (one per version is fine) and run
+   `aspect run //ext/sparkle:generate_appcast -- "$PWD/release-dir"`. It reads
+   each archive's `CFBundleShortVersionString`/`CFBundleVersion`, signs the entry
+   with the private key from the Keychain, and writes `appcast.xml` next to them.
+4. Upload the archives to the GitHub release, copy the generated `appcast.xml`
+   over `docs/appcast.xml`, and commit. GitHub Pages serves it at
+   `https://rickmark.github.io/garage-rag/appcast.xml`, which is the SUFeedURL.
+
+`//ext/sparkle:sign_update` signs a single archive if you need to patch an entry
+by hand. `//ext/sparkle:binary_delta` builds the delta patches `generate_appcast`
+attaches when it finds `BinaryDelta` alongside itself — without them every user
+downloads the whole app rather than a diff.
+
+### Why the framework is re-signed
+
+The hardened runtime turns on library validation, so a `Sparkle` dylib still
+carrying the Sparkle Project's Team ID would refuse to load into Garage.
+rules_apple's imported-framework processor re-signs `Sparkle.framework/Versions/B`
+with the embedding app's identity when it bundles it, and `macos_lipo_app`
+re-signs the nested `Updater.app` and `XPCServices/*.xpc` on the way to
+notarization.
+
 ## App architecture
 
 - `PostgresService` — owns a private cluster in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`, port 14824, database `garage-rag`. On first initialization it generates a random Postgres superuser password, stores it in the macOS Keychain, and creates the cluster with SCRAM authentication.

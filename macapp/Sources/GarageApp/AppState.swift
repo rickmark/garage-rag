@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import Combine
 import OSLog
+import GarageUpdater
 import IngestClient
 import PythonXPCService
 
@@ -26,6 +27,9 @@ final class AppState: ObservableObject {
     let llama: LlamaService
     let modelDownload: ModelDownloadService
     let volumeAccess: VolumeAccessService
+    /// Sparkle front end. Inert in App Store builds, which update
+    /// through the App Store rather than embedding Sparkle at all.
+    let updater = UpdaterService.shared
     @Published var ingestService: IngestService
     let xpcServices: XPCServiceManager
     @Published var osLogStreamService: OSLogStreamService
@@ -130,6 +134,7 @@ final class AppState: ObservableObject {
         self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.xpcServices.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.osLogStreamService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        updater.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
 
         do {
             lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil

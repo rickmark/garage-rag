@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle update feed for Developer ID builds of Garage, served at
+  https://rickmark.github.io/garage-rag/appcast.xml (the SUFeedURL in
+  macapp/Sources/GarageApp/Sparkle.plist).
+
+  Do not hand-edit the item entries: regenerate this file by running
+  //ext/sparkle:generate_appcast over the release directory, so every entry is
+  signed with the private EdDSA key from the login Keychain, then copy the
+  result here and commit it. See macapp/README.md for the full release flow.
+
+  An empty channel is a valid feed meaning "no updates available", which is what
+  this is until the first Developer ID release is published.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Garage</title>
+    <link>https://rickmark.github.io/garage-rag/appcast.xml</link>
+    <description>Developer ID release feed for Garage.</description>
+    <language>en</language>
+  </channel>
+</rss>
