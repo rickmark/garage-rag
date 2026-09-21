@@ -79,6 +79,10 @@ copy_to_directory(
     srcs = [
         "//ext/python:python_3_13",
     ],
+    exclude_srcs_patterns = [
+        "**/test/**",
+        "**/test",
+    ],
     include_srcs_patterns = [
         "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13/**",
     ],

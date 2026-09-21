@@ -268,9 +268,13 @@ final class AppState: ObservableObject {
     func resetDatabase() async {
         do {
             try await postgres.resetDatabase()
-            if postgres.status == .running {
-                try? await mcp.start()
-                try? await grpc.start()
+            if postgres.status == .running || postgres.status == .needsMigration {
+                try await postgres.applyMigrations()
+                await runGarage(["sync"])
+                if postgres.status == .running {
+                    try? await mcp.start()
+                    try? await grpc.start()
+                }
                 await fetchRegisteredModels()
                 await fetchRegisteredSources()
                 await fetchCorpusStats()
@@ -521,12 +525,18 @@ final class AppState: ObservableObject {
             logger.warning("\(msg, privacy: .public)")
             return false
         }
+        let allSlugs = Set(sources.map(\.slug))
+        ingestService.setPendingSources(allSlugs)
+        defer {
+            ingestService.clearPendingSources()
+        }
         var allSucceeded = true
         for source in sources {
             if ingestService.isCancelling {
                 logger.info("ingestAllSources stopped because cancellation was requested.")
                 break
             }
+            ingestService.markSourceActive(source.slug)
             let sourceOptions = IngestOptions(
                 includeCode: options.includeCode || source.includeCode,
                 limit: options.limit,
@@ -549,12 +559,6 @@ final class AppState: ObservableObject {
     @discardableResult
     func ingestViaXPC(slug: String, options: IngestOptions = .default) async -> Bool {
         await ingestSource(slug: slug, options: options, mode: .xpcService)
-    }
-
-    /// Runs ingestion via the out-of-process standalone `garage ingest` CLI subprocess.
-    @discardableResult
-    func ingestViaCLI(slug: String, options: IngestOptions = .default) async -> Bool {
-        await ingestSource(slug: slug, options: options, mode: .cliProcess)
     }
 
     /// Runs embedding backfill in an independent process and log stream.

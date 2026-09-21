@@ -61,13 +61,13 @@ struct StatusView: View {
 
                 corpusOverviewSection
 
-                xpcServicesSection
-
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(sortedStatusItems) { item in
                         pageStatusCard(for: item)
                     }
                 }
+
+                xpcServicesSection
 
                 if !appState.lastCommandOutput.isEmpty {
                     GroupBox("Last Command Output") {

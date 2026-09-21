@@ -93,6 +93,37 @@ target_arch = sys.argv[2]
 signing_identity = sys.argv[3]
 options = sys.argv[4]
 
+# 0. Clean unneeded directories from the staged app bundle before signing
+for site_python_test in [
+    os.path.join(app_bundle, "Contents/Resources/site-python/test"),
+]:
+    if os.path.exists(site_python_test):
+        shutil.rmtree(site_python_test, ignore_errors=True)
+
+frameworks_dir = os.path.join(app_bundle, "Contents/Frameworks")
+if os.path.exists(frameworks_dir):
+    for fw in os.listdir(frameworks_dir):
+        if fw == "Python.framework" or fw.endswith(".framework"):
+            versions_dir = os.path.join(frameworks_dir, fw, "Versions")
+            if os.path.isdir(versions_dir):
+                for ver in os.listdir(versions_dir):
+                    lib_dir = os.path.join(versions_dir, ver, "lib")
+                    if os.path.isdir(lib_dir) and not os.path.islink(lib_dir):
+                        shutil.rmtree(lib_dir, ignore_errors=True)
+                    elif os.path.islink(lib_dir):
+                        try:
+                            os.unlink(lib_dir)
+                        except OSError:
+                            pass
+            fw_lib_dir = os.path.join(frameworks_dir, fw, "lib")
+            if os.path.isdir(fw_lib_dir) and not os.path.islink(fw_lib_dir):
+                shutil.rmtree(fw_lib_dir, ignore_errors=True)
+            elif os.path.islink(fw_lib_dir):
+                try:
+                    os.unlink(fw_lib_dir)
+                except OSError:
+                    pass
+
 MACHO_MAGICS = {
     b"\\xfe\\xed\\xfa\\xce", b"\\xce\\xfa\\xed\\xfe",
     b"\\xfe\\xed\\xfa\\xcf", b"\\xcf\\xfa\\xed\\xfe",

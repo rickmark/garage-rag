@@ -94,13 +94,11 @@ final class IngestClientTests: XCTestCase {
     }
 
     func testIngestExecutionModeEnumCases() {
-        XCTAssertEqual(IngestExecutionMode.allCases.count, 2)
+        XCTAssertEqual(IngestExecutionMode.allCases.count, 1)
         XCTAssertEqual(IngestExecutionMode.xpcService.rawValue, "xpc")
-        XCTAssertEqual(IngestExecutionMode.cliProcess.rawValue, "cli_process")
-
-        XCTAssertEqual(IngestExecutionMode.cliProcess.shortTitle, "CLI Process")
-        XCTAssertTrue(IngestExecutionMode.cliProcess.title.contains("CLI"))
-        XCTAssertTrue(IngestExecutionMode.cliProcess.modeDescription.contains("garage ingest"))
+        XCTAssertEqual(IngestExecutionMode.xpcService.shortTitle, "XPC Helper")
+        XCTAssertTrue(IngestExecutionMode.xpcService.title.contains("XPC"))
+        XCTAssertTrue(IngestExecutionMode.xpcService.modeDescription.contains("GarageIngestXPCService"))
     }
 
     func testVolumeAccessTestRequestAndResult() throws {

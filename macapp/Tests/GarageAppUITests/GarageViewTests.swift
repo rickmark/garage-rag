@@ -86,7 +86,7 @@ final class GarageViewTests: XCTestCase {
     @MainActor
     func testLlamaModelsViewHosting() {
         let appState = AppState()
-        let llamaModelsView = LlamaModelsView()
+        let llamaModelsView = ModelsView()
             .environmentObject(appState)
         let hostingController = NSHostingController(rootView: llamaModelsView)
         XCTAssertNotNil(hostingController.view)

@@ -17,7 +17,6 @@ struct SourcesView: View {
     // Arbitrary Ingest Parameters State
     @State private var customSourceSlug: String = "*"
     @State private var customSourceInput: String = ""
-    @State private var customExecutionMode: IngestExecutionMode = .xpcService
     @State private var customIncludeCode: Bool = false
     @State private var customForce: Bool = false
     @State private var customLimitEnabled: Bool = false
@@ -264,25 +263,6 @@ struct SourcesView: View {
     private var configuredSourcesSection: some View {
         GroupBox("Configured Ingest Sources") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Text("Ingest Execution Mode:")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Picker("Ingest Mode", selection: $appState.ingestService.executionMode) {
-                        ForEach(IngestExecutionMode.allCases) { mode in
-                            Text(mode.shortTitle).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
-
-                    Text(appState.ingestService.executionMode.modeDescription)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .padding(.vertical, 2)
-
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(appState.registeredSources.count) source\(appState.registeredSources.count == 1 ? "" : "s") configured across config files and database.")
@@ -308,19 +288,7 @@ struct SourcesView: View {
                         }
                         .disabled(appState.ingestService.isCancelling)
                     } else {
-                        Menu {
-                            Button("Ingest All (\(appState.ingestService.executionMode.shortTitle))") {
-                                ingestAllSources()
-                            }
-                            Button("Ingest All via XPC Helper") {
-                                ingestAllSources(mode: .xpcService)
-                            }
-                            Button("Ingest All via CLI Process") {
-                                ingestAllSources(mode: .cliProcess)
-                            }
-                        } label: {
-                            Text("Ingest All Sources")
-                        } primaryAction: {
+                        Button("Ingest All Sources") {
                             ingestAllSources()
                         }
                         .disabled(appState.registeredSources.isEmpty || notReady)
@@ -449,20 +417,6 @@ struct SourcesView: View {
                     .disabled(notReady)
 
                     Menu {
-                        Button("Ingest (\(appState.ingestService.executionMode.shortTitle))") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode)
-                        }
-
-                        Button("Ingest via XPC Helper") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .xpcService)
-                        }
-
-                        Button("Ingest via CLI Process") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode, mode: .cliProcess)
-                        }
-
-                        Divider()
-
                         Button("Ingest (Include Code)") {
                             ingestSource(slug: source.slug, includeCode: true)
                         }
@@ -568,6 +522,38 @@ struct SourcesView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                } else if appState.ingestService.pendingSources.contains(source.slug) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.badge.checkmark")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text("Pending Ingest")
+                            .font(.caption.bold())
+                            .foregroundStyle(.orange)
+                        Text("• Queued in batch run…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                } else if source.documentCount == 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        Text("Pending Ingest:")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        if source.expectedElements > 0 {
+                            Text("\(source.expectedElements) item\(source.expectedElements == 1 ? "" : "s") found by scan • Not yet ingested")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("No documents indexed yet • Ready to ingest")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
                 } else if let progress = appState.ingestService.progressBySource[source.slug] {
                     HStack {
                         Image(systemName: progress.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
@@ -582,7 +568,7 @@ struct SourcesView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if source.expectedElements > 0 {
+                    if source.expectedElements > 0 && source.documentCount > 0 {
                         ProgressView(
                             value: Double(source.documentCount),
                             total: Double(max(source.documentCount, source.expectedElements))
@@ -606,7 +592,7 @@ struct SourcesView: View {
                         Spacer()
                     }
 
-                    if source.expectedElements > 0 {
+                    if source.expectedElements > 0 && source.documentCount > 0 {
                         ProgressView(
                             value: Double(source.documentCount),
                             total: Double(max(source.documentCount, source.expectedElements))
@@ -781,19 +767,6 @@ struct SourcesView: View {
                                     .frame(maxWidth: 280)
                             }
                         }
-                    }
-
-                    GridRow {
-                        Text("Execution Mode:")
-                            .font(.caption.bold())
-
-                        Picker("Execution Mode", selection: $customExecutionMode) {
-                            ForEach(IngestExecutionMode.allCases) { mode in
-                                Text(mode.shortTitle).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 320)
                     }
                 }
 
@@ -1177,19 +1150,19 @@ struct SourcesView: View {
         }
     }
 
-    private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false, mode: IngestExecutionMode? = nil) {
+    private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
         busy = true
         Task {
             let options = IngestOptions(includeCode: includeCode, force: force)
-            _ = await appState.ingestSource(slug: slug, options: options, mode: mode)
+            _ = await appState.ingestSource(slug: slug, options: options)
             busy = false
         }
     }
 
-    private func ingestAllSources(mode: IngestExecutionMode? = nil) {
+    private func ingestAllSources() {
         busy = true
         Task {
-            _ = await appState.ingestSource(slug: "*", mode: mode)
+            _ = await appState.ingestSource(slug: "*")
             busy = false
         }
     }
@@ -1290,7 +1263,6 @@ struct SourcesView: View {
         customArbitraryArgs = ""
         customGrpcHost = ""
         customGrpcPort = ""
-        customExecutionMode = appState.ingestService.executionMode
     }
 
     private var effectiveCustomSlug: String {
@@ -1369,8 +1341,7 @@ struct SourcesView: View {
         Task {
             _ = await appState.ingestSource(
                 slug: slug,
-                options: options,
-                mode: customExecutionMode
+                options: options
             )
             busy = false
         }

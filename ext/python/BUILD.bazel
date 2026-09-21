@@ -131,8 +131,14 @@ copy_to_directory(
     srcs = [":python_3_13"],
     out = "python_framework_raw",
     exclude_srcs_patterns = [
-        "**/Versions/3.13/lib/python3.13/test/**",
-        "**/Versions/3.13/lib/python3.13/test",
+        "**/Versions/*/lib/**",
+        "**/Versions/*/lib",
+        "**/Versions/3.13/lib/**",
+        "**/Versions/3.13/lib",
+        "**/Versions/Current/lib/**",
+        "**/Versions/Current/lib",
+        "**/lib/**",
+        "**/lib",
     ],
     include_srcs_patterns = [
         "python_3_13/Python.framework/**",

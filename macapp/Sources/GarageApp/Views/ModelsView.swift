@@ -433,7 +433,7 @@ struct ModelsView: View {
                         }
                     }
 
-                    if let task = activeTask {
+                    if !isDownloaded, let task = activeTask, task.status == .downloading || task.status == .queued {
                         VStack(alignment: .leading, spacing: 3) {
                             ProgressView(value: task.fractionCompleted)
                                 .progressViewStyle(.linear)
@@ -1254,6 +1254,9 @@ struct ModelsView: View {
     }
 
     private func isModelDownloading(item: UnifiedModelItem) -> Bool {
+        if isModelFileDownloaded(item: item) {
+            return false
+        }
         if let url = item.effectiveDownloadURL {
             return modelDownload.isModelDownloading(url: url)
         }
@@ -1264,12 +1267,16 @@ struct ModelsView: View {
     }
 
     private func getActiveDownloadTask(item: UnifiedModelItem) -> DownloadTaskInfo? {
-        modelDownload.activeDownloads.first {
-            $0.modelId == item.slug ||
+        if isModelFileDownloaded(item: item) {
+            return nil
+        }
+        return modelDownload.activeDownloads.first {
+            ($0.status == .downloading || $0.status == .queued) &&
+            ($0.modelId == item.slug ||
             $0.filename == item.effectiveFilename ||
             URL(fileURLWithPath: $0.filename).lastPathComponent == item.effectiveFilename ||
             (item.effectiveFilename != nil && URL(fileURLWithPath: item.effectiveFilename!).lastPathComponent == URL(fileURLWithPath: $0.filename).lastPathComponent) ||
-            $0.url == item.effectiveDownloadURL
+            $0.url == item.effectiveDownloadURL)
         }
     }
 

@@ -4,24 +4,21 @@ import OSLog
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "IngestService")
 
-/// Execution strategy for document ingestion.
+/// Execution strategy for document ingestion (XPC service).
 enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
     case xpcService = "xpc"
-    case cliProcess = "cli_process"
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .xpcService: return "Out-of-Process (XPC Helper)"
-        case .cliProcess: return "Out-of-Process (`garage ingest` CLI)"
         }
     }
 
     var shortTitle: String {
         switch self {
         case .xpcService: return "XPC Helper"
-        case .cliProcess: return "CLI Process"
         }
     }
 
@@ -29,8 +26,6 @@ enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .xpcService:
             return "Runs Python ingestion in a dedicated multi-threaded background process (GarageIngestXPCService) with crash isolation."
-        case .cliProcess:
-            return "Runs document ingestion out-of-process by executing the standalone `garage ingest` CLI process."
         }
     }
 }
@@ -49,6 +44,7 @@ final class IngestService: ObservableObject {
     @Published private(set) var isCancelling: Bool = false
     @Published private(set) var activeMode: IngestExecutionMode? = nil
     @Published private(set) var currentSource: String? = nil
+    @Published private(set) var pendingSources: Set<String> = []
     @Published private(set) var latestProgress: IngestProgressUpdate? = nil
     @Published private(set) var progressBySource: [String: IngestProgressUpdate] = [:]
     @Published private(set) var lastError: String? = nil
@@ -58,8 +54,6 @@ final class IngestService: ObservableObject {
 
     let xpcClient: IngestClient
     let postgres: PostgresService?
-    private var cliRunner: ProcessRunner?
-    private var cliProcess: Process?
     private let maxLogLines = 4000
     private var activeActivity: NSObjectProtocol? = nil
     private var osLogMonitorTask: Task<Void, Never>? = nil
@@ -122,6 +116,18 @@ final class IngestService: ObservableObject {
         lastError = nil
         lastSuccess = nil
         latestProgress = nil
+    }
+
+    func setPendingSources(_ slugs: Set<String>) {
+        self.pendingSources = slugs
+    }
+
+    func markSourceActive(_ slug: String) {
+        self.pendingSources.remove(slug)
+    }
+
+    func clearPendingSources() {
+        self.pendingSources.removeAll()
     }
 
     // MARK: - OSLogStore Monitoring
@@ -270,20 +276,14 @@ final class IngestService: ObservableObject {
     func cancel() async -> Bool {
         guard isRunning else { return false }
         isCancelling = true
-        let label = activeMode == .cliProcess ? "Ingest (CLI)" : "Ingest (XPC)"
-        logger.info("IngestService: requesting cancel for '\(self.currentSource ?? "source", privacy: .public)' in mode \(label, privacy: .public)")
+        let label = "Ingest (XPC)"
+        logger.info("IngestService: requesting cancel for '\(self.currentSource ?? "source", privacy: .public)'")
         let line = LogLine(
             stream: .stderr,
             text: "Cancelling ingestion for '\(currentSource ?? "source")'...",
             source: label
         )
         appendLog(line)
-
-        if activeMode == .cliProcess {
-            cliRunner?.terminate()
-            cliProcess?.terminate()
-            return true
-        }
 
         do {
             let success = try await xpcClient.cancelIngest()
@@ -299,7 +299,7 @@ final class IngestService: ObservableObject {
         }
     }
 
-    /// Performs ingestion for the given source slug with options and execution mode, streaming progress back to the UI.
+    /// Performs ingestion for the given source slug with options, streaming progress back to the UI.
     @discardableResult
     func ingest(
         slug: String,
@@ -307,11 +307,7 @@ final class IngestService: ObservableObject {
         mode: IngestExecutionMode? = nil
     ) async -> IngestResult {
         let targetMode = mode ?? executionMode
-        let commandLabel: String
-        switch targetMode {
-        case .cliProcess: commandLabel = "Ingest (CLI)"
-        case .xpcService: commandLabel = "Ingest (XPC)"
-        }
+        let commandLabel = "Ingest (XPC)"
 
         guard !isRunning else {
             let msg = "Ingestion is already running for \(currentSource ?? "another source")"
@@ -359,10 +355,6 @@ final class IngestService: ObservableObject {
                 ProcessInfo.processInfo.endActivity(act)
                 self.activeActivity = nil
             }
-        }
-
-        if targetMode == .cliProcess {
-            return await runCliIngest(slug: slug, options: options, commandLabel: commandLabel)
         }
 
         let selectedClient = xpcClient
@@ -429,90 +421,6 @@ final class IngestService: ObservableObject {
             let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
             appendLog(line)
             return IngestResult(succeeded: false, message: errorMsg)
-        }
-    }
-
-    private func runCliIngest(
-        slug: String,
-        options: IngestOptions,
-        commandLabel: String
-    ) async -> IngestResult {
-        guard FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) else {
-            let msg = "garage CLI executable not found at \(Paths.garageCLI.path)"
-            logger.error("\(msg, privacy: .public)")
-            let line = LogLine(stream: .stderr, text: msg, source: commandLabel)
-            appendLog(line)
-            lastError = msg
-            return IngestResult(succeeded: false, message: msg)
-        }
-
-        var args = ["ingest", "--source", slug]
-        if options.includeCode {
-            args.append("--include-code")
-        }
-        if options.force {
-            args.append("--force")
-        }
-        if let limit = options.limit {
-            args.append(contentsOf: ["--limit", "\(limit)"])
-        }
-        if !options.extraArguments.isEmpty {
-            args.append(contentsOf: options.extraArguments)
-        }
-
-        let runner = ProcessRunner()
-        self.cliRunner = runner
-
-        defer {
-            self.cliRunner = nil
-            self.cliProcess = nil
-        }
-
-        var env = ProcessInfo.processInfo.environment
-        if let postgres = self.postgres, let dbURL = try? postgres.connectionURL() {
-            env["GARAGE_DATABASE_URL"] = dbURL
-        }
-        if let lmStudioToken = try? LMStudioTokenStore.load() {
-            env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
-        }
-
-        let process: Process
-        do {
-            process = try runner.run(
-                executable: Paths.garageCLI,
-                arguments: args,
-                environment: env,
-                currentDirectory: Paths.garageWorkingDirectory,
-                source: commandLabel
-            ) { [weak self] line in
-                self?.appendLog(line)
-            }
-            self.cliProcess = process
-        } catch {
-            let errorMsg = "Failed to launch garage ingest CLI: \(error.localizedDescription)"
-            logger.error("\(errorMsg, privacy: .public)")
-            let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
-            appendLog(line)
-            lastError = errorMsg
-            return IngestResult(succeeded: false, message: errorMsg)
-        }
-
-        return await withCheckedContinuation { continuation in
-            process.terminationHandler = { [weak self] proc in
-                DispatchQueue.main.async {
-                    let exitCode = proc.terminationStatus
-                    let succeeded = exitCode == 0
-                    let resultMsg = succeeded
-                        ? "Ingest completed successfully via CLI process (exit code: \(exitCode))"
-                        : "Ingest failed via CLI process (exit code: \(exitCode))"
-                    if succeeded {
-                        self?.lastSuccess = resultMsg
-                    } else {
-                        self?.lastError = resultMsg
-                    }
-                    continuation.resume(returning: IngestResult(succeeded: succeeded, message: resultMsg))
-                }
-            }
         }
     }
 }

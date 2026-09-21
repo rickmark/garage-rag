@@ -153,9 +153,7 @@ public struct LogsView: View {
     private func configureStreamingForCurrentSource() {
         appState.osLogStreamService.setPredicate(source.osLogPredicate)
         if !appState.osLogStreamService.isStreaming {
-            appState.osLogStreamService.startStreaming(since: Date().addingTimeInterval(-300))
-        } else {
-            appState.osLogStreamService.resumeStreaming()
+            appState.osLogStreamService.startStreaming(since: Date().addingTimeInterval(-300), paused: true)
         }
     }
 

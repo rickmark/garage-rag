@@ -32,7 +32,7 @@ public enum OSLogTimeWindow: String, CaseIterable, Identifiable, Sendable {
 public final class OSLogStreamService: ObservableObject {
     @Published public private(set) var serviceLogs: [LogsView.LogSource: [LogLine]] = [:]
     @Published public private(set) var isStreaming: Bool = false
-    @Published public private(set) var isPaused: Bool = false
+    @Published public private(set) var isPaused: Bool = true
     @Published public private(set) var lastPolledDate: Date? = nil
     @Published public var scopeFilter: NSPredicate? = nil
 
@@ -45,7 +45,7 @@ public final class OSLogStreamService: ObservableObject {
 
     public init(startStreaming: Bool = false) {
         if startStreaming {
-            self.startStreaming()
+            self.startStreaming(paused: true)
         }
     }
 
@@ -66,10 +66,10 @@ public final class OSLogStreamService: ObservableObject {
     // MARK: - Streaming Controls
 
     /// Starts polling `OSLogStore` for new log entries starting from `since`.
-    public func startStreaming(since startDate: Date = Date().addingTimeInterval(-300), pollInterval: TimeInterval = 0.25) {
+    public func startStreaming(since startDate: Date = Date().addingTimeInterval(-300), pollInterval: TimeInterval = 0.25, paused: Bool = true) {
         stopStreaming()
         isStreaming = true
-        isPaused = false
+        isPaused = paused
         lastStreamDate = startDate
 
         guard #available(macOS 12.0, *) else { return }
@@ -132,7 +132,7 @@ public final class OSLogStreamService: ObservableObject {
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
-        isPaused = false
+        isPaused = true
     }
 
     /// Pauses streaming without cancelling the task.

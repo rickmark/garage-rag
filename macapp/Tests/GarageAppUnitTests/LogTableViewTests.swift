@@ -133,7 +133,7 @@ final class LogTableViewTests: XCTestCase {
     func testOSLogStreamServiceOperations() {
         let streamer = OSLogStreamService(startStreaming: false)
         XCTAssertFalse(streamer.isStreaming)
-        XCTAssertFalse(streamer.isPaused)
+        XCTAssertTrue(streamer.isPaused)
 
         // Test appending log entries for specific targets
         let line1 = LogLine(stream: .stdout, text: "Ingest completed for 10 docs", source: "IngestService", level: .info)
@@ -158,6 +158,9 @@ final class LogTableViewTests: XCTestCase {
         // Test streaming controls
         streamer.startStreaming(since: Date().addingTimeInterval(-60))
         XCTAssertTrue(streamer.isStreaming)
+        XCTAssertTrue(streamer.isPaused)
+
+        streamer.resumeStreaming()
         XCTAssertFalse(streamer.isPaused)
 
         streamer.pauseStreaming()

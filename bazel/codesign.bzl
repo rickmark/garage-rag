@@ -319,6 +319,7 @@ if [ "$kind" = "dir" ]; then
 
     if [ -d "$output/Versions" ]; then
         rm -rf "$output/bin" "$output/bazel-out" "$output/Contents" "$output/Versions/Current" 2>/dev/null || true
+        rm -rf "$output/Versions"/*/lib "$output/lib" 2>/dev/null || true
         find "$output" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
         find "$output" -name "*.app" -exec rm -rf {} + 2>/dev/null || true
         latest_ver="$(ls -1 "$output/Versions" | grep -v Current | tail -n 1)"
@@ -332,6 +333,10 @@ if [ "$kind" = "dir" ]; then
             fi
         done
     fi
+
+    # Remove site-python test directory and Python.framework lib directory if present before signing
+    find "$output" -depth -type d \\( -name "test" -path "*/site-python/test" -o -name "test" -path "$output/test" \\) -exec rm -rf {} + 2>/dev/null || true
+    find "$output" -depth -type d \\( -name "lib" -path "*/Python.framework/Versions/*/lib" -o -name "lib" -path "*/Python.framework/lib" \\) -exec rm -rf {} + 2>/dev/null || true
 
     # Ensure all regular files are independent writable copies (break hardlinks)
     for file in $(find "$output" -type f); do
