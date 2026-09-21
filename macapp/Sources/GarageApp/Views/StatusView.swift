@@ -56,13 +56,13 @@ struct StatusView: View {
     @State private var copiedServiceId: String? = nil
     @State private var quickAddingModelSlug: String? = nil
     @State private var quickAddingSourceSlug: String? = nil
+    @State private var isAddingAllSources: Bool = false
+    @State private var isAddingAllModels: Bool = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 systemHealthHeader
-
-                corpusOverviewSection
 
                 if showDefaultSourcesQuickAdd {
                     defaultSourcesQuickAddSection
@@ -71,6 +71,8 @@ struct StatusView: View {
                 if showFeaturedModelsQuickAdd {
                     featuredModelsQuickAddSection
                 }
+
+                corpusOverviewSection
 
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(sortedStatusItems) { item in
@@ -217,7 +219,7 @@ struct StatusView: View {
     }
 
     private var defaultSourcesQuickAddSection: some View {
-        GroupBox("Get Started: Add a Source") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Text("No sources are configured yet. Add one of these common locations to start indexing, or configure a custom source on the Sources page.")
                     .font(.caption)
@@ -242,6 +244,23 @@ struct StatusView: View {
                 .font(.caption)
             }
             .padding(8)
+        } label: {
+            HStack {
+                Text("Get Started: Add a Source")
+                Spacer()
+                Button {
+                    addAllQuickSources()
+                } label: {
+                    if isAddingAllSources {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Add All")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(quickAddingSourceSlug != nil || isAddingAllSources || quickSourcePresets.isEmpty)
+            }
         }
     }
 
@@ -273,13 +292,30 @@ struct StatusView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
+    private func addSourceArgs(_ preset: QuickSourcePreset) -> [String] {
+        ["add-source", preset.slug, preset.root, "--kind", preset.kind, "--class", preset.corpusClass, "--trust", preset.trust]
+    }
+
     private func addQuickSource(_ preset: QuickSourcePreset) {
         quickAddingSourceSlug = preset.slug
-        let args = ["add-source", preset.slug, preset.root, "--kind", preset.kind, "--class", preset.corpusClass, "--trust", preset.trust]
         Task {
-            await appState.runGarage(args)
+            await appState.runGarage(addSourceArgs(preset))
             await appState.fetchRegisteredSources()
             quickAddingSourceSlug = nil
+        }
+    }
+
+    private func addAllQuickSources() {
+        isAddingAllSources = true
+        let presets = quickSourcePresets
+        Task {
+            for preset in presets {
+                quickAddingSourceSlug = preset.slug
+                await appState.runGarage(addSourceArgs(preset))
+            }
+            await appState.fetchRegisteredSources()
+            quickAddingSourceSlug = nil
+            isAddingAllSources = false
         }
     }
 
@@ -294,7 +330,7 @@ struct StatusView: View {
     }
 
     private var featuredModelsQuickAddSection: some View {
-        GroupBox("Get Started: Add a Model") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Text("No embedding models are registered yet. Add one of these recommended models to enable chunk embedding and search.")
                     .font(.caption)
@@ -319,6 +355,23 @@ struct StatusView: View {
                 .font(.caption)
             }
             .padding(8)
+        } label: {
+            HStack {
+                Text("Get Started: Add a Model")
+                Spacer()
+                Button {
+                    addAllFeaturedModels()
+                } label: {
+                    if isAddingAllModels {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Add All")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(quickAddingModelSlug != nil || isAddingAllModels || featuredModelPresets.isEmpty)
+            }
         }
     }
 
@@ -369,8 +422,7 @@ struct StatusView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func addFeaturedModel(_ preset: ModelPresetEntry) {
-        quickAddingModelSlug = preset.slug
+    private func registerModelArgs(_ preset: ModelPresetEntry) -> [String] {
         var args = ["register-model", preset.slug, "--provider", preset.provider ?? "llama_xpc"]
         if preset.effectiveDims > 0 {
             args += ["--dims", "\(preset.effectiveDims)"]
@@ -378,10 +430,29 @@ struct StatusView: View {
         if let ref = preset.modelRef, !ref.isEmpty, ref != preset.slug {
             args += ["--model-ref", ref]
         }
+        return args
+    }
+
+    private func addFeaturedModel(_ preset: ModelPresetEntry) {
+        quickAddingModelSlug = preset.slug
         Task {
-            await appState.runGarage(args)
+            await appState.runGarage(registerModelArgs(preset))
             await appState.fetchRegisteredModels()
             quickAddingModelSlug = nil
+        }
+    }
+
+    private func addAllFeaturedModels() {
+        isAddingAllModels = true
+        let presets = featuredModelPresets
+        Task {
+            for preset in presets {
+                quickAddingModelSlug = preset.slug
+                await appState.runGarage(registerModelArgs(preset))
+            }
+            await appState.fetchRegisteredModels()
+            quickAddingModelSlug = nil
+            isAddingAllModels = false
         }
     }
 
