@@ -4,6 +4,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
     case database = "Database"
     case sources = "Sources & Ingest"
+    case documents = "Documents"
     case models = "Models"
     case mcp = "MCP Server"
     case search = "Search"
@@ -16,6 +17,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .status: "gauge.with.dots.needle.50percent"
         case .database: "cylinder.split.1x2"
         case .sources: "tray.and.arrow.down"
+        case .documents: "doc.text.magnifyingglass"
         case .models: "cpu"
         case .mcp: "server.rack"
         case .search: "magnifyingglass"
@@ -41,6 +43,7 @@ struct ContentView: View {
             case .status: StatusView(selection: $selection)
             case .database: DatabaseView()
             case .sources: SourcesView()
+            case .documents: DocumentsView()
             case .models: ModelsView()
             case .mcp: MCPServerView()
             case .search: SearchView()
