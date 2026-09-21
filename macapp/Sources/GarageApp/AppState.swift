@@ -35,9 +35,9 @@ final class AppState: ObservableObject {
     @Published private(set) var presetModels: [ModelPresetEntry] = []
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
-    @Published private(set) var registeredSources: [RegisteredSource] = []
+    @Published var registeredSources: [RegisteredSource] = []
     @Published private(set) var isFetchingSources = false
-    @Published private(set) var corpusStats = CorpusStats()
+    @Published var corpusStats = CorpusStats()
     @Published private(set) var isFetchingStats = false
     @Published private(set) var isApplyingMigrations = false
     @Published var scheduledMaintenanceEnabled: Bool {
@@ -526,6 +526,7 @@ final class AppState: ObservableObject {
             return false
         }
         let allSlugs = Set(sources.map(\.slug))
+        ingestService.clearProgressBySource()
         ingestService.setPendingSources(allSlugs)
         defer {
             ingestService.clearPendingSources()
@@ -697,6 +698,212 @@ final class AppState: ObservableObject {
             lastCommandSucceeded = false
             lastCommandOutput = error.localizedDescription
         }
+    }
+
+    // MARK: - Combined Ingest Progress Tracking
+
+    /// Total number of expected documents from prior scan across active / registered sources.
+    var combinedIngestTotalExpected: Int {
+        // If ingesting a single source and not in a batch run:
+        if ingestService.pendingSources.isEmpty,
+           let current = ingestService.currentSource,
+           current != "*",
+           let src = registeredSources.first(where: { $0.slug == current }) {
+            if src.expectedElements > 0 {
+                return src.expectedElements
+            }
+            if let latest = ingestService.latestProgress, latest.totalItems > 0 {
+                return latest.totalItems
+            }
+            return 0
+        }
+
+        // Multi-source / all sources batch run:
+        let totalFromScan = corpusStats.totalExpectedElements > 0
+            ? corpusStats.totalExpectedElements
+            : registeredSources.reduce(0) { $0 + $1.expectedElements }
+        if totalFromScan > 0 {
+            return totalFromScan
+        }
+
+        // If no prior scan total, sum totalItems from known progress updates
+        let totalFromUpdates = registeredSources.reduce(0) { sum, source in
+            if let prog = ingestService.progressBySource[source.slug] {
+                return sum + prog.totalItems
+            }
+            return sum
+        }
+        if totalFromUpdates > 0 {
+            return totalFromUpdates
+        }
+
+        return ingestService.latestProgress?.totalItems ?? 0
+    }
+
+    /// Total number of documents processed (seen / scanned) so far in the current ingestion run.
+    var combinedIngestProcessedCount: Int {
+        // If single source:
+        if ingestService.pendingSources.isEmpty,
+           let current = ingestService.currentSource,
+           current != "*",
+           let src = registeredSources.first(where: { $0.slug == current }) {
+            let seen = ingestService.latestProgress?.seen ?? 0
+            if src.expectedElements > 0 {
+                return min(src.expectedElements, seen)
+            }
+            return seen
+        }
+
+        // Multi-source:
+        let totalExpected = combinedIngestTotalExpected
+        var totalProcessed = 0
+
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource {
+                let seen = ingestService.latestProgress?.seen ?? 0
+                if source.expectedElements > 0 {
+                    totalProcessed += min(source.expectedElements, seen)
+                } else {
+                    totalProcessed += seen
+                }
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                if source.expectedElements > 0 {
+                    totalProcessed += source.expectedElements
+                } else if prog.seen > 0 {
+                    totalProcessed += prog.seen
+                } else {
+                    totalProcessed += prog.indexed
+                }
+            }
+        }
+
+        if totalExpected > 0 {
+            return min(totalExpected, totalProcessed)
+        }
+        return totalProcessed
+    }
+
+    /// Combined progress fraction from 0.0 to 1.0 based on combined documents from prior scan.
+    var combinedIngestProgressFraction: Double {
+        let total = combinedIngestTotalExpected
+        let processed = combinedIngestProcessedCount
+        if total > 0 {
+            return min(1.0, max(0.0, Double(processed) / Double(total)))
+        }
+        if let latest = ingestService.latestProgress {
+            return latest.progress
+        }
+        return 0.0
+    }
+
+    /// Formatted percentage string for the combined ingest progress (e.g. "45%").
+    var combinedIngestProgressPercent: String {
+        let fraction = combinedIngestProgressFraction
+        return "\(Int((fraction * 100.0).rounded()))%"
+    }
+
+    var combinedIngestIndexedCount: Int {
+        var count = 0
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource, let latest = ingestService.latestProgress {
+                count += latest.indexed
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                count += prog.indexed
+            }
+        }
+        if count == 0, let latest = ingestService.latestProgress {
+            return latest.indexed
+        }
+        return count
+    }
+
+    var combinedIngestSkippedCount: Int {
+        var count = 0
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource, let latest = ingestService.latestProgress {
+                count += latest.skipped
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                count += prog.skipped
+            }
+        }
+        if count == 0, let latest = ingestService.latestProgress {
+            return latest.skipped
+        }
+        return count
+    }
+
+    var combinedIngestFailedCount: Int {
+        var count = 0
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource, let latest = ingestService.latestProgress {
+                count += latest.failed
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                count += prog.failed
+            }
+        }
+        if count == 0, let latest = ingestService.latestProgress {
+            return latest.failed
+        }
+        return count
+    }
+
+    var combinedIngestPlaceholdersCount: Int {
+        var count = 0
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource, let latest = ingestService.latestProgress {
+                count += latest.placeholders
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                count += prog.placeholders
+            }
+        }
+        if count == 0, let latest = ingestService.latestProgress {
+            return latest.placeholders
+        }
+        return count
+    }
+
+    var combinedIngestChunksCount: Int {
+        var count = 0
+        for source in registeredSources {
+            if source.slug == ingestService.currentSource, let latest = ingestService.latestProgress {
+                count += latest.chunksWritten
+            } else if let prog = ingestService.progressBySource[source.slug] {
+                count += prog.chunksWritten
+            }
+        }
+        if count == 0, let latest = ingestService.latestProgress {
+            return latest.chunksWritten
+        }
+        return count
+    }
+
+    var combinedIngestItemType: String {
+        ingestService.latestProgress?.itemType ?? "documents"
+    }
+
+    var combinedIngestTitle: String {
+        if ingestService.pendingSources.isEmpty, let current = ingestService.currentSource, current != "*" {
+            return current
+        }
+        if let current = ingestService.currentSource, !current.isEmpty, current != "*" {
+            return "Ingesting \(current)"
+        }
+        return "Ingestion"
+    }
+
+    var combinedIngestStatusMessage: String {
+        let total = combinedIngestTotalExpected
+        let processed = combinedIngestProcessedCount
+        let indexed = combinedIngestIndexedCount
+        let skipped = combinedIngestSkippedCount
+        let itemType = combinedIngestItemType
+        if total > 0 {
+            return "\(processed) of \(total) \(itemType) (\(indexed) indexed, \(skipped) skipped)"
+        }
+        if let msg = ingestService.latestProgress?.message, !msg.isEmpty {
+            return msg
+        }
+        return "\(indexed) indexed, \(skipped) skipped"
     }
 
     var statusSummary: String {

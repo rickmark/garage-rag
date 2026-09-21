@@ -125,7 +125,7 @@ public struct XPCServiceInfo: Identifiable, Equatable, Sendable {
 }
 
 /// Internal adapter to receive streaming logs and stdout/stderr chunks from XPC services.
-private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtocol {
+private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtocol, @unchecked Sendable {
     private let serviceId: String
     private weak var manager: XPCServiceManager?
     private weak var osLogStreamService: OSLogStreamService?
@@ -149,33 +149,47 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
     }
 
     func didReceiveStdout(_ text: String) {
-        Task { @MainActor [weak self] in
+        Task.detached(priority: .utility) { [weak self] in
             guard let self = self else { return }
-            self.manager?.appendLog(text, stream: .stdout, source: self.serviceId, level: .info)
-            self.osLogStreamService?.receiveXPCStdout(text, source: self.targetLogSource)
+            let serviceId = self.serviceId
+            let targetSource = self.targetLogSource
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.manager?.appendLog(text, stream: .stdout, source: serviceId, level: .info)
+                self.osLogStreamService?.receiveXPCStdout(text, source: targetSource)
+            }
         }
     }
 
     func didReceiveStderr(_ text: String) {
-        Task { @MainActor [weak self] in
+        Task.detached(priority: .utility) { [weak self] in
             guard let self = self else { return }
-            self.manager?.appendLog(text, stream: .stderr, source: self.serviceId, level: .error)
-            self.osLogStreamService?.receiveXPCStderr(text, source: self.targetLogSource)
+            let serviceId = self.serviceId
+            let targetSource = self.targetLogSource
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.manager?.appendLog(text, stream: .stderr, source: serviceId, level: .error)
+                self.osLogStreamService?.receiveXPCStderr(text, source: targetSource)
+            }
         }
     }
 
     func didReceiveLog(source: String, level: String, message: String, timestamp: Double) {
-        let lvl: LogLevel
-        switch level.uppercased() {
-        case "ERROR", "CRITICAL", "FATAL": lvl = .error
-        case "WARN", "WARNING": lvl = .warning
-        case "DEBUG", "TRACE": lvl = .debug
-        default: lvl = .info
-        }
-        Task { @MainActor [weak self] in
+        Task.detached(priority: .utility) { [weak self] in
             guard let self = self else { return }
-            self.manager?.appendLog(message, stream: lvl == .error ? .stderr : .stdout, source: source, level: lvl)
-            self.osLogStreamService?.receiveXPCLog(source: self.targetLogSource, level: lvl, message: message, timestamp: timestamp)
+            let lvl: LogLevel
+            switch level.uppercased() {
+            case "ERROR", "CRITICAL", "FATAL": lvl = .error
+            case "WARN", "WARNING": lvl = .warning
+            case "DEBUG", "TRACE": lvl = .debug
+            default: lvl = .info
+            }
+            let targetSource = self.targetLogSource
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.manager?.appendLog(message, stream: lvl == .error ? .stderr : .stdout, source: source, level: lvl)
+                self.osLogStreamService?.receiveXPCLog(source: targetSource, level: lvl, message: message, timestamp: timestamp)
+            }
         }
     }
 }

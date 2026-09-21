@@ -45,7 +45,7 @@ struct MenuBarView: View {
                         Text(progress.source.isEmpty ? "Ingesting…" : "Ingesting \(progress.source)")
                             .font(.system(size: 11, weight: .semibold))
                         Spacer()
-                        Text(progress.formattedPercent)
+                        Text(appState.combinedIngestProgressPercent)
                             .font(.system(size: 11, weight: .bold).monospaced())
                             .foregroundStyle(.blue)
                     }

@@ -231,12 +231,12 @@ struct StatusView: View {
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .foregroundStyle(.blue)
                     Spacer()
-                    Text(progress.formattedPercent)
+                    Text(appState.combinedIngestProgressPercent)
                         .font(.system(size: 16, weight: .bold).monospaced())
                         .foregroundStyle(.blue)
                 }
 
-                ProgressView(value: progress.progress)
+                ProgressView(value: appState.combinedIngestProgressFraction)
                     .progressViewStyle(.linear)
 
                 if let cur = progress.currentItem, !cur.isEmpty {
@@ -246,7 +246,7 @@ struct StatusView: View {
                         .lineLimit(1)
                 }
 
-                Text(progress.message.isEmpty ? "\(progress.seen) of \(progress.totalItems) \(progress.itemType) (\(progress.indexed) indexed, \(progress.skipped) skipped)" : progress.message)
+                Text(appState.combinedIngestStatusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -1649,7 +1649,7 @@ struct StatusView: View {
             } else if appState.ingestService.isRunning {
                 severity = .info
                 let src = appState.ingestService.currentSource ?? "All Sources"
-                let pct = appState.ingestService.latestProgress?.formattedPercent ?? ""
+                let pct = appState.combinedIngestProgressPercent
                 headline = "Ingesting \(src)\(pct.isEmpty ? "" : " (\(pct))")"
                 details = appState.ingestService.latestProgress?.message ?? "Currently ingesting files into personal archive."
                 quickAction = PageStatusItem.QuickAction(label: appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {

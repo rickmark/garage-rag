@@ -176,7 +176,7 @@ struct SourcesView: View {
                                         .foregroundStyle(.green)
                                 }
 
-                                Text(progress.source.isEmpty ? "Ingestion" : progress.source)
+                                Text(appState.combinedIngestTitle)
                                     .font(.headline)
 
                                 badgeText(progress.phase.uppercased(), bg: Color.blue.opacity(0.15), fg: .blue)
@@ -188,7 +188,7 @@ struct SourcesView: View {
 
                                 Spacer()
 
-                                Text(progress.formattedPercent)
+                                Text(appState.combinedIngestProgressPercent)
                                     .font(.headline.monospaced())
                                     .foregroundStyle(.primary)
 
@@ -206,21 +206,21 @@ struct SourcesView: View {
                                 }
                             }
 
-                            ProgressView(value: progress.progress)
+                            ProgressView(value: appState.combinedIngestProgressFraction)
                                 .progressViewStyle(.linear)
 
                             HStack(spacing: 8) {
-                                badgeText("\(progress.seen)/\(progress.totalItems) \(progress.itemType)", bg: Color.primary.opacity(0.06), fg: .primary)
-                                badgeText("\(progress.indexed) indexed", bg: Color.green.opacity(0.15), fg: .green)
-                                badgeText("\(progress.skipped) skipped", bg: Color.gray.opacity(0.15), fg: .secondary)
-                                if progress.failed > 0 {
-                                    badgeText("\(progress.failed) failed", bg: Color.red.opacity(0.15), fg: .red)
+                                badgeText("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", bg: Color.primary.opacity(0.06), fg: .primary)
+                                badgeText("\(appState.combinedIngestIndexedCount) indexed", bg: Color.green.opacity(0.15), fg: .green)
+                                badgeText("\(appState.combinedIngestSkippedCount) skipped", bg: Color.gray.opacity(0.15), fg: .secondary)
+                                if appState.combinedIngestFailedCount > 0 {
+                                    badgeText("\(appState.combinedIngestFailedCount) failed", bg: Color.red.opacity(0.15), fg: .red)
                                 }
-                                if progress.placeholders > 0 {
-                                    badgeText("\(progress.placeholders) placeholders", bg: Color.orange.opacity(0.15), fg: .orange)
+                                if appState.combinedIngestPlaceholdersCount > 0 {
+                                    badgeText("\(appState.combinedIngestPlaceholdersCount) placeholders", bg: Color.orange.opacity(0.15), fg: .orange)
                                 }
-                                if progress.chunksWritten > 0 {
-                                    badgeText("\(progress.chunksWritten) chunks", bg: Color.purple.opacity(0.15), fg: .purple)
+                                if appState.combinedIngestChunksCount > 0 {
+                                    badgeText("\(appState.combinedIngestChunksCount) chunks", bg: Color.purple.opacity(0.15), fg: .purple)
                                 }
                                 Spacer()
                             }

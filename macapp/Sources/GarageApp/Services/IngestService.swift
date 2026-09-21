@@ -116,6 +116,11 @@ final class IngestService: ObservableObject {
         lastError = nil
         lastSuccess = nil
         latestProgress = nil
+        progressBySource.removeAll()
+    }
+
+    func clearProgressBySource() {
+        self.progressBySource.removeAll()
     }
 
     func setPendingSources(_ slugs: Set<String>) {
@@ -301,70 +306,91 @@ final class IngestService: ObservableObject {
 
     /// Performs ingestion for the given source slug with options, streaming progress back to the UI.
     @discardableResult
-    func ingest(
+    nonisolated func ingest(
         slug: String,
         options: IngestOptions = .default,
         mode: IngestExecutionMode? = nil
     ) async -> IngestResult {
-        let targetMode = mode ?? executionMode
         let commandLabel = "Ingest (XPC)"
 
-        guard !isRunning else {
-            let msg = "Ingestion is already running for \(currentSource ?? "another source")"
-            logger.warning("IngestService: \(msg, privacy: .public)")
-            let line = LogLine(stream: .stderr, text: msg, source: commandLabel)
-            appendLog(line)
-            lastError = msg
-            return IngestResult(succeeded: false, message: msg)
+        let prep = await MainActor.run { () -> (shouldProceed: Bool, errorResult: IngestResult?, runStartDate: Date, targetMode: IngestExecutionMode, dbURL: String?, lmToken: String?) in
+            let targetMode = mode ?? self.executionMode
+
+            guard !self.isRunning else {
+                let msg = "Ingestion is already running for \(self.currentSource ?? "another source")"
+                logger.warning("IngestService: \(msg, privacy: .public)")
+                let line = LogLine(stream: .stderr, text: msg, source: commandLabel)
+                self.appendLog(line)
+                self.lastError = msg
+                return (false, IngestResult(succeeded: false, message: msg), Date(), targetMode, nil, nil)
+            }
+
+            self.isRunning = true
+            self.activeMode = targetMode
+            self.currentSource = slug
+            let runStartDate = Date()
+            self.startedAt = runStartDate
+            self.lastError = nil
+            self.lastSuccess = nil
+
+            let activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
+                reason: "Garage document ingestion for \(slug) (\(targetMode.shortTitle))"
+            )
+            self.activeActivity = activity
+
+            let startMsg = "Starting ingestion [\(targetMode.title)] for source '\(slug)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))..."
+            logger.info("IngestService: \(startMsg, privacy: .public)")
+            let startLine = LogLine(
+                stream: .stdout,
+                text: startMsg,
+                source: commandLabel
+            )
+            self.appendLog(startLine)
+
+            self.startOSLogMonitoring(since: runStartDate.addingTimeInterval(-1.0))
+
+            var effectiveDatabaseURL = options.databaseUrl
+            if effectiveDatabaseURL == nil, let postgres = self.postgres, let dbURL = try? postgres.connectionURL() {
+                effectiveDatabaseURL = dbURL
+            }
+            var effectiveLMStudioToken = options.lmStudioApiToken
+            if effectiveLMStudioToken == nil, let lmToken = try? LMStudioTokenStore.load() {
+                effectiveLMStudioToken = lmToken
+            }
+
+            return (true, nil, runStartDate, targetMode, effectiveDatabaseURL, effectiveLMStudioToken)
         }
 
-        isRunning = true
-        activeMode = targetMode
-        currentSource = slug
-        let runStartDate = Date()
-        startedAt = runStartDate
-        lastError = nil
-        lastSuccess = nil
+        guard prep.shouldProceed else {
+            return prep.errorResult ?? IngestResult(succeeded: false, message: "Ingestion is already running")
+        }
 
-        let activity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
-            reason: "Garage document ingestion for \(slug) (\(targetMode.shortTitle))"
-        )
-        self.activeActivity = activity
+        let runStartDate = prep.runStartDate
+        let targetMode = prep.targetMode
+        let selectedClient = self.xpcClient
 
-        let startMsg = "Starting ingestion [\(targetMode.title)] for source '\(slug)' (includeCode: \(options.includeCode), force: \(options.force), limit: \(String(describing: options.limit)))..."
-        logger.info("IngestService: \(startMsg, privacy: .public)")
-        let startLine = LogLine(
-            stream: .stdout,
-            text: startMsg,
-            source: commandLabel
-        )
-        appendLog(startLine)
-
-        startOSLogMonitoring(since: runStartDate.addingTimeInterval(-1.0))
-
-        defer {
-            stopOSLogMonitoring()
-            drainOSLogs(since: runStartDate.addingTimeInterval(-1.0))
-            isRunning = false
-            isCancelling = false
-            activeMode = nil
-            currentSource = nil
-            startedAt = nil
+        let cleanup = { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.stopOSLogMonitoring()
+            self.drainOSLogs(since: runStartDate.addingTimeInterval(-1.0))
+            self.isRunning = false
+            self.isCancelling = false
+            self.activeMode = nil
+            self.currentSource = nil
+            self.startedAt = nil
             if let act = self.activeActivity {
                 ProcessInfo.processInfo.endActivity(act)
                 self.activeActivity = nil
             }
         }
 
-        let selectedClient = xpcClient
-        var effectiveDatabaseURL = options.databaseUrl
-        if effectiveDatabaseURL == nil, let postgres = self.postgres, let dbURL = try? postgres.connectionURL() {
-            effectiveDatabaseURL = dbURL
-        }
-        var effectiveLMStudioToken = options.lmStudioApiToken
-        if effectiveLMStudioToken == nil, let lmToken = try? LMStudioTokenStore.load() {
-            effectiveLMStudioToken = lmToken
+        defer {
+            Task { @MainActor [weak self] in
+                if self?.isRunning == true {
+                    cleanup()
+                }
+            }
         }
 
         let effectiveOptions = IngestOptions(
@@ -374,12 +400,12 @@ final class IngestService: ObservableObject {
             grpcHost: options.grpcHost,
             grpcPort: options.grpcPort,
             extraArguments: options.extraArguments,
-            databaseUrl: effectiveDatabaseURL,
-            lmStudioApiToken: effectiveLMStudioToken
+            databaseUrl: prep.dbURL,
+            lmStudioApiToken: prep.lmToken
         )
 
-        if let dbURL = effectiveDatabaseURL {
-            _ = try? await selectedClient.setDatabaseURL(dbURL, lmStudioApiToken: effectiveLMStudioToken)
+        if let dbURL = prep.dbURL {
+            _ = try? await selectedClient.setDatabaseURL(dbURL, lmStudioApiToken: prep.lmToken)
         }
 
         do {
@@ -387,39 +413,47 @@ final class IngestService: ObservableObject {
                 slug: slug,
                 options: effectiveOptions,
                 onLog: { [weak self] message, level in
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
                         let stream: LogLine.Stream = level >= 40 ? .stderr : .stdout
                         self?.appendLog(LogLine(stream: stream, text: message, source: commandLabel))
                     }
                 },
                 onProgress: { [weak self] progress in
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
                         self?.handleProgress(progress, sourceLabel: commandLabel)
                     }
                 }
             )
 
-            if result.succeeded {
-                let successMsg = result.message ?? "Ingestion finished successfully for \(slug) [\(targetMode.shortTitle)]"
-                logger.info("IngestService: \(successMsg, privacy: .public)")
-                lastSuccess = successMsg
-                let line = LogLine(stream: .stdout, text: successMsg, source: commandLabel)
-                appendLog(line)
-            } else {
-                let errorMsg = result.message ?? "Ingestion failed for \(slug) [\(targetMode.shortTitle)]"
-                logger.error("IngestService: \(errorMsg, privacy: .public)")
-                lastError = errorMsg
-                let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
-                appendLog(line)
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                if result.succeeded {
+                    let successMsg = result.message ?? "Ingestion finished successfully for \(slug) [\(targetMode.shortTitle)]"
+                    logger.info("IngestService: \(successMsg, privacy: .public)")
+                    self.lastSuccess = successMsg
+                    let line = LogLine(stream: .stdout, text: successMsg, source: commandLabel)
+                    self.appendLog(line)
+                } else {
+                    let errorMsg = result.message ?? "Ingestion failed for \(slug) [\(targetMode.shortTitle)]"
+                    logger.error("IngestService: \(errorMsg, privacy: .public)")
+                    self.lastError = errorMsg
+                    let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
+                    self.appendLog(line)
+                }
+                cleanup()
             }
 
             return result
         } catch {
             let errorMsg = "Ingestion error for \(slug) [\(targetMode.shortTitle)]: \(error.localizedDescription)"
             logger.error("IngestService: \(errorMsg, privacy: .public)")
-            lastError = errorMsg
-            let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
-            appendLog(line)
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.lastError = errorMsg
+                let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
+                self.appendLog(line)
+                cleanup()
+            }
             return IngestResult(succeeded: false, message: errorMsg)
         }
     }
