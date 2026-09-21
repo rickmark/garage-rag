@@ -128,7 +128,6 @@ public struct LogTableView: View {
     @State private var selectedLineIDs = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\LogLine.date, order: .forward)]
     @State private var showDetailInspector = false
-    @State private var selectedLine: LogLine?
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -146,21 +145,21 @@ public struct LogTableView: View {
         self.onClear = onClear
     }
 
+    private var effectiveSelectedLine: LogLine? {
+        if let firstID = selectedLineIDs.first {
+            return lines.first(where: { $0.id == firstID })
+        }
+        return nil
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             filterToolbar
             Divider()
             contentView
-            if showDetailInspector, let line = selectedLine ?? lines.first(where: { selectedLineIDs.contains($0.id) }) {
+            if showDetailInspector, let line = effectiveSelectedLine {
                 Divider()
                 detailInspectorView(for: line)
-            }
-        }
-        .onChange(of: selectedLineIDs) {
-            if let firstID = selectedLineIDs.first, let match = lines.first(where: { $0.id == firstID }) {
-                selectedLine = match
-            } else if selectedLineIDs.isEmpty {
-                selectedLine = nil
             }
         }
     }
@@ -333,8 +332,8 @@ public struct LogTableView: View {
                     copySelectedLines(ids: selectedIDs)
                 }
                 Button("Inspect Selected") {
-                    if let firstID = selectedIDs.first, let line = lines.first(where: { $0.id == firstID }) {
-                        selectedLine = line
+                    if let firstID = selectedIDs.first {
+                        selectedLineIDs = [firstID]
                         showDetailInspector = true
                     }
                 }

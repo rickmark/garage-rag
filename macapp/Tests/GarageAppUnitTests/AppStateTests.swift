@@ -501,4 +501,31 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.sourceProgressFraction(for: "source-b"), 0.0)
         XCTAssertEqual(state.sourceProgressPercent(for: "source-b"), "0%")
     }
+
+    @MainActor
+    func testScheduledMaintenanceDefaults() {
+        let state = AppState()
+        XCTAssertTrue(state.scheduledMaintenanceEnabled)
+        XCTAssertEqual(state.scheduledMaintenanceInterval, 3600)
+    }
+
+    @MainActor
+    func testScanSourcesSkippedWhenIngesting() async {
+        let state = AppState()
+        state.setIngestingForTesting(true)
+
+        let scanResult = await state.scanSources()
+        XCTAssertFalse(scanResult)
+    }
+
+    @MainActor
+    func testRunGarageScanSkippedWhenIngesting() async {
+        let state = AppState()
+        state.setIngestingForTesting(true)
+
+        let result = await state.runGarage(["scan", "--source", "*"])
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandSucceeded, false)
+        XCTAssertEqual(state.lastCommandOutput, "Cannot scan while ingestion is in progress.")
+    }
 }

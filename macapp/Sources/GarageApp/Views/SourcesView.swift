@@ -430,14 +430,17 @@ struct SourcesView: View {
                         Button("Ingest (Include Code)") {
                             ingestSource(slug: source.slug, includeCode: true)
                         }
+                        .disabled(notReady)
 
                         Button("Ingest (Force Re-index)") {
                             ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
                         }
+                        .disabled(notReady)
 
                         Button("Scan Source") {
                             scanSource(slug: source.slug, includeCode: source.includeCode)
                         }
+                        .disabled(notReady)
 
                         Button("Reconcile (Dry Run)") {
                             run(["reconcile", "--source", source.slug])
@@ -1187,6 +1190,7 @@ struct SourcesView: View {
     }
 
     private func scanSource(slug: String, includeCode: Bool = false) {
+        guard !appState.isIngesting else { return }
         busy = true
         Task {
             await appState.scanSources(source: slug, includeCode: includeCode)
@@ -1195,6 +1199,7 @@ struct SourcesView: View {
     }
 
     private func scanAllSources() {
+        guard !appState.isIngesting else { return }
         busy = true
         Task {
             await appState.scanSources(source: "*")

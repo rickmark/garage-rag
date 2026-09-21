@@ -85,9 +85,11 @@ final class AppState: ObservableObject {
         mcp = GarageMCPService(postgres: postgres)
         grpc = GarageGRPCService(postgres: postgres)
 
-        scheduledMaintenanceEnabled = UserDefaults.standard.bool(
-            forKey: Self.scheduledMaintenanceEnabledKey
-        )
+        if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
+            scheduledMaintenanceEnabled = storedEnabled
+        } else {
+            scheduledMaintenanceEnabled = true
+        }
         let storedInterval = UserDefaults.standard.double(
             forKey: Self.scheduledMaintenanceIntervalKey
         )
@@ -461,12 +463,20 @@ final class AppState: ObservableObject {
     func setCorpusStatsForTesting(_ stats: CorpusStats) {
         self.corpusStats = stats
     }
+
+    func setIngestingForTesting(_ isIngesting: Bool) {
+        self.ingestService.setRunningForTesting(isIngesting)
+    }
     #endif
 
     /// Performs a scan on configured sources to calculate item counts and update expected element totals.
     @discardableResult
     func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
         guard postgres.status == .running else { return false }
+        guard !isIngesting else {
+            logger.info("Scan skipped because ingestion is in progress.")
+            return false
+        }
         var args = ["scan", "--source", source]
         if includeCode {
             args.append("--include-code")
@@ -480,6 +490,13 @@ final class AppState: ObservableObject {
     /// Runs a garage subcommand and captures its combined output for display.
     @discardableResult
     func runGarage(_ arguments: [String]) async -> Bool {
+        if arguments.first == "scan" && isIngesting {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Cannot scan while ingestion is in progress."
+            logger.warning("Attempted to run garage scan while ingestion is in progress.")
+            return false
+        }
+
         guard !commandInProgress else {
             lastCommandSucceeded = false
             lastCommandOutput = "A garage command is already running."

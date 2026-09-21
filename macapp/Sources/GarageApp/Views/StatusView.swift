@@ -166,7 +166,7 @@ struct StatusView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .disabled(appState.isFetchingStats)
+                    .disabled(appState.isFetchingStats || appState.isIngesting || appState.isScanning)
                 }
             }
             .padding(8)

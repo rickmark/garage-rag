@@ -546,4 +546,10 @@ final class IngestService: ObservableObject {
             return IngestResult(succeeded: false, message: errorMsg)
         }
     }
+
+    #if DEBUG
+    func setRunningForTesting(_ running: Bool) {
+        self.isRunning = running
+    }
+    #endif
 }
