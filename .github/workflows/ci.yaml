@@ -1,9 +1,11 @@
 name: CI
 
 # Runs the Aspect CLI tasks on ephemeral GitHub-hosted runners. Each task is its
-# own job so results show up as separate status checks. The Aspect CLI version is
-# pinned by .aspect/version.axl; `setup-aspect` installs it and wires the GitHub
-# Actions cache. See https://aspect.build/docs/cli/tasks-ci
+# own job so results show up as separate status checks. The Aspect CLI version
+# actually invoked is pinned by .aspect/version.axl; the launcher binary each job
+# downloads below is pinned by tools/tools.lock.json (the same lockfile
+# //tools:bazel_env reads for local dev), so bumping that file keeps CI in sync
+# without touching this workflow. See https://aspect.build/docs/cli/tasks-ci
 on:
   push:
     branches: [main]
@@ -27,7 +29,16 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install bazelisk
+      - name: Install Aspect CLI
+        run: |
+          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
+          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
+          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/bin/aspect"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: aspect test --task:name test -- //...
 
   gazelle:
@@ -38,7 +49,16 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install bazelisk
+      - name: Install Aspect CLI
+        run: |
+          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
+          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
+          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/bin/aspect"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: aspect gazelle --task:name gazelle
 
   buildifier:
@@ -49,7 +69,16 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install bazelisk
+      - name: Install Aspect CLI
+        run: |
+          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
+          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
+          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/bin/aspect"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: aspect buildifier --task:name buildifier
 
 
@@ -61,7 +90,16 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install bazelisk
+      - name: Install Aspect CLI
+        run: |
+          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
+          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
+          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/bin/aspect"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: aspect format --task:name format
 
   lint:
@@ -72,6 +110,15 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install bazelisk
+      - name: Install Aspect CLI
+        run: |
+          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
+          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
+          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/bin/aspect"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: aspect lint --task:name lint -- //...
 
