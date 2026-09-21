@@ -57,3 +57,9 @@ build:store --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64
 # "No matching toolchains found for @bazel_tools//tools/test:default_test_toolchain_type".
 build:ci --platforms=//bazel:adhoc --extra_execution_platforms=//bazel:adhoc
 build:ci --@rules_apple//apple/build_settings:signing_certificate_name=-
+
+# `science`, which builds the //garage_python scie binaries, reads its
+# api.github.com credential from this variable. The PyScie action declares
+# use_default_shell_env, so it only sees what --action_env lets through; the
+# value comes from the workflow, which sets it to the job's own GITHUB_TOKEN.
+build:ci --action_env=SCIENCE_AUTH_API_GITHUB_COM_BEARER

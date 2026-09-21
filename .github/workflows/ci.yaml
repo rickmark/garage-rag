@@ -39,7 +39,17 @@ jobs:
           echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
           chmod +x "$RUNNER_TEMP/bin/aspect"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - run: aspect test --task:name test -- //...
+      - name: Run tests
+        env:
+          # Building the //garage_python scie binaries runs `science`, which
+          # resolves the python-build-standalone release to embed by asking
+          # api.github.com for the latest one. Unauthenticated that is 60
+          # requests/hour shared by every runner behind the same egress IP, and
+          # it fails the build with "403 rate limit exceeded"; any valid token
+          # lifts it to 5000/hour. Reaches the action through the
+          # --action_env in .bazelrc's `ci` config.
+          SCIENCE_AUTH_API_GITHUB_COM_BEARER: ${{ github.token }}
+        run: aspect test --task:name test -- //...
 
   gazelle:
     runs-on: macos-latest
