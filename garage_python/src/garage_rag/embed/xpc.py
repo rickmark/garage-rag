@@ -64,7 +64,7 @@ def embed_via_grpc(
 
         items = [
             ChunkEmbeddingItem(chunk_id=chunk.chunk_id, vector=[float(x) for x in vec])
-            for chunk, vec in zip(resp.chunks, vectors)
+            for chunk, vec in zip(resp.chunks, vectors, strict=False)
         ]
 
         update_req = UpdateEmbeddingsRequest(

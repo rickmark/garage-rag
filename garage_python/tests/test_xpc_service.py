@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import pytest
 
 from garage_rag.proto.garage_pb2 import (
     CommandRequest,
@@ -11,7 +10,6 @@ from garage_rag.proto.garage_pb2 import (
     StatusType,
 )
 from garage_rag.service.xpc import (
-    DEFAULT_BUNDLE_ID,
     DEFAULT_TEAM_ID,
     DEFAULT_XPC_SERVICE_NAME,
     PeerAuthenticator,

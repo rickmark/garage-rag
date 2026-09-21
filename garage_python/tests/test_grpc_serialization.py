@@ -3,28 +3,11 @@
 from __future__ import annotations
 
 import json
-import pytest
 
 from garage_rag.proto.garage_pb2 import (
-    AddSourceRequest,
-    BackfillRequest,
     CommandRequest,
-    CommandStatus,
-    ConfigInitRequest,
-    ConfigShowRequest,
-    ExtractRequest,
-    IngestRequest,
-    ListModelsRequest,
-    ListSourcesRequest,
-    McpInstallRequest,
-    McpServeRequest,
-    McpStatusRequest,
-    PingRequest,
-    RegisterModelRequest,
     SearchRequest,
-    StatusRequest,
     StatusType,
-    VersionRequest,
 )
 from garage_rag.service.client import GarageClient, run_command_in_process
 from garage_rag.service.executor import CommandExecutor

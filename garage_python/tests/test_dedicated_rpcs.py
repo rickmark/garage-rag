@@ -3,29 +3,12 @@
 from __future__ import annotations
 
 import json
-import pytest
-from pathlib import Path
 
 from garage_rag.proto.garage_pb2 import (
-    AddSourceRequest,
-    ConfigPathRequest,
-    ConfigSchemaRequest,
-    ConfigShowRequest,
-    ExtractRequest,
-    ListModelsRequest,
-    ListSourcesRequest,
     McpInstallRequest,
-    McpStatusRequest,
-    McpUninstallRequest,
-    PingRequest,
     RegisterModelRequest,
-    RemoveSourceRequest,
-    SearchRequest,
-    StatusRequest,
-    VersionRequest,
 )
 from garage_rag.service.client import GarageClient
-from garage_rag.service.server import GarageRpcServicer
 
 
 def test_dedicated_rpc_ping():
@@ -91,7 +74,7 @@ def test_dedicated_rpc_mcp_install_dry_run():
 
 
 def test_model_info_proto_model_id():
-    from garage_rag.proto.garage_pb2 import ModelInfo, RegisterModelRequest
+    from garage_rag.proto.garage_pb2 import ModelInfo
 
     m = ModelInfo(
         slug="test-slug",

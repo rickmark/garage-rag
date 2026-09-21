@@ -10,10 +10,11 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from garage_rag.db.models import CorpusClass, TrustTier
 from garage_rag.ingest.scanner import ScanResult
@@ -50,7 +51,7 @@ class AuthorPayload:
     name: str
     role: str = "author"
     confidence: float = 1.0
-    evidence: Optional[str] = None
+    evidence: str | None = None
     identities: dict[str, str] = field(default_factory=dict)
     is_self: bool = False
 
@@ -59,12 +60,12 @@ class AuthorPayload:
 class ChunkPayload:
     ord: int
     text: str
-    token_count: Optional[int] = None
-    char_start: Optional[int] = None
-    char_end: Optional[int] = None
-    heading_path: Optional[str] = None
+    token_count: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    heading_path: str | None = None
     chunk_sha256: str = ""
-    chunker: Optional[str] = None
+    chunker: str | None = None
 
 
 class IngestStorageGateway(ABC):
@@ -133,16 +134,16 @@ class IngestStorageGateway(ABC):
         run_id: int,
         source_slug: str,
         uri: str,
-        title: Optional[str],
-        lang: Optional[str],
+        title: str | None,
+        lang: str | None,
         byte_size: int,
         mtime: float,
-        source_sha256: Optional[str],
+        source_sha256: str | None,
         content_sha256: str,
         extractor: str,
         extractor_version: str,
-        chunker: Optional[str],
-        content: Optional[str],
+        chunker: str | None,
+        content: str | None,
         meta: dict[str, Any],
         corpus_class: str,
         trust_tier: str,
@@ -381,16 +382,16 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         run_id: int,
         source_slug: str,
         uri: str,
-        title: Optional[str],
-        lang: Optional[str],
+        title: str | None,
+        lang: str | None,
         byte_size: int,
         mtime: float,
-        source_sha256: Optional[str],
+        source_sha256: str | None,
         content_sha256: str,
         extractor: str,
         extractor_version: str,
-        chunker: Optional[str],
-        content: Optional[str],
+        chunker: str | None,
+        content: str | None,
         meta: dict[str, Any],
         corpus_class: str,
         trust_tier: str,
@@ -687,16 +688,16 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         run_id: int,
         source_slug: str,
         uri: str,
-        title: Optional[str],
-        lang: Optional[str],
+        title: str | None,
+        lang: str | None,
         byte_size: int,
         mtime: float,
-        source_sha256: Optional[str],
+        source_sha256: str | None,
         content_sha256: str,
         extractor: str,
         extractor_version: str,
-        chunker: Optional[str],
-        content: Optional[str],
+        chunker: str | None,
+        content: str | None,
         meta: dict[str, Any],
         corpus_class: str,
         trust_tier: str,
@@ -797,7 +798,7 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
 
     def test_read_documents(
         self,
-        source_slug: Optional[str] = None,
+        source_slug: str | None = None,
         limit: int = 5,
         sample_bytes: int = 1024,
     ) -> dict[str, Any]:
@@ -849,7 +850,9 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
                     "uri": uri,
                     "full_path": str(full_path),
                     "exists": stat.exists,
-                    "byte_size": stat.byte_size if stat.exists else (full_path.stat().st_size if full_path.exists() else 0),
+                    "byte_size": (
+                        stat.byte_size if stat.exists else (full_path.stat().st_size if full_path.exists() else 0)
+                    ),
                     "can_read": can_read,
                     "bytes_read": bytes_read,
                     "error": error_msg,
@@ -869,11 +872,11 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
 
 
 def get_storage_gateway(
-    session_factory: Optional[Callable[[], Any]] = None,
-    gateway: Optional[IngestStorageGateway] = None,
-    grpc_client: Optional[Any] = None,
-    grpc_host: Optional[str] = None,
-    grpc_port: Optional[int] = None,
+    session_factory: Callable[[], Any] | None = None,
+    gateway: IngestStorageGateway | None = None,
+    grpc_client: Any | None = None,
+    grpc_host: str | None = None,
+    grpc_port: int | None = None,
 ) -> IngestStorageGateway:
     """Obtain the configured IngestStorageGateway."""
     if gateway is not None:

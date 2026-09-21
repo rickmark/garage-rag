@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Callable, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import grpc
 
@@ -29,8 +30,6 @@ from garage_rag.proto.garage_pb2 import (
     ConfigSchemaResponse,
     ConfigShowRequest,
     ConfigShowResponse,
-    DocumentAuthorPayload,
-    DocumentChunkPayload,
     DropModelRequest,
     DropModelResponse,
     ExtractRequest,
@@ -88,7 +87,7 @@ from garage_rag.proto.garage_pb2 import (
     VersionResponse,
 )
 from garage_rag.proto.garage_pb2_grpc import GarageServiceStub
-from garage_rag.service.executor import CommandExecutor, default_executor
+from garage_rag.service.executor import CommandExecutor
 from garage_rag.service.server import GarageRpcServicer
 
 
@@ -116,17 +115,17 @@ class GarageClient:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        host: str | None = None,
+        port: int | None = None,
         in_process: bool = True,
-        servicer: Optional[GarageRpcServicer] = None,
+        servicer: GarageRpcServicer | None = None,
     ) -> None:
         self.host = host or "127.0.0.1"
         self.port = port or 50051
         self.in_process = in_process and not (host and port)
         self.servicer = servicer or GarageRpcServicer()
-        self._channel: Optional[grpc.Channel] = None
-        self._stub: Optional[GarageServiceStub] = None
+        self._channel: grpc.Channel | None = None
+        self._stub: GarageServiceStub | None = None
 
     def _get_stub(self) -> GarageServiceStub:
         if self._stub is None:
@@ -309,7 +308,7 @@ default_client = GarageClient()
 
 def run_command_in_process(
     argv: list[str],
-    executor: Optional[CommandExecutor] = None,
+    executor: CommandExecutor | None = None,
 ) -> Iterator[CommandStatus]:
     """Execute command in process, streaming CommandStatus."""
     client = GarageClient(in_process=True, servicer=GarageRpcServicer(executor=executor))
@@ -328,8 +327,8 @@ def run_command_grpc(
 
 def execute_and_render_cli(
     argv: list[str],
-    host: Optional[str] = None,
-    port: Optional[int] = None,
+    host: str | None = None,
+    port: int | None = None,
     use_remote_grpc: bool = False,
 ) -> int:
     """Execute command serialized through gRPC pipeline and render streaming status/output to console."""
@@ -350,8 +349,7 @@ def execute_and_render_cli(
             sys.stderr.flush()
         if status.type == StatusType.STATUS_ERROR:
             exit_code = status.exit_code or 1
-        elif status.type == StatusType.STATUS_COMPLETED:
-            if exit_code == 0:
-                exit_code = status.exit_code
+        elif status.type == StatusType.STATUS_COMPLETED and exit_code == 0:
+            exit_code = status.exit_code
 
     return exit_code

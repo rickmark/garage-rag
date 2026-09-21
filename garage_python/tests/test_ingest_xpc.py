@@ -1,7 +1,6 @@
 """Tests for ingest_xpc synchronous and progress functionality."""
 
 from unittest.mock import MagicMock, patch
-import pytest
 
 from garage_rag.ingest import (
     IngestProgress,
@@ -166,6 +165,7 @@ def test_ingest_xpc_cancellation():
 def test_set_c_log_callback():
     import ctypes
     import logging
+
     from garage_rag.ingest import set_c_log_callback
 
     logs_received = []

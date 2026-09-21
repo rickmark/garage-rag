@@ -24,7 +24,6 @@ from garage_rag.proto.garage_pb2 import (
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
     CheckDocumentStatResponse,
-    ChunkEmbeddingItem,
     CommandRequest,
     CommandStatus,
     ConfigImportSourcesRequest,
@@ -38,9 +37,7 @@ from garage_rag.proto.garage_pb2 import (
     ConfigShowRequest,
     ConfigShowResponse,
     DocumentAuthorInfo,
-    DocumentAuthorPayload,
     DocumentChunkInfo,
-    DocumentChunkPayload,
     DocumentDetail,
     DocumentFactInfo,
     DocumentSummary,
@@ -157,6 +154,7 @@ class GarageRpcServicer(GarageServiceServicer):
         is_ready = True
         try:
             from sqlalchemy import text
+
             from garage_rag.db.engine import get_engine
             from garage_rag.db.migrate import has_pending_migrations
 
@@ -636,7 +634,8 @@ class GarageRpcServicer(GarageServiceServicer):
 
             summary = (
                 f"Ingested {source_slug}: seen {counters.seen:,}/{counters.total_items:,} {counters.item_type}, "
-                f"indexed {counters.indexed:,}, skipped {counters.skipped:,}, failed {counters.failed:,}, chunks {counters.chunks_written:,}"
+                f"indexed {counters.indexed:,}, skipped {counters.skipped:,}, failed {counters.failed:,}, "
+                f"chunks {counters.chunks_written:,}"
             )
             yield IngestStatus(
                 source=source_slug,
@@ -670,7 +669,11 @@ class GarageRpcServicer(GarageServiceServicer):
         )
 
         with session_scope() as session:
-            targets = [get_model(session, request.model)] if request.model and request.model != "*" else list_models(session)
+            targets = (
+                [get_model(session, request.model)]
+                if request.model and request.model != "*"
+                else list_models(session)
+            )
             if not targets:
                 context.abort(grpc.StatusCode.NOT_FOUND, "no models registered")
 
@@ -1582,6 +1585,7 @@ class GarageRpcServicer(GarageServiceServicer):
     ) -> GetEmbeddingBatchesResponse:
         """Fetch pending unembedded text chunks for a target embedding model."""
         from sqlalchemy import text
+
         from garage_rag.db.emb_tables import get_model
         from garage_rag.db.engine import session_scope
         from garage_rag.embed.ollama import assert_safe_table, count_pending
@@ -1644,6 +1648,7 @@ class GarageRpcServicer(GarageServiceServicer):
     ) -> UpdateEmbeddingsResponse:
         """Upsert computed embedding vectors for the given model table."""
         from sqlalchemy import text
+
         from garage_rag.db.emb_tables import get_model
         from garage_rag.db.engine import session_scope
         from garage_rag.embed.ollama import _adapt, _plan_from_row, assert_safe_table

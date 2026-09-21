@@ -5,16 +5,15 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from garage_rag.db.models import CorpusClass, IngestState, Source, TrustTier
 from garage_rag.ingest.gateway import (
     AuthorPayload,
     ChunkPayload,
-    ExistingDocStat,
     GrpcIngestStorageGateway,
     SqlAlchemyIngestStorageGateway,
-    get_storage_gateway,
 )
 from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
@@ -28,7 +27,6 @@ from garage_rag.proto.garage_pb2 import (
     PersistDocumentRequest,
     PersistDocumentResponse,
     PersistScanRequest,
-    PersistScanResponse,
 )
 from garage_rag.service.client import GarageClient
 from garage_rag.service.server import GarageRpcServicer, create_grpc_server

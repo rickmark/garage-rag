@@ -8,10 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from garage_rag.db.models import CorpusClass, TrustTier
-from garage_rag.ingest.gateway import ExistingDocStat, IngestStorageGateway, SourceContext
+from garage_rag.ingest.gateway import IngestStorageGateway, SourceContext
 from garage_rag.ingest.materialize import MaterializationBudget
 from garage_rag.ingest.pipeline import IngestCounters, ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
