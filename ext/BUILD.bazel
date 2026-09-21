@@ -142,6 +142,33 @@ macho_test(
 )
 
 macho_test(
+    name = "libicu_shared_arch_test",
+    src = "//ext/libicu:libicu_dylibs",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libreadline_shared_arch_test",
+    src = "//ext/libreadline:libreadline_dylibs",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libzlib_shared_arch_test",
+    src = "//ext/libzlib:libzlib_dylibs",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
     name = "openssl_arch_test",
     src = ":openssl",
     archs = ["arm64"],

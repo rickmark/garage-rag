@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
 
 configure_make(
     name = "libicu",
@@ -22,6 +23,81 @@ configure_make(
         "libicudata.a",
         "libicuio.a",
         "libicutu.a",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Shared build, consumed only by //ext/postgres:postgres, so the app ships one copy of ICU
+# under postgres/lib instead of a static copy baked into every Postgres binary and dylib.
+configure_make(
+    name = "libicu_shared",
+    configure_command = "source/configure",
+    configure_options = [
+        "--disable-samples",
+        "--disable-tests",
+        "--disable-static",
+        "--enable-shared",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
+    },
+    lib_source = "@libicu//:libicu_source",
+    out_shared_libs = [
+        "libicudata.76.dylib",
+        "libicui18n.76.dylib",
+        "libicuio.76.dylib",
+        "libicutu.76.dylib",
+        "libicuuc.76.dylib",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+extract_foreign_cc_file(
+    name = "libicudata_dylib",
+    target = ":libicu_shared",
+    filename = "libicudata.76.dylib",
+    out = "lib/libicudata.76.dylib",
+)
+
+extract_foreign_cc_file(
+    name = "libicui18n_dylib",
+    target = ":libicu_shared",
+    filename = "libicui18n.76.dylib",
+    out = "lib/libicui18n.76.dylib",
+)
+
+extract_foreign_cc_file(
+    name = "libicuio_dylib",
+    target = ":libicu_shared",
+    filename = "libicuio.76.dylib",
+    out = "lib/libicuio.76.dylib",
+)
+
+extract_foreign_cc_file(
+    name = "libicutu_dylib",
+    target = ":libicu_shared",
+    filename = "libicutu.76.dylib",
+    out = "lib/libicutu.76.dylib",
+)
+
+extract_foreign_cc_file(
+    name = "libicuuc_dylib",
+    target = ":libicu_shared",
+    filename = "libicuuc.76.dylib",
+    out = "lib/libicuuc.76.dylib",
+)
+
+filegroup(
+    name = "libicu_dylibs",
+    srcs = [
+        ":libicudata_dylib",
+        ":libicui18n_dylib",
+        ":libicuio_dylib",
+        ":libicutu_dylib",
+        ":libicuuc_dylib",
     ],
     visibility = ["//visibility:public"],
 )

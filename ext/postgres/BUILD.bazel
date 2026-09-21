@@ -109,15 +109,20 @@ done
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//ext:libicu",
-        "//ext:libreadline",
-        "//ext:libzlib",
+        "//ext/libicu:libicu_shared",
+        "//ext/libreadline:libreadline_shared",
+        "//ext/libzlib:libzlib_shared",
     ],
 )
 
 install_name(
     name = "postgres_rpath",
-    dep = ":postgres",
+    deps = [
+        ":postgres",
+        "//ext/libicu:libicu_dylibs",
+        "//ext/libreadline:libreadline_dylibs",
+        "//ext/libzlib:libzlib_dylibs",
+    ],
     visibility = ["//visibility:public"],
 )
 

@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
 
 configure_make(
     name = "libzlib",
@@ -16,5 +17,38 @@ configure_make(
     out_static_libs = [
         "libz.a",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# Shared build, consumed only by //ext/postgres:postgres; see //ext/libicu:libicu_shared.
+configure_make(
+    name = "libzlib_shared",
+    configure_command = "configure",
+    configure_options = [
+        "--shared",
+    ],
+    env = {
+        "AR": "/usr/bin/ar",
+        "CFLAGS": "-arch arm64 -arch x86_64 -g",
+        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
+        "LDFLAGS": "-arch arm64 -arch x86_64",
+    },
+    lib_source = "@libzlib//:libzlib_source",
+    out_shared_libs = [
+        "libz.1.dylib",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+extract_foreign_cc_file(
+    name = "libz_dylib",
+    target = ":libzlib_shared",
+    filename = "libz.1.dylib",
+    out = "lib/libz.1.dylib",
+)
+
+filegroup(
+    name = "libzlib_dylibs",
+    srcs = [":libz_dylib"],
     visibility = ["//visibility:public"],
 )
