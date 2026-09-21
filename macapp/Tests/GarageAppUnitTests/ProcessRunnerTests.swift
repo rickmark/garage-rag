@@ -230,4 +230,36 @@ final class ProcessRunnerTests: XCTestCase {
         wait(for: [expectation], timeout: 5.0)
         XCTAssertFalse(runner.isRunning)
     }
+
+    func testProcessRunnerHighVolumeOutputThreadSafety() throws {
+        let runner = ProcessRunner()
+        let expectation = XCTestExpectation(description: "High volume output completed without crash")
+        let lineCount = 500
+        var linesReceived = 0
+        let lock = NSLock()
+
+        let script = "for i in $(seq 1 \(lineCount)); do echo \"stdout line $i\"; echo \"stderr line $i\" >&2; done"
+        let process = try runner.run(
+            executable: URL(fileURLWithPath: "/bin/bash"),
+            arguments: ["-c", script],
+            source: "volume_test"
+        ) { line in
+            lock.lock()
+            linesReceived += 1
+            lock.unlock()
+        }
+
+        process.terminationHandler = { _ in
+            // Give brief window for trailing asynchronous readability delivery
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                expectation.fulfill()
+            }
+        }
+
+        wait(for: [expectation], timeout: 10.0)
+        lock.lock()
+        let total = linesReceived
+        lock.unlock()
+        XCTAssertGreaterThan(total, 0)
+    }
 }

@@ -24,10 +24,19 @@ macos_unit_test(
     name = "GarageAppUnitTests",
     bundle_id = "me.rickmark.garage-rag.GarageAppUnitTests",
     bundle_name = "GarageAppUnitTests",
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
+    linkopts = [
+        "-F$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
+    ],
     minimum_os_version = "14.0",
     timeout = "long",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageAppUnitTests_lib",
+        "//ext/python:python_framework",
     ],
 )

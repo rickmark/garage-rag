@@ -42,8 +42,28 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
         reply(true, nil)
     }
 
+    func setAppBundleFileHandle(_ bundleHandle: FileHandle, with reply: @escaping (Bool, String?) -> Void) {
+        reply(true, nil)
+    }
+
+    func updateConfiguration(_ options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
+        reply(true, nil)
+    }
+
     func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
         reply(true, "Mock diagnostic passed", "All systems operational in mock service")
+    }
+
+    func getServiceStatus(with reply: @escaping (String) -> Void) {
+        reply("{}")
+    }
+
+    func runSelfTests(with reply: @escaping (Bool, String) -> Void) {
+        reply(true, "{}")
+    }
+
+    func restartServices(graceful: Bool, with reply: @escaping (Bool, String?) -> Void) {
+        reply(true, nil)
     }
 
     func fetchLogs(with reply: @escaping (String?, String?) -> Void) {

@@ -180,10 +180,14 @@ public struct LogLine: Identifiable, Hashable, Sendable {
 /// Thin wrapper around Process that streams stdout/stderr line-by-line to a
 /// callback and reports exit status. Used for both the long-running Postgres
 /// server process and one-shot `garage` CLI invocations.
-final class ProcessRunner {
+final class ProcessRunner: @unchecked Sendable {
     private(set) var process: Process?
     private var stdoutBuffer = Data()
     private var stderrBuffer = Data()
+    private let stdoutLock = NSLock()
+    private let stderrLock = NSLock()
+    private var stdoutHandle: FileHandle?
+    private var stderrHandle: FileHandle?
 
     @discardableResult
     func run(
@@ -209,11 +213,24 @@ final class ProcessRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.consume(handle: handle, buffer: \.stdoutBuffer, stream: .stdout, source: source, onLine: onLine)
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        let stderrHandle = stderrPipe.fileHandleForReading
+        self.stdoutHandle = stdoutHandle
+        self.stderrHandle = stderrHandle
+
+        stdoutHandle.readabilityHandler = { [weak self] handle in
+            guard let self else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self.consume(handle: handle, lock: self.stdoutLock, buffer: \.stdoutBuffer, stream: .stdout, source: source, onLine: onLine)
         }
-        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.consume(handle: handle, buffer: \.stderrBuffer, stream: .stderr, source: source, onLine: onLine)
+        stderrHandle.readabilityHandler = { [weak self] handle in
+            guard let self else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self.consume(handle: handle, lock: self.stderrLock, buffer: \.stderrBuffer, stream: .stderr, source: source, onLine: onLine)
         }
 
         self.process = process
@@ -258,30 +275,38 @@ final class ProcessRunner {
 
     private func consume(
         handle: FileHandle,
+        lock: NSLock,
         buffer: ReferenceWritableKeyPath<ProcessRunner, Data>,
         stream: LogLine.Stream,
         source: String,
         onLine: @escaping (LogLine) -> Void
     ) {
         let data = handle.availableData
-        guard !data.isEmpty else {
+        var linesToEmit: [String] = []
+
+        lock.lock()
+        if data.isEmpty {
+            handle.readabilityHandler = nil
             if !self[keyPath: buffer].isEmpty {
-                let text = String(data: self[keyPath: buffer], encoding: .utf8) ?? ""
+                if let text = String(data: self[keyPath: buffer], encoding: .utf8), !text.isEmpty {
+                    linesToEmit.append(text)
+                }
                 self[keyPath: buffer].removeAll()
-                if !text.isEmpty {
-                    Self.emitToOSLog(stream: stream, text: text, source: source)
-                    DispatchQueue.main.async {
-                        onLine(LogLine(stream: stream, text: text, source: source))
-                    }
+            }
+            lock.unlock()
+        } else {
+            self[keyPath: buffer].append(data)
+            while let range = self[keyPath: buffer].firstRange(of: Data([0x0A])) {
+                let lineData = self[keyPath: buffer].subdata(in: self[keyPath: buffer].startIndex..<range.lowerBound)
+                self[keyPath: buffer].removeSubrange(self[keyPath: buffer].startIndex..<range.upperBound)
+                if let text = String(data: lineData, encoding: .utf8) {
+                    linesToEmit.append(text)
                 }
             }
-            return
+            lock.unlock()
         }
-        self[keyPath: buffer].append(data)
-        while let range = self[keyPath: buffer].firstRange(of: Data([0x0A])) {
-            let lineData = self[keyPath: buffer].subdata(in: self[keyPath: buffer].startIndex..<range.lowerBound)
-            self[keyPath: buffer].removeSubrange(self[keyPath: buffer].startIndex..<range.upperBound)
-            let text = String(data: lineData, encoding: .utf8) ?? ""
+
+        for text in linesToEmit {
             Self.emitToOSLog(stream: stream, text: text, source: source)
             DispatchQueue.main.async {
                 onLine(LogLine(stream: stream, text: text, source: source))
@@ -317,17 +342,30 @@ final class ProcessRunner {
         }
     }
 
+    private func cleanupHandlers() {
+        stdoutHandle?.readabilityHandler = nil
+        stderrHandle?.readabilityHandler = nil
+        stdoutHandle = nil
+        stderrHandle = nil
+    }
+
     func terminate() {
+        cleanupHandlers()
         guard let process, process.isRunning else { return }
         process.terminate()
     }
 
     func forceKill() {
+        cleanupHandlers()
         guard let process, process.isRunning else { return }
         kill(process.processIdentifier, SIGKILL)
     }
 
     var isRunning: Bool {
         process?.isRunning ?? false
+    }
+
+    deinit {
+        cleanupHandlers()
     }
 }
