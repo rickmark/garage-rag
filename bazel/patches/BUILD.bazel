@@ -1,0 +1,1 @@
+exports_files(["rules_apple_xcarchive_symlinks.patch"])

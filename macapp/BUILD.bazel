@@ -1,3 +1,4 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(
     "@rules_xcodeproj//xcodeproj:defs.bzl",
     "top_level_target",
@@ -32,6 +33,19 @@ appstore_macos_application(
 appstore_xcarchive(
     name = "GarageStore.xcarchive",
     bundle = "//macapp/Sources/GarageApp:GarageApp",
+    visibility = ["//visibility:public"],
+)
+
+# `bazel run //macapp:xcarchive_open` builds the archive, copies it into Xcode's own
+# (writable) Archives directory, and opens it so it shows up in Xcode Organizer ready
+# for distribution/upload — bazel-out itself is read-only, which Xcode's export flow
+# needs to write into.
+# gazelle:exclude open_xcarchive.sh
+sh_binary(
+    name = "xcarchive_open",
+    srcs = ["open_xcarchive.sh"],
+    args = ["$(location :GarageStore.xcarchive)"],
+    data = [":GarageStore.xcarchive"],
     visibility = ["//visibility:public"],
 )
 
