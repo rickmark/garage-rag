@@ -4,6 +4,35 @@ import OSLog
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "IngestService")
 
+/// Thread-safe buffer for batching background ingest logs and progress updates before dispatching to MainActor.
+private final class IngestBatchBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingLogs: [LogLine] = []
+    private var pendingProgress: [IngestProgressUpdate] = []
+
+    func appendLog(_ line: LogLine) {
+        lock.lock()
+        pendingLogs.append(line)
+        lock.unlock()
+    }
+
+    func appendProgress(_ progress: IngestProgressUpdate) {
+        lock.lock()
+        pendingProgress.append(progress)
+        lock.unlock()
+    }
+
+    func drain() -> (logs: [LogLine], progress: [IngestProgressUpdate]) {
+        lock.lock()
+        let logs = pendingLogs
+        let progress = pendingProgress
+        pendingLogs.removeAll(keepingCapacity: true)
+        pendingProgress.removeAll(keepingCapacity: true)
+        lock.unlock()
+        return (logs, progress)
+    }
+}
+
 /// Execution strategy for document ingestion (XPC service).
 enum IngestExecutionMode: String, CaseIterable, Identifiable, Sendable {
     case xpcService = "xpc"
@@ -80,23 +109,30 @@ final class IngestService: ObservableObject {
     }
 
     func appendLog(_ line: LogLine) {
-        let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !textTrimmed.isEmpty else { return }
+        appendLogs([line])
+    }
 
-        let timeBucket = Int(line.date.timeIntervalSince1970)
-        let key = "\(textTrimmed)|\(timeBucket)"
+    func appendLogs(_ lines: [LogLine]) {
+        guard !lines.isEmpty else { return }
+        for line in lines {
+            let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !textTrimmed.isEmpty else { continue }
 
-        if seenLogKeys.contains(key) {
-            return
+            let timeBucket = Int(line.date.timeIntervalSince1970)
+            let key = "\(textTrimmed)|\(timeBucket)"
+
+            if seenLogKeys.contains(key) {
+                continue
+            }
+            seenLogKeys.insert(key)
+            seenLogKeyQueue.append(key)
+            if seenLogKeyQueue.count > maxSeenKeys {
+                let removed = seenLogKeyQueue.removeFirst()
+                seenLogKeys.remove(removed)
+            }
+
+            logs.append(line)
         }
-        seenLogKeys.insert(key)
-        seenLogKeyQueue.append(key)
-        if seenLogKeyQueue.count > maxSeenKeys {
-            let removed = seenLogKeyQueue.removeFirst()
-            seenLogKeys.remove(removed)
-        }
-
-        logs.append(line)
         if logs.count > maxLogLines {
             logs.removeFirst(logs.count - maxLogLines)
         }
@@ -229,7 +265,7 @@ final class IngestService: ObservableObject {
                     logger.debug("IngestService: OSLogStore polling error: \(error.localizedDescription, privacy: .public)")
                 }
 
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }
@@ -257,22 +293,33 @@ final class IngestService: ObservableObject {
     }
 
     func handleProgress(_ progress: IngestProgressUpdate, sourceLabel: String = "Ingest") {
-        self.latestProgress = progress
-        self.progressBySource[progress.source] = progress
-        if self.currentSource == nil || self.currentSource == "*" {
-            self.currentSource = progress.source
+        handleProgressBatch([progress], sourceLabel: sourceLabel)
+    }
+
+    func handleProgressBatch(_ updates: [IngestProgressUpdate], sourceLabel: String = "Ingest") {
+        guard !updates.isEmpty else { return }
+        var progressLogs: [LogLine] = []
+        for progress in updates {
+            self.latestProgress = progress
+            self.progressBySource[progress.source] = progress
+            if self.currentSource == nil || self.currentSource == "*" {
+                self.currentSource = progress.source
+            }
+
+            logger.debug("IngestService progress (\(sourceLabel, privacy: .public)): phase=\(progress.phase, privacy: .public), msg=\(progress.message, privacy: .public)")
+
+            if !progress.message.isEmpty {
+                let stream: LogLine.Stream = progress.isError ? .stderr : .stdout
+                let line = LogLine(
+                    stream: stream,
+                    text: progress.message,
+                    source: sourceLabel
+                )
+                progressLogs.append(line)
+            }
         }
-
-        logger.debug("IngestService progress (\(sourceLabel, privacy: .public)): phase=\(progress.phase, privacy: .public), msg=\(progress.message, privacy: .public)")
-
-        if !progress.message.isEmpty {
-            let stream: LogLine.Stream = progress.isError ? .stderr : .stdout
-            let line = LogLine(
-                stream: stream,
-                text: progress.message,
-                source: sourceLabel
-            )
-            appendLog(line)
+        if !progressLogs.isEmpty {
+            appendLogs(progressLogs)
         }
     }
 
@@ -385,8 +432,38 @@ final class IngestService: ObservableObject {
             }
         }
 
+        let batchBuffer = IngestBatchBuffer()
+        let batchFlushTask = Task { [weak self, batchBuffer] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { break }
+                let (logs, progressUpdates) = batchBuffer.drain()
+                if !logs.isEmpty || !progressUpdates.isEmpty {
+                    await MainActor.run { [weak self] in
+                        guard let self = self else { return }
+                        if !logs.isEmpty {
+                            self.appendLogs(logs)
+                        }
+                        if !progressUpdates.isEmpty {
+                            self.handleProgressBatch(progressUpdates, sourceLabel: commandLabel)
+                        }
+                    }
+                }
+            }
+        }
+
         defer {
-            Task { @MainActor [weak self] in
+            batchFlushTask.cancel()
+            Task { @MainActor [weak self, batchBuffer] in
+                let (remainingLogs, remainingProgress) = batchBuffer.drain()
+                if let self = self {
+                    if !remainingLogs.isEmpty {
+                        self.appendLogs(remainingLogs)
+                    }
+                    if !remainingProgress.isEmpty {
+                        self.handleProgressBatch(remainingProgress, sourceLabel: commandLabel)
+                    }
+                }
                 if self?.isRunning == true {
                     cleanup()
                 }
@@ -412,21 +489,25 @@ final class IngestService: ObservableObject {
             let result = try await selectedClient.ingest(
                 slug: slug,
                 options: effectiveOptions,
-                onLog: { [weak self] message, level in
-                    Task { @MainActor [weak self] in
-                        let stream: LogLine.Stream = level >= 40 ? .stderr : .stdout
-                        self?.appendLog(LogLine(stream: stream, text: message, source: commandLabel))
-                    }
+                onLog: { message, level in
+                    let stream: LogLine.Stream = level >= 40 ? .stderr : .stdout
+                    batchBuffer.appendLog(LogLine(stream: stream, text: message, source: commandLabel))
                 },
-                onProgress: { [weak self] progress in
-                    Task { @MainActor [weak self] in
-                        self?.handleProgress(progress, sourceLabel: commandLabel)
-                    }
+                onProgress: { progress in
+                    batchBuffer.appendProgress(progress)
                 }
             )
 
+            batchFlushTask.cancel()
+            let (remainingLogs, remainingProgress) = batchBuffer.drain()
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
+                if !remainingLogs.isEmpty {
+                    self.appendLogs(remainingLogs)
+                }
+                if !remainingProgress.isEmpty {
+                    self.handleProgressBatch(remainingProgress, sourceLabel: commandLabel)
+                }
                 if result.succeeded {
                     let successMsg = result.message ?? "Ingestion finished successfully for \(slug) [\(targetMode.shortTitle)]"
                     logger.info("IngestService: \(successMsg, privacy: .public)")
@@ -445,10 +526,18 @@ final class IngestService: ObservableObject {
 
             return result
         } catch {
+            batchFlushTask.cancel()
+            let (remainingLogs, remainingProgress) = batchBuffer.drain()
             let errorMsg = "Ingestion error for \(slug) [\(targetMode.shortTitle)]: \(error.localizedDescription)"
             logger.error("IngestService: \(errorMsg, privacy: .public)")
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
+                if !remainingLogs.isEmpty {
+                    self.appendLogs(remainingLogs)
+                }
+                if !remainingProgress.isEmpty {
+                    self.handleProgressBatch(remainingProgress, sourceLabel: commandLabel)
+                }
                 self.lastError = errorMsg
                 let line = LogLine(stream: .stderr, text: errorMsg, source: commandLabel)
                 self.appendLog(line)

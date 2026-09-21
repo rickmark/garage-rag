@@ -1,11 +1,13 @@
 import SwiftUI
 import AppKit
+import Combine
 import IngestClient
 
 @MainActor
 struct SourcesView: View {
     @EnvironmentObject var appState: AppState
 
+    @State private var refreshTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     @State private var slug = ""
     @State private var root = ""
     @State private var kind = "filesystem"
@@ -68,6 +70,14 @@ struct SourcesView: View {
         .navigationTitle("Sources & Ingest")
         .onAppear {
             refreshSourcesAndTestDisk()
+        }
+        .onReceive(refreshTimer) { _ in
+            if appState.ingestService.isRunning || appState.isScanning {
+                Task {
+                    await appState.fetchRegisteredSources()
+                    await appState.fetchCorpusStats()
+                }
+            }
         }
     }
 
