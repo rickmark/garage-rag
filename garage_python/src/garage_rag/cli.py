@@ -10,10 +10,12 @@ import os
 from pathlib import Path
 from typing import Annotated, cast
 
+import psycopg
 import typer
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import func
+from sqlalchemy.exc import DBAPIError
 
 from garage_rag.config import (
     CONFIG_FILENAME,
@@ -51,6 +53,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+log = logging.getLogger(__name__)
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -1461,6 +1464,30 @@ def serve(
         serve_grpc(host=host, port=port)
 
 
+def _pgvector_library_hint(exc: BaseException) -> str | None:
+    """If ``exc`` was caused by Postgres failing to load the pgvector native
+    library (SQLSTATE 58P01, "could not access file ..."), return an
+    actionable message. Returns None for every other failure so callers fall
+    back to a normal error report.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, psycopg.errors.UndefinedFile):
+            return (
+                "Postgres could not load the pgvector extension's native library "
+                f"({current}). The 'vector' type is registered but its shared "
+                "library is missing or unreadable next to this Postgres install -- "
+                "vector columns cannot be read or written until that's fixed. "
+                "Check Contents/Resources/postgres/lib and .../share/extension "
+                "for vector.dylib and vector.control in the app bundle."
+            )
+        orig = getattr(current, "orig", None)
+        current = orig or current.__cause__ or current.__context__
+    return None
+
+
 def main_cli() -> int:
     """Main CLI entrypoint."""
     import io
@@ -1491,6 +1518,11 @@ def main_cli() -> int:
         return 0
     except SystemExit as se:
         return se.code if isinstance(se.code, int) else 0
+    except (DBAPIError, psycopg.Error) as exc:
+        hint = _pgvector_library_hint(exc)
+        log.error("database error: %s", exc, exc_info=True)
+        console.print(f"[red]database error[/red]: {hint or exc}")
+        return 1
 
 
 if __name__ == "__main__":

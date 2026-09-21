@@ -273,6 +273,19 @@ final class PostgresService: ObservableObject {
     func start() async throws {
         guard status == .stopped || isFailed else { return }
         status = .starting
+
+        // A postgres launched by a previous run of this app (an older build,
+        // or this app after a crash/force-quit that skipped
+        // applicationWillTerminate) can still be alive and holding our data
+        // directory's lock and port. If we skip this and it's still up,
+        // pg_isready below happily reports that ghost process as ready, so
+        // we silently talk to a stale postmaster -- one that may have
+        // resolved its shared library paths (like pgvector's) against a
+        // now-replaced app bundle -- instead of starting a fresh one from
+        // the current bundle. Always clear it first; this is a no-op when
+        // nothing is running.
+        Self.stopAnyRunningInstance()
+
         do {
             try ensureInitialized()
         } catch {
@@ -388,8 +401,14 @@ final class PostgresService: ObservableObject {
             }
             if !exited && kill(pid, 0) == 0 {
                 kill(pid, SIGKILL)
+                usleep(100_000)
             }
         }
+
+        // pg_ctl removes this on a clean stop; the manual kill path above
+        // does not. Clear it ourselves so the next postgres we launch never
+        // has to reason about a leftover lock from a process we just killed.
+        try? FileManager.default.removeItem(at: pidFile)
     }
 
     /// Drops and recreates the app's private database when running, or
