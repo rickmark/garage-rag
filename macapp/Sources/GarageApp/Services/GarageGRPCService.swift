@@ -331,6 +331,60 @@ final class GarageGRPCService: ObservableObject {
         }
     }
 
+    func listDocuments(
+        source: String? = nil,
+        corpusClass: String? = nil,
+        trustTier: String? = nil,
+        query: String? = nil,
+        limit: Int = 200,
+        offset: Int = 0
+    ) async throws -> Garage_ListDocumentsResponse {
+        if status != .running {
+            try await start()
+        }
+
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        var request = Garage_ListDocumentsRequest()
+        if let source = source, !source.isEmpty {
+            request.source = source
+        }
+        if let corpusClass = corpusClass, !corpusClass.isEmpty {
+            request.corpusClass = corpusClass
+        }
+        if let trustTier = trustTier, !trustTier.isEmpty {
+            request.trustTier = trustTier
+        }
+        if let query = query, !query.isEmpty {
+            request.query = query
+        }
+        request.limit = Int32(limit)
+        request.offset = Int32(offset)
+
+        let callOptions = CallOptions(timeLimit: .timeout(.seconds(30)))
+        do {
+            return try await client.listDocuments(request, callOptions: callOptions)
+        } catch {
+            throw GarageGRPCError.searchFailed(error.localizedDescription)
+        }
+    }
+
+    func getDocument(documentID: Int64) async throws -> Garage_GetDocumentResponse {
+        if status != .running {
+            try await start()
+        }
+
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        var request = Garage_GetDocumentRequest()
+        request.documentID = documentID
+
+        let callOptions = CallOptions(timeLimit: .timeout(.seconds(30)))
+        do {
+            return try await client.getDocument(request, callOptions: callOptions)
+        } catch {
+            throw GarageGRPCError.searchFailed(error.localizedDescription)
+        }
+    }
+
     /// Functional test that performs structured gRPC RPC calls (GetStatus, GetVersion, ListModels, ListSources, GetStats)
     /// to thoroughly verify that the gRPC daemon and all underlying subsystems are operational beyond a simple ping.
     func testServiceQuery() async -> (isSuccess: Bool, summary: String, details: String, durationMs: Double) {

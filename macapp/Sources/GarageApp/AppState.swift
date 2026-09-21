@@ -655,6 +655,32 @@ final class AppState: ObservableObject {
         return response.hits.map { SearchResultItem(hit: $0) }
     }
 
+    /// Lists documents via the gRPC server, optionally filtered by source/class/trust/query.
+    func listDocuments(
+        source: String? = nil,
+        corpusClass: String? = nil,
+        trustTier: String? = nil,
+        query: String? = nil,
+        limit: Int = 200,
+        offset: Int = 0
+    ) async throws -> (items: [DocumentListItem], totalCount: Int) {
+        let response = try await grpc.listDocuments(
+            source: source,
+            corpusClass: corpusClass,
+            trustTier: trustTier,
+            query: query,
+            limit: limit,
+            offset: offset
+        )
+        return (response.documents.map { DocumentListItem(summary: $0) }, Int(response.totalCount))
+    }
+
+    /// Fetches a single document's metadata and chunks via the gRPC server.
+    func getDocument(documentID: Int64) async throws -> DocumentDetailItem {
+        let response = try await grpc.getDocument(documentID: documentID)
+        return DocumentDetailItem(response: response)
+    }
+
     private func configureScheduledMaintenance() {
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil

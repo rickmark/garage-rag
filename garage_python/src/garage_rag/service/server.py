@@ -37,8 +37,12 @@ from garage_rag.proto.garage_pb2 import (
     ConfigSchemaResponse,
     ConfigShowRequest,
     ConfigShowResponse,
+    DocumentAuthorInfo,
     DocumentAuthorPayload,
+    DocumentChunkInfo,
     DocumentChunkPayload,
+    DocumentDetail,
+    DocumentSummary,
     DropModelRequest,
     DropModelResponse,
     EmbeddingChunkItem,
@@ -47,12 +51,16 @@ from garage_rag.proto.garage_pb2 import (
     ExtractResponse,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
+    GetDocumentRequest,
+    GetDocumentResponse,
     GetEmbeddingBatchesRequest,
     GetEmbeddingBatchesResponse,
     IngestRequest,
     IngestStatus,
     InitDbRequest,
     InitDbResponse,
+    ListDocumentsRequest,
+    ListDocumentsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
@@ -233,6 +241,151 @@ class GarageRpcServicer(GarageServiceServicer):
             hits=proto_hits,
             total_hits=len(proto_hits),
             formatted_output=f"Found {len(proto_hits)} results for {request.query!r}",
+        )
+
+    # -----------------------------------------------------------------------
+    # Documents & Chunks
+    # -----------------------------------------------------------------------
+
+    def ListDocuments(self, request: ListDocumentsRequest, context: grpc.ServicerContext) -> ListDocumentsResponse:
+        """List documents, optionally filtered by source/class/trust/query."""
+        from sqlalchemy import func, or_
+
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Chunk, Document, Source
+
+        with session_scope() as session:
+            query = session.query(Document).join(Source, Document.source_id == Source.id)
+
+            if request.source:
+                query = query.filter(Source.slug == request.source)
+            if request.corpus_class:
+                query = query.filter(Document.corpus_class == request.corpus_class)
+            if request.trust_tier:
+                query = query.filter(Document.trust_tier == request.trust_tier)
+            if request.query:
+                like = f"%{request.query}%"
+                query = query.filter(or_(Document.title.ilike(like), Document.uri.ilike(like)))
+
+            total_count = query.with_entities(func.count(Document.id)).scalar() or 0
+
+            limit = request.limit or 100
+            offset = max(request.offset, 0)
+            documents = (
+                query.order_by(Document.ingested_at.desc(), Document.id.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+
+            doc_ids = [d.id for d in documents]
+            chunk_counts: dict[int, int] = {}
+            slugs_by_doc_id: dict[int, str] = {}
+            if doc_ids:
+                chunk_counts = dict(
+                    session.query(Chunk.document_id, func.count(Chunk.id))
+                    .filter(Chunk.document_id.in_(doc_ids))
+                    .group_by(Chunk.document_id)
+                    .all()
+                )
+                slugs_by_doc_id = dict(
+                    session.query(Document.id, Source.slug)
+                    .join(Source, Document.source_id == Source.id)
+                    .filter(Document.id.in_(doc_ids))
+                    .all()
+                )
+
+            summaries = [
+                DocumentSummary(
+                    id=d.id,
+                    uri=d.uri,
+                    title=d.title or "",
+                    source_slug=slugs_by_doc_id.get(d.id, ""),
+                    corpus_class=str(d.corpus_class),
+                    trust_tier=str(d.trust_tier),
+                    mime=d.mime or "",
+                    lang=d.lang or "",
+                    byte_size=d.byte_size or 0,
+                    chunk_count=chunk_counts.get(d.id, 0),
+                    state=str(d.state),
+                    ingested_at=d.ingested_at.isoformat() if d.ingested_at else "",
+                )
+                for d in documents
+            ]
+
+        return ListDocumentsResponse(
+            documents=summaries,
+            total_count=total_count,
+            formatted_output=f"{len(summaries)} of {total_count} documents",
+        )
+
+    def GetDocument(self, request: GetDocumentRequest, context: grpc.ServicerContext) -> GetDocumentResponse:
+        """Fetch a single document's metadata and its chunks."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Chunk, Document, Source
+
+        with session_scope() as session:
+            document = session.get(Document, request.document_id)
+            if document is None:
+                context.set_code(grpc.StatusCode.NOT_FOUND)
+                context.set_details(f"document {request.document_id} not found")
+                return GetDocumentResponse()
+
+            source = session.get(Source, document.source_id)
+
+            chunks = (
+                session.query(Chunk)
+                .filter(Chunk.document_id == document.id)
+                .order_by(Chunk.ord.asc())
+                .all()
+            )
+
+            authors = [
+                DocumentAuthorInfo(
+                    name=da.author.display_name,
+                    role=str(da.role),
+                    confidence=float(da.confidence),
+                )
+                for da in document.authors
+            ]
+
+            detail = DocumentDetail(
+                id=document.id,
+                uri=document.uri,
+                title=document.title or "",
+                source_slug=source.slug if source else "",
+                corpus_class=str(document.corpus_class),
+                trust_tier=str(document.trust_tier),
+                mime=document.mime or "",
+                lang=document.lang or "",
+                byte_size=document.byte_size or 0,
+                extractor=document.extractor or "",
+                extractor_version=document.extractor_version or "",
+                chunker=document.chunker or "",
+                meta_json=json.dumps(document.meta) if document.meta else "",
+                state=str(document.state),
+                error=document.error or "",
+                ingested_at=document.ingested_at.isoformat() if document.ingested_at else "",
+                authors=authors,
+            )
+
+            proto_chunks = [
+                DocumentChunkInfo(
+                    id=c.id,
+                    ord=c.ord,
+                    text=c.text,
+                    token_count=c.token_count or 0,
+                    char_start=c.char_start or 0,
+                    char_end=c.char_end or 0,
+                    heading_path=c.heading_path or "",
+                )
+                for c in chunks
+            ]
+
+        return GetDocumentResponse(
+            document=detail,
+            chunks=proto_chunks,
+            formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks",
         )
 
     # -----------------------------------------------------------------------

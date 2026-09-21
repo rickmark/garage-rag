@@ -64,6 +64,16 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.SearchRequest.SerializeToString,
                 response_deserializer=garage__pb2.SearchResponse.FromString,
                 _registered_method=True)
+        self.ListDocuments = channel.unary_unary(
+                '/garage.GarageService/ListDocuments',
+                request_serializer=garage__pb2.ListDocumentsRequest.SerializeToString,
+                response_deserializer=garage__pb2.ListDocumentsResponse.FromString,
+                _registered_method=True)
+        self.GetDocument = channel.unary_unary(
+                '/garage.GarageService/GetDocument',
+                request_serializer=garage__pb2.GetDocumentRequest.SerializeToString,
+                response_deserializer=garage__pb2.GetDocumentResponse.FromString,
+                _registered_method=True)
         self.ListSources = channel.unary_unary(
                 '/garage.GarageService/ListSources',
                 request_serializer=garage__pb2.ListSourcesRequest.SerializeToString,
@@ -262,6 +272,19 @@ class GarageServiceServicer:
     def Search(self, request, context):
         """--- Search ---
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListDocuments(self, request, context):
+        """--- Documents & Chunks ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetDocument(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -493,6 +516,16 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.Search,
                     request_deserializer=garage__pb2.SearchRequest.FromString,
                     response_serializer=garage__pb2.SearchResponse.SerializeToString,
+            ),
+            'ListDocuments': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListDocuments,
+                    request_deserializer=garage__pb2.ListDocumentsRequest.FromString,
+                    response_serializer=garage__pb2.ListDocumentsResponse.SerializeToString,
+            ),
+            'GetDocument': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetDocument,
+                    request_deserializer=garage__pb2.GetDocumentRequest.FromString,
+                    response_serializer=garage__pb2.GetDocumentResponse.SerializeToString,
             ),
             'ListSources': grpc.unary_unary_rpc_method_handler(
                     servicer.ListSources,
@@ -792,6 +825,60 @@ class GarageService:
             '/garage.GarageService/Search',
             garage__pb2.SearchRequest.SerializeToString,
             garage__pb2.SearchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListDocuments(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/ListDocuments',
+            garage__pb2.ListDocumentsRequest.SerializeToString,
+            garage__pb2.ListDocumentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetDocument(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/GetDocument',
+            garage__pb2.GetDocumentRequest.SerializeToString,
+            garage__pb2.GetDocumentResponse.FromString,
             options,
             channel_credentials,
             insecure,

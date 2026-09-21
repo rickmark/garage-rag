@@ -20,6 +20,10 @@ service GarageService {
     // --- Search ---
     rpc Search (SearchRequest) returns (SearchResponse);
 
+    // --- Documents & Chunks ---
+    rpc ListDocuments (ListDocumentsRequest) returns (ListDocumentsResponse);
+    rpc GetDocument (GetDocumentRequest) returns (GetDocumentResponse);
+
     // --- Sources ---
     rpc ListSources (ListSourcesRequest) returns (ListSourcesResponse);
     rpc AddSource (AddSourceRequest) returns (AddSourceResponse);
@@ -166,6 +170,86 @@ message SearchHit {
 message SearchResponse {
     repeated SearchHit hits = 1;
     int32 total_hits = 2;
+    string formatted_output = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Documents & Chunks
+// ---------------------------------------------------------------------------
+
+message DocumentSummary {
+    int64 id = 1;
+    string uri = 2;
+    string title = 3;
+    string source_slug = 4;
+    string corpus_class = 5;
+    string trust_tier = 6;
+    string mime = 7;
+    string lang = 8;
+    int64 byte_size = 9;
+    int32 chunk_count = 10;
+    string state = 11;
+    string ingested_at = 12;
+}
+
+message ListDocumentsRequest {
+    string source = 1; // source slug filter; empty = all sources
+    string corpus_class = 2; // filter; empty = all
+    string trust_tier = 3; // filter; empty = all
+    string query = 4; // substring match on title/uri
+    int32 limit = 5;
+    int32 offset = 6;
+}
+
+message ListDocumentsResponse {
+    repeated DocumentSummary documents = 1;
+    int64 total_count = 2;
+    string formatted_output = 3;
+}
+
+message DocumentChunkInfo {
+    int64 id = 1;
+    int32 ord = 2;
+    string text = 3;
+    int32 token_count = 4;
+    int32 char_start = 5;
+    int32 char_end = 6;
+    string heading_path = 7;
+}
+
+message DocumentAuthorInfo {
+    string name = 1;
+    string role = 2;
+    float confidence = 3;
+}
+
+message DocumentDetail {
+    int64 id = 1;
+    string uri = 2;
+    string title = 3;
+    string source_slug = 4;
+    string corpus_class = 5;
+    string trust_tier = 6;
+    string mime = 7;
+    string lang = 8;
+    int64 byte_size = 9;
+    string extractor = 10;
+    string extractor_version = 11;
+    string chunker = 12;
+    string meta_json = 13;
+    string state = 14;
+    string error = 15;
+    string ingested_at = 16;
+    repeated DocumentAuthorInfo authors = 17;
+}
+
+message GetDocumentRequest {
+    int64 document_id = 1;
+}
+
+message GetDocumentResponse {
+    DocumentDetail document = 1;
+    repeated DocumentChunkInfo chunks = 2;
     string formatted_output = 3;
 }
 
