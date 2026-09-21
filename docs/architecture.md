@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Architecture Guide
-description: Ingestion pipeline, extractors, quality filtering, and concurrency model.
+description: Ingestion pipeline, extractors, quality filtering, concurrency model, and the GarageApp XPC process architecture.
 ---
 
 # Architecture
@@ -108,6 +108,28 @@ recall.
 MCP 2.0 over stdio. Every tool returns a dataclass, because under MCP 2.0
 dataclass returns map field-for-field while scalars and lists get wrapped in
 `{"result": ...}`.
+
+## `GarageApp` process architecture
+
+`GarageApp` itself is a thin SwiftUI host: every pipeline stage above runs inside a
+dedicated, statically-linked **XPC service** rather than in-process, and the app talks to
+each one over gRPC (`proto/garage.proto`) rather than direct function calls:
+
+| Service | Hosts |
+|---|---|
+| `GarageXPCService` | The main `garage_rag.service.server` gRPC backend (search, sources, ingestion orchestration, config, DB facade) |
+| `GarageIngestXPCService` | Ingest workers (walk → materialize → extract → attribute) |
+| `GarageEmbedXPCService` | Embedding generation against Ollama / LM Studio |
+| `GarageMCPServerService` | The MCP 2.0 server (`garage_rag.mcp_server.server`) exposed to Claude Desktop/Code and other MCP clients |
+| `LlamaXPCService` | Optional in-process `llama.cpp` inference for local models |
+| `ModelDownloadXPCService` | Model artifact downloads |
+| `PythonXPCService` | Shared base: embeds CPython directly (`GaragePythonEmbed`/`GaragePythonRuntime`) so the other Python-backed services run without depending on a system interpreter |
+
+Each service is sandboxed and independently restartable by the host (`GarageManagedService`
+protocol), so a crash or hang in one stage — a corrupt PDF during ingest, a wedged embedding
+request — does not take down `GarageApp` or the other services. All Python execution is
+funnelled through `GaragePythonRuntime.withGIL` so the GIL is released whenever Swift is
+otherwise idle.
 
 ## Idempotency
 

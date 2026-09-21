@@ -1,5 +1,13 @@
 # Garage
 
+[![CI](https://github.com/rickmark/garage-rag/actions/workflows/ci.yaml/badge.svg)](https://github.com/rickmark/garage-rag/actions/workflows/ci.yaml)
+[![Docs](https://github.com/rickmark/garage-rag/actions/workflows/jekyll-gh-pages.yml/badge.svg)](https://rickmark.github.io/garage-rag/)
+[![Release](https://img.shields.io/github/v/release/rickmark/garage-rag?include_prereleases&label=release)](https://github.com/rickmark/garage-rag/releases)
+
+> **Status: Beta.** Garage is under active development. Core ingestion, search, and MCP functionality are stable
+> and in daily use; expect schema migrations and CLI flags to still evolve before a 1.0 release. See
+> [RELEASE_NOTES.md](RELEASE_NOTES.md) and [Releases](https://github.com/rickmark/garage-rag/releases) for changelogs.
+
 A local-first personal Retrieval-Augmented Generation (RAG) pipeline and knowledge indexing system powered by
 PostgreSQL + pgvector. Garage indexes personal documents, code repositories, and notes with automated authorship
 attribution, multi-model vector embeddings, hybrid full-text/vector search via Reciprocal Rank Fusion (RRF), and
@@ -16,6 +24,7 @@ a Model Context Protocol (MCP) 2.0 server, accompanied by a native macOS compani
 - **Model-Agnostic Vector Storage**: Chunks are decoupled from embedding tables (`emb_<slug>`), allowing seamless multi-model backfilling and re-indexing across Ollama and LM Studio.
 - **Model Context Protocol (MCP) 2.0**: Exposes indexed knowledge to LLMs (such as Claude Desktop and Claude Code) over standard stdio or local HTTP with DNS-rebinding protection.
 - **Native macOS Application (`GarageApp`)**: Menu bar and window application in Swift/SwiftUI embedding a self-contained, relocatable PostgreSQL 18 + pgvector instance and bundled CLI services.
+- **Sandboxed XPC Service Architecture**: Ingestion, embedding, the embedded Python runtime, and the MCP server each run as isolated, statically-linked XPC helper services communicating over gRPC, so a crash or hang in one pipeline stage never takes down the app.
 
 ---
 
@@ -38,11 +47,11 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
                                                     MCP server
 ```
 
-For detailed architectural and design specifications, see:
+Full documentation is published at **[rickmark.github.io/garage-rag](https://rickmark.github.io/garage-rag/)**. For detailed architectural and design specifications, see:
 - [Support Center & User Guide](docs/support.md) — Comprehensive setup, CLI usage, and MCP integrations.
 - [Troubleshooting & Diagnostics](docs/troubleshooting.md) — Common issues, error codes, and permission troubleshooting.
 - [Frequently Asked Questions (FAQ)](docs/faq.md) — Privacy, storage, models, and MCP tools.
-- [Architecture Guide](docs/architecture.md) — Ingestion pipeline, extractors, quality filtering, and concurrency model.
+- [Architecture Guide](docs/architecture.md) — Ingestion pipeline, extractors, quality filtering, concurrency model, and the `GarageApp` XPC process architecture.
 - [Attribution & Identity](docs/attribution.md) — Git-aware author detection, trust tiers, and evidence logging.
 - [Privacy & Egress Guarantees](docs/privacy.md) — Multi-tier egress guards and macOS TCC considerations.
 - [Database Schema Reference](docs/schema.md) — PostgreSQL schema layout, cascade rules, and HNSW vector indexing.
@@ -72,7 +81,7 @@ For detailed architectural and design specifications, see:
 
 ### Prerequisites
 
-- [Aspect CLI](https://aspect.build/docs/cli/install) or [Bazel](https://bazel.build/) (v8+)
+- [Aspect CLI](https://aspect.build/docs/cli/install) or [Bazel](https://bazel.build/) (v8+) — on macOS, install via `brew install aspect-build/aspect/aspect bazelisk` (the `aspect` formula lives in Aspect's own tap, not Homebrew core)
 - Python 3.13+ (when running outside the Bazel hermetic toolchains)
 - PostgreSQL with `pgvector` (or use the embedded instance provided by `GarageApp`)
 - [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) for local embedding generation

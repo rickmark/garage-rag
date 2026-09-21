@@ -27,7 +27,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install aspect-build/aspect/aspect bazelisk
       - run: aspect test --task:name test -- //...
 
   gazelle:
@@ -38,7 +38,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install aspect-build/aspect/aspect bazelisk
       - run: aspect gazelle --task:name gazelle
 
   buildifier:
@@ -49,7 +49,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install aspect-build/aspect/aspect bazelisk
       - run: aspect buildifier --task:name buildifier
 
 
@@ -61,7 +61,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install aspect-build/aspect/aspect bazelisk
       - run: aspect format --task:name format
 
   lint:
@@ -72,6 +72,6 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install aspect bazelisk
+          brew install aspect-build/aspect/aspect bazelisk
       - run: aspect lint --task:name lint -- //...
 
