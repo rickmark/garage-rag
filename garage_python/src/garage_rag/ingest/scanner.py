@@ -38,7 +38,6 @@ from garage_rag.ingest.walker import (
     is_dependency_path,
     is_diagnostic_dir,
     is_diagnostic_file,
-    walk,
 )
 
 log = logging.getLogger(__name__)
@@ -103,12 +102,7 @@ def scan_filesystem(
         )
 
     if root.is_file():
-        if not is_indexable(root):
-            count = 0
-        elif not include_code and is_code_path(root):
-            count = 0
-        else:
-            count = 1
+        count = 0 if not is_indexable(root) or not include_code and is_code_path(root) else 1
         return SourceScanResult(
             source_slug=source_slug,
             kind="filesystem",
@@ -397,7 +391,7 @@ def scan_maildir(
     message_count = 0
     folder_count = 0
 
-    for parent_str, dirnames, filenames in os.walk(str(root), followlinks=False):
+    for parent_str, _dirnames, filenames in os.walk(str(root), followlinks=False):
         parent_name = os.path.basename(parent_str).lower()
         is_maildir_box = parent_name in ("cur", "new", "tmp")
         folder_count += 1
@@ -406,9 +400,7 @@ def scan_maildir(
             if _is_hidden(filename):
                 continue
             lower_name = filename.lower()
-            if is_maildir_box:
-                message_count += 1
-            elif lower_name.endswith((".eml", ".emlx", ".msg", ".mbox")):
+            if is_maildir_box or lower_name.endswith((".eml", ".emlx", ".msg", ".mbox")):
                 message_count += 1
 
     return SourceScanResult(

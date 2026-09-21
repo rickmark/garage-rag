@@ -1,15 +1,15 @@
 """ingest"""
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 import logging
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Optional
-
-from garage_rag.db.models import Source
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -55,10 +55,8 @@ class StreamToLog:
                 except Exception:
                     pass
         if self.original_stream and hasattr(self.original_stream, "write"):
-            try:
+            with contextlib.suppress(Exception):
                 self.original_stream.write(buf)
-            except Exception:
-                pass
 
     def flush(self) -> None:
         if self._buf.strip() and _global_c_log_callback is not None:
@@ -69,10 +67,8 @@ class StreamToLog:
             except Exception:
                 pass
         if self.original_stream and hasattr(self.original_stream, "flush"):
-            try:
+            with contextlib.suppress(Exception):
                 self.original_stream.flush()
-            except Exception:
-                pass
 
 
 def set_c_log_callback(callback_address: int) -> None:
@@ -110,10 +106,10 @@ def set_c_log_callback(callback_address: int) -> None:
 
             tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
             if _global_c_log_callback is not None:
-                try:
-                    _global_c_log_callback(40, f"Uncaught Python exception:\n{tb_str}".encode("utf-8", errors="replace"))
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    _global_c_log_callback(
+                        40, f"Uncaught Python exception:\n{tb_str}".encode("utf-8", errors="replace")
+                    )
             log.critical("Uncaught Python exception: %s\n%s", exc_value, tb_str)
 
         sys.excepthook = custom_excepthook
@@ -144,8 +140,8 @@ class IngestProgress:
     item_type: str = "items"
     progress: float = 0.0
     message: str = ""
-    error: Optional[str] = None
-    current_item: Optional[str] = None
+    error: str | None = None
+    current_item: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -190,16 +186,16 @@ def _notify_c_progress(prog: IngestProgress) -> None:
 
 def ingest_xpc(
     source: str,
-    progress_callback: Optional[Callable[[Any], Any]] = None,
+    progress_callback: Callable[[Any], Any] | None = None,
     *,
     include_code: bool = False,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     force: bool = False,
     session_factory: Any = None,
     gateway: Any = None,
     grpc_client: Any = None,
-    grpc_host: Optional[str] = None,
-    grpc_port: Optional[int] = None,
+    grpc_host: str | None = None,
+    grpc_port: int | None = None,
 ) -> None:
     _ensure_logging()
     log.info(
@@ -264,7 +260,7 @@ def ingest_xpc(
         )
         _emit_progress(start_prog)
 
-        def _handle_pipeline_progress(*args: Any, **kwargs: Any) -> None:
+        def _handle_pipeline_progress(*args: Any, _source: str = current_source, **kwargs: Any) -> None:
             counters = args[0] if len(args) > 0 else None
             phase = kwargs.get("phase", "ingest")
             total_items = kwargs.get("total_items", getattr(counters, "total_items", 0))
@@ -280,36 +276,36 @@ def ingest_xpc(
             errors = getattr(counters, "errors", [])
             last_error = errors[-1] if errors else None
 
-            if total_items and total_items > 0:
-                prog_val = min(1.0, max(0.0, float(seen) / float(total_items)))
-            else:
-                prog_val = 0.0
+            prog_val = min(1.0, max(0.0, float(seen) / float(total_items))) if total_items and total_items > 0 else 0.0
 
             if phase == "scan":
-                msg = f"Scanning {current_source}: found {total_items} {item_type}"
+                msg = f"Scanning {_source}: found {total_items} {item_type}"
             elif phase == "complete":
                 prog_val = 1.0
                 msg = (
-                    f"Ingested {current_source}: {indexed} ingested ({seen}/{total_items} {item_type} scanned, "
+                    f"Ingested {_source}: {indexed} ingested ({seen}/{total_items} {item_type} scanned, "
                     f"{skipped} skipped, {failed} failed, {chunks_written} chunks written)"
                 )
             elif phase == "cancelled":
-                msg = f"Ingestion cancelled for {current_source} after {seen}/{total_items} {item_type} scanned ({indexed} ingested)"
+                msg = (
+                    f"Ingestion cancelled for {_source} after {seen}/{total_items} {item_type} scanned "
+                    f"({indexed} ingested)"
+                )
             elif current_item:
                 pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
                 msg = (
-                    f"[{seen}/{total_items} scanned {pct}] {current_source}: {indexed} ingested "
+                    f"[{seen}/{total_items} scanned {pct}] {_source}: {indexed} ingested "
                     f"({skipped} skipped, {failed} failed) - {current_item}"
                 )
             else:
                 pct = f"{(prog_val * 100):.1f}%" if total_items else "0.0%"
                 msg = (
-                    f"[{seen}/{total_items} scanned {pct}] {current_source}: {indexed} ingested "
+                    f"[{seen}/{total_items} scanned {pct}] {_source}: {indexed} ingested "
                     f"({skipped} skipped, {failed} failed, {chunks_written} chunks)"
                 )
 
             prog = IngestProgress(
-                source=current_source,
+                source=_source,
                 phase=phase,
                 seen=seen,
                 total_items=total_items,
@@ -339,7 +335,8 @@ def ingest_xpc(
                 is_cancelled=is_ingest_cancelled,
             )
             log.info(
-                "Completed pipeline.ingest_source for %r: seen=%d/%d, indexed=%d, skipped=%d, failed=%d, placeholders=%d, chunks=%d",
+                "Completed pipeline.ingest_source for %r: seen=%d/%d, indexed=%d, skipped=%d, failed=%d, "
+                "placeholders=%d, chunks=%d",
                 current_source,
                 counters.seen,
                 counters.total_items,
@@ -403,7 +400,7 @@ def ingest_xpc(
 
 def run_ingest_xpc(
     source: str,
-    progress_callback: Optional[Callable[[Any], Any]] = None,
+    progress_callback: Callable[[Any], Any] | None = None,
     **kwargs: Any,
 ) -> None:
     """Synchronous entry point for running ingest_xpc."""
@@ -413,7 +410,7 @@ def run_ingest_xpc(
 def test_read_documents_via_grpc(
     grpc_host: str = "127.0.0.1",
     grpc_port: int = 50051,
-    source_slug: Optional[str] = None,
+    source_slug: str | None = None,
     limit: int = 5,
     sample_bytes: int = 1024,
 ) -> dict[str, Any]:

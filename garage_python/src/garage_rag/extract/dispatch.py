@@ -283,10 +283,7 @@ def extract(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
         )
 
     extractor = extractor_for(path)
-    if extractor is _image:
-        result = _image(path, source_allows_cloud=source_allows_cloud)
-    else:
-        result = extractor(path)
+    result = _image(path, source_allows_cloud=source_allows_cloud) if extractor is _image else extractor(path)
     if result.is_empty:
         raise ExtractionError(f"extractor {result.extractor} produced no text: {path}")
     return result

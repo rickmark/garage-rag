@@ -8,14 +8,12 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.db.models import CorpusClass, Source, TrustTier
-from garage_rag.ingest.pipeline import IngestCounters, ingest_source
+from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import (
-    SourceScanResult,
     scan_feed,
     scan_filesystem,
     scan_git,
@@ -23,7 +21,7 @@ from garage_rag.ingest.scanner import (
     scan_source,
     scan_sqlite,
 )
-from garage_rag.proto.garage_pb2 import IngestRequest, ScanRequest
+from garage_rag.proto.garage_pb2 import ScanRequest
 from garage_rag.service.server import GarageRpcServicer
 
 runner = CliRunner()
@@ -89,7 +87,9 @@ def test_scan_git_repository(tmp_path: Path) -> None:
     # Initialize a git repository
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test User"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True, capture_output=True
+    )
 
     (tmp_path / "README.md").write_text("# Readme", encoding="utf-8")
     (tmp_path / "main.py").write_text("print('main')", encoding="utf-8")
@@ -360,7 +360,7 @@ def test_grpc_scan_rpc(tmp_path: Path) -> None:
         mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = src
         mock_session.query.return_value.order_by.return_value.all.return_value = [src]
         mock_session.__enter__.return_value = mock_session
-        mock_factory.return_value = mock_session_factory = MagicMock(return_value=mock_session)
+        mock_factory.return_value = MagicMock(return_value=mock_session)
 
         req = ScanRequest(source="rpc-source")
         resp = servicer.Scan(req, mock_context)

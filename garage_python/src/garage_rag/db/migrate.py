@@ -66,35 +66,34 @@ def init_extensions(database_url: str | None = None, schema_dir: Path | None = N
     except FileNotFoundError:
         extension_files = []
 
-    with psycopg.connect(url, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            # Ensure schema_migrations table exists
-            cur.execute(
-                """
+    with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+        # Ensure schema_migrations table exists
+        cur.execute(
+            """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version text PRIMARY KEY,
                     applied_at timestamptz NOT NULL DEFAULT now()
                 );
                 """
-            )
-            if extension_files:
-                for path in extension_files:
-                    log.info("applying extension migration outside sqlalchemy: %s", path.name)
-                    cur.execute(path.read_text(encoding="utf-8"))
-                    cur.execute(
-                        "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
-                        (path.stem,),
-                    )
-                    applied.append(path.name)
-            else:
-                log.info("creating default extensions outside sqlalchemy")
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+        )
+        if extension_files:
+            for path in extension_files:
+                log.info("applying extension migration outside sqlalchemy: %s", path.name)
+                cur.execute(path.read_text(encoding="utf-8"))
                 cur.execute(
                     "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
-                    ("001_extensions",),
+                    (path.stem,),
                 )
-                applied.append("default_extensions")
+                applied.append(path.name)
+        else:
+            log.info("creating default extensions outside sqlalchemy")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+            cur.execute(
+                "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
+                ("001_extensions",),
+            )
+            applied.append("default_extensions")
     return applied
 
 
@@ -138,16 +137,15 @@ def apply_migrations(
     else:
         if remaining_files:
             conninfo = to_psycopg_conninfo(raw_url)
-            with psycopg.connect(conninfo, autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    for path in remaining_files:
-                        log.info("applying %s", path.name)
-                        cur.execute(path.read_text(encoding="utf-8"))
-                        cur.execute(
-                            "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
-                            (path.stem,),
-                        )
-                        applied.append(path.name)
+            with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
+                for path in remaining_files:
+                    log.info("applying %s", path.name)
+                    cur.execute(path.read_text(encoding="utf-8"))
+                    cur.execute(
+                        "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING;",
+                        (path.stem,),
+                    )
+                    applied.append(path.name)
         reset_engine()
 
     return applied
@@ -166,24 +164,24 @@ def pending_migrations(
         return []
 
     try:
-        with psycopg.connect(url, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations');"
-                )
-                row = cur.fetchone()
-                exists = bool(row and row[0])
-                if not exists:
-                    return files
+        with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = 'schema_migrations');"
+            )
+            row = cur.fetchone()
+            exists = bool(row and row[0])
+            if not exists:
+                return files
 
-                cur.execute("SELECT version FROM schema_migrations;")
-                applied = {r[0] for r in cur.fetchall()}
+            cur.execute("SELECT version FROM schema_migrations;")
+            applied = {r[0] for r in cur.fetchall()}
 
-                pending: list[Path] = []
-                for f in files:
-                    if f.stem not in applied and f.name not in applied:
-                        pending.append(f)
-                return pending
+            pending: list[Path] = []
+            for f in files:
+                if f.stem not in applied and f.name not in applied:
+                    pending.append(f)
+            return pending
     except Exception:
         return files
 
@@ -222,9 +220,8 @@ def database_exists(url: str) -> bool:
     """Whether the target database is reachable."""
     conninfo = to_psycopg_conninfo(url)
     try:
-        with psycopg.connect(conninfo, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
+        with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
         return True
     except (psycopg.OperationalError, psycopg.Error, Exception):
         return False
