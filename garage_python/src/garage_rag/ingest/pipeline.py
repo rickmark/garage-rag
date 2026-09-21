@@ -25,14 +25,13 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from garage_rag.attribute.resolver import (
     Attribution,
     SelfIdentity,
-    ensure_self_author,
     get_or_create_author,
     resolve,
 )
@@ -42,8 +41,6 @@ from garage_rag.db.models import (
     CorpusClass,
     Document,
     DocumentAuthor,
-    IngestRun,
-    IngestSeen,
     IngestState,
     Source,
 )
@@ -58,7 +55,6 @@ from garage_rag.ingest.gateway import (
     ChunkPayload,
     IngestStorageGateway,
     SourceContext,
-    SqlAlchemyIngestStorageGateway,
     get_storage_gateway,
 )
 from garage_rag.ingest.materialize import MaterializationBudget, ensure_local
@@ -356,7 +352,9 @@ def ingest_one(
             candidate.path,
             source_allows_cloud=bool(source_ctx.allow_cloud_enrichment),
         )
-        log.debug("Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text))
+        log.debug(
+            "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
+        )
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
         log.warning("Extraction failed for %s: %s", candidate.uri, exc)
@@ -649,7 +647,8 @@ def ingest_source(
         )
 
         log.info(
-            "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, placeholders=%d, chunks=%d, errors=%d",
+            "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, "
+            "placeholders=%d, chunks=%d, errors=%d",
             source_slug,
             counters.total_items,
             counters.seen,

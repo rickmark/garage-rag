@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import grpc
 
-from garage_rag.db.models import Document, Source
+from garage_rag.db.models import Document
 from garage_rag.proto.garage_pb2 import EnrichFactsRequest
 from garage_rag.service.server import GarageRpcServicer
 
@@ -28,7 +29,9 @@ def test_enrich_facts_single_document_by_id():
         mock_scope.return_value.__enter__.return_value = mock_session
         mock_session.get.return_value = document
 
-        with patch("garage_rag.enrich.facts.extract_and_store_facts", return_value=[MagicMock(), MagicMock()]) as mock_extract:
+        with patch(
+            "garage_rag.enrich.facts.extract_and_store_facts", return_value=[MagicMock(), MagicMock()]
+        ) as mock_extract:
             statuses = list(servicer.EnrichFacts(EnrichFactsRequest(document_id=5), mock_context))
 
     assert len(statuses) == 1
@@ -51,10 +54,8 @@ def test_enrich_facts_document_id_not_found_aborts():
         mock_scope.return_value.__enter__.return_value = mock_session
         mock_session.get.return_value = None
 
-        try:
+        with contextlib.suppress(grpc.RpcError):
             list(servicer.EnrichFacts(EnrichFactsRequest(document_id=999), mock_context))
-        except grpc.RpcError:
-            pass
 
     mock_context.abort.assert_called_once()
     assert mock_context.abort.call_args[0][0] == grpc.StatusCode.NOT_FOUND
@@ -71,10 +72,11 @@ def test_enrich_facts_all_documents_for_source_streams_one_status_each():
         joined = mock_session.query.return_value.join.return_value
         joined.filter.return_value.order_by.return_value.all.return_value = docs
 
-        with patch("garage_rag.enrich.facts.extract_and_store_facts", side_effect=[[MagicMock()], [MagicMock(), MagicMock()]]):
-            statuses = list(
-                servicer.EnrichFacts(EnrichFactsRequest(source="notes"), mock_context)
-            )
+        with patch(
+            "garage_rag.enrich.facts.extract_and_store_facts",
+            side_effect=[[MagicMock()], [MagicMock(), MagicMock()]],
+        ):
+            statuses = list(servicer.EnrichFacts(EnrichFactsRequest(source="notes"), mock_context))
 
     assert len(statuses) == 2
     assert statuses[0].facts_extracted == 1

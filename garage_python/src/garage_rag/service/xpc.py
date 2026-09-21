@@ -7,10 +7,8 @@ import ctypes.util
 import logging
 import os
 import platform
-import sys
 import threading
 import time
-from typing import Any, Iterator, List, Optional, Tuple
 
 from garage_rag.proto.garage_pb2 import (
     CommandRequest,
@@ -32,8 +30,13 @@ IS_MACOS = platform.system() == "Darwin"
 if IS_MACOS:
     try:
         libxpc = ctypes.CDLL(ctypes.util.find_library("System") or "/usr/lib/libSystem.B.dylib")
-        libsec = ctypes.CDLL(ctypes.util.find_library("Security") or "/System/Library/Frameworks/Security.framework/Security")
-        libcf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation") or "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        libsec = ctypes.CDLL(
+            ctypes.util.find_library("Security") or "/System/Library/Frameworks/Security.framework/Security"
+        )
+        libcf = ctypes.CDLL(
+            ctypes.util.find_library("CoreFoundation")
+            or "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
     except Exception as exc:
         logger.warning("Could not load native macOS libraries: %s", exc)
         libxpc = None
@@ -50,8 +53,8 @@ class PeerAuthenticator:
 
     def __init__(
         self,
-        expected_team_id: Optional[str] = DEFAULT_TEAM_ID,
-        expected_bundle_id: Optional[str] = None,
+        expected_team_id: str | None = DEFAULT_TEAM_ID,
+        expected_bundle_id: str | None = None,
         allow_unsigned_in_dev: bool = False,
     ) -> None:
         self.expected_team_id = expected_team_id
@@ -148,7 +151,10 @@ class PeerAuthenticator:
                         if validity_status != 0:
                             if self.allow_unsigned_in_dev:
                                 return True, f"Dev mode bypass: requirement check status {validity_status}"
-                            return False, f"Peer PID {pid} does not satisfy identity requirement (status {validity_status})"
+                            return (
+                                False,
+                                f"Peer PID {pid} does not satisfy identity requirement (status {validity_status})",
+                            )
                     finally:
                         libcf.CFRelease(sec_req)
                 else:
@@ -188,10 +194,10 @@ class XpcServiceServer:
     def __init__(
         self,
         service_name: str = DEFAULT_XPC_SERVICE_NAME,
-        team_id: Optional[str] = DEFAULT_TEAM_ID,
-        bundle_id: Optional[str] = None,
+        team_id: str | None = DEFAULT_TEAM_ID,
+        bundle_id: str | None = None,
         allow_unsigned_in_dev: bool = False,
-        executor: Optional[CommandExecutor] = None,
+        executor: CommandExecutor | None = None,
     ) -> None:
         self.service_name = service_name
         self.authenticator = PeerAuthenticator(
@@ -240,12 +246,15 @@ class XpcServiceServer:
 
         return exit_code, statuses
 
-    def run(self, stop_event: Optional[threading.Event] = None) -> None:
+    def run(self, stop_event: threading.Event | None = None) -> None:
         """Run the XPC service loop."""
         self._stop_event = stop_event or threading.Event()
         self._running = True
         print(f"Garage XPC Mach Service listening on '{self.service_name}' (PID: {os.getpid()})")
-        print(f"XPC Peer Authentication: Team ID='{self.authenticator.expected_team_id}', Bundle ID='{self.authenticator.expected_bundle_id}'")
+        print(
+            f"XPC Peer Authentication: Team ID='{self.authenticator.expected_team_id}', "
+            f"Bundle ID='{self.authenticator.expected_bundle_id}'"
+        )
 
         try:
             while not self._stop_event.is_set():
@@ -260,16 +269,16 @@ class XpcServiceServer:
 
 def serve_xpc(
     service_name: str = DEFAULT_XPC_SERVICE_NAME,
-    team_id: Optional[str] = DEFAULT_TEAM_ID,
-    bundle_id: Optional[str] = None,
+    team_id: str | None = DEFAULT_TEAM_ID,
+    bundle_id: str | None = None,
     allow_unsigned_in_dev: bool = False,
-    stop_event: Optional[threading.Event] = None,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Start the macOS XPC Mach service and block until stopped."""
     server = XpcServiceServer(
         service_name=service_name,
         team_id=team_id,
         bundle_id=bundle_id,
-        allow_unsigned_in_dev=allow_unsigned,
+        allow_unsigned_in_dev=allow_unsigned_in_dev,
     )
     server.run(stop_event=stop_event)

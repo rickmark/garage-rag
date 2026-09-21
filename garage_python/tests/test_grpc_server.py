@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import threading
-import time
+
 import grpc
 import pytest
 
 from garage_rag.proto.garage_pb2 import (
     CommandRequest,
-    CommandStatus,
     ConfigPathRequest,
     ConfigShowRequest,
     McpStatusRequest,

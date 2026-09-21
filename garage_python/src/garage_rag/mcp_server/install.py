@@ -90,7 +90,15 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
         ClientTarget(
             key="cursor-global",
             label="Cursor (global extension settings)",
-            path=support / "Cursor" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+            path=(
+                support
+                / "Cursor"
+                / "User"
+                / "globalStorage"
+                / "saoudrizwan.claude-dev"
+                / "settings"
+                / "cline_mcp_settings.json"
+            ),
         ),
         ClientTarget(
             key="vscode",
@@ -101,7 +109,15 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
         ClientTarget(
             key="vscode-global",
             label="VS Code (global extension settings)",
-            path=support / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+            path=(
+                support
+                / "Code"
+                / "User"
+                / "globalStorage"
+                / "saoudrizwan.claude-dev"
+                / "settings"
+                / "cline_mcp_settings.json"
+            ),
         ),
         ClientTarget(
             key="windsurf",

@@ -109,56 +109,60 @@ class TestMcpTools:
         with patch("garage_rag.mcp_server.server.session_scope") as mock_scope:
             mock_session = MagicMock()
             mock_scope.return_value.__enter__.return_value = mock_session
-            with patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]) as mock_run_search:
-                with patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]):
-                    result = rag_search(
-                        query="test query",
-                        limit=5,
-                        mode="hybrid",
-                        corpus_class="document",
-                        trust="authored",
-                        source="notes",
-                        author="Rick",
-                    )
+            with (
+                patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]) as mock_run_search,
+                patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]),
+            ):
+                result = rag_search(
+                    query="test query",
+                    limit=5,
+                    mode="hybrid",
+                    corpus_class="document",
+                    trust="authored",
+                    source="notes",
+                    author="Rick",
+                )
 
-                    mock_run_search.assert_called_once_with(
-                        mock_session,
-                        "test query",
-                        limit=5,
-                        mode="hybrid",
-                        corpus_classes=["document"],
-                        trust_tiers=["authored"],
-                        sources=["notes"],
-                        author="Rick",
-                    )
-                    assert isinstance(result, SearchResult)
-                    assert result.query == "test query"
-                    assert result.mode == "hybrid"
-                    assert result.model == "bge-base"
-                    assert result.count == 1
-                    assert len(result.hits) == 1
-                    hit = result.hits[0]
-                    assert isinstance(hit, Hit)
-                    assert hit.chunk_id == 1
-                    assert hit.document_id == 10
-                    assert hit.location == "~/docs/guide.md"
-                    assert hit.title == "User Guide"
-                    assert hit.score == 0.876543
-                    assert hit.section == "Introduction > Getting Started"
-                    assert hit.authors == ["Rick Mark"]
+                mock_run_search.assert_called_once_with(
+                    mock_session,
+                    "test query",
+                    limit=5,
+                    mode="hybrid",
+                    corpus_classes=["document"],
+                    trust_tiers=["authored"],
+                    sources=["notes"],
+                    author="Rick",
+                )
+                assert isinstance(result, SearchResult)
+                assert result.query == "test query"
+                assert result.mode == "hybrid"
+                assert result.model == "bge-base"
+                assert result.count == 1
+                assert len(result.hits) == 1
+                hit = result.hits[0]
+                assert isinstance(hit, Hit)
+                assert hit.chunk_id == 1
+                assert hit.document_id == 10
+                assert hit.location == "~/docs/guide.md"
+                assert hit.title == "User Guide"
+                assert hit.score == 0.876543
+                assert hit.section == "Introduction > Getting Started"
+                assert hit.authors == ["Rick Mark"]
 
     def test_rag_search_fts_mode_and_no_default_model(self) -> None:
         mock_hit = MockSearchHit()
         with patch("garage_rag.mcp_server.server.session_scope") as mock_scope:
             mock_session = MagicMock()
             mock_scope.return_value.__enter__.return_value = mock_session
-            with patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]):
-                with patch("garage_rag.mcp_server.server.list_models", return_value=[]):
-                    result_fts = rag_search(query="fts query", mode="fts")
-                    assert result_fts.model == "n/a"
+            with (
+                patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]),
+                patch("garage_rag.mcp_server.server.list_models", return_value=[]),
+            ):
+                result_fts = rag_search(query="fts query", mode="fts")
+                assert result_fts.model == "n/a"
 
-                    result_vec = rag_search(query="vec query", mode="vector")
-                    assert result_vec.model == "none"
+                result_vec = rag_search(query="vec query", mode="vector")
+                assert result_vec.model == "none"
 
     def test_rag_get_document_requires_id_or_location(self) -> None:
         with pytest.raises(ValueError, match="pass either document_id or location"):
@@ -181,7 +185,8 @@ class TestMcpTools:
             mock_scope.return_value.__enter__.return_value = mock_session
 
             mock_session.query.return_value.filter.return_value.one_or_none.return_value = doc_obj
-            mock_session.query.return_value.join.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            author_query = mock_session.query.return_value.join.return_value.filter.return_value
+            author_query.order_by.return_value.all.return_value = [
                 ("Alice",),
                 ("Bob",),
             ]
@@ -216,7 +221,8 @@ class TestMcpTools:
             mock_scope.return_value.__enter__.return_value = mock_session
 
             mock_session.query.return_value.filter.return_value.one_or_none.return_value = doc_obj
-            mock_session.query.return_value.join.return_value.filter.return_value.order_by.return_value.all.return_value = []
+            author_query = mock_session.query.return_value.join.return_value.filter.return_value
+            author_query.order_by.return_value.all.return_value = []
             mock_session.query.return_value.filter.return_value.scalar.return_value = 12
 
             result = rag_get_document(location="~/code/main.rs", max_chars=1000)
@@ -260,7 +266,8 @@ class TestMcpTools:
             mock_session = MagicMock()
             mock_scope.return_value.__enter__.return_value = mock_session
 
-            mock_session.query.return_value.outerjoin.return_value.outerjoin.return_value.group_by.return_value.order_by.return_value.all.return_value = rows
+            source_query = mock_session.query.return_value.outerjoin.return_value.outerjoin.return_value
+            source_query.group_by.return_value.order_by.return_value.all.return_value = rows
 
             result = rag_list_sources()
             assert isinstance(result, SourceList)
@@ -293,7 +300,8 @@ class TestMcpTools:
             mock_session = MagicMock()
             mock_scope.return_value.__enter__.return_value = mock_session
 
-            mock_session.query.return_value.outerjoin.return_value.outerjoin.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = rows
+            author_query = mock_session.query.return_value.outerjoin.return_value.outerjoin.return_value
+            author_query.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = rows
 
             result = rag_list_authors(limit=10)
             assert isinstance(result, AuthorList)
@@ -317,22 +325,24 @@ class TestMcpTools:
             mock_session.query.return_value.filter.return_value.scalar.side_effect = [100, 3]
             mock_session.query.return_value.scalar.side_effect = [500, 8]
 
-            with patch("garage_rag.mcp_server.server.corpus_overview", return_value=overview_data):
-                with patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]):
-                    with patch("garage_rag.mcp_server.server.count_vectors", return_value=450):
-                        stats = rag_stats()
-                        assert isinstance(stats, CorpusStats)
-                        assert stats.documents == 100
-                        assert stats.chunks == 500
-                        assert stats.authors == 8
-                        assert stats.placeholders_pending == 3
-                        assert stats.by_class_and_trust == overview_data
-                        assert len(stats.models) == 1
-                        m = stats.models[0]
-                        assert isinstance(m, ModelInfo)
-                        assert m.slug == "bge-base"
-                        assert m.vectors == 450
-                        assert m.pending == 50
+            with (
+                patch("garage_rag.mcp_server.server.corpus_overview", return_value=overview_data),
+                patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]),
+                patch("garage_rag.mcp_server.server.count_vectors", return_value=450),
+            ):
+                stats = rag_stats()
+                assert isinstance(stats, CorpusStats)
+                assert stats.documents == 100
+                assert stats.chunks == 500
+                assert stats.authors == 8
+                assert stats.placeholders_pending == 3
+                assert stats.by_class_and_trust == overview_data
+                assert len(stats.models) == 1
+                m = stats.models[0]
+                assert isinstance(m, ModelInfo)
+                assert m.slug == "bge-base"
+                assert m.vectors == 450
+                assert m.pending == 50
 
 
 # ---------------------------------------------------------------------------
@@ -351,63 +361,73 @@ class TestServerLifecycle:
                 assert "7 sources registered" in caplog.text
 
     def test_serve_stdio(self) -> None:
-        with patch("garage_rag.mcp_server.server._log_startup"):
-            with patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run:
-                serve("stdio")
-                mock_mcp_run.assert_called_once_with()
+        with (
+            patch("garage_rag.mcp_server.server._log_startup"),
+            patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run,
+        ):
+            serve("stdio")
+            mock_mcp_run.assert_called_once_with()
 
     def test_serve_unsupported_transport(self) -> None:
-        with patch("garage_rag.mcp_server.server._log_startup"):
-            with pytest.raises(ValueError, match="unsupported transport: 'custom'"):
-                serve("custom")
+        with (
+            patch("garage_rag.mcp_server.server._log_startup"),
+            pytest.raises(ValueError, match="unsupported transport: 'custom'"),
+        ):
+            serve("custom")
 
     def test_serve_sse(self) -> None:
-        with patch("garage_rag.mcp_server.server._log_startup"):
-            with patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run:
-                serve(
-                    "sse",
-                    host="127.0.0.1",
-                    port=8000,
-                    path="/events",
-                    allowed_origins=["http://localhost:3000"],
-                )
-                mock_mcp_run.assert_called_once()
-                call_args, call_kwargs = mock_mcp_run.call_args
-                assert call_args[0] == "sse"
-                assert call_kwargs["host"] == "127.0.0.1"
-                assert call_kwargs["port"] == 8000
-                assert call_kwargs["sse_path"] == "/events"
-                sec = call_kwargs["transport_security"]
-                assert sec.enable_dns_rebinding_protection is True
-                assert "127.0.0.1:8000" in sec.allowed_hosts
-                assert "http://localhost:3000" in sec.allowed_origins
+        with (
+            patch("garage_rag.mcp_server.server._log_startup"),
+            patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run,
+        ):
+            serve(
+                "sse",
+                host="127.0.0.1",
+                port=8000,
+                path="/events",
+                allowed_origins=["http://localhost:3000"],
+            )
+            mock_mcp_run.assert_called_once()
+            call_args, call_kwargs = mock_mcp_run.call_args
+            assert call_args[0] == "sse"
+            assert call_kwargs["host"] == "127.0.0.1"
+            assert call_kwargs["port"] == 8000
+            assert call_kwargs["sse_path"] == "/events"
+            sec = call_kwargs["transport_security"]
+            assert sec.enable_dns_rebinding_protection is True
+            assert "127.0.0.1:8000" in sec.allowed_hosts
+            assert "http://localhost:3000" in sec.allowed_origins
 
     def test_serve_streamable_http(self) -> None:
-        with patch("garage_rag.mcp_server.server._log_startup"):
-            with patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run:
-                serve(
-                    "streamable-http",
-                    host="127.0.0.1",
-                    port=9000,
-                    path="/mcp",
-                    json_response=True,
-                    stateless=True,
-                )
-                mock_mcp_run.assert_called_once()
-                call_args, call_kwargs = mock_mcp_run.call_args
-                assert call_args[0] == "streamable-http"
-                assert call_kwargs["host"] == "127.0.0.1"
-                assert call_kwargs["port"] == 9000
-                assert call_kwargs["streamable_http_path"] == "/mcp"
-                assert call_kwargs["json_response"] is True
-                assert call_kwargs["stateless_http"] is True
+        with (
+            patch("garage_rag.mcp_server.server._log_startup"),
+            patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run,
+        ):
+            serve(
+                "streamable-http",
+                host="127.0.0.1",
+                port=9000,
+                path="/mcp",
+                json_response=True,
+                stateless=True,
+            )
+            mock_mcp_run.assert_called_once()
+            call_args, call_kwargs = mock_mcp_run.call_args
+            assert call_args[0] == "streamable-http"
+            assert call_kwargs["host"] == "127.0.0.1"
+            assert call_kwargs["port"] == 9000
+            assert call_kwargs["streamable_http_path"] == "/mcp"
+            assert call_kwargs["json_response"] is True
+            assert call_kwargs["stateless_http"] is True
 
     def test_serve_non_loopback_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        with patch("garage_rag.mcp_server.server._log_startup"):
-            with patch("garage_rag.mcp_server.server.mcp.run"):
-                with caplog.at_level(logging.WARNING):
-                    serve("streamable-http", host="0.0.0.0", port=9000)
-                    assert "listening on 0.0.0.0, which is reachable from other machines" in caplog.text
+        with (
+            patch("garage_rag.mcp_server.server._log_startup"),
+            patch("garage_rag.mcp_server.server.mcp.run"),
+            caplog.at_level(logging.WARNING),
+        ):
+            serve("streamable-http", host="0.0.0.0", port=9000)
+            assert "listening on 0.0.0.0, which is reachable from other machines" in caplog.text
 
     def test_main_calls_serve_stdio(self) -> None:
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:

@@ -1,13 +1,12 @@
 """Tests for Python Llama XPC client, in-process engine, and HTTP protocol emulation."""
 
 import math
+
 import pytest
 
 from garage_rag.service.llama_xpc import (
     DEFAULT_LLAMA_XPC_SERVICE_NAME,
-    LlamaServiceEngine,
     LlamaXPCClient,
-    LlamaXPCError,
 )
 
 
