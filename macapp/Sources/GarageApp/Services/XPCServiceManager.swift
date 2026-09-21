@@ -124,19 +124,77 @@ public struct XPCServiceInfo: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Thread-safe buffer that coalesces bursts of XPC stdout/stderr/log callbacks so the main actor
+/// only has to apply one batched update per flush interval instead of one per raw chunk. Without
+/// this, a chatty helper process can drive `didReceiveStdout`/`didReceiveStderr` at very high
+/// frequency, and each call previously did its own `Task.detached` + `MainActor.run` hop to append
+/// a single entry (and O(n) trim) to `logs` - pegging the main thread under bursty output.
+private final class XPCLogBatchBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingManagerLogs: [LogLine] = []
+    private var pendingStreamLogs: [LogLine] = []
+
+    func appendManagerLog(_ line: LogLine) {
+        lock.lock()
+        pendingManagerLogs.append(line)
+        lock.unlock()
+    }
+
+    func appendStreamLogs(_ lines: [LogLine]) {
+        guard !lines.isEmpty else { return }
+        lock.lock()
+        pendingStreamLogs.append(contentsOf: lines)
+        lock.unlock()
+    }
+
+    func drain() -> (managerLogs: [LogLine], streamLogs: [LogLine]) {
+        lock.lock()
+        let managerLogs = pendingManagerLogs
+        let streamLogs = pendingStreamLogs
+        pendingManagerLogs.removeAll(keepingCapacity: true)
+        pendingStreamLogs.removeAll(keepingCapacity: true)
+        lock.unlock()
+        return (managerLogs, streamLogs)
+    }
+}
+
 /// Internal adapter to receive streaming logs and stdout/stderr chunks from XPC services.
 private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtocol, @unchecked Sendable {
     private let serviceId: String
     private weak var manager: XPCServiceManager?
     private weak var osLogStreamService: OSLogStreamService?
+    private let buffer = XPCLogBatchBuffer()
+    private let flushTask: Task<Void, Never>
 
     init(serviceId: String, manager: XPCServiceManager?, osLogStreamService: OSLogStreamService? = nil) {
         self.serviceId = serviceId
         self.manager = manager
         self.osLogStreamService = osLogStreamService
+        let buffer = self.buffer
+        let targetSource = Self.targetLogSource(for: serviceId)
+        flushTask = Task.detached(priority: .utility) { [weak manager, weak osLogStreamService] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if Task.isCancelled { break }
+                let (managerLogs, streamLogs) = buffer.drain()
+                guard !managerLogs.isEmpty || !streamLogs.isEmpty else { continue }
+                await MainActor.run {
+                    if !managerLogs.isEmpty {
+                        manager?.appendLogs(managerLogs)
+                    }
+                    if !streamLogs.isEmpty {
+                        osLogStreamService?.appendLogs(streamLogs, for: [targetSource, .unifiedLog])
+                    }
+                }
+            }
+        }
     }
 
-    private var targetLogSource: LogsView.LogSource {
+    deinit {
+        flushTask.cancel()
+    }
+
+    private static func targetLogSource(for serviceId: String) -> LogsView.LogSource {
         switch serviceId {
         case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc": return .ingest
         case "embed-xpc", "me.rickmark.garage-rag.embed-xpc": return .embed
@@ -148,51 +206,36 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
         }
     }
 
+    private var targetLogSource: LogsView.LogSource { Self.targetLogSource(for: serviceId) }
+
     func didReceiveStdout(_ text: String) {
-        Task.detached(priority: .utility) { [weak self] in
-            guard let self = self else { return }
-            let serviceId = self.serviceId
-            let targetSource = self.targetLogSource
-            let lines = OSLogStreamService.makeLogLines(from: text, stream: .stdout, source: targetSource.rawValue)
-            await MainActor.run { [weak self] in
-                guard let self = self else { return }
-                self.manager?.appendLog(text, stream: .stdout, source: serviceId, level: .info)
-                self.osLogStreamService?.appendLogs(lines, for: [targetSource, .unifiedLog])
-            }
-        }
+        let targetSource = targetLogSource
+        buffer.appendManagerLog(LogLine(stream: .stdout, text: text, source: serviceId, level: .info))
+        buffer.appendStreamLogs(OSLogStreamService.makeLogLines(from: text, stream: .stdout, source: targetSource.rawValue))
     }
 
     func didReceiveStderr(_ text: String) {
-        Task.detached(priority: .utility) { [weak self] in
-            guard let self = self else { return }
-            let serviceId = self.serviceId
-            let targetSource = self.targetLogSource
-            let lines = OSLogStreamService.makeLogLines(from: text, stream: .stderr, source: targetSource.rawValue)
-            await MainActor.run { [weak self] in
-                guard let self = self else { return }
-                self.manager?.appendLog(text, stream: .stderr, source: serviceId, level: .error)
-                self.osLogStreamService?.appendLogs(lines, for: [targetSource, .unifiedLog])
-            }
-        }
+        let targetSource = targetLogSource
+        buffer.appendManagerLog(LogLine(stream: .stderr, text: text, source: serviceId, level: .error))
+        buffer.appendStreamLogs(OSLogStreamService.makeLogLines(from: text, stream: .stderr, source: targetSource.rawValue))
     }
 
     func didReceiveLog(source: String, level: String, message: String, timestamp: Double) {
-        Task.detached(priority: .utility) { [weak self] in
-            guard let self = self else { return }
-            let lvl: LogLevel
-            switch level.uppercased() {
-            case "ERROR", "CRITICAL", "FATAL": lvl = .error
-            case "WARN", "WARNING": lvl = .warning
-            case "DEBUG", "TRACE": lvl = .debug
-            default: lvl = .info
-            }
-            let targetSource = self.targetLogSource
-            await MainActor.run { [weak self] in
-                guard let self = self else { return }
-                self.manager?.appendLog(message, stream: lvl == .error ? .stderr : .stdout, source: source, level: lvl)
-                self.osLogStreamService?.receiveXPCLog(source: targetSource, level: lvl, message: message, timestamp: timestamp)
-            }
+        let lvl: LogLevel
+        switch level.uppercased() {
+        case "ERROR", "CRITICAL", "FATAL": lvl = .error
+        case "WARN", "WARNING": lvl = .warning
+        case "DEBUG", "TRACE": lvl = .debug
+        default: lvl = .info
         }
+        buffer.appendManagerLog(LogLine(stream: lvl == .error ? .stderr : .stdout, text: message, source: source, level: lvl))
+        buffer.appendStreamLogs([LogLine(
+            date: Date(timeIntervalSince1970: timestamp),
+            stream: lvl == .error ? .stderr : .stdout,
+            text: message,
+            source: targetLogSource.rawValue,
+            level: lvl
+        )])
     }
 }
 
@@ -310,7 +353,14 @@ public final class XPCServiceManager: ObservableObject {
         level: LogLevel? = nil,
         pid: Int32? = nil
     ) {
-        logs.append(LogLine(stream: stream, text: text, source: source, level: level, pid: pid))
+        appendLogs([LogLine(stream: stream, text: text, source: source, level: level, pid: pid)])
+    }
+
+    /// Appends a batch of log lines with a single `@Published` mutation and a single trim, instead of one of each
+    /// per line. Callers streaming bursty output (e.g. `XPCLogReceiverAdapter`) should batch before calling this.
+    public func appendLogs(_ lines: [LogLine]) {
+        guard !lines.isEmpty else { return }
+        logs.append(contentsOf: lines)
         if logs.count > maxLogLines {
             logs.removeFirst(logs.count - maxLogLines)
         }
