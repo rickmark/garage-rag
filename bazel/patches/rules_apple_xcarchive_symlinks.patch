@@ -1,0 +1,66 @@
+--- a/tools/xcarchivetool/make_xcarchive.py	2026-09-21 15:09:49
++++ b/tools/xcarchivetool/make_xcarchive.py	2026-09-21 15:10:24
+@@ -4,6 +4,7 @@
+ import plistlib
+ import re
+ import shutil
++import stat
+ import tempfile
+ import zipfile
+ 
+@@ -69,6 +70,27 @@
+     team=team)
+ 
+ 
++def _extract_zip_preserving_symlinks(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
++  """Extracts a zip file, restoring entries stored as symlinks.
++
++  `zipfile.ZipFile.extractall` ignores the Unix mode bits stored in each
++  entry's `external_attr`, so a symlink entry (as produced by `zip -y` or by
++  bundletool's own zip-merging code) is written out as a regular file whose
++  contents are the raw link-target bytes. This corrupts any bundle that
++  relies on symlinks, e.g. a versioned Python.framework's `Versions/Current`.
++  """
++  for info in zip_file.infolist():
++    extracted_path = zip_file.extract(info, dest_dir)
++    unix_mode = info.external_attr >> 16
++    if stat.S_ISLNK(unix_mode):
++      with open(extracted_path, "r") as link_file:
++        link_target = link_file.read()
++      os.remove(extracted_path)
++      os.symlink(link_target, extracted_path)
++    elif unix_mode:
++      os.chmod(extracted_path, unix_mode)
++
++
+ def _extract_app_from_ipa(ipa_path: str, output_path: str) -> str:
+   """Extracts the .ipa to a temporary directory and copies the .app to the output directory."""
+ 
+@@ -76,14 +98,14 @@
+     # Unzip the .ipa to a temporary directory.
+     with open(ipa_path, "rb") as ipa_file:
+       ipa_zip = zipfile.ZipFile(ipa_file, "r")
+-      ipa_zip.extractall(temp_dir)
++      _extract_zip_preserving_symlinks(ipa_zip, temp_dir)
+     # Find the .app.
+     app_path = next(Path(temp_dir).glob("**/*.app"))
+     if not app_path:
+       raise Exception(
+         "Could not find .app within the .ipa bundle located at: " + ipa_path)
+-    # Copy the .app to the output directory.
+-    shutil.copytree(app_path, output_path, dirs_exist_ok=True)
++    # Copy the .app to the output directory, preserving symlinks restored above.
++    shutil.copytree(app_path, output_path, dirs_exist_ok=True, symlinks=True)
+ 
+ 
+ def _main(
+@@ -135,7 +157,8 @@
+   else:
+     shutil.copytree(bundle_path, bundle_dest_path,
+             copy_function=shutil.copyfile,
+-            dirs_exist_ok=True)
++            dirs_exist_ok=True,
++            symlinks=True)
+ 
+   # Copy the dSYM files into the .xcarchive.
+   dsyms_path = os.path.join(output_path, "dSYMs")

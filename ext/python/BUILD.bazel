@@ -139,6 +139,18 @@ copy_to_directory(
         "**/Versions/Current/lib",
         "**/lib/**",
         "**/lib",
+        # The bin/ directory (python3, idle3, pydoc3, python3-config, ...) isn't
+        # needed at runtime — GaragePythonEmbed links libpython directly via
+        # PyConfig — and App Store review flags bundled command-line
+        # interpreters/tools inside a framework, so drop it before signing.
+        "**/Versions/*/bin/**",
+        "**/Versions/*/bin",
+        "**/Versions/3.13/bin/**",
+        "**/Versions/3.13/bin",
+        "**/Versions/Current/bin/**",
+        "**/Versions/Current/bin",
+        "**/bin/**",
+        "**/bin",
     ],
     include_srcs_patterns = [
         "python_3_13/Python.framework/**",
