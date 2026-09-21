@@ -106,6 +106,28 @@ tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
 
 Postgres maintains the keyword index itself; no application bookkeeping.
 
+### `conversations` / `messages`
+
+Structured storage for communication sources (`sms`/`imessage` chat.db, `mail`)
+prior to synthesis into a document.
+
+A `conversations` row is one thread between the corpus owner and a single
+other participant (`other_author_id`), scoped to the `source_id` it came
+from and keyed on the source's native thread identifier (`external_id`) so
+re-ingest finds the same conversation rather than duplicating it.
+
+`messages` rows accumulate under a conversation as they are ingested, each
+attributed to its sender via `author_id` (the owner or the conversation's
+`other_author_id`) and deduplicated on `(conversation_id, external_id)`.
+
+A synthesis step concatenates a conversation's messages in `sent_at` order
+into one synthetic `documents` row — `conversations.document_id` — which is
+then chunked and embedded exactly like any other document, using the same
+`comms_window_minutes` / `comms_window_messages` grouping as the chunker.
+Deleting that document (e.g. to force a rebuild) clears `document_id` back
+to null rather than deleting the raw messages, so re-synthesis has the full
+history to work from.
+
 ### `embedding_models` and the `emb_*` tables
 
 One table per model, because `vector(1024)` and `vector(2560)` cannot share a
