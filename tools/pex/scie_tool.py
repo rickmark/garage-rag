@@ -10,14 +10,24 @@ from pex.scie.science import ensure_science
 
 def parse_args():
     parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
-    parser.add_argument("-o", "--output", dest="output", required=True, help="Output file path")
-    parser.add_argument("--pex-file", dest="pex_file", required=True, help="Input PEX file")
+    parser.add_argument(
+        "-o", "--output", dest="output", required=True, help="Output file path"
+    )
+    parser.add_argument(
+        "--pex-file", dest="pex_file", required=True, help="Input PEX file"
+    )
 
     # Scie options
-    parser.add_argument("--scie", dest="scie", default="none", choices=["none", "eager", "lazy"])
-    parser.add_argument("--scie-python-version", dest="scie_python_version", default="3.13")
+    parser.add_argument(
+        "--scie", dest="scie", default="none", choices=["none", "eager", "lazy"]
+    )
+    parser.add_argument(
+        "--scie-python-version", dest="scie_python_version", default="3.13"
+    )
     parser.add_argument("--scie-pbs-release", dest="scie_pbs_release", default="")
-    parser.add_argument("--scie-platform", dest="scie_platforms", action="append", default=[])
+    parser.add_argument(
+        "--scie-platform", dest="scie_platforms", action="append", default=[]
+    )
     parser.add_argument("--scie-env", dest="scie_env", action="append", default=[])
     parser.add_argument("--inject-env", dest="inject_env", action="append", default=[])
     parser.add_argument("--scie-science-binary", dest="scie_science_binary", default="")
@@ -136,7 +146,9 @@ int main(int argc, char *argv[]) {
 
 
 def build_scie_from_pex(pex_path, output_path, options):
-    science_binary = options.scie_science_binary if options.scie_science_binary else None
+    science_binary = (
+        options.scie_science_binary if options.scie_science_binary else None
+    )
     science = ensure_science(science_binary=science_binary)
 
     work_dir = safe_mkdtemp()
@@ -221,14 +233,22 @@ def build_scie_from_pex(pex_path, output_path, options):
             cmd.append("--no-use-platform-suffix")
         cmd.append(manifest_path)
 
-        res = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        res = subprocess.run(
+            cmd, cwd=work_dir, capture_output=True, text=True, stdin=subprocess.DEVNULL
+        )
         if res.returncode != 0:
-            print(f"Error executing science: {res.stderr}\n{res.stdout}", file=sys.stderr)
+            print(
+                f"Error executing science: {res.stderr}\n{res.stdout}", file=sys.stderr
+            )
             sys.exit(res.returncode)
 
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-        is_macos_fat = "macos-aarch64" in platforms and "macos-x86_64" in platforms and sys.platform == "darwin"
+        is_macos_fat = (
+            "macos-aarch64" in platforms
+            and "macos-x86_64" in platforms
+            and sys.platform == "darwin"
+        )
 
         if is_macos_fat:
             arm64_bin = os.path.join(dest_dir, f"{app_name}-macos-aarch64")
@@ -254,7 +274,10 @@ def build_scie_from_pex(pex_path, output_path, options):
             ]
             compile_res = subprocess.run(clang_cmd, capture_output=True, text=True)
             if compile_res.returncode != 0:
-                print(f"Error compiling universal launcher: {compile_res.stderr}", file=sys.stderr)
+                print(
+                    f"Error compiling universal launcher: {compile_res.stderr}",
+                    file=sys.stderr,
+                )
                 sys.exit(compile_res.returncode)
             os.chmod(output_path, 0o755)
         else:
@@ -264,7 +287,10 @@ def build_scie_from_pex(pex_path, output_path, options):
                 if candidates:
                     built_binary = os.path.join(dest_dir, candidates[0])
                 else:
-                    print(f"Error: science did not produce an executable in {dest_dir}", file=sys.stderr)
+                    print(
+                        f"Error: science did not produce an executable in {dest_dir}",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
 
             if os.path.exists(output_path):

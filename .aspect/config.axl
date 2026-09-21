@@ -36,9 +36,13 @@ def config(ctx: ConfigContext):
         ctx.traits[BazelTrait].extra_flags.extend([
             "--config=ci",
             # CI runners have no Developer ID signing identity installed, so
-            # codesigning with the default //bazel:universal_developer_id
-            # platform fails. Ad-hoc sign instead, matching local dev builds.
-            "--platforms=//bazel:adhoc",
+            # codesigning with the certificate baked into the default
+            # //bazel:universal_developer_id platform fails. Clear the
+            # signing_certificate_name build setting so codesign.bzl falls
+            # back to ad-hoc signing ("-"), without changing the target
+            # platform itself (which also drives toolchain/exec-platform
+            # resolution — swapping platforms broke test toolchain lookup).
+            "--@rules_apple//apple/build_settings:signing_certificate_name=",
         ])
 
     # Enable artifact uploads for testlogs, profile, and BEP.
