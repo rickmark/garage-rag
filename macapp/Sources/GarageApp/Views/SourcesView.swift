@@ -438,6 +438,11 @@ struct SourcesView: View {
                         }
                         .disabled(notReady)
 
+                        Button("Glean Facts") {
+                            enrichFacts(source: source.slug)
+                        }
+                        .disabled(notReady || appState.enrichFacts.isRunning)
+
                         Button("Reconcile (Apply Deletions)", role: .destructive) {
                             run(["reconcile", "--source", source.slug, "--apply"])
                         }
@@ -1016,6 +1021,12 @@ struct SourcesView: View {
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
+        }
+    }
+
+    private func enrichFacts(source: String) {
+        Task {
+            await appState.runEnrichFacts(["enrich-facts", "--source", source])
         }
     }
 

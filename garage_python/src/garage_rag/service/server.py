@@ -47,6 +47,8 @@ from garage_rag.proto.garage_pb2 import (
     DropModelRequest,
     DropModelResponse,
     EmbeddingChunkItem,
+    EnrichFactsRequest,
+    EnrichFactsStatus,
     ExtractChunk,
     ExtractRequest,
     ExtractResponse,
@@ -732,6 +734,74 @@ class GarageRpcServicer(GarageServiceServicer):
                     progress_message=f"{row.slug}: {summary}",
                     formatted_output=f"{row.slug}: {summary}",
                 )
+
+    def EnrichFacts(self, request: EnrichFactsRequest, context: grpc.ServicerContext) -> Iterator[EnrichFactsStatus]:
+        """Distill documents into facts, streaming EnrichFactsStatus events per document."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.db.models import Document, Source
+        from garage_rag.enrich.facts import DEFAULT_MODEL_ID, DEFAULT_PROVIDER, extract_and_store_facts
+
+        model_id = request.model_id or DEFAULT_MODEL_ID
+        provider = request.provider or DEFAULT_PROVIDER
+
+        with session_scope() as session:
+            if request.document_id:
+                documents = [session.get(Document, request.document_id)]
+                documents = [d for d in documents if d is not None]
+                if not documents:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"document {request.document_id} not found")
+            else:
+                query = session.query(Document)
+                if request.source and request.source != "*":
+                    query = query.join(Source, Document.source_id == Source.id).filter(Source.slug == request.source)
+                documents = query.order_by(Document.id).all()
+
+            total = len(documents)
+            processed = 0
+            failed = 0
+
+            if total == 0:
+                yield EnrichFactsStatus(
+                    total=0,
+                    is_complete=True,
+                    progress=1.0,
+                    progress_message="No documents to enrich.",
+                    formatted_output="No documents to enrich.",
+                )
+                return
+
+            for document in documents:
+                try:
+                    facts = extract_and_store_facts(session, document, model_id=model_id, provider=provider)
+                    session.commit()
+                    processed += 1
+                    yield EnrichFactsStatus(
+                        document_uri=document.uri or "",
+                        document_id=document.id,
+                        total=total,
+                        processed=processed,
+                        facts_extracted=len(facts),
+                        failed=failed,
+                        is_complete=processed + failed == total,
+                        progress=(processed + failed) / total,
+                        progress_message=f"{document.uri or document.id}: {len(facts)} facts",
+                        formatted_output=f"{processed + failed}/{total} documents, {len(facts)} facts extracted",
+                    )
+                except Exception as exc:
+                    session.rollback()
+                    failed += 1
+                    yield EnrichFactsStatus(
+                        document_uri=document.uri or "",
+                        document_id=document.id,
+                        total=total,
+                        processed=processed,
+                        failed=failed,
+                        is_complete=processed + failed == total,
+                        progress=(processed + failed) / total,
+                        error_message=str(exc),
+                        progress_message=f"{document.uri or document.id}: failed ({exc})",
+                        formatted_output=f"{processed + failed}/{total} documents, {failed} failed",
+                    )
 
     def Reconcile(self, request: ReconcileRequest, context: grpc.ServicerContext) -> ReconcileResponse:
         """Delete documents whose source files no longer exist."""

@@ -295,6 +295,90 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertNil(nomic.useCases)
     }
 
+    func testLoadModelPresetsFromGroupedManifest() throws {
+        let json = """
+        {
+            "text_embedding": [
+                {
+                    "name": "BGE-M3 (Embeddings)",
+                    "model_id": "BAAI/bge-m3",
+                    "slug": "bge-m3",
+                    "model_ref": "bge-m3",
+                    "provider": "llama_xpc",
+                    "native_dims": 1024,
+                    "default_dims": 1024,
+                    "context_size": 8192
+                }
+            ],
+            "fact_distil": [
+                {
+                    "name": "Gemma 2 2B Instruct",
+                    "model_id": "google/gemma-2-2b-it",
+                    "slug": "gemma2-2b",
+                    "model_ref": "gemma2-2b",
+                    "provider": "llama_xpc",
+                    "context_size": 8192,
+                    "featured": true
+                }
+            ]
+        }
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_models_grouped_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let embeddingPresets = GarageConfigLoader.loadModelPresets(fileURL: tempURL)
+        XCTAssertEqual(embeddingPresets.count, 1)
+        XCTAssertEqual(embeddingPresets[0].slug, "bge-m3")
+
+        let factDistilPresets = GarageConfigLoader.loadFactDistilPresets(fileURL: tempURL)
+        XCTAssertEqual(factDistilPresets.count, 1)
+        XCTAssertEqual(factDistilPresets[0].slug, "gemma2-2b")
+        XCTAssertTrue(factDistilPresets[0].featured)
+
+        // The embedding list must never leak fact_distil entries or vice versa.
+        XCTAssertFalse(embeddingPresets.contains { $0.slug == "gemma2-2b" })
+        XCTAssertFalse(factDistilPresets.contains { $0.slug == "bge-m3" })
+    }
+
+    func testLoadFactDistilPresetsFallbackToDefaultWhenFileMissing() {
+        let fakeURL = URL(fileURLWithPath: "/tmp/non_existent_models_\(UUID().uuidString).json")
+        let presets = GarageConfigLoader.loadFactDistilPresets(fileURL: fakeURL)
+        XCTAssertTrue(presets.contains { $0.slug == "gemma2-2b" })
+    }
+
+    func testLoadFactDistilPresetsFromLegacyFlatArrayFallsBackToDefault() throws {
+        // A pre-grouping models.json (flat array) has no fact_distil section at
+        // all; loadFactDistilPresets should still offer the built-in default
+        // rather than silently returning nothing.
+        let json = """
+        [
+            {
+                "name": "BGE-M3 (Embeddings)",
+                "model_id": "BAAI/bge-m3",
+                "slug": "bge-m3",
+                "model_ref": "bge-m3",
+                "provider": "llama_xpc",
+                "native_dims": 1024,
+                "default_dims": 1024,
+                "context_size": 8192
+            }
+        ]
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_models_legacy_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let embeddingPresets = GarageConfigLoader.loadModelPresets(fileURL: tempURL)
+        XCTAssertEqual(embeddingPresets.count, 1)
+        XCTAssertEqual(embeddingPresets[0].slug, "bge-m3")
+
+        let factDistilPresets = GarageConfigLoader.loadFactDistilPresets(fileURL: tempURL)
+        XCTAssertTrue(factDistilPresets.contains { $0.slug == "gemma2-2b" })
+    }
+
     func testLoadModelPresetsFallbackToDefault() {
         let fakeURL = URL(fileURLWithPath: "/tmp/non_existent_models_\(UUID().uuidString).json")
         let presets = GarageConfigLoader.loadModelPresets(fileURL: fakeURL)

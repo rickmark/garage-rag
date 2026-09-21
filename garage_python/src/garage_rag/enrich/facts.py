@@ -31,11 +31,20 @@ from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
 from garage_rag.db.models import Chunk, Document, Fact
+from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
 
 log = logging.getLogger(__name__)
 
 # A small local instruction model, pulled with `ollama pull gemma2:2b`.
 DEFAULT_MODEL_ID = "gemma2:2b"
+
+# Fact-distillation backends. "ollama" talks to a local Ollama server (the
+# default, and the only one that runs real inference today); "llama_xpc"
+# routes through LlamaXPCLanguageModel -- see that module's docstring for why
+# that's an in-process call rather than an HTTP one, and for the current
+# caveat that LlamaXPCService has no real model backend yet.
+FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
+DEFAULT_PROVIDER = "ollama"
 
 PROMPT = textwrap.dedent("""\
     Extract every standalone fact stated in this document.
@@ -76,6 +85,7 @@ def extract_facts(
     *,
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
+    provider: str = DEFAULT_PROVIDER,
 ) -> list[lx.data.Extraction]:
     """Run LangExtract over ``text``, returning only grounded extractions.
 
@@ -83,16 +93,32 @@ def extract_facts(
     its own few-shot example rather than the input document; it is filtered
     out here rather than stored, since such a fact cannot be traced back to
     the source text.
+
+    ``provider`` selects the inference backend: "ollama" (default) talks to a
+    local Ollama server via LangExtract's built-in provider; "llama_xpc" runs
+    the prompt through ``LlamaXPCLanguageModel`` in-process instead.
     """
-    settings = get_settings()
-    result = lx.extract(
-        text_or_documents=text,
-        prompt_description=PROMPT,
-        examples=EXAMPLES,
-        model_id=model_id,
-        model_url=model_url or settings.ollama_host,
-        show_progress=False,
-    )
+    if provider not in FACT_DISTIL_PROVIDERS:
+        raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
+
+    if provider == "llama_xpc":
+        result = lx.extract(
+            text_or_documents=text,
+            prompt_description=PROMPT,
+            examples=EXAMPLES,
+            model=LlamaXPCLanguageModel(model_id=model_id),
+            show_progress=False,
+        )
+    else:
+        settings = get_settings()
+        result = lx.extract(
+            text_or_documents=text,
+            prompt_description=PROMPT,
+            examples=EXAMPLES,
+            model_id=model_id,
+            model_url=model_url or settings.ollama_host,
+            show_progress=False,
+        )
     return [e for e in result.extractions if e.char_interval is not None]
 
 
@@ -146,6 +172,7 @@ def extract_and_store_facts(
     *,
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
+    provider: str = DEFAULT_PROVIDER,
     queue_for_embedding: bool = True,
 ) -> list[Fact]:
     """Extract facts for ``document`` and replace its ``facts`` rows.
@@ -164,8 +191,8 @@ def extract_and_store_facts(
     if not document.content:
         return []
 
-    log.info("extracting facts for document %s", document.id)
-    extractions = extract_facts(document.content, model_id=model_id, model_url=model_url)
+    log.info("extracting facts for document %s via %s", document.id, provider)
+    extractions = extract_facts(document.content, model_id=model_id, model_url=model_url, provider=provider)
 
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     facts = facts_from_extractions(document.id, extractions, model_id=model_id)

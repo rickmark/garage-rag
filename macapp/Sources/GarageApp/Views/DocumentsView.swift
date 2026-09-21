@@ -19,6 +19,7 @@ public struct DocumentsView: View {
     @State private var listErrorMessage: String?
     @State private var detailErrorMessage: String?
     @State private var hasLoaded = false
+    @State private var isGleaningFacts = false
 
     private let corpusClasses = ["all", "document", "communication", "code", "reference", "note"]
     private let trustTiers = ["all", "authored", "trusted", "community", "unverified"]
@@ -328,6 +329,17 @@ public struct DocumentsView: View {
                     metaField("Chunks", "\(detail.chunks.count)")
                     if !detail.facts.isEmpty { metaField("Facts", "\(detail.facts.count)") }
                     Spacer()
+                    Button {
+                        glean(detail)
+                    } label: {
+                        if isGleaningFacts {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text(detail.facts.isEmpty ? "Glean Facts" : "Re-glean Facts")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(isGleaningFacts || appState.postgres.status != .running)
                 }
 
                 if !detail.authors.isEmpty {
@@ -497,6 +509,22 @@ public struct DocumentsView: View {
                     self.detailErrorMessage = error.localizedDescription
                     self.isLoadingDetail = false
                 }
+            }
+        }
+    }
+
+    private func glean(_ detail: DocumentDetailItem) {
+        isGleaningFacts = true
+        Task {
+            await appState.runEnrichFacts(["enrich-facts", "--document-id", "\(detail.id)"])
+            if selectedDocumentID == detail.id {
+                let refreshed = try? await appState.getDocument(documentID: detail.id)
+                await MainActor.run {
+                    if let refreshed { self.selectedDetail = refreshed }
+                    self.isGleaningFacts = false
+                }
+            } else {
+                await MainActor.run { self.isGleaningFacts = false }
             }
         }
     }

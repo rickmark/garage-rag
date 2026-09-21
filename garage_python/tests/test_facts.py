@@ -14,6 +14,7 @@ from garage_rag.enrich.facts import (
     extract_facts,
     facts_from_extractions,
 )
+from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
 
 
 def _extraction(text: str, *, start: int, end: int, attributes: dict | None = None) -> lx.data.Extraction:
@@ -50,6 +51,57 @@ def test_extract_facts_stays_local_and_drops_ungrounded(monkeypatch) -> None:
     assert captured["model_url"] == "http://ollama.example:11434"
     assert captured["prompt_description"]
     assert captured["examples"]
+
+
+def test_extract_facts_routes_to_llama_xpc_when_requested(monkeypatch) -> None:
+    captured: dict = {}
+
+    grounded = _extraction("Acme Corp was founded in 1998.", start=0, end=31)
+
+    class Result:
+        extractions = [grounded]
+
+    def fake_extract(**kwargs):
+        captured.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
+
+    extractions = extract_facts(
+        "Acme Corp was founded in 1998.", model_id="gemma2-2b", provider="llama_xpc"
+    )
+
+    assert extractions == [grounded]
+    assert isinstance(captured["model"], LlamaXPCLanguageModel)
+    assert captured["model"].model_id == "gemma2-2b"
+    assert "model_id" not in captured
+    assert "model_url" not in captured
+
+
+def test_extract_facts_rejects_unknown_provider() -> None:
+    try:
+        extract_facts("text", provider="bogus")
+    except ValueError as exc:
+        assert "bogus" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for an unknown provider")
+
+
+def test_llama_xpc_language_model_infers_via_chat_completion() -> None:
+    fake_client = MagicMock()
+    fake_client.chat_completion.return_value = {
+        "choices": [{"message": {"content": '{"extractions": []}'}}]
+    }
+
+    model = LlamaXPCLanguageModel(model_id="gemma2-2b", client=fake_client)
+    results = list(model.infer(["prompt one", "prompt two"]))
+
+    assert len(results) == 2
+    assert results[0][0].output == '{"extractions": []}'
+    assert fake_client.chat_completion.call_count == 2
+    first_call_kwargs = fake_client.chat_completion.call_args_list[0].kwargs
+    assert first_call_kwargs["model"] == "gemma2-2b"
+    assert first_call_kwargs["messages"] == [{"role": "user", "content": "prompt one"}]
 
 
 def test_facts_from_extractions_preserves_order_and_grounding() -> None:

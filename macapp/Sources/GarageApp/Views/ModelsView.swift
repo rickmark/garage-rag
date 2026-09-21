@@ -280,6 +280,11 @@ struct ModelsView: View {
                     }
                     .disabled(appState.registeredModels.isEmpty || notReady || appState.backfill.isRunning)
 
+                    Button("Glean Facts (All)") {
+                        enrichAllFacts()
+                    }
+                    .disabled(notReady || appState.enrichFacts.isRunning)
+
                     Button("Refresh") {
                         refreshAll()
                     }
@@ -1098,6 +1103,16 @@ struct ModelsView: View {
                     .frame(minHeight: 180, maxHeight: 300)
                 }
             }
+            if !appState.enrichFacts.logs.isEmpty {
+                GroupBox("Fact Enrichment Output") {
+                    LogTableView(
+                        lines: appState.enrichFacts.logs,
+                        sourceName: "Enrich Facts",
+                        onClear: { appState.enrichFacts.clearLogs() }
+                    )
+                    .frame(minHeight: 180, maxHeight: 300)
+                }
+            }
         }
     }
 
@@ -1346,6 +1361,12 @@ struct ModelsView: View {
             await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
             busy = false
+        }
+    }
+
+    private func enrichAllFacts() {
+        Task {
+            await appState.runEnrichFacts(["enrich-facts", "--source", "*"])
         }
     }
 
