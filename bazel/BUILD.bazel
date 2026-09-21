@@ -39,11 +39,16 @@ constraint_value(
     constraint_setting = ":distribution",
 )
 
+# Keyed on the signing certificate rather than :distribution_adhoc, which is a
+# platform constraint: rules_apple's split transitions rewrite the platform, so
+# anything reached through a macos_application/macos_framework would fall through
+# to the Developer ID branch of every signing select. The build setting survives
+# those transitions, which is why :is_store keys on it too.
 config_setting(
     name = "is_adhoc",
-    constraint_values = [
-        ":distribution_adhoc",
-    ],
+    flag_values = {
+        "@rules_apple//apple/build_settings:signing_certificate_name": "-",
+    },
 )
 
 config_setting(
@@ -70,6 +75,7 @@ platform(
     ],
     flags = [
         "--apple_platform_type=macos",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=-",
     ],
 )
 

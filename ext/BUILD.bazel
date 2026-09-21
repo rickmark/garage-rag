@@ -221,16 +221,8 @@ macho_test(
     archs = ["arm64"],
 )
 
-codesign_test(
-    name = "pythonkit_codesign_test",
-    src = "//ext/pythonkit:PythonKit",
-    is_store = select({
-        "//bazel:is_store": True,
-        "//conditions:default": False,
-    }),
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
-)
+# No pythonkit_codesign_test: //ext/pythonkit:PythonKit is a swift_library, so it
+# contributes a .a and a .swiftmodule and never a signed Mach-O binary of its own
+# ("No Mach-O binaries were found in target inputs"). PythonKit is linked
+# statically into PythonXPCService.framework, and the signature that matters now
+# lives on //macapp/Sources/PythonXPCService:PythonXPCService_signed.

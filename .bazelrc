@@ -30,8 +30,8 @@ build --workspace_status_command=bazel/workspace_status.sh
 
 build --platforms=//bazel:universal_developer_id
 # Platform configuration presets
-build:adhoc --platforms=//bazel:adhoc
-build:local --platforms=//bazel:local
+build:adhoc --platforms=//bazel:adhoc --@rules_apple//apple/build_settings:signing_certificate_name=-
+build:local --platforms=//bazel:local --@rules_apple//apple/build_settings:signing_certificate_name=-
 build:arm_developer_id --platforms=//bazel:arm_developer_id --macos_cpus=arm64
 build:developer_id --platforms=//bazel:universal_developer_id --macos_cpus=arm64,x86_64
 build:universal --platforms=//bazel:universal_developer_id --macos_cpus=arm64,x86_64
@@ -43,6 +43,12 @@ build:store --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64
 # is added automatically by .aspect/config.axl when CI is set; point it at the
 # adhoc platform, which signs with "-" (see the //bazel:is_adhoc selects).
 #
+# The certificate is set on the command line and not left to the platform's own
+# flags because rules_apple's split transitions rewrite the platform: anything
+# reached through a macos_application/macos_framework would otherwise lose it and
+# sign with the Developer ID identity. Same reason //bazel:is_adhoc keys on the
+# build setting rather than on the distribution_adhoc constraint.
+#
 # //bazel:distribution defaults to distribution_developer_id, so the autodetected
 # host platform carries that value implicitly and does not satisfy the adhoc
 # platform's distribution_adhoc constraint. Bazel resolves a test's execution
@@ -50,3 +56,4 @@ build:store --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64
 # adhoc platform for execution too, every *_test fails toolchain resolution with
 # "No matching toolchains found for @bazel_tools//tools/test:default_test_toolchain_type".
 build:ci --platforms=//bazel:adhoc --extra_execution_platforms=//bazel:adhoc
+build:ci --@rules_apple//apple/build_settings:signing_certificate_name=-
