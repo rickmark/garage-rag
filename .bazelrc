@@ -42,4 +42,11 @@ build:store --platforms=//bazel:universal_store --macos_cpus=arm64,x86_64
 # default `universal_developer_id` platform can't codesign there. `--config=ci`
 # is added automatically by .aspect/config.axl when CI is set; point it at the
 # adhoc platform, which signs with "-" (see the //bazel:is_adhoc selects).
-build:ci --platforms=//bazel:adhoc
+#
+# //bazel:distribution defaults to distribution_developer_id, so the autodetected
+# host platform carries that value implicitly and does not satisfy the adhoc
+# platform's distribution_adhoc constraint. Bazel resolves a test's execution
+# platform against the target platform's constraints, so without registering the
+# adhoc platform for execution too, every *_test fails toolchain resolution with
+# "No matching toolchains found for @bazel_tools//tools/test:default_test_toolchain_type".
+build:ci --platforms=//bazel:adhoc --extra_execution_platforms=//bazel:adhoc
