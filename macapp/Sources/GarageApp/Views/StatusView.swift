@@ -470,7 +470,10 @@ struct StatusView: View {
                     .controlSize(.small)
 
                     Button {
-                        Task { await appState.xpcServices.refreshAll() }
+                        Task {
+                            await appState.xpcServices.refreshAll()
+                            await appState.grpc.refreshStatus()
+                        }
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")

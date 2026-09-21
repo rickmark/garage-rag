@@ -6,6 +6,7 @@ import AppKit
 /// External destinations surfaced by the splash dialog.
 enum SplashLinks {
     static let patreon = URL(string: "https://www.patreon.com/rickmark")!
+    static let linkedin = URL("https://linkedin.com/in/penwellr")!
     static let releases = URL(string: "https://github.com/rickmark/garage-rag/releases")!
 }
 
@@ -164,7 +165,7 @@ struct SplashView: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                openURL(SplashLinks.patreon)
+                openURL(SplashLinks.linkedin)
             } label: {
                 Label("Get in touch", systemImage: "envelope")
             }

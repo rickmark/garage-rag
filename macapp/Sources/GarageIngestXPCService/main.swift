@@ -184,12 +184,13 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
         }
     }
 
-    /// Ingest clients receive progress updates in addition to the common log stream.
+    /// Ingest clients may receive progress updates in addition to the common log stream. Only the connection that
+    /// actually requests an ingest is added to the progress fan-out (see `runIngest`): pushing progress at a
+    /// connection whose client did not export a receiver makes NSXPC invalidate that connection.
     override func didAcceptConnection(_ connection: NSXPCConnection) {
         let clientPID = connection.processIdentifier
         logger.info("Ingest XPC listener received connection request from PID: \(clientPID), EUID: \(connection.effectiveUserIdentifier), EGID: \(connection.effectiveGroupIdentifier)")
         connection.remoteObjectInterface = NSXPCInterface(with: GarageIngestProgressReceiverProtocol.self)
-        GarageIngestActiveConnections.shared.add(connection)
 
         let baseInvalidation = connection.invalidationHandler
         connection.invalidationHandler = { [weak connection] in
@@ -344,12 +345,20 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
         successPrefix: String,
         with reply: @escaping (Bool, String?) -> Void
     ) {
+        // The requesting connection is the one that exported a progress receiver; capture it on the XPC thread.
+        let requester = NSXPCConnection.current()
+        if let requester = requester {
+            GarageIngestActiveConnections.shared.add(requester)
+        }
         Self.workerQueue.async { [self] in
             let startTime = CFAbsoluteTimeGetCurrent()
             logger.info("Starting ingest synchronously on worker queue for source: '\(source, privacy: .public)'")
             GarageIngestActiveConnections.shared.activeIngestSource = source
             defer {
                 GarageIngestActiveConnections.shared.activeIngestSource = nil
+                if let requester = requester {
+                    GarageIngestActiveConnections.shared.remove(requester)
+                }
             }
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],

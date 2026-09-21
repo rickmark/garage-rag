@@ -716,13 +716,17 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         streamingConnections[key] = connection
 
-        // Hand over the app bundle and ping to register the streaming receiver on the service side
+        // Hand over the app bundle, then opt this connection in to live log streaming on the service side.
         if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }) as? GarageCommonXPCServiceProtocol {
             Self.configureBundle(on: proxy) {
-                proxy.ping { _ in
-                    logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
+                proxy.subscribeToLogStream { subscribed in
+                    if subscribed {
+                        logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
+                    } else {
+                        logger.warning("Service '\(bundleId, privacy: .public)' declined the log streaming subscription")
+                    }
                 }
             }
         }

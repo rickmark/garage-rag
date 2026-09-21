@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
@@ -500,6 +501,34 @@ def _log_startup() -> None:
     log.info("%d sources registered", count)
 
 
+def _http_security(bind_host: str, bind_port: int, allowed_origins: list[str] | None):
+    """DNS-rebinding protection shared by every HTTP transport."""
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    # Host header allowlist: the addresses a client may legitimately use.
+    allowed_hosts = [
+        f"{bind_host}:{bind_port}",
+        f"localhost:{bind_port}",
+        f"127.0.0.1:{bind_port}",
+    ]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=sorted(set(allowed_hosts)),
+        allowed_origins=sorted(set(allowed_origins or [])),
+    )
+
+
+def _warn_if_not_loopback(bind_host: str) -> None:
+    if not is_loopback(bind_host):
+        # Not fatal here — the CLI already required an explicit opt-in — but it
+        # belongs in the log so it is visible in whatever captured stderr.
+        log.warning(
+            "listening on %s, which is reachable from other machines; this "
+            "server has no authentication and exposes the whole corpus",
+            bind_host,
+        )
+
+
 def serve(
     transport: str = "stdio",
     *,
@@ -530,32 +559,11 @@ def serve(
     if transport not in ("streamable-http", "sse"):
         raise ValueError(f"unsupported transport: {transport!r}")
 
-    from mcp.server.transport_security import TransportSecuritySettings
-
     bind_host = host or settings.mcp_host
     bind_port = port or settings.mcp_port
     http_path = path or settings.mcp_http_path
-
-    # Host header allowlist: the addresses a client may legitimately use.
-    allowed_hosts = [
-        f"{bind_host}:{bind_port}",
-        f"localhost:{bind_port}",
-        f"127.0.0.1:{bind_port}",
-    ]
-    security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=sorted(set(allowed_hosts)),
-        allowed_origins=sorted(set(allowed_origins or [])),
-    )
-
-    if not is_loopback(bind_host):
-        # Not fatal here — the CLI already required an explicit opt-in — but it
-        # belongs in the log so it is visible in whatever captured stderr.
-        log.warning(
-            "listening on %s, which is reachable from other machines; this "
-            "server has no authentication and exposes the whole corpus",
-            bind_host,
-        )
+    security = _http_security(bind_host, bind_port, allowed_origins)
+    _warn_if_not_loopback(bind_host)
 
     log.info("listening on http://%s:%d%s", bind_host, bind_port, http_path)
 
@@ -585,8 +593,23 @@ def main() -> None:
     serve("stdio")
 
 
+# ---------------------------------------------------------------------------
+# embedded (background thread) server, used by the macOS XPC helper
+# ---------------------------------------------------------------------------
+#
+# ``mcp.run("streamable-http")`` builds its own ``uvicorn.Server`` and never
+# hands it back, so a caller cannot stop it; the only way to shut it down is to
+# end the process. The XPC helper needs start / stop / restart inside one
+# long-lived process, therefore the background variant constructs the uvicorn
+# server itself and keeps the handle so ``should_exit`` can be raised later.
+
+_active_server = None  # uvicorn.Server | None
 _active_server_thread: threading.Thread | None = None
+_active_server_error: str | None = None
 _server_lock = threading.Lock()
+
+STARTUP_WAIT_SECONDS = 15.0
+SHUTDOWN_WAIT_SECONDS = 10.0
 
 
 def start_background_server(
@@ -597,44 +620,137 @@ def start_background_server(
     json_response: bool = False,
     stateless: bool = False,
 ) -> bool:
-    """Start the MCP HTTP server in a daemon background thread."""
-    global _active_server_thread
+    """Start the MCP streamable-HTTP server in a daemon background thread.
+
+    Blocks until the socket is bound (returns ``True``) or start-up failed
+    (returns ``False``; see :func:`background_server_error`). A previously
+    started server is shut down first so restarting on the same port works.
+    """
+    global _active_server, _active_server_thread, _active_server_error
+
+    import uvicorn
+
     with _server_lock:
-        if _active_server_thread and _active_server_thread.is_alive():
-            stop_background_server()
+        if _active_server_thread is not None and _active_server_thread.is_alive():
+            _stop_locked()
+
+        _active_server_error = None
+        log.info("garage-rag MCP server starting (transport=streamable-http, embedded)")
+        try:
+            _log_startup()
+        except Exception as exc:  # the database may not be reachable yet; not fatal
+            log.warning("could not query the database during start-up: %s", exc)
+
+        security = _http_security(host, port, allowed_origins)
+        _warn_if_not_loopback(host)
+
+        app = mcp.streamable_http_app(
+            streamable_http_path=path,
+            json_response=json_response,
+            stateless_http=stateless,
+            transport_security=security,
+            host=host,
+        )
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=mcp.settings.log_level.lower(),
+        )
+        server = uvicorn.Server(config)
 
         def _run() -> None:
+            global _active_server_error
             try:
-                serve(
-                    "streamable-http",
-                    host=host,
-                    port=port,
-                    path=path,
-                    allowed_origins=allowed_origins,
-                    json_response=json_response,
-                    stateless=stateless,
-                )
-            except Exception as e:
-                log.error("MCP background server error: %s", e)
+                # ``Server.run`` skips signal handling when it is not on the main
+                # thread, which is exactly what an embedded server wants.
+                server.run()
+            except SystemExit as exc:
+                # uvicorn calls ``sys.exit(3)`` when the bind or lifespan fails.
+                _active_server_error = f"MCP server failed to start (exit {exc.code})"
+                log.error("%s", _active_server_error)
+            except Exception as exc:
+                _active_server_error = f"MCP background server error: {exc}"
+                log.error("%s", _active_server_error)
 
-        t = threading.Thread(target=_run, daemon=True, name="garage-mcp-http-server")
-        t.start()
-        _active_server_thread = t
+        thread = threading.Thread(target=_run, daemon=True, name="garage-mcp-http-server")
+        thread.start()
+
+        deadline = time.monotonic() + STARTUP_WAIT_SECONDS
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        if not server.started:
+            if thread.is_alive():
+                # Still binding after the deadline: give up and tear it down.
+                server.should_exit = True
+                thread.join(timeout=2.0)
+                _active_server_error = _active_server_error or (
+                    f"MCP server did not start listening on {host}:{port} "
+                    f"within {STARTUP_WAIT_SECONDS:.0f}s"
+                )
+            else:
+                _active_server_error = _active_server_error or (
+                    f"MCP server exited before binding {host}:{port} (see log)"
+                )
+            _active_server = None
+            _active_server_thread = None
+            return False
+
+        _active_server = server
+        _active_server_thread = thread
+        log.info("listening on http://%s:%d%s", host, port, path)
         return True
+
+
+def _stop_locked() -> bool:
+    """Stop the running server; the caller holds ``_server_lock``."""
+    global _active_server, _active_server_thread
+    server = _active_server
+    thread = _active_server_thread
+    _active_server = None
+    _active_server_thread = None
+    if server is None or thread is None:
+        return True
+
+    server.should_exit = True
+    thread.join(timeout=SHUTDOWN_WAIT_SECONDS)
+    if thread.is_alive():
+        # Drain did not finish in time: drop in-flight connections.
+        server.force_exit = True
+        thread.join(timeout=2.0)
+    stopped = not thread.is_alive()
+    if stopped:
+        log.info("garage-rag MCP server stopped")
+    else:
+        log.warning("garage-rag MCP server thread did not exit after force_exit")
+    return stopped
 
 
 def stop_background_server() -> bool:
-    """Stop the background MCP HTTP server thread."""
-    global _active_server_thread
+    """Stop the background MCP HTTP server and wait for its thread to exit."""
     with _server_lock:
-        _active_server_thread = None
-        return True
+        return _stop_locked()
 
 
 def is_background_server_running() -> bool:
-    """Check if the background MCP HTTP server is running."""
+    """Whether the background server is bound and its thread is alive."""
     with _server_lock:
-        return _active_server_thread is not None and _active_server_thread.is_alive()
+        server = _active_server
+        thread = _active_server_thread
+        return (
+            server is not None
+            and thread is not None
+            and thread.is_alive()
+            and bool(server.started)
+            and not server.should_exit
+        )
+
+
+def background_server_error() -> str | None:
+    """The reason the last :func:`start_background_server` failed, if any."""
+    with _server_lock:
+        return _active_server_error
 
 
 # Required: `mcp dev`, `mcp run`, and the tests all *import* this module.

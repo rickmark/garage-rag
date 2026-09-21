@@ -355,7 +355,9 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         newConnection.exportedInterface = exportedInterface
         newConnection.exportedObject = self
 
-        GarageXPCOutputCapture.shared.addConnection(newConnection)
+        // Log streaming is opt-in (`subscribeToLogStream`): most clients open short-lived connections without an
+        // exported receiver, and pushing a message at such a connection makes NSXPC drop it as undecodable and
+        // invalidate the connection - which also loses the reply of whatever call the client was waiting for.
         newConnection.invalidationHandler = { [weak newConnection] in
             logger.info("XPC connection invalidated for pid \(clientPID, privacy: .public)")
             if let conn = newConnection {
@@ -505,6 +507,16 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
     public func clearLogs(with reply: @escaping (Bool) -> Void) {
         GarageXPCOutputCapture.shared.clear()
         GarageXPCCrashHandler.clearCrashReport(serviceName: serviceName)
+        reply(true)
+    }
+
+    public func subscribeToLogStream(with reply: @escaping (Bool) -> Void) {
+        guard let connection = NSXPCConnection.current() else {
+            reply(false)
+            return
+        }
+        GarageXPCOutputCapture.shared.addConnection(connection)
+        logger.info("\(self.serviceName, privacy: .public): pid \(connection.processIdentifier, privacy: .public) subscribed to log streaming")
         reply(true)
     }
 

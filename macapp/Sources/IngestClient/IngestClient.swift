@@ -69,10 +69,11 @@ public final class IngestClient: Sendable {
         let connection = NSXPCConnection(serviceName: name)
         connection.remoteObjectInterface = NSXPCInterface(with: GarageIngestXPCServiceProtocol.self)
 
-        if let receiver = progressReceiver {
-            connection.exportedInterface = NSXPCInterface(with: GarageIngestProgressReceiverProtocol.self)
-            connection.exportedObject = receiver
-        }
+        // The ingest helper fans progress / log messages out to every connected client. A connection without an
+        // exported receiver would treat those as undecodable messages and get invalidated mid-call, so always
+        // export one (a silent receiver when the caller is not interested in progress).
+        connection.exportedInterface = NSXPCInterface(with: GarageIngestProgressReceiverProtocol.self)
+        connection.exportedObject = progressReceiver ?? IngestProgressReceiver()
 
         connection.interruptionHandler = {
             logger.warning("IngestClient NSXPCConnection to '\(name, privacy: .public)' was interrupted.")

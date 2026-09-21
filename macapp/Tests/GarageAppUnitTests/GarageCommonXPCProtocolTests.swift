@@ -88,6 +88,10 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
         reply(true)
     }
 
+    func subscribeToLogStream(with reply: @escaping (Bool) -> Void) {
+        reply(true)
+    }
+
     func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
         GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
     }

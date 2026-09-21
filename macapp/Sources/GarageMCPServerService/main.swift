@@ -76,7 +76,12 @@ final class GarageMCPManagedServer: GarageManagedService {
             ])
             let success = Bool(started) ?? true
             guard success else {
-                throw GarageXPCServiceError.notRunning("start_background_server returned False")
+                var reason = "start_background_server returned False"
+                if let errorFn = mcpModule.checking.background_server_error, errorFn != Python.None,
+                   let detail = String(errorFn()), !detail.isEmpty {
+                    reason = detail
+                }
+                throw GarageXPCServiceError.notRunning(reason)
             }
             lock.lock()
             running = true
@@ -124,7 +129,8 @@ final class GarageMCPServerServiceDelegate: GarageXPCServiceBase, GarageMCPServe
     override func additionalSelfTests() -> [GarageXPCSelfTest] {
         [
             GarageXPCStandardSelfTests.serviceModule("garage_rag.mcp_server"),
-            GarageXPCStandardSelfTests.serviceModule("garage_rag.mcp_server.server", attributes: ["start_background_server", "stop_background_server", "is_background_server_running"]),
+            GarageXPCStandardSelfTests.serviceModule("garage_rag.mcp_server.server", attributes: ["start_background_server", "stop_background_server", "is_background_server_running", "background_server_error"]),
+            GarageXPCStandardSelfTests.sitePackages(modules: ["uvicorn", "starlette", "mcp.server.streamable_http_manager"]),
         ]
     }
 

@@ -241,24 +241,48 @@ final class GarageGRPCService: ObservableObject {
         return connection
     }
 
+    /// Readiness is decided by the helper over XPC (`isServerRunning`, the authoritative view of the managed
+    /// Python gRPC server); a TCP ping over the gRPC channel then confirms the port answers. When XPC says the
+    /// daemon is up but the TCP probe keeps failing within the timeout, the XPC verdict wins so the status is
+    /// not stuck on "starting" because of a slow first channel connect.
     func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        var xpcReportedRunning = false
         while Date() < deadline {
-            do {
-                let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
-                var pingReq = Garage_PingRequest()
-                pingReq.message = "healthcheck"
-                let callOptions = CallOptions(timeLimit: .timeout(.milliseconds(500)))
-                let response = try await client.ping(pingReq, callOptions: callOptions)
-                if !response.message.isEmpty {
-                    return true
-                }
-            } catch {
-                cleanupChannel()
+            if !xpcReportedRunning {
+                xpcReportedRunning = (try? await client.isServerRunning()) ?? false
+            }
+            if xpcReportedRunning, await pingOverTCP() {
+                return true
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
-        return false
+        return xpcReportedRunning
+    }
+
+    private func pingOverTCP() async -> Bool {
+        do {
+            let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+            var pingReq = Garage_PingRequest()
+            pingReq.message = "healthcheck"
+            let callOptions = CallOptions(timeLimit: .timeout(.milliseconds(500)))
+            let response = try await client.ping(pingReq, callOptions: callOptions)
+            return !response.message.isEmpty
+        } catch {
+            cleanupChannel()
+            return false
+        }
+    }
+
+    /// Re-syncs `status` with the helper's view of the managed gRPC server (used by the status UI).
+    func refreshStatus() async {
+        guard status == .running || status == .stopped || isFailed else { return }
+        let running = (try? await client.isServerRunning()) ?? false
+        if running, status != .running {
+            status = .running
+        } else if !running, status == .running {
+            status = .stopped
+        }
     }
 
     func search(

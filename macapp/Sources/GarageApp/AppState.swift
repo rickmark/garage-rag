@@ -138,7 +138,8 @@ final class AppState: ObservableObject {
         do {
             try await postgres.start()
             if postgres.status == .running {
-                try await mcp.start()
+                // Each daemon starts independently: an MCP failure must not keep the gRPC backend down.
+                try? await mcp.start()
                 try? await grpc.start()
             }
             await fetchRegisteredModels()

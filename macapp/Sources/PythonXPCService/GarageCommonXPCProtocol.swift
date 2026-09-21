@@ -57,6 +57,11 @@ public protocol GarageCommonXPCServiceProtocol: NSObjectProtocol {
     /// Clear in-memory log and output buffers.
     func clearLogs(with reply: @escaping (Bool) -> Void)
 
+    /// Opts the calling connection in to live log streaming. The service only pushes `GarageXPCLogReceiverProtocol`
+    /// messages over connections that subscribed, so clients that did not export a receiver never get unsolicited
+    /// messages (which NSXPC treats as undecodable and answers by invalidating the connection).
+    func subscribeToLogStream(with reply: @escaping (Bool) -> Void)
+
     /// Common gRPC invocation over XPC: dispatch a gRPC/protobuf call by service/method name with raw payload data.
     func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void)
 
