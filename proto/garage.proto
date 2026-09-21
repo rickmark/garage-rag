@@ -33,6 +33,7 @@ service GarageService {
     rpc Scan (ScanRequest) returns (ScanResponse);
     rpc Ingest (IngestRequest) returns (stream IngestStatus);
     rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
+    rpc EnrichFacts (EnrichFactsRequest) returns (stream EnrichFactsStatus);
     rpc Reconcile (ReconcileRequest) returns (ReconcileResponse);
 
     // --- Embedding Models ---
@@ -190,6 +191,7 @@ message DocumentSummary {
     int32 chunk_count = 10;
     string state = 11;
     string ingested_at = 12;
+    int32 fact_count = 13;
 }
 
 message ListDocumentsRequest {
@@ -223,6 +225,17 @@ message DocumentAuthorInfo {
     float confidence = 3;
 }
 
+message DocumentFactInfo {
+    int64 id = 1;
+    int32 ord = 2;
+    string fact = 3;
+    string fact_class = 4;
+    string attributes_json = 5;
+    int32 char_start = 6;
+    int32 char_end = 7;
+    string extractor = 8;
+}
+
 message DocumentDetail {
     int64 id = 1;
     string uri = 2;
@@ -251,6 +264,7 @@ message GetDocumentResponse {
     DocumentDetail document = 1;
     repeated DocumentChunkInfo chunks = 2;
     string formatted_output = 3;
+    repeated DocumentFactInfo facts = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +386,27 @@ message BackfillStatus {
     int64 failed = 4;
     int64 remaining = 5;
     int64 batches = 6;
+    bool is_complete = 7;
+    float progress = 8;
+    string progress_message = 9;
+    string error_message = 10;
+    string formatted_output = 11;
+}
+
+message EnrichFactsRequest {
+    string source = 1; // source slug filter, or "*"/empty for all sources
+    int64 document_id = 2; // if > 0, extract facts for just this document, ignoring `source`
+    string model_id = 3; // fact_distil model slug/ref to use; empty = default (gemma2:2b)
+    string provider = 4; // "ollama" (default, real inference) | "llama_xpc" (placeholder until real inference lands)
+}
+
+message EnrichFactsStatus {
+    string document_uri = 1;
+    int64 document_id = 2;
+    int64 total = 3;
+    int64 processed = 4;
+    int64 facts_extracted = 5;
+    int64 failed = 6;
     bool is_complete = 7;
     float progress = 8;
     string progress_message = 9;

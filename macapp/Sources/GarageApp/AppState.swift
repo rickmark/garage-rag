@@ -17,6 +17,7 @@ final class AppState: ObservableObject {
     let garage: GarageCLIService
     let ingest: GarageCLIService
     let backfill: GarageCLIService
+    let enrichFacts: GarageCLIService
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -34,6 +35,7 @@ final class AppState: ObservableObject {
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
     @Published private(set) var presetModels: [ModelPresetEntry] = []
+    @Published private(set) var factDistilPresetModels: [ModelPresetEntry] = []
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
@@ -63,6 +65,7 @@ final class AppState: ObservableObject {
     private var commandInProgress = false
     private var hasLaunched = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
+    private var pendingMaintenanceTask: Task<Void, Never>?
 
     convenience init() {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
@@ -83,6 +86,7 @@ final class AppState: ObservableObject {
         garage = GarageCLIService(postgres: postgres)
         ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
+        enrichFacts = GarageCLIService(postgres: postgres, commandLabel: "garage enrich-facts")
         mcp = GarageMCPService(postgres: postgres)
         grpc = GarageGRPCService(postgres: postgres)
 
@@ -103,6 +107,7 @@ final class AppState: ObservableObject {
         mcp.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         grpc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        enrichFacts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -155,6 +160,7 @@ final class AppState: ObservableObject {
 
     func fetchPresetModels() {
         self.presetModels = GarageConfigLoader.loadModelPresets()
+        self.factDistilPresetModels = GarageConfigLoader.loadFactDistilPresets()
     }
 
     func fetchRegisteredModels() async {
@@ -263,6 +269,7 @@ final class AppState: ObservableObject {
         garage.cancel()
         ingest.cancel()
         backfill.cancel()
+        enrichFacts.cancel()
         xpcServices.terminateAll()
         XPCServiceManager.stopAnyRunningInstances()
         PostgresService.stopAnyRunningInstance()
@@ -511,7 +518,7 @@ final class AppState: ObservableObject {
         lastCommandSucceeded = result.succeeded
 
         if result.succeeded, let command = arguments.first, Self.maintenanceTriggeringCommands.contains(command) {
-            Task { [weak self] in await self?.triggerMaintenanceIfEnabled() }
+            scheduleDebouncedMaintenanceTrigger()
         }
 
         return result.succeeded
@@ -594,6 +601,13 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
+    /// Distills documents into facts ("glean facts") in an independent process and log stream.
+    @discardableResult
+    func runEnrichFacts(_ arguments: [String]) async -> Bool {
+        let result = await enrichFacts.run(arguments)
+        return result.succeeded
+    }
+
     /// Combines CLI ingest logs and XPC ingestion logs into a single chronologically ordered stream.
     var combinedIngestLogs: [LogLine] {
         (ingest.logs + ingestService.logs).sorted { $0.date < $1.date }
@@ -614,6 +628,8 @@ final class AppState: ObservableObject {
         case "Embedding", "Backfill":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
+        case "Enrich Facts", "garage enrich-facts":
+            enrichFacts.clearLogs()
         case "MCP Server":
             mcp.clearLogs()
             osLogStreamService.clearLogs(for: .mcp)
@@ -743,6 +759,19 @@ final class AppState: ObservableObject {
     func triggerMaintenanceIfEnabled() async {
         guard scheduledMaintenanceEnabled else { return }
         await runScheduledMaintenance()
+    }
+
+    /// Debounces `triggerMaintenanceIfEnabled()` so a rapid burst of add-source/
+    /// register-model calls (e.g. "Add All") coalesces into a single run that
+    /// starts once the burst settles, rather than each add racing `runGarage`'s
+    /// `commandInProgress` guard against the scan/ingest the previous add kicked off.
+    private func scheduleDebouncedMaintenanceTrigger() {
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.triggerMaintenanceIfEnabled()
+        }
     }
 
     private func performDatabaseOperation(_ operation: () throws -> Void) {

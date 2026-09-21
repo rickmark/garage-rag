@@ -264,8 +264,26 @@ def scan_git(
 # 3. SQLite scanner
 # ---------------------------------------------------------------------------
 
-def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int]]:
-    """Count user table rows in a single SQLite database."""
+# Apple Messages' chat.db always carries these three tables together; no
+# other known sqlite source shares this exact signature. Detecting it lets
+# the scanner count threads instead of raw message/handle/attachment rows.
+_APPLE_MESSAGES_SIGNATURE_TABLES = {"chat", "message", "handle"}
+
+
+def _is_apple_messages_database(tables: set[str]) -> bool:
+    return _APPLE_MESSAGES_SIGNATURE_TABLES.issubset(tables)
+
+
+def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int], bool]:
+    """Count rows in a single SQLite database.
+
+    Returns `(item_count, table_counts, is_thread_count)`. For an Apple
+    Messages chat.db, `item_count` is the number of chat threads (one becomes
+    one synthesized document each), not the sum of every table's rows, and
+    `is_thread_count` is True so the caller can report "threads" rather than
+    "records". Any other database counts total rows across its tables as
+    before.
+    """
     total_rows = 0
     table_counts: dict[str, int] = {}
     uri = f"file:{db_path.resolve()}?mode=ro"
@@ -289,11 +307,14 @@ def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int]]:
                         total_rows += count
                 except sqlite3.Error as err:
                     log.debug("Could not count table %s in %s: %s", table, db_path, err)
+
+            if _is_apple_messages_database(set(tables)):
+                return table_counts.get("chat", 0), table_counts, True
         finally:
             conn.close()
     except (sqlite3.Error, OSError) as exc:
         log.debug("Failed opening sqlite db at %s: %s", db_path, exc)
-    return total_rows, table_counts
+    return total_rows, table_counts, False
 
 
 def scan_sqlite(
@@ -329,17 +350,19 @@ def scan_sqlite(
 
     total_records = 0
     all_table_counts: dict[str, dict[str, int]] = {}
+    any_thread_counted = False
     for db_path in db_files:
-        rows, tbls = _count_sqlite_database_rows(db_path)
+        rows, tbls, is_thread_count = _count_sqlite_database_rows(db_path)
         total_records += rows
         all_table_counts[db_path.name] = tbls
+        any_thread_counted = any_thread_counted or is_thread_count
 
     return SourceScanResult(
         source_slug=source_slug,
         kind="sqlite",
         root=root,
         item_count=total_records,
-        item_type="records",
+        item_type="threads" if any_thread_counted else "records",
         details={
             "databases_count": len(db_files),
             "databases": [p.name for p in db_files],

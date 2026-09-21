@@ -32,6 +32,7 @@ manifest:
     langchain_core: langchain_core
     langchain_protocol: langchain_protocol
     langchain_text_splitters: langchain_text_splitters
+    langextract: langextract
     langsmith: langsmith
     lxml: lxml
     markdown_it: markdown_it_py

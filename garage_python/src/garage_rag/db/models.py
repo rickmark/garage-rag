@@ -164,6 +164,7 @@ class Document(Base):
 
     chunks: Mapped[list[Chunk]] = relationship(back_populates="document", cascade="all, delete-orphan")
     authors: Mapped[list[DocumentAuthor]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    facts: Mapped[list[Fact]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("source_id", "uri", name="documents_uri_unique"),)
 
@@ -198,14 +199,50 @@ class Chunk(Base):
     heading_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_sha256: Mapped[bytes] = mapped_column(LargeBinary)
     chunker: Mapped[str] = mapped_column(Text)
+    # Set when this chunk is a fact's text rather than a slice of
+    # documents.content, so the fact can be embedded like any other chunk.
+    fact_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True
+    )
     # `tsv` is a generated column; it is read-only from the ORM's perspective and
     # is intentionally not mapped.
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+    fact: Mapped[Fact | None] = relationship(back_populates="chunk")
 
     __table_args__ = (
         UniqueConstraint("document_id", "ord", name="chunks_ord_unique"),
         Index("chunks_doc", "document_id"),
+    )
+
+
+class Fact(Base):
+    __tablename__ = "facts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id", ondelete="CASCADE"))
+    ord: Mapped[int] = mapped_column(Integer)
+    fact: Mapped[str] = mapped_column(Text)
+    fact_class: Mapped[str] = mapped_column(Text, default="fact")
+    attributes: Mapped[dict] = mapped_column(JSONB, default=dict)
+    char_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extractor: Mapped[str] = mapped_column(Text, default="langextract")
+    extractor_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # `tsv` is a generated column; read-only from the ORM's perspective and
+    # intentionally not mapped.
+
+    document: Mapped[Document] = relationship(back_populates="facts")
+    # The chunk carrying this fact's embeddings, if it has been queued for
+    # embedding. Deletion is DB-driven (chunks.fact_id ON DELETE CASCADE), not
+    # ORM-driven, so the chunk row -- and its vectors in every per-model
+    # embedding table -- disappear even on a bulk/raw-SQL fact delete.
+    chunk: Mapped[Chunk | None] = relationship(back_populates="fact", uselist=False, passive_deletes=True)
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "ord", name="facts_ord_unique"),
+        Index("facts_document", "document_id"),
     )
 
 
