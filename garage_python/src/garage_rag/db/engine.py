@@ -50,7 +50,20 @@ def get_engine() -> Engine:
         # connections do get the type registered.
         try:
             register_vector(dbapi_connection)
-        except (psycopg.Error, ValueError, Exception):
+        except psycopg.errors.UndefinedFile as exc:
+            # SQLSTATE 58P01: Postgres knows about the `vector` type (the
+            # extension was created) but can't dlopen its shared library.
+            # This is a broken install (the bundled pgvector.dylib is
+            # missing or unreadable next to this Postgres binary), not the
+            # bootstrap case below -- every later vector query will fail the
+            # same way, so this needs to be loud, not swallowed at debug.
+            log.error(
+                "pgvector extension is registered but its native library "
+                "could not be loaded (%s); vector columns will be unusable "
+                "until the postgres install is repaired",
+                exc,
+            )
+        except (psycopg.Error, ValueError):
             log.debug("pgvector types unavailable; assuming pre-init-db bootstrap")
 
     _engine = engine
