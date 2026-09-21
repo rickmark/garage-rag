@@ -5,7 +5,7 @@ load("@rules_apple//apple:xcarchive.bzl", _raw_xcarchive = "xcarchive")
 def _appstore_transition_impl(settings, attr):
     return {
         "//command_line_option:platforms": ["//bazel:universal_store"],
-        "//command_line_option:macos_cpus": ["arm64", "x86_64"],
+        "//command_line_option:macos_cpus": ["arm64"],
     }
 
 _appstore_transition = transition(
