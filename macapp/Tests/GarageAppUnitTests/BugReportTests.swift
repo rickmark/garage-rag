@@ -44,6 +44,15 @@ final class BugReportTests: XCTestCase {
         )
     }
 
+    func testRedactsConnectionStringPasswordWithDriverSuffix() {
+        // PostgresService.connectionURL() hands out the SQLAlchemy form, and
+        // that is what actually reaches the logs.
+        XCTAssertEqual(
+            redactor.redact("postgresql+psycopg://garage:hunter2@localhost:14824/garage-rag"),
+            "postgresql+psycopg://garage:<redacted>@localhost:14824/garage-rag"
+        )
+    }
+
     func testRedactsKeyValueSecrets() {
         XCTAssertEqual(redactor.redact("api_key: sk-abc123"), "api_key=<redacted>")
         XCTAssertEqual(redactor.redact("token=\"ghp_deadbeef\""), "token=<redacted>")
@@ -177,6 +186,36 @@ final class BugReportTests: XCTestCase {
         let lines = [LogLine(stream: .stdout, text: "hello", source: "App")]
         let body = BugReportComposer.compose(draft: draft(), diagnostics: [], logLines: lines, redactor: redactor)
         XCTAssertFalse(body.contains("<details>"))
+    }
+
+    // MARK: - Title and document
+
+    func testTitleIsRedacted() {
+        var draft = self.draft()
+        draft.title = "Crash indexing /Users/testuser/Private"
+        XCTAssertEqual(
+            BugReportComposer.title(for: draft, redactor: redactor),
+            "Crash indexing ~/Private"
+        )
+    }
+
+    func testDocumentRedactsTheTitleItPrefixes() {
+        // The summary is free text and is exported alongside the body, so it
+        // must not be the one field that escapes redaction.
+        var draft = self.draft()
+        draft.title = "Fails for rick@example.com under /Users/testuser/Notes"
+        let document = BugReportComposer.document(draft: draft, diagnostics: [], redactor: redactor)
+
+        XCTAssertTrue(document.hasPrefix("# Fails for <email redacted> under ~/Notes\n\n"))
+        XCTAssertFalse(document.contains("/Users/testuser"))
+        XCTAssertFalse(document.contains("rick@example.com"))
+    }
+
+    func testDocumentIsTheBodyPlusTheTitle() {
+        let draft = self.draft()
+        let body = BugReportComposer.compose(draft: draft, diagnostics: [], redactor: redactor)
+        let document = BugReportComposer.document(draft: draft, diagnostics: [], redactor: redactor)
+        XCTAssertTrue(document.hasSuffix(body))
     }
 
     // MARK: - Log digest

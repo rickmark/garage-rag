@@ -97,8 +97,11 @@ struct BugReportRedactor: Sendable {
     private static let rules: [Rule] = [
         // Other accounts' home directories.
         rule("/Users/[A-Za-z0-9._-]+", "/Users/\(userPlaceholder)"),
-        // Passwords embedded in a Postgres connection string.
-        rule("(postgres(?:ql)?://[^:/@\\s]+:)[^@\\s]+@", "$1\(secretPlaceholder)@"),
+        // Passwords embedded in a Postgres connection string. The scheme may
+        // carry a SQLAlchemy driver suffix: `PostgresService.connectionURL()`
+        // hands out `postgresql+psycopg://`, and that is the form that reaches
+        // the logs, so missing it would leave the password in the report.
+        rule("(postgres(?:ql)?(?:\\+[A-Za-z0-9_.-]+)?://[^:/@\\s]+:)[^@\\s]+@", "$1\(secretPlaceholder)@"),
         // key=value / key: value secrets.
         rule("(?i)\\b(password|passwd|token|secret|api[-_]?key|authorization)\\b\\s*[=:]\\s*\"?[^\\s\"&,]+\"?",
              "$1=\(secretPlaceholder)"),
@@ -248,6 +251,28 @@ enum BugReportComposer {
 
         blocks.append("---\n\n" + footer)
         return blocks.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// The report's title, redacted like every other piece of user-typed text.
+    /// The summary field is free text — a user will paste a path or an address
+    /// into it as readily as into the description — and it is exported
+    /// alongside the body, so it cannot be the one thing that skips the
+    /// redactor.
+    static func title(for draft: BugReportDraft, redactor: BugReportRedactor = BugReportRedactor()) -> String {
+        redactor.redact(draft.effectiveTitle)
+    }
+
+    /// Title and body as one Markdown document. This is what the preview
+    /// renders and what Copy and Save produce, so nothing reaches the
+    /// clipboard or the disk that the user has not already read.
+    static func document(
+        draft: BugReportDraft,
+        diagnostics: [DiagnosticSection],
+        logLines: [LogLine] = [],
+        redactor: BugReportRedactor = BugReportRedactor()
+    ) -> String {
+        "# \(title(for: draft, redactor: redactor))\n\n"
+            + compose(draft: draft, diagnostics: diagnostics, logLines: logLines, redactor: redactor)
     }
 
     private static func section(_ heading: String, body: String, redactor: BugReportRedactor) -> String {

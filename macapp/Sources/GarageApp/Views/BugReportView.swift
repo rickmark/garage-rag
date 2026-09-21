@@ -225,7 +225,7 @@ struct BugReportView: View {
     private var previewSection: some View {
         DisclosureGroup(isExpanded: $isPreviewExpanded) {
             ScrollView {
-                Text(composedBody)
+                Text(composedDocument)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -276,8 +276,8 @@ struct BugReportView: View {
 
     // MARK: Report
 
-    /// The report exactly as it will be copied, saved, or sent to GitHub — the
-    /// same string the preview shows, so there is no hidden payload.
+    /// The body sections alone — what GitHub's form receives, since it takes
+    /// the title in its own field.
     private var composedBody: String {
         BugReportComposer.compose(
             draft: draft,
@@ -287,6 +287,22 @@ struct BugReportView: View {
         )
     }
 
+    /// Title and body together: exactly what the preview shows and what Copy
+    /// and Save write out, so there is no hidden payload. The title goes
+    /// through the redactor with everything else.
+    private var composedDocument: String {
+        BugReportComposer.document(
+            draft: draft,
+            diagnostics: diagnostics,
+            logLines: logLines,
+            redactor: redactor
+        )
+    }
+
+    private var redactedTitle: String {
+        BugReportComposer.title(for: draft, redactor: redactor)
+    }
+
     private func refreshAttachments() {
         diagnostics = BugReportDiagnosticsCollector.collect(appState: appState, version: version)
         logLines = BugReportLogDigest.select(from: appState.osLogStreamService.logs(for: draft.logSource))
@@ -294,7 +310,7 @@ struct BugReportView: View {
 
     private func copyReport() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("# \(draft.effectiveTitle)\n\n\(composedBody)", forType: .string)
+        NSPasteboard.general.setString(composedDocument, forType: .string)
         didCopy = true
         Task {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -309,7 +325,7 @@ struct BugReportView: View {
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            try "# \(draft.effectiveTitle)\n\n\(composedBody)".write(to: destination, atomically: true, encoding: .utf8)
+            try composedDocument.write(to: destination, atomically: true, encoding: .utf8)
             dismiss()
         } catch {
             saveError = error.localizedDescription
@@ -317,7 +333,7 @@ struct BugReportView: View {
     }
 
     private func openIssue() {
-        guard let url = BugReportDestination.newIssueURL(title: draft.effectiveTitle, body: composedBody) else {
+        guard let url = BugReportDestination.newIssueURL(title: redactedTitle, body: composedBody) else {
             openURL(BugReportLinks.issues)
             return
         }
