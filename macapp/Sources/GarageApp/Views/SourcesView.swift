@@ -497,17 +497,27 @@ struct SourcesView: View {
             VStack(alignment: .leading, spacing: 4) {
                 if appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug,
                    let progress = appState.ingestService.latestProgress {
+                    let sourceTotal = appState.sourceTotalExpected(for: source.slug)
+                    let totalItems = sourceTotal > 0 ? sourceTotal : progress.totalItems
+                    let sourceFraction = appState.sourceProgressFraction(for: source.slug)
+                    let displayPercent = totalItems > 0 ? appState.sourceProgressPercent(for: source.slug) : progress.formattedPercent
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("Ingesting (\(progress.phase)): \(progress.formattedPercent)")
+                        Text("Ingesting (\(progress.phase)): \(displayPercent)")
                             .font(.caption.bold())
                             .foregroundStyle(.blue)
                         Spacer()
-                        Text("Scanned: \(progress.seen)/\(progress.totalItems) \(progress.itemType) • Ingested: \(progress.indexed)")
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                        if totalItems > 0 {
+                            Text("Scanned: \(progress.seen)/\(totalItems) \(progress.itemType) • Ingested: \(progress.indexed)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Scanned: \(progress.seen) \(progress.itemType) • Ingested: \(progress.indexed)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    ProgressView(value: progress.progress)
+                    ProgressView(value: sourceFraction)
                         .progressViewStyle(.linear)
                         .tint(.blue)
 
@@ -534,6 +544,18 @@ struct SourcesView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
+                        if source.expectedElements > 0 {
+                            Text("0/\(source.expectedElements) items")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if source.expectedElements > 0 {
+                        ProgressView(
+                            value: Double(source.documentCount),
+                            total: Double(max(source.documentCount, source.expectedElements))
+                        )
+                        .progressViewStyle(.linear)
                     }
                 } else if source.documentCount == 0 {
                     HStack(spacing: 6) {
@@ -554,7 +576,16 @@ struct SourcesView: View {
                         }
                         Spacer()
                     }
+                    if source.expectedElements > 0 {
+                        ProgressView(
+                            value: 0.0,
+                            total: Double(source.expectedElements)
+                        )
+                        .progressViewStyle(.linear)
+                    }
                 } else if let progress = appState.ingestService.progressBySource[source.slug] {
+                    let sourceTotal = appState.sourceTotalExpected(for: source.slug)
+                    let totalItems = sourceTotal > 0 ? sourceTotal : progress.totalItems
                     HStack {
                         Image(systemName: progress.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                             .foregroundStyle(progress.isError ? Color.red : Color.green)
@@ -562,13 +593,24 @@ struct SourcesView: View {
                         Text("Last Ingest (\(progress.phase)): \(progress.indexed) ingested, \(progress.skipped) skipped, \(progress.failed) failed")
                             .font(.caption)
                         Spacer()
-                        if progress.totalItems > 0 {
-                            Text("Scanned: \(progress.seen)/\(progress.totalItems) \(progress.itemType)")
+                        if totalItems > 0 {
+                            Text("Scanned: \(progress.seen)/\(totalItems) \(progress.itemType)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        } else if progress.seen > 0 {
+                            Text("Scanned: \(progress.seen) \(progress.itemType)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if source.expectedElements > 0 && source.documentCount > 0 {
+                    if totalItems > 0 {
+                        let processed = max(source.documentCount, progress.indexed, progress.seen)
+                        ProgressView(
+                            value: Double(processed),
+                            total: Double(max(processed, totalItems))
+                        )
+                        .progressViewStyle(.linear)
+                    } else if source.expectedElements > 0 {
                         ProgressView(
                             value: Double(source.documentCount),
                             total: Double(max(source.documentCount, source.expectedElements))
@@ -592,7 +634,7 @@ struct SourcesView: View {
                         Spacer()
                     }
 
-                    if source.expectedElements > 0 && source.documentCount > 0 {
+                    if source.expectedElements > 0 {
                         ProgressView(
                             value: Double(source.documentCount),
                             total: Double(max(source.documentCount, source.expectedElements))

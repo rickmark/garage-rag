@@ -450,4 +450,55 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.combinedIngestProgressFraction, 0.5, accuracy: 0.001)
         XCTAssertEqual(state.combinedIngestProgressPercent, "50%")
     }
+
+    @MainActor
+    func testSingleSourceProgressDiffersFromOverallProgressBar() {
+        let state = AppState()
+
+        let source1 = RegisteredSource(slug: "source-a", root: "/tmp/a", expectedElements: 100)
+        let source2 = RegisteredSource(slug: "source-b", root: "/tmp/b", expectedElements: 300)
+        let source3 = RegisteredSource(slug: "source-c", root: "/tmp/c", expectedElements: 600)
+        state.registeredSources = [source1, source2, source3]
+        state.corpusStats.totalExpectedElements = 1000
+
+        state.ingestService.setPendingSources(["source-a", "source-b", "source-c"])
+
+        // Source 1 starts and reports 50 of its 100 items seen
+        state.ingestService.markSourceActive("source-a")
+        let prog1 = IngestProgressUpdate(
+            source: "source-a",
+            phase: "ingest",
+            seen: 50,
+            totalItems: 100,
+            indexed: 45,
+            skipped: 5,
+            failed: 0,
+            placeholders: 0,
+            chunksWritten: 90,
+            itemType: "documents",
+            progress: 0.5,
+            message: "Ingesting source-a: 50/100",
+            error: nil,
+            currentItem: "file1.txt"
+        )
+        state.ingestService.handleProgress(prog1)
+
+        // Overall progress: 50 / 1000 = 5%
+        XCTAssertEqual(state.combinedIngestTotalExpected, 1000)
+        XCTAssertEqual(state.combinedIngestProcessedCount, 50)
+        XCTAssertEqual(state.combinedIngestProgressFraction, 0.05, accuracy: 0.001)
+        XCTAssertEqual(state.combinedIngestProgressPercent, "5%")
+
+        // Single source progress for source-a: 50 / 100 = 50%
+        XCTAssertEqual(state.sourceTotalExpected(for: "source-a"), 100)
+        XCTAssertEqual(state.sourceProcessedCount(for: "source-a"), 50)
+        XCTAssertEqual(state.sourceProgressFraction(for: "source-a"), 0.5, accuracy: 0.001)
+        XCTAssertEqual(state.sourceProgressPercent(for: "source-a"), "50%")
+
+        // Single source progress for pending source-b: 0 / 300 = 0%
+        XCTAssertEqual(state.sourceTotalExpected(for: "source-b"), 300)
+        XCTAssertEqual(state.sourceProcessedCount(for: "source-b"), 0)
+        XCTAssertEqual(state.sourceProgressFraction(for: "source-b"), 0.0)
+        XCTAssertEqual(state.sourceProgressPercent(for: "source-b"), "0%")
+    }
 }

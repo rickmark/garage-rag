@@ -917,6 +917,65 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Single Source Ingest Progress Tracking
+
+    /// Total number of expected documents for a specific source (from prior scan or progress updates).
+    func sourceTotalExpected(for sourceSlug: String) -> Int {
+        if let src = registeredSources.first(where: { $0.slug == sourceSlug }), src.expectedElements > 0 {
+            return src.expectedElements
+        }
+        if let prog = ingestService.progressBySource[sourceSlug], prog.totalItems > 0 {
+            return prog.totalItems
+        }
+        if ingestService.currentSource == sourceSlug, let latest = ingestService.latestProgress, latest.totalItems > 0 {
+            return latest.totalItems
+        }
+        return 0
+    }
+
+    /// Number of documents processed (seen / scanned) for a specific source.
+    func sourceProcessedCount(for sourceSlug: String) -> Int {
+        if ingestService.currentSource == sourceSlug, let latest = ingestService.latestProgress {
+            let total = sourceTotalExpected(for: sourceSlug)
+            if total > 0 {
+                return min(total, latest.seen)
+            }
+            return latest.seen
+        }
+        if let prog = ingestService.progressBySource[sourceSlug] {
+            if let src = registeredSources.first(where: { $0.slug == sourceSlug }), src.expectedElements > 0 {
+                return src.expectedElements
+            }
+            return prog.seen > 0 ? prog.seen : prog.indexed
+        }
+        if let src = registeredSources.first(where: { $0.slug == sourceSlug }) {
+            return src.documentCount
+        }
+        return 0
+    }
+
+    /// Progress fraction from 0.0 to 1.0 for a specific single source based on its items.
+    func sourceProgressFraction(for sourceSlug: String) -> Double {
+        let total = sourceTotalExpected(for: sourceSlug)
+        let processed = sourceProcessedCount(for: sourceSlug)
+        if total > 0 {
+            return min(1.0, max(0.0, Double(processed) / Double(total)))
+        }
+        if ingestService.currentSource == sourceSlug, let latest = ingestService.latestProgress {
+            return latest.progress
+        }
+        if let prog = ingestService.progressBySource[sourceSlug] {
+            return prog.progress
+        }
+        return 0.0
+    }
+
+    /// Formatted percentage string for a specific single source (e.g. "50%").
+    func sourceProgressPercent(for sourceSlug: String) -> String {
+        let fraction = sourceProgressFraction(for: sourceSlug)
+        return "\(Int((fraction * 100.0).rounded()))%"
+    }
+
     var statusColor: Color {
         switch postgres.status {
         case .running: .green
