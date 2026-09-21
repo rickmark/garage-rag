@@ -205,6 +205,7 @@ def schema_summary(session: Session) -> dict[str, int]:
         "documents",
         "document_authors",
         "chunks",
+        "facts",
         "conversations",
         "messages",
         "embedding_models",
