@@ -23,12 +23,14 @@ macos_lipo_app(
 notarytool(
     name = "GarageAppNotary_arm64",
     app = ":GarageApp_arm64",
+    keychain_profile = "Primary",
     visibility = ["//visibility:public"],
 )
 
 notarytool(
     name = "GarageAppNotary_x86_64",
     app = ":GarageApp_x86_64",
+    keychain_profile = "Primary",
     visibility = ["//visibility:public"],
 )
 
@@ -38,13 +40,14 @@ notarytool(
         ":GarageApp_arm64",
         ":GarageApp_x86_64",
     ],
+    keychain_profile = "Primary",
     visibility = ["//visibility:public"],
 )
 
 # 3. Package installers for each architecture
 pkgbuild(
     name = "GarageInstaller_arm64",
-    app = ":GarageApp_arm64",
+    app = ":GarageAppNotary_arm64",
     identifier = "me.rickmark.garage-rag.pkg",
     install_location = "/Applications",
     signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
@@ -53,7 +56,7 @@ pkgbuild(
 
 pkgbuild(
     name = "GarageInstaller_x86_64",
-    app = ":GarageApp_x86_64",
+    app = ":GarageAppNotary_x86_64",
     identifier = "me.rickmark.garage-rag.pkg",
     install_location = "/Applications",
     signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
@@ -72,18 +75,21 @@ filegroup(
 # 4. Notarize the installers
 notarytool(
     name = "GarageInstallerNotary_arm64",
+    keychain_profile = "Primary",
     pkg = ":GarageInstaller_arm64",
     visibility = ["//visibility:public"],
 )
 
 notarytool(
     name = "GarageInstallerNotary_x86_64",
+    keychain_profile = "Primary",
     pkg = ":GarageInstaller_x86_64",
     visibility = ["//visibility:public"],
 )
 
 notarytool(
     name = "GarageInstallerNotary",
+    keychain_profile = "Primary",
     pkgs = [
         ":GarageInstaller_arm64",
         ":GarageInstaller_x86_64",
@@ -94,12 +100,13 @@ notarytool(
 notarytool(
     name = "notarize_all",
     apps = [
-        ":GarageApp_arm64",
-        ":GarageApp_x86_64",
+        ":GarageAppNotary_arm64",
+        ":GarageAppNotary_x86_64",
     ],
+    keychain_profile = "Primary",
     pkgs = [
-        ":GarageInstaller_arm64",
-        ":GarageInstaller_x86_64",
+        ":GarageInstallerNotary_arm64",
+        ":GarageInstallerNotary_x86_64",
     ],
     visibility = ["//visibility:public"],
 )
@@ -113,19 +120,6 @@ filegroup(
         ":GarageInstaller_arm64",
         ":GarageInstaller_x86_64",
     ],
-    visibility = ["//visibility:public"],
-)
-
-# 6. Local installation helpers
-pkg_install(
-    name = "install_arm64",
-    pkg = ":GarageInstaller_arm64",
-    visibility = ["//visibility:public"],
-)
-
-pkg_install(
-    name = "install_x86_64",
-    pkg = ":GarageInstaller_x86_64",
     visibility = ["//visibility:public"],
 )
 

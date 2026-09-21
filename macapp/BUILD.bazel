@@ -78,56 +78,8 @@ alias(
 )
 
 alias(
-    name = "GarageApp_lib",
-    actual = "//macapp/Sources/GarageApp:GarageApp_lib",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppVersion",
-    actual = "//macapp/Sources/GarageApp:GarageAppVersion",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstaller",
-    actual = "//macapp/package:GarageInstaller",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageNotary",
-    actual = "//macapp/package:GarageNotary",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "install",
     actual = "//macapp/package:install",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "postgres_output",
-    actual = "//macapp/externals:postgres_output",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "schema_output",
-    actual = "//macapp/externals:schema_output",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "postgresql.conf",
-    actual = "//macapp/externals:postgresql.conf",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "postgres.conf",
-    actual = "//macapp/externals:postgresql.conf",
     visibility = ["//visibility:public"],
 )
 
@@ -137,102 +89,11 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-alias(
-    name = "MCPServerClient_lib",
-    actual = "//macapp/Sources/MCPServerClient:MCPServerClient",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "IngestClient_lib",
-    actual = "//macapp/Sources/IngestClient:IngestClient",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "LlamaClient_lib",
-    actual = "//macapp/Sources/LlamaClient:LlamaClient",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "ModelDownloadClient_lib",
-    actual = "//macapp/Sources/ModelDownloadClient:ModelDownloadClient",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppUnitTests",
-    actual = "//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppUITests",
-    actual = "//macapp/Tests/GarageAppUITests:GarageAppUITests",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "LlamaClientTests",
-    actual = "//macapp/Tests/LlamaClientTests:LlamaClientTests",
-    visibility = ["//visibility:public"],
-)
-
 # Primary alias used by the build and tests to reference the main executable.
 alias(
     name = "macapp",
     # The macOS application binary is produced by the developer_id_macos_application rule above.
-    actual = ":Garage.app",
-    visibility = ["//visibility:public"],
-)
-
-# Preserve a bundle‑level alias for any consumers that still expect the .app package.
-alias(
-    name = "macapp_bundle",
-    actual = ":Garage.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageDeveloperID.app",
-    actual = ":Garage.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppStore.app",
-    actual = ":GarageStore.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "appstore.app",
-    actual = ":GarageStore.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "developer_id.app",
-    actual = ":Garage.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "store.app",
-    actual = ":GarageStore.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageStore",
-    actual = ":GarageStore.app",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageDeveloperID",
-    actual = ":Garage.app",
+    actual = ":GarageApp",
     visibility = ["//visibility:public"],
 )
 
@@ -243,109 +104,13 @@ alias(
 )
 
 alias(
-    name = "GarageApp_arm64",
-    actual = "//macapp/package:GarageApp_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageApp_x86_64",
-    actual = "//macapp/package:GarageApp_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstaller_arm64",
-    actual = "//macapp/package:GarageInstaller_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstaller_x86_64",
-    actual = "//macapp/package:GarageInstaller_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "installer_arm64",
-    actual = "//macapp/package:GarageInstaller_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "installer_x86_64",
-    actual = "//macapp/package:GarageInstaller_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppNotary_arm64",
-    actual = "//macapp/package:GarageAppNotary_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppNotary_x86_64",
-    actual = "//macapp/package:GarageAppNotary_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstallerNotary_arm64",
-    actual = "//macapp/package:GarageInstallerNotary_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstallerNotary_x86_64",
-    actual = "//macapp/package:GarageInstallerNotary_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageInstallerNotary",
-    actual = "//macapp/package:GarageInstallerNotary",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "package",
     actual = "//macapp/package:package",
     visibility = ["//visibility:public"],
 )
 
 alias(
-    name = "install_arm64",
-    actual = "//macapp/package:install_arm64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "install_x86_64",
-    actual = "//macapp/package:install_x86_64",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "xcarchive",
-    actual = ":GarageStore.xcarchive",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageAppStore.xcarchive",
-    actual = ":GarageStore.xcarchive",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "appstore.xcarchive",
-    actual = ":GarageStore.xcarchive",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "store.xcarchive",
     actual = ":GarageStore.xcarchive",
     visibility = ["//visibility:public"],
 )
