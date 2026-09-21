@@ -153,10 +153,11 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
             guard let self = self else { return }
             let serviceId = self.serviceId
             let targetSource = self.targetLogSource
+            let lines = OSLogStreamService.makeLogLines(from: text, stream: .stdout, source: targetSource.rawValue)
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
                 self.manager?.appendLog(text, stream: .stdout, source: serviceId, level: .info)
-                self.osLogStreamService?.receiveXPCStdout(text, source: targetSource)
+                self.osLogStreamService?.appendLogs(lines, for: [targetSource, .unifiedLog])
             }
         }
     }
@@ -166,10 +167,11 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
             guard let self = self else { return }
             let serviceId = self.serviceId
             let targetSource = self.targetLogSource
+            let lines = OSLogStreamService.makeLogLines(from: text, stream: .stderr, source: targetSource.rawValue)
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
                 self.manager?.appendLog(text, stream: .stderr, source: serviceId, level: .error)
-                self.osLogStreamService?.receiveXPCStderr(text, source: targetSource)
+                self.osLogStreamService?.appendLogs(lines, for: [targetSource, .unifiedLog])
             }
         }
     }

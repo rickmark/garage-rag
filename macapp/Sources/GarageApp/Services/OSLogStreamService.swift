@@ -298,25 +298,46 @@ public final class OSLogStreamService: ObservableObject {
 
     /// Appends a new `LogLine` to target services while deduplicating by text content, source, and timestamp bucket.
     public func appendLog(_ line: LogLine, for targets: Set<LogsView.LogSource>) {
-        let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !textTrimmed.isEmpty else { return }
+        appendLogs([line], for: targets)
+    }
 
-        let timeBucket = Int(line.date.timeIntervalSince1970)
-        let key = "\(textTrimmed)|\(timeBucket)|\(line.source)|\(line.pid ?? 0)"
+    /// Appends a batch of `LogLine`s to target services in a single `@Published` update per target, deduplicating by
+    /// text content, source, and timestamp bucket. Batching avoids triggering a Combine publish (and the array
+    /// copy/trim it entails) once per line, which is what stalls the main thread under bursty log volume.
+    public func appendLogs(_ lines: [LogLine], for targets: Set<LogsView.LogSource>) {
+        guard !lines.isEmpty else { return }
 
-        if seenLogKeys.contains(key) {
-            return
+        var accepted: [LogLine] = []
+        accepted.reserveCapacity(lines.count)
+
+        for line in lines {
+            let textTrimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !textTrimmed.isEmpty else { continue }
+
+            let timeBucket = Int(line.date.timeIntervalSince1970)
+            let key = "\(textTrimmed)|\(timeBucket)|\(line.source)|\(line.pid ?? 0)"
+
+            if seenLogKeys.contains(key) {
+                continue
+            }
+            seenLogKeys.insert(key)
+            seenLogKeyQueue.append(key)
+            accepted.append(line)
         }
-        seenLogKeys.insert(key)
-        seenLogKeyQueue.append(key)
+
         if seenLogKeyQueue.count > maxSeenKeys {
-            let removed = seenLogKeyQueue.removeFirst()
-            seenLogKeys.remove(removed)
+            let overflow = seenLogKeyQueue.count - maxSeenKeys
+            for removed in seenLogKeyQueue.prefix(overflow) {
+                seenLogKeys.remove(removed)
+            }
+            seenLogKeyQueue.removeFirst(overflow)
         }
+
+        guard !accepted.isEmpty else { return }
 
         for target in targets {
             var current = serviceLogs[target] ?? []
-            current.append(line)
+            current.append(contentsOf: accepted)
             if current.count > maxLogLinesPerService {
                 current.removeFirst(current.count - maxLogLinesPerService)
             }
@@ -326,42 +347,33 @@ public final class OSLogStreamService: ObservableObject {
 
     // MARK: - Direct XPC Log Streaming
 
-    /// Ingests stdout streamed chunk over XPC from a helper service.
-    public func receiveXPCStdout(_ text: String, source: LogsView.LogSource, pid: Int32? = nil) {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        for line in lines {
+    /// Splits a raw stdout/stderr text chunk into individual `LogLine`s. This does string scanning (line splitting,
+    /// level inference) and is safe to call off the main actor so bursty output doesn't do that work on the main thread.
+    public nonisolated static func makeLogLines(from text: String, stream: LogLine.Stream, source: String, pid: Int32? = nil) -> [LogLine] {
+        text.split(separator: "\n", omittingEmptySubsequences: true).map { line in
             let str = String(line)
-            let inferredLevel = LogLine.inferLevel(stream: .stdout, text: str)
-            let logLine = LogLine(
+            return LogLine(
                 id: UUID(),
                 date: Date(),
-                stream: .stdout,
+                stream: stream,
                 text: str,
-                source: source.rawValue,
-                level: inferredLevel,
+                source: source,
+                level: LogLine.inferLevel(stream: stream, text: str),
                 pid: pid
             )
-            appendLog(logLine, for: [source, .unifiedLog])
         }
+    }
+
+    /// Ingests stdout streamed chunk over XPC from a helper service.
+    public func receiveXPCStdout(_ text: String, source: LogsView.LogSource, pid: Int32? = nil) {
+        let lines = Self.makeLogLines(from: text, stream: .stdout, source: source.rawValue, pid: pid)
+        appendLogs(lines, for: [source, .unifiedLog])
     }
 
     /// Ingests stderr streamed chunk over XPC from a helper service.
     public func receiveXPCStderr(_ text: String, source: LogsView.LogSource, pid: Int32? = nil) {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        for line in lines {
-            let str = String(line)
-            let inferredLevel = LogLine.inferLevel(stream: .stderr, text: str)
-            let logLine = LogLine(
-                id: UUID(),
-                date: Date(),
-                stream: .stderr,
-                text: str,
-                source: source.rawValue,
-                level: inferredLevel,
-                pid: pid
-            )
-            appendLog(logLine, for: [source, .unifiedLog])
-        }
+        let lines = Self.makeLogLines(from: text, stream: .stderr, source: source.rawValue, pid: pid)
+        appendLogs(lines, for: [source, .unifiedLog])
     }
 
     /// Ingests a structured log entry emitted over XPC from a helper service.
@@ -402,9 +414,7 @@ public final class OSLogStreamService: ObservableObject {
             ))
         }
 
-        for item in collected {
-            appendLog(item, for: [source, .unifiedLog])
-        }
+        appendLogs(collected, for: [source, .unifiedLog])
     }
 
     /// Loads all persisted log files for all XPC helper services.
