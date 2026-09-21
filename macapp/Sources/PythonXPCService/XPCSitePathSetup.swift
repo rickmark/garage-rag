@@ -4,15 +4,24 @@ import PythonKit
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "XPCSitePathSetup")
 
-/// Simple site-python path setup - no dynamic library loading.
-/// Only configures Python's sys.path to include the bundled site-packages.
+/// Compatibility facade over `GaragePythonRuntime`.
+///
+/// Historically this configured `sys.path` after the fact; the interpreter is now started through the
+/// PyConfig API with `home`, `stdlib`, `lib-dynload` and `site-packages` set up front (see
+/// `GaragePythonRuntime`). `setupSitePath()` simply triggers that initialization.
 public struct XPCSitePathSetup {
-    /// Sets up Python's sys.path with the bundled site-packages.
-    /// This is used instead of dynamic library loading - PythonKit uses static linking.
-    public static func setupSitePath() {
-        logger.info("XPCSitePathSetup: setting up Python site path for bundle '\(Bundle.main.bundleIdentifier ?? "unknown", privacy: .public)'...")
-        PythonInterface.setupPythonHome()
-        logger.info("XPCSitePathSetup: Python site path setup completed")
+    /// Initializes the bundled Python environment if it has not been started yet.
+    @discardableResult
+    public static func setupSitePath() -> Bool {
+        logger.info("XPCSitePathSetup: initializing bundled Python for '\(Bundle.main.bundleIdentifier ?? "unknown", privacy: .public)'...")
+        switch GaragePythonRuntime.shared.initializeIfNeeded() {
+        case .success(let env):
+            logger.info("XPCSitePathSetup: Python ready (home: \(env.home.path, privacy: .public))")
+            return true
+        case .failure(let error):
+            logger.error("XPCSitePathSetup: Python initialization failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
     
     /// Normalizes database URLs to ensure psycopg is used.

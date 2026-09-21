@@ -5,6 +5,7 @@ import ctypes
 import json
 import logging
 import sys
+import threading
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
@@ -15,6 +16,9 @@ log = logging.getLogger(__name__)
 _global_c_callback: Any = None
 _global_c_log_callback: Any = None
 _global_cancel_requested: bool = False
+# Guards (re)registration of the C callbacks; the Swift host may register them from
+# several threads (pythonDidBecomeReady, each ingest request).
+_c_callback_lock = threading.RLock()
 
 
 class OSLogHandler(logging.Handler):
@@ -167,11 +171,12 @@ def reset_ingest_cancel() -> None:
 def set_c_progress_callback(callback_address: int) -> None:
     """Register a C ABI function pointer (address) for real-time progress updates."""
     global _global_c_callback
-    if not callback_address:
-        _global_c_callback = None
-    else:
-        callback_type = ctypes.CFUNCTYPE(None, ctypes.c_char_p)
-        _global_c_callback = callback_type(callback_address)
+    with _c_callback_lock:
+        if not callback_address:
+            _global_c_callback = None
+        else:
+            callback_type = ctypes.CFUNCTYPE(None, ctypes.c_char_p)
+            _global_c_callback = callback_type(callback_address)
 
 
 def _notify_c_progress(prog: IngestProgress) -> None:

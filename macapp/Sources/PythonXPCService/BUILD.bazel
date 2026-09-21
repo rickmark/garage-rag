@@ -1,5 +1,6 @@
 load("@rules_apple//apple:macos.bzl", "macos_framework")
-load("@rules_swift//swift:swift.bzl", "swift_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_swift//swift:swift.bzl", "swift_binary", "swift_library")
 load("//bazel:codesign.bzl", "codesign")
 
 # Protocol definitions for all XPC services
@@ -12,18 +13,39 @@ swift_library(
     visibility = ["//visibility:public"],
 )
 
+# C shim around the CPython PyConfig embedding API (isolated interpreter start-up).
+# Headers come from the framework build; the interpreter itself is provided by the
+# bundled Python.framework that every consumer links with `-framework Python`.
+objc_library(
+    name = "GaragePythonEmbed",
+    srcs = ["CPythonEmbed/GaragePythonEmbed.c"],
+    hdrs = ["CPythonEmbed/GaragePythonEmbed.h"],
+    includes = ["CPythonEmbed"],
+    module_name = "GaragePythonEmbed",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ext/python:python_headers",
+    ],
+)
+
 swift_library(
     name = "PythonXPCService_swift",
     srcs = [
         "GarageFileLogger.swift",
         "GarageGRPCOverXPC.swift",
+        "GaragePythonRuntime.swift",
+        "GarageXPCCrashHandler.swift",
         "GarageXPCOutputCapture.swift",
+        "GarageXPCSelfTests.swift",
+        "GarageXPCServiceBase.swift",
+        "GarageXPCServiceHost.swift",
         "XPCSitePathSetup.swift",
         "_Reexport.swift",
     ],
     module_name = "PythonXPCService",
     visibility = ["//visibility:public"],
     deps = [
+        ":GaragePythonEmbed",
         ":PythonXPCService_protocol",
         "//ext:PythonKit",
         "//ext:openssl",  # For libssl.a and libcrypto.a
@@ -37,11 +59,33 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# Command line smoke test: `bazel run //macapp/Sources/PythonXPCService:python_embed_smoke -- /path/to/Garage.app`
+# starts the isolated interpreter exactly like the XPC services do and runs the standard self tests.
+swift_binary(
+    name = "python_embed_smoke",
+    srcs = ["SmokeTest/main.swift"],
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
+    linkopts = [
+        "-F$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "$(location //ext/python:python_framework)/..",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":PythonXPCService_swift",
+    ],
+)
+
 macos_framework(
     name = "PythonXPCService_framework",
     additional_linker_inputs = [
         "//ext/python:python_framework",
-        "//ext/pythonkit:PythonKit",
     ],
     bundle_id = "me.rickmark.garage-rag.PythonXPCService",
     bundle_name = "PythonXPCService",
@@ -50,9 +94,6 @@ macos_framework(
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
-        "-F$(location //ext/pythonkit:PythonKit)/..",
-        "-framework",
-        "PythonKit",
         "-framework",
         "SystemConfiguration",
     ],

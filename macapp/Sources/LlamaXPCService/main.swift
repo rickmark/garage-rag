@@ -6,124 +6,134 @@ import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.llama-xpc", category: "LlamaXPCService")
 
-private func installCrashHandlers() {
-    NSSetUncaughtExceptionHandler { exception in
-        let callStack = exception.callStackSymbols.joined(separator: "\n  ")
-        let msg = "CRITICAL: Uncaught NSException '\(exception.name.rawValue)': \(exception.reason ?? "none")\nUserInfo: \(String(describing: exception.userInfo))\nCall Stack:\n  \(callStack)\n"
-        fputs(msg, stderr)
-        fflush(stderr)
-        logger.fault("CRITICAL: Uncaught NSException '\(exception.name.rawValue, privacy: .public)': \(exception.reason ?? "none", privacy: .public)\nUserInfo: \(String(describing: exception.userInfo), privacy: .public)\nCall Stack:\n  \(callStack, privacy: .public)")
+/// Wraps the in-process llama inference engine as a managed service so the host can (re)load / unload the
+/// configured model. `start()` is a no-op until `loadModel` has configured a model path.
+final class LlamaEngineManagedService: GarageManagedService {
+    let name = "llama-engine"
+
+    private let lock = NSLock()
+    private let engine: LlamaServerEngine
+    private var modelPath: String?
+    private var alias: String?
+    private var configJson: String?
+    private var autoStart = false
+    private(set) var lastMessage: String?
+
+    init(engine: LlamaServerEngine) {
+        self.engine = engine
     }
 
-    let fatalSignals: [Int32] = [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGPIPE]
-    for sig in fatalSignals {
-        signal(sig) { signum in
-            let sigName: String
-            switch signum {
-            case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault)"
-            case SIGBUS: sigName = "SIGBUS (Bus Error)"
-            case SIGABRT: sigName = "SIGABRT (Abort)"
-            case SIGILL: sigName = "SIGILL (Illegal Instruction)"
-            case SIGFPE: sigName = "SIGFPE (Floating Point Exception)"
-            case SIGTRAP: sigName = "SIGTRAP (Trace/BPT Trap)"
-            case SIGPIPE: sigName = "SIGPIPE (Broken Pipe)"
-            default: sigName = "Signal \(signum)"
-            }
+    /// Configures the model used by the next `start()`.
+    func configure(modelPath: String, alias: String?, configJson: String?) {
+        lock.lock()
+        self.modelPath = modelPath
+        self.alias = alias
+        self.configJson = configJson
+        self.autoStart = true
+        lock.unlock()
+    }
 
-            var dyldMsg = ""
-            if let errCStr = dlerror() {
-                dyldMsg = " | dyld error: \(String(cString: errCStr))"
-            }
+    /// Forgets the configured model so a later restart does not reload it.
+    func clearConfiguration() {
+        lock.lock()
+        modelPath = nil
+        alias = nil
+        configJson = nil
+        autoStart = false
+        lock.unlock()
+    }
 
-            let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
-            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
-            fputs(msg, stderr)
-            fflush(stderr)
-            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
+    var isConfigured: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return autoStart
+    }
 
-            signal(signum, SIG_DFL)
-            raise(signum)
+    var isRunning: Bool {
+        engine.currentModelPath != nil
+    }
+
+    func start() throws {
+        lock.lock()
+        let shouldStart = autoStart
+        let (path, alias, configJson) = (modelPath, self.alias, self.configJson)
+        lock.unlock()
+        guard shouldStart, let path = path else {
+            logger.info("llama-engine not configured yet; waiting for loadModel")
+            return
         }
+
+        let res = engine.loadModel(path: path, alias: alias, configJson: configJson)
+        lock.lock()
+        lastMessage = res.message
+        lock.unlock()
+        if res.success {
+            logger.info("Model loaded successfully: \(res.message, privacy: .public)")
+            GarageXPCOutputCapture.shared.log(message: "llama-engine loaded model \(path)")
+        } else {
+            logger.error("Failed to load model: \(res.message, privacy: .public)")
+            throw GarageXPCServiceError.notRunning(res.message)
+        }
+    }
+
+    func stop(graceful: Bool) throws {
+        guard engine.currentModelPath != nil else { return }
+        let ok = engine.unloadModel()
+        if !ok {
+            throw GarageXPCServiceError.notRunning("llama-engine failed to unload the current model")
+        }
+        logger.info("llama-engine unloaded model (graceful: \(graceful, privacy: .public))")
     }
 }
 
-final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCServiceProtocol {
+final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtocol {
     private let engine = LlamaServerEngine.shared
+    private let engineService: LlamaEngineManagedService
 
-    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        let clientPID = newConnection.processIdentifier
-        logger.info("Accepted incoming XPC connection from PID \(clientPID)")
-        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
-        newConnection.exportedInterface = NSXPCInterface(with: LlamaXPCServiceProtocol.self)
-        newConnection.exportedObject = self
-        GarageXPCOutputCapture.shared.addConnection(newConnection)
-        newConnection.invalidationHandler = { [weak newConnection] in
-            logger.info("XPC connection from PID \(clientPID) invalidated")
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.interruptionHandler = { [weak newConnection] in
-            logger.warning("XPC connection from PID \(clientPID) interrupted")
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.resume()
-        return true
+    init() {
+        engineService = LlamaEngineManagedService(engine: engine)
+        super.init(
+            serviceName: "LlamaXPCService",
+            logFileName: "llama-xpc.log",
+            usesPython: false
+        )
     }
 
-    func ping(with reply: @escaping (String) -> Void) {
-        logger.debug("Handling ping request")
-        reply("pong from LlamaXPCService")
+    override var exportedInterface: NSXPCInterface {
+        NSXPCInterface(with: LlamaXPCServiceProtocol.self)
     }
 
-    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
-        let name = "LlamaXPCService"
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let uptime = ProcessInfo.processInfo.systemUptime
-        let status = engine.currentModelPath != nil ? "model_loaded" : "idle"
-        logger.debug("Returning service info: name=\(name, privacy: .public), pid=\(pid), uptime=\(uptime), status=\(status, privacy: .public)")
-        reply(name, pid, uptime, status)
+    override func additionalSelfTests() -> [GarageXPCSelfTest] {
+        let engine = self.engine
+        return [
+            GarageXPCSelfTest(name: "Llama Engine", description: "Queries the llama inference engine health endpoint and reports slot usage.", requiresPython: false) {
+                let health = engine.handleHealth()
+                guard let status = health["status"] as? String else {
+                    throw GarageXPCSelfTestFailure("Llama engine health returned no status", details: String(describing: health))
+                }
+                let idle = health["slots_idle"] as? Int ?? 0
+                let processing = health["slots_processing"] as? Int ?? 0
+                let modelState = engine.currentModelPath != nil ? "model_loaded" : "idle"
+                return "Status: \(status)\nEngine: \(modelState)\nModel: \(engine.currentModelPath ?? "none")\nSlots idle: \(idle), processing: \(processing)"
+            },
+            GarageXPCSelfTest(name: "Model File", description: "Verifies the currently loaded model path exists on disk.", requiresPython: false) {
+                guard let path = engine.currentModelPath else {
+                    throw GarageXPCSelfTestSkipped("No model loaded")
+                }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+                    throw GarageXPCSelfTestFailure("Loaded model file is missing: \(path)")
+                }
+                let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+                return "Model: \(path)\nSize: \(size) bytes"
+            },
+        ]
     }
 
-    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        _ = bundleURL.startAccessingSecurityScopedResource()
-        reply(true, nil)
+    override func registerManagedServices(in host: GarageXPCServiceHost) {
+        host.register(engineService)
     }
 
-    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
-        let status = engine.currentModelPath != nil ? "model_loaded" : "idle"
-        let summary = "Llama inference engine is healthy (\(status))"
-        let details = "Status: \(status), Model: \(engine.currentModelPath ?? "none")"
-        reply(true, summary, details)
-    }
-
-    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
-        reply(out, err)
-    }
-
-    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
-        reply(out, err, nil)
-    }
-
-    func clearLogs(with reply: @escaping (Bool) -> Void) {
-        logger.debug("Clearing captured output logs")
-        GarageXPCOutputCapture.shared.clear()
-        reply(true)
-    }
-
-    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
-        logger.debug("Handling gRPC call over XPC: service=\(service, privacy: .public), method=\(method, privacy: .public)")
-        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
-    }
-
-    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        logger.debug("Handling RPC over XPC: method=\(method, privacy: .public)")
-        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
-    }
+    // MARK: - LlamaXPCServiceProtocol
 
     func health(with reply: @escaping (String?, Error?) -> Void) {
         let dict = engine.handleHealth()
@@ -253,28 +263,39 @@ final class LlamaXPCServiceDelegate: NSObject, NSXPCListenerDelegate, LlamaXPCSe
 
     func loadModel(modelPath: String, alias: String?, configJson: String?, with reply: @escaping (Bool, String?, Error?) -> Void) {
         logger.info("Loading model from path: \(modelPath, privacy: .public), alias: \(alias ?? "none", privacy: .public)")
-        let res = engine.loadModel(path: modelPath, alias: alias, configJson: configJson)
-        if res.success {
-            logger.info("Model loaded successfully: \(res.message, privacy: .public)")
-        } else {
-            logger.error("Failed to load model: \(res.message, privacy: .public)")
+        engineService.configure(modelPath: modelPath, alias: alias, configJson: configJson)
+        host.restart(named: engineService.name, graceful: true) { [engineService] state in
+            switch state {
+            case .running:
+                reply(true, engineService.lastMessage ?? "Model loaded successfully from \(modelPath)", nil)
+            case .failed(let message):
+                reply(false, message, nil)
+            default:
+                reply(false, "llama-engine is \(state.name)", nil)
+            }
         }
-        reply(res.success, res.message, nil)
     }
 
     func unloadModel(with reply: @escaping (Bool, Error?) -> Void) {
         logger.info("Unloading current model")
-        let res = engine.unloadModel()
-        reply(res, nil)
+        engineService.clearConfiguration()
+        guard engineService.isRunning else {
+            reply(true, nil)
+            return
+        }
+        host.stopAll(graceful: true) { [engineService] states in
+            if case .failed(let message)? = states[engineService.name] {
+                logger.error("Failed to unload model: \(message, privacy: .public)")
+                reply(false, nil)
+            } else {
+                reply(true, nil)
+            }
+        }
     }
 }
 
-installCrashHandlers()
-GarageXPCOutputCapture.shared.configure(serviceName: "LlamaXPCService", logFileName: "llama-xpc.log")
-GarageXPCOutputCapture.shared.startCapturing()
-logger.info("LlamaXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
+// MARK: - Process Entry Point
+
 let delegate = LlamaXPCServiceDelegate()
-let listener = NSXPCListener.service()
-listener.delegate = delegate
-listener.resume()
-RunLoop.main.run()
+delegate.bootstrap()
+delegate.run()

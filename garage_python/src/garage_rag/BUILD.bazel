@@ -30,6 +30,7 @@ py_library(
     srcs = [
         "__init__.py",
         "cli.py",
+        "libpq.py",
     ],
     imports = [".."],
     visibility = ["//visibility:public"],

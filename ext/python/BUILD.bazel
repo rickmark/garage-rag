@@ -1,5 +1,6 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 load("//bazel:codesign.bzl", "codesign")
 
@@ -98,6 +99,24 @@ configure_make(
 alias(
     name = "python_3_13_framework",
     actual = ":python_3_13",
+    visibility = ["//visibility:public"],
+)
+
+# Raw install tree of the framework build (Python.framework/, bin/, include/).
+filegroup(
+    name = "python_3_13_install_dir",
+    srcs = [":python_3_13"],
+    output_group = "gen_dir",
+)
+
+# Header-only target exposing <Python.h> from the framework build so that host
+# code can use the PyConfig embedding API. It deliberately does NOT link
+# libpython: consumers link `-framework Python` (the bundled Python.framework)
+# so exactly one interpreter is present in the process.
+cc_library(
+    name = "python_headers",
+    hdrs = [":python_3_13_install_dir"],
+    includes = ["copy_python_3_13/python_3_13/Python.framework/Versions/3.13/include/python3.13"],
     visibility = ["//visibility:public"],
 )
 

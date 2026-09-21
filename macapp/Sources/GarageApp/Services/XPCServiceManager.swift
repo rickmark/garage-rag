@@ -191,6 +191,8 @@ public final class XPCServiceManager: ObservableObject {
     @Published public private(set) var testingServiceIds: Set<String> = []
     @Published public private(set) var isTestingAll: Bool = false
     @Published public private(set) var logs: [LogLine] = []
+    @Published public private(set) var statusReports: [String: GarageXPCStatusReport] = [:]
+    @Published public private(set) var restartingServiceIds: Set<String> = []
 
     public weak var osLogStreamService: OSLogStreamService?
     private var streamingConnections: [String: NSXPCConnection] = [:]
@@ -252,6 +254,18 @@ public final class XPCServiceManager: ObservableObject {
         "GarageXPCService"
     ]
 
+    /// Services whose diagnostics are provided by the in-service self tests of the shared Python runtime base.
+    public nonisolated static let selfTestDrivenServiceIds: Set<String> = [
+        "garage-xpc", "me.rickmark.garage-rag.xpc",
+        "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
+        "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
+        "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc"
+    ]
+
+    private static let statusCallTimeout: UInt64 = 20_000_000_000
+    private static let selfTestCallTimeout: UInt64 = 180_000_000_000
+    private static let restartCallTimeout: UInt64 = 120_000_000_000
+
     public init(
         initialServices: [XPCServiceInfo] = defaultServices,
         pingExecutor: PingExecutor? = nil,
@@ -310,6 +324,7 @@ public final class XPCServiceManager: ObservableObject {
             services[index].lastChecked = Date()
             logger.info("XPC service '\(bundleId, privacy: .public)' is active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms)")
             appendLog("[\(services[index].name)] Active (pid: \(result.pid), latency: \(String(format: "%.2f", result.latencyMs))ms): \(result.response)", source: services[index].id, level: .info, pid: result.pid)
+            _ = await fetchStatusReport(serviceId: services[index].id)
             return newState
         } catch {
             let errorMsg = error.localizedDescription
@@ -342,6 +357,231 @@ public final class XPCServiceManager: ObservableObject {
             }
             for await _ in group {}
         }
+    }
+
+    // MARK: - Status Reports & In-Service Self Tests
+
+    private func resolveService(_ serviceId: String) -> XPCServiceInfo? {
+        services.first(where: { $0.id == serviceId || $0.bundleId == serviceId })
+    }
+
+    /// Stores a status report and surfaces failed self tests in the manager log (once per distinct test run).
+    private func storeStatusReport(_ report: GarageXPCStatusReport, for service: XPCServiceInfo, forceLogFailures: Bool = false) {
+        let previous = statusReports[service.id]
+        statusReports[service.id] = report
+
+        let failed = report.failedTests
+        guard !failed.isEmpty else { return }
+        let previousFailedNames = Set(previous?.failedTests.map { $0.name } ?? [])
+        let isNewRun = previous == nil || previous?.lastTestRun != report.lastTestRun || previousFailedNames != Set(failed.map { $0.name })
+        guard forceLogFailures || isNewRun else { return }
+
+        for test in failed {
+            let reason = test.errorMessage ?? test.summary
+            appendLog("[\(service.name)] Self test '\(test.name)' failed (\(String(format: "%.1f", test.durationMs))ms): \(reason)", stream: .stderr, source: service.id, level: .error, pid: report.pid)
+        }
+    }
+
+    /// Fetches the structured status report (lifecycle, Python runtime, managed services, self tests) of a service.
+    @discardableResult
+    public func fetchStatusReport(serviceId: String) async -> GarageXPCStatusReport? {
+        guard let service = resolveService(serviceId) else { return nil }
+        let bundleId = service.bundleId
+        do {
+            let json: String = try await Self.performCommonCall(bundleId: bundleId, timeoutNanoseconds: Self.statusCallTimeout) { proxy, relay in
+                proxy.getServiceStatus { json in
+                    relay.resume(returning: json)
+                }
+            }
+            guard let report = GarageXPCStatusReport.decode(fromJSON: json) else {
+                logger.warning("Could not decode status report from '\(bundleId, privacy: .public)'")
+                appendLog("[\(service.name)] Received an undecodable status report", stream: .stderr, source: service.id, level: .warning)
+                return nil
+            }
+            storeStatusReport(report, for: service)
+            return report
+        } catch {
+            logger.warning("Failed to fetch status report from '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            appendLog("[\(service.name)] Status report unavailable: \(error.localizedDescription)", stream: .stderr, source: service.id, level: .warning)
+            return nil
+        }
+    }
+
+    /// Concurrently fetches the status reports of all registered services.
+    public func refreshAllStatusReports() async {
+        let serviceIds = services.map { $0.id }
+        await withTaskGroup(of: Void.self) { group in
+            for id in serviceIds {
+                group.addTask { [weak self] in
+                    guard let self = self else { return }
+                    _ = await self.fetchStatusReport(serviceId: id)
+                }
+            }
+        }
+    }
+
+    /// Re-runs the in-service self tests of a helper and mirrors the outcome into `diagnosticResults`.
+    @discardableResult
+    public func runServiceSelfTests(serviceId: String) async -> GarageXPCStatusReport? {
+        guard let service = resolveService(serviceId) else { return nil }
+        let bundleId = service.bundleId
+        testingServiceIds.insert(service.id)
+        defer { testingServiceIds.remove(service.id) }
+
+        appendLog("[\(service.name)] Running in-service self tests...", source: service.id, level: .info)
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            let (passed, json): (Bool, String) = try await Self.performCommonCall(bundleId: bundleId, timeoutNanoseconds: Self.selfTestCallTimeout) { proxy, relay in
+                proxy.runSelfTests { passed, json in
+                    relay.resume(returning: (passed, json))
+                }
+            }
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+
+            guard let report = GarageXPCStatusReport.decode(fromJSON: json) else {
+                diagnosticResults[service.id] = ServiceDiagnosticTestResult(
+                    serviceId: service.id,
+                    testName: "In-Service Self Tests",
+                    testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                    isSuccess: false,
+                    durationMs: elapsed,
+                    summary: "Self tests \(passed ? "passed" : "failed") but the report could not be decoded",
+                    details: json,
+                    errorMessage: "Undecodable self test report"
+                )
+                return nil
+            }
+
+            storeStatusReport(report, for: service, forceLogFailures: true)
+            let result = Self.makeDiagnosticResult(from: report, serviceId: service.id, durationMs: elapsed)
+            diagnosticResults[service.id] = result
+            appendLog("[\(service.name)] \(result.summary)", stream: result.isSuccess ? .stdout : .stderr, source: service.id, level: result.isSuccess ? .info : .error, pid: report.pid)
+            return report
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            logger.warning("Self tests failed to run on '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            diagnosticResults[service.id] = ServiceDiagnosticTestResult(
+                serviceId: service.id,
+                testName: "In-Service Self Tests",
+                testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                isSuccess: false,
+                durationMs: elapsed,
+                summary: "Self tests could not be run: \(error.localizedDescription)",
+                details: error.localizedDescription,
+                errorMessage: error.localizedDescription
+            )
+            appendLog("[\(service.name)] Self tests could not be run: \(error.localizedDescription)", stream: .stderr, source: service.id, level: .error)
+            return nil
+        }
+    }
+
+    /// Converts an in-service status report into the legacy diagnostic result consumed by the existing UI.
+    nonisolated static func makeDiagnosticResult(from report: GarageXPCStatusReport, serviceId: String, durationMs: Double) -> ServiceDiagnosticTestResult {
+        let total = report.tests.count
+        let passedCount = report.tests.filter { $0.status == .passed }.count
+        let skippedCount = report.tests.filter { $0.status == .skipped }.count
+        let failed = report.failedTests
+
+        var lines: [String] = []
+        for test in report.tests {
+            lines.append("[\(test.status.rawValue.uppercased())] \(test.name): \(test.summary)")
+            if test.status == .failed {
+                if let err = test.errorMessage, !err.isEmpty { lines.append("    error: \(err)") }
+                if !test.details.isEmpty {
+                    for detailLine in test.details.components(separatedBy: .newlines) where !detailLine.isEmpty {
+                        lines.append("    \(detailLine)")
+                    }
+                }
+            }
+        }
+        if total == 0 {
+            lines.append("The service did not report any self tests (lifecycle: \(report.lifecycle), python: \(report.python.state)).")
+        }
+
+        var summary = "\(passedCount) of \(total) self tests passed"
+        if skippedCount > 0 { summary += " (\(skippedCount) skipped)" }
+        let errorMessage = failed.isEmpty ? nil : failed.map { "\($0.name): \($0.errorMessage ?? $0.summary)" }.joined(separator: "; ")
+
+        return ServiceDiagnosticTestResult(
+            serviceId: serviceId,
+            testName: "In-Service Self Tests",
+            testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+            isSuccess: report.allTestsPassed,
+            durationMs: durationMs,
+            summary: summary,
+            details: lines.joined(separator: "\n"),
+            errorMessage: errorMessage
+        )
+    }
+
+    /// Restarts the background services managed inside a helper without killing the helper process.
+    @discardableResult
+    public func restartManagedServices(serviceId: String, graceful: Bool) async -> (success: Bool, message: String?) {
+        guard let service = resolveService(serviceId) else {
+            return (false, "Service '\(serviceId)' not registered")
+        }
+        let bundleId = service.bundleId
+        restartingServiceIds.insert(service.id)
+        defer { restartingServiceIds.remove(service.id) }
+
+        appendLog("[\(service.name)] Restarting managed services (\(graceful ? "graceful" : "forced"))...", source: service.id, level: .warning, pid: service.pid)
+
+        let outcome: (success: Bool, message: String?)
+        do {
+            outcome = try await Self.performCommonCall(bundleId: bundleId, timeoutNanoseconds: Self.restartCallTimeout) { proxy, relay in
+                proxy.restartServices(graceful: graceful) { success, message in
+                    relay.resume(returning: (success: success, message: message))
+                }
+            }
+        } catch {
+            outcome = (false, error.localizedDescription)
+        }
+
+        appendLog(
+            "[\(service.name)] Managed services restart \(outcome.success ? "succeeded" : "failed")\(outcome.message.map { ": \($0)" } ?? "")",
+            stream: outcome.success ? .stdout : .stderr,
+            source: service.id,
+            level: outcome.success ? .info : .error
+        )
+        _ = await fetchStatusReport(serviceId: service.id)
+        return outcome
+    }
+
+    /// Pushes configuration (database URL, gRPC endpoint, ...) to every registered helper. Failures are logged and ignored.
+    public func pushConfiguration(_ options: [String: String]) async {
+        guard !options.isEmpty else { return }
+        let targets = services
+        await withTaskGroup(of: Void.self) { group in
+            for service in targets {
+                group.addTask { [weak self] in
+                    do {
+                        let (success, message): (Bool, String?) = try await Self.performCommonCall(bundleId: service.bundleId, timeoutNanoseconds: Self.statusCallTimeout) { proxy, relay in
+                            proxy.updateConfiguration(options) { success, message in
+                                relay.resume(returning: (success, message))
+                            }
+                        }
+                        if !success {
+                            await self?.appendLog("[\(service.name)] Configuration update rejected: \(message ?? "unknown reason")", stream: .stderr, source: service.id, level: .warning)
+                        }
+                    } catch {
+                        logger.debug("Configuration push to '\(service.bundleId, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)")
+                        await self?.appendLog("[\(service.name)] Configuration push failed: \(error.localizedDescription)", stream: .stderr, source: service.id, level: .warning)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Convenience wrapper that maps the app's known endpoints onto `GarageXPCConfigurationKey` and pushes them to all helpers.
+    public func pushKnownConfiguration(databaseURL: String?, grpcHost: String?, grpcPort: Int?) async {
+        var options: [String: String] = [:]
+        if let databaseURL = databaseURL, !databaseURL.isEmpty { options[GarageXPCConfigurationKey.databaseURL] = databaseURL }
+        if let grpcHost = grpcHost, !grpcHost.isEmpty { options[GarageXPCConfigurationKey.grpcHost] = grpcHost }
+        if let grpcPort = grpcPort, grpcPort > 0 { options[GarageXPCConfigurationKey.grpcPort] = String(grpcPort) }
+        guard !options.isEmpty else { return }
+        appendLog("Pushing configuration to XPC helpers: \(options.keys.sorted().joined(separator: ", "))", source: "xpc-services", level: .info)
+        await pushConfiguration(options)
     }
 
     // MARK: - Restart Operations
@@ -476,12 +716,11 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         streamingConnections[key] = connection
 
-        // Trigger setAppBundleReference and ping to register the streaming receiver on the service side
+        // Hand over the app bundle and ping to register the streaming receiver on the service side
         if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }) as? GarageCommonXPCServiceProtocol {
-            let bundleRef = Bundle.main.bundleURL
-            proxy.setAppBundleReference(bundleRef) { _, _ in
+            Self.configureBundle(on: proxy) {
                 proxy.ping { _ in
                     logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
                 }
@@ -541,6 +780,62 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Shared app bundle handshake: hands the helper an open descriptor of the app bundle first (so it can
+    /// resolve the bundle even when the path is not readable from its sandbox), then the URL as a fallback.
+    nonisolated static func configureBundle(on proxy: GarageCommonXPCServiceProtocol, completion: @escaping () -> Void) {
+        let bundleURL = Bundle.main.bundleURL
+        let sendURL = {
+            proxy.setAppBundleReference(bundleURL) { _, _ in
+                completion()
+            }
+        }
+
+        if let bundleHandle = FileHandle(forReadingAtPath: Bundle.main.bundlePath) {
+            proxy.setAppBundleFileHandle(bundleHandle) { _, _ in
+                sendURL()
+            }
+            // The descriptor is duplicated into the XPC message when the call is encoded; release our copy.
+            try? bundleHandle.close()
+        } else {
+            sendURL()
+        }
+    }
+
+    /// Opens a one-shot connection using the common protocol, performs the bundle handshake, and runs `body`.
+    /// The connection is invalidated (which fails the pending call) if no reply arrives within the timeout.
+    private static func performCommonCall<T>(
+        bundleId: String,
+        timeoutNanoseconds: UInt64,
+        _ body: @escaping (GarageCommonXPCServiceProtocol, ContinuationRelay<T>) -> Void
+    ) async throws -> T {
+        let connection = NSXPCConnection(serviceName: bundleId)
+        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
+        connection.resume()
+        defer { connection.invalidate() }
+
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            logger.warning("XPC call to '\(bundleId, privacy: .public)' timed out; invalidating connection")
+            connection.invalidate()
+        }
+        defer { timeoutTask.cancel() }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let relay = ContinuationRelay(continuation)
+
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                relay.resume(throwing: error)
+            }) as? GarageCommonXPCServiceProtocol else {
+                relay.resume(throwing: NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy for \(bundleId)"]))
+                return
+            }
+
+            configureBundle(on: proxy) {
+                body(proxy, relay)
+            }
+        }
+    }
+
     private static func performXPCPing(bundleId: String) async throws -> (pid: pid_t, latencyMs: Double, response: String) {
         let startTime = CFAbsoluteTimeGetCurrent()
         let connection = NSXPCConnection(serviceName: bundleId)
@@ -561,8 +856,7 @@ public final class XPCServiceManager: ObservableObject {
                 return
             }
 
-            let bundleRef = Bundle.main.bundleURL
-            proxy.setAppBundleReference(bundleRef) { _, _ in
+            configureBundle(on: proxy) {
                 proxy.ping { reply in
                     let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
                     let pid = connection.processIdentifier
@@ -596,8 +890,7 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                let bundleRef = Bundle.main.bundleURL
-                proxy.setAppBundleReference(bundleRef) { _, _ in
+                Self.configureBundle(on: proxy) {
                     proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
                         if let error = error {
                             relay.resume(throwing: error)
@@ -637,18 +930,17 @@ public final class XPCServiceManager: ObservableObject {
 
         let result: ServiceDiagnosticTestResult
         switch serviceId {
-        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc":
-            result = await runEmbedDiagnosticTest()
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
+             "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
+             "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc",
+             "garage-xpc", "me.rickmark.garage-rag.xpc":
+            result = await runSelfTestDiagnostic(for: serviceId)
         case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
             result = await runModelDownloadDiagnosticTest()
+            _ = await fetchStatusReport(serviceId: serviceId)
         case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
             result = await runLlamaDiagnosticTest()
-        case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc":
-            result = await runIngestDiagnosticTest()
-        case "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc":
-            result = await runMCPDiagnosticTest()
-        case "garage-xpc", "me.rickmark.garage-rag.xpc":
-            result = await runGarageBackendDiagnosticTest()
+            _ = await fetchStatusReport(serviceId: serviceId)
         default:
             result = ServiceDiagnosticTestResult(
                 serviceId: serviceId,
@@ -686,6 +978,36 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Diagnostic for helpers built on the shared Python runtime base: run the in-service self tests and
+    /// fall back to the legacy bespoke check when the helper does not answer with a report.
+    private func runSelfTestDiagnostic(for serviceId: String) async -> ServiceDiagnosticTestResult {
+        let resolvedId = resolveService(serviceId)?.id ?? serviceId
+        if await runServiceSelfTests(serviceId: serviceId) != nil, let converted = diagnosticResults[resolvedId] {
+            return converted
+        }
+        let failure = diagnosticResults[resolvedId]
+
+        let legacy: ServiceDiagnosticTestResult
+        switch resolvedId {
+        case "embed-xpc": legacy = await runEmbedDiagnosticTest()
+        case "ingest-xpc": legacy = await runIngestDiagnosticTest()
+        case "mcp-server-xpc": legacy = await runMCPDiagnosticTest()
+        default: legacy = await runGarageBackendDiagnosticTest()
+        }
+
+        guard let failure = failure else { return legacy }
+        return ServiceDiagnosticTestResult(
+            serviceId: legacy.serviceId,
+            testName: legacy.testName,
+            testDescription: legacy.testDescription,
+            isSuccess: false,
+            durationMs: legacy.durationMs + failure.durationMs,
+            summary: failure.summary,
+            details: "\(failure.details)\n\nFallback check '\(legacy.testName)': \(legacy.summary)\n\(legacy.details)",
+            errorMessage: failure.errorMessage ?? legacy.errorMessage
+        )
+    }
+
     private func runEmbedDiagnosticTest() async -> ServiceDiagnosticTestResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         let bundleId = "me.rickmark.garage-rag.embed-xpc"
@@ -706,8 +1028,7 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                let bundleRef = Bundle.main.bundleURL
-                proxy.setAppBundleReference(bundleRef) { _, _ in
+                Self.configureBundle(on: proxy) {
                     proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
                         relay.resume(returning: (isOk, output ?? "No output"))
                     }
@@ -788,8 +1109,7 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
                     return
                 }
-                let bundleRef = Bundle.main.bundleURL
-                proxy.setAppBundleReference(bundleRef) { _, _ in
+                Self.configureBundle(on: proxy) {
                     proxy.ping { reply in relay.resume(returning: reply) }
                 }
             }
@@ -942,8 +1262,7 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                let bundleRef = Bundle.main.bundleURL
-                proxy.setAppBundleReference(bundleRef) { _, _ in
+                Self.configureBundle(on: proxy) {
                     proxy.runDiagnostic { isOk, sum, det in
                         relay.resume(returning: (isOk, sum ?? (isOk ? "Garage backend healthy" : "Diagnostic failed"), det ?? ""))
                     }

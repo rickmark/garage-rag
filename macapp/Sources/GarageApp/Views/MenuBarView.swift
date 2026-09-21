@@ -77,6 +77,14 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button("About & Support…") {
+                NSApp.activate(ignoringOtherApps: true)
+                for window in NSApp.windows where window.title == "Garage" {
+                    window.makeKeyAndOrderFront(nil)
+                }
+                NotificationCenter.default.post(name: .garageShowSplash, object: nil)
+            }
+
             Button("Quit Garage") {
                 NSApp.terminate(nil)
             }

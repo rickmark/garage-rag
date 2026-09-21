@@ -167,15 +167,112 @@ public final class GarageGRPCOverXPCClient: @unchecked Sendable {
 
     public init() {}
 
-    /// Passes the main application bundle URL to set the bundle and extend the sandbox.
+    /// Passes the main application bundle to the service: first as an open directory handle (works across
+    /// sandbox boundaries and lets the service resolve the real path with `F_GETPATH`), then as a URL.
     private func ensureAppBundleConfigured(proxy: GarageCommonXPCServiceProtocol) async {
-        // Use the main bundle URL for sandbox access
-        let bundleURL = Bundle.main.bundleURL
+        await Self.configureAppBundle(on: proxy)
+    }
+
+    /// Shared handshake used by every client: `setAppBundleFileHandle` followed by `setAppBundleReference`.
+    public static func configureAppBundle(on proxy: GarageCommonXPCServiceProtocol, bundle: Bundle = .main) async {
+        if let handle = FileHandle(forReadingAtPath: bundle.bundlePath) {
+            await withCheckedContinuation { continuation in
+                proxy.setAppBundleFileHandle(handle) { _, _ in
+                    continuation.resume()
+                }
+            }
+            try? handle.close()
+        }
         await withCheckedContinuation { continuation in
-            proxy.setAppBundleReference(bundleURL) { _, _ in
+            proxy.setAppBundleReference(bundle.bundleURL) { _, _ in
                 continuation.resume()
             }
         }
+    }
+
+    /// Fetches the structured status report (lifecycle, Python runtime, self tests, recent errors).
+    public func fetchStatusReport(connection: NSXPCConnection) async throws -> GarageXPCStatusReport {
+        let proxy = try makeProxy(connection: connection, onError: { _ in })
+        await ensureAppBundleConfigured(proxy: proxy)
+        return try await withCheckedThrowingContinuation { continuation in
+            let activeProxy: GarageCommonXPCServiceProtocol
+            do {
+                activeProxy = try makeProxy(connection: connection, onError: { continuation.resume(throwing: $0) })
+            } catch {
+                continuation.resume(throwing: error)
+                return
+            }
+            activeProxy.getServiceStatus { json in
+                if let report = GarageXPCStatusReport.decode(fromJSON: json) {
+                    continuation.resume(returning: report)
+                } else {
+                    continuation.resume(throwing: NSError(domain: "GarageGRPCOverXPCClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Malformed status report: \(json.prefix(200))"]))
+                }
+            }
+        }
+    }
+
+    /// Re-runs the service self tests and returns the resulting report.
+    public func runSelfTests(connection: NSXPCConnection) async throws -> (passed: Bool, report: GarageXPCStatusReport?) {
+        let proxy = try makeProxy(connection: connection, onError: { _ in })
+        await ensureAppBundleConfigured(proxy: proxy)
+        return try await withCheckedThrowingContinuation { continuation in
+            let activeProxy: GarageCommonXPCServiceProtocol
+            do {
+                activeProxy = try makeProxy(connection: connection, onError: { continuation.resume(throwing: $0) })
+            } catch {
+                continuation.resume(throwing: error)
+                return
+            }
+            activeProxy.runSelfTests { passed, json in
+                continuation.resume(returning: (passed, GarageXPCStatusReport.decode(fromJSON: json)))
+            }
+        }
+    }
+
+    /// Restarts the managed background services inside the helper.
+    public func restartServices(graceful: Bool, connection: NSXPCConnection) async throws -> (success: Bool, message: String?) {
+        let proxy = try makeProxy(connection: connection, onError: { _ in })
+        return try await withCheckedThrowingContinuation { continuation in
+            let activeProxy: GarageCommonXPCServiceProtocol
+            do {
+                activeProxy = try makeProxy(connection: connection, onError: { continuation.resume(throwing: $0) })
+            } catch {
+                continuation.resume(throwing: error)
+                return
+            }
+            activeProxy.restartServices(graceful: graceful) { success, message in
+                continuation.resume(returning: (success, message))
+            }
+        }
+    }
+
+    /// Pushes configuration (database URL, gRPC endpoint, ...) to the helper.
+    public func updateConfiguration(_ options: [String: String], connection: NSXPCConnection) async throws -> Bool {
+        let proxy = try makeProxy(connection: connection, onError: { _ in })
+        return try await withCheckedThrowingContinuation { continuation in
+            let activeProxy: GarageCommonXPCServiceProtocol
+            do {
+                activeProxy = try makeProxy(connection: connection, onError: { continuation.resume(throwing: $0) })
+            } catch {
+                continuation.resume(throwing: error)
+                return
+            }
+            activeProxy.updateConfiguration(options) { success, _ in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+
+    private func makeProxy(connection: NSXPCConnection, onError: @escaping (Error) -> Void) throws -> GarageCommonXPCServiceProtocol {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler(onError) as? GarageCommonXPCServiceProtocol else {
+            throw NSError(
+                domain: "GarageGRPCOverXPCClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "XPC remote object does not conform to GarageCommonXPCServiceProtocol"]
+            )
+        }
+        return proxy
     }
 
     /// Dispatches a gRPC call with raw binary payload across an XPC connection.

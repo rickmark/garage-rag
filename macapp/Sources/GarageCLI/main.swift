@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 import OSLog
 import PythonKit
+import PythonXPCService
 
 private let cliLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.cli", category: "GarageCLI")
 
@@ -99,9 +100,26 @@ private final class CLIOutputCapturer {
     }
 }
 
-private func setupPythonEnvironment() {
-    // Skip dynamic library loading - use static linking
-    // Only configure site-packages in sys.path
+/// Starts the isolated interpreter (PyConfig API) with `home`, stdlib, `lib-dynload` and `site-packages` taken
+/// from `<Garage.app>/Contents/Resources/site-python`, exactly like the XPC services do.
+private func setupPythonEnvironment() -> Bool {
+    let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    // Garage.app/Contents/MacOS/garage -> Garage.app
+    let bundleURL = execURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let runtime = GaragePythonRuntime.shared
+    if bundleURL.pathExtension == "app" {
+        runtime.setAppBundle(url: bundleURL)
+    }
+    switch runtime.initializeIfNeeded() {
+    case .success(let env):
+        if ProcessInfo.processInfo.environment["GARAGE_DEBUG"] != nil || CommandLine.arguments.contains("--debug") {
+            fputs("[GARAGE_CLI] Python home: \(env.home.path)\n", stderr)
+        }
+        return true
+    case .failure(let error):
+        fputs("Error starting embedded Python: \(error.localizedDescription)\n", stderr)
+        return false
+    }
 }
 
 private func runCLI() {
@@ -109,85 +127,76 @@ private func runCLI() {
     defer {
         CLIOutputCapturer.shared.flush()
     }
-    setupPythonEnvironment()
-
-    let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    let binDir = execURL.deletingLastPathComponent()
-    let bundleURL = binDir.deletingLastPathComponent().deletingLastPathComponent()
+    guard setupPythonEnvironment() else {
+        CLIOutputCapturer.shared.flush()
+        exit(1)
+    }
 
     do {
-        let sys = try Python.attemptImport("sys")
+        try GaragePythonRuntime.shared.withGIL {
+            let sys = try Python.attemptImport("sys")
 
+            // Set sys.argv
+            sys.argv = PythonObject(CommandLine.arguments)
 
-        let sitePackagesCandidates = [
-            bundleURL.appendingPathComponent("Contents/Resources/site-python"),
-        ]
-
-        for spURL in sitePackagesCandidates {
-            if FileManager.default.fileExists(atPath: spURL.path) {
-                sys.path.insert(0, spURL.path)
+            // Ensure stdout, stderr, and stdin streams are handed to Python
+            do {
+                let io = try Python.attemptImport("io")
+                if sys.stdin == Python.None || Bool(Python.hasattr(sys.stdin, "read")) != true {
+                    let stdinObj = io.open(0, mode: "r", encoding: "utf-8", errors: "replace", closefd: false)
+                    sys.stdin = stdinObj
+                    sys.__stdin__ = stdinObj
+                }
+                if sys.stdout == Python.None || Bool(Python.hasattr(sys.stdout, "write")) != true {
+                    let stdoutObj = io.open(1, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
+                    sys.stdout = stdoutObj
+                    sys.__stdout__ = stdoutObj
+                }
+                if sys.stderr == Python.None || Bool(Python.hasattr(sys.stderr, "write")) != true {
+                    let stderrObj = io.open(2, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
+                    sys.stderr = stderrObj
+                    sys.__stderr__ = stderrObj
+                }
+            } catch {
+                fputs("Warning: Could not configure standard streams for Python: \(error)\n", stderr)
             }
-        }
 
-        // Set sys.argv
-        sys.argv = PythonObject(CommandLine.arguments)
-
-        // Ensure stdout, stderr, and stdin streams are handed to Python
-        do {
-            let io = try Python.attemptImport("io")
-            if sys.stdin == Python.None || Bool(Python.hasattr(sys.stdin, "read")) != true {
-                let stdinObj = io.open(0, mode: "r", encoding: "utf-8", errors: "replace", closefd: false)
-                sys.stdin = stdinObj
-                sys.__stdin__ = stdinObj
+            do {
+                let _ = try Python.attemptImport("site")
+            } catch {
+                fputs("Warning: Could not import site module: \(error)\n", stderr)
             }
-            if sys.stdout == Python.None || Bool(Python.hasattr(sys.stdout, "write")) != true {
-                let stdoutObj = io.open(1, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
-                sys.stdout = stdoutObj
-                sys.__stdout__ = stdoutObj
-            }
-            if sys.stderr == Python.None || Bool(Python.hasattr(sys.stderr, "write")) != true {
-                let stderrObj = io.open(2, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
-                sys.stderr = stderrObj
-                sys.__stderr__ = stderrObj
-            }
-        } catch {
-            fputs("Warning: Could not configure standard streams for Python: \(error)\n", stderr)
-        }
 
-        do {
-            let _ = try Python.attemptImport("site")
-        } catch {
-            fputs("Warning: Could not import site module: \(error)\n", stderr)
-        }
-
-        if ProcessInfo.processInfo.environment["GARAGE_DEBUG"] != nil || CommandLine.arguments.contains("--debug") {
-            fputs("[GARAGE_CLI] Dynamic Python: \(ProcessInfo.processInfo.environment["PYTHON_LIBRARY"] ?? "default")\n", stderr)
-            fputs("[GARAGE_CLI] Dynamic Postgres: \(ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"] ?? "default")\n", stderr)
-            fputs("[GARAGE_CLI] Python sys.path: \(sys.path)\n", stderr)
-        }
-
-        let cliModule: PythonObject
-        do {
-            cliModule = try Python.attemptImport("garage_rag.cli")
-        } catch {
-            if let tb = try? Python.attemptImport("traceback") {
-                _ = tb.print_exc()
+            if ProcessInfo.processInfo.environment["GARAGE_DEBUG"] != nil || CommandLine.arguments.contains("--debug") {
+                fputs("[GARAGE_CLI] Dynamic Python: \(ProcessInfo.processInfo.environment["PYTHON_LIBRARY"] ?? "default")\n", stderr)
+                fputs("[GARAGE_CLI] Dynamic Postgres: \(ProcessInfo.processInfo.environment["GARAGE_LIBPQ_PATH"] ?? "default")\n", stderr)
+                fputs("[GARAGE_CLI] Python sys.path: \(sys.path)\n", stderr)
             }
-            fputs("Error executing garage CLI: \(error)\n", stderr)
-            fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+
+            let cliModule: PythonObject
+            do {
+                cliModule = try Python.attemptImport("garage_rag.cli")
+            } catch {
+                if let tb = try? Python.attemptImport("traceback") {
+                    _ = tb.print_exc()
+                }
+                fputs("Error executing garage CLI: \(error)\n", stderr)
+                fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+                CLIOutputCapturer.shared.flush()
+                exit(1)
+            }
+            // Use the throwing call so Python exceptions surface as errors instead of PythonKit's `try!` trap.
+            let exitCode = Int(try cliModule.main_cli.throwing.dynamicallyCall(withArguments: [])) ?? 0
             CLIOutputCapturer.shared.flush()
-            exit(1)
+            exit(Int32(exitCode))
         }
-        let exitCode = Int(cliModule.main_cli()) ?? 0
-        CLIOutputCapturer.shared.flush()
-        exit(Int32(exitCode))
     } catch {
-        if let tb = try? Python.attemptImport("traceback") {
-            _ = tb.print_exc()
-        }
-        fputs("Error executing garage CLI: \(error)\n", stderr)
-        if let sys = try? Python.attemptImport("sys") {
-            fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+        // Traceback formatting and any other Python access must happen with the GIL held.
+        _ = try? GaragePythonRuntime.shared.withGIL {
+            fputs("Error executing garage CLI: \(GaragePythonRuntime.describe(error))\n", stderr)
+            if let sys = try? Python.attemptImport("sys") {
+                fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
+            }
         }
         CLIOutputCapturer.shared.flush()
         exit(1)

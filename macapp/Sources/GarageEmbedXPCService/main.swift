@@ -6,166 +6,42 @@ import PythonKit
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.embed-xpc", category: "GarageEmbedXPCService")
 
-private func installCrashHandlers() {
-    NSSetUncaughtExceptionHandler { exception in
-        let callStack = exception.callStackSymbols.joined(separator: "\n  ")
-        let msg = "CRITICAL: Uncaught NSException '\(exception.name.rawValue)': \(exception.reason ?? "none")\nUserInfo: \(String(describing: exception.userInfo))\nCall Stack:\n  \(callStack)\n"
-        fputs(msg, stderr)
-        fflush(stderr)
-        logger.fault("CRITICAL: Uncaught NSException '\(exception.name.rawValue, privacy: .public)': \(exception.reason ?? "none", privacy: .public)\nUserInfo: \(String(describing: exception.userInfo), privacy: .public)\nCall Stack:\n  \(callStack, privacy: .public)")
+final class GarageEmbedXPCServiceDelegate: GarageXPCServiceBase, GarageEmbedXPCServiceProtocol {
+    /// Embedding work can take a long time; keep it off the XPC listener thread.
+    private static let workerQueue = DispatchQueue(label: "me.rickmark.garage.embed.worker", qos: .userInitiated)
+
+    init() {
+        super.init(
+            serviceName: "GarageEmbedXPCService",
+            logFileName: "embed-xpc.log",
+            requiredPythonModules: ["grpc", "psycopg", "google.protobuf", "garage_rag"]
+        )
     }
 
-    let fatalSignals: [Int32] = [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGPIPE]
-    for sig in fatalSignals {
-        signal(sig) { signum in
-            let sigName: String
-            switch signum {
-            case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault)"
-            case SIGBUS: sigName = "SIGBUS (Bus Error)"
-            case SIGABRT: sigName = "SIGABRT (Abort)"
-            case SIGILL: sigName = "SIGILL (Illegal Instruction)"
-            case SIGFPE: sigName = "SIGFPE (Floating Point Exception)"
-            case SIGTRAP: sigName = "SIGTRAP (Trace/BPT Trap)"
-            case SIGPIPE: sigName = "SIGPIPE (Broken Pipe)"
-            default: sigName = "Signal \(signum)"
-            }
-
-            var dyldMsg = ""
-            if let errCStr = dlerror() {
-                dyldMsg = " | dyld error: \(String(cString: errCStr))"
-            }
-
-            let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
-            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
-            fputs(msg, stderr)
-            fflush(stderr)
-            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
-
-            signal(signum, SIG_DFL)
-            raise(signum)
-        }
-    }
-}
-
-final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, GarageEmbedXPCServiceProtocol {
-    private var isInitialized = false
-    private let initLock = NSLock()
-    private(set) var initializationError: String? = nil
-
-    private func initializePythonIfNeeded() {
-        initLock.lock()
-        defer { initLock.unlock() }
-        guard !isInitialized else { return }
-
-        do {
-            logger.info("Initializing Python runtime (using static linking - no dynamic library loading)...")
-            _ = try? Python.attemptImport("garage_rag.embed")
-        } catch {
-            var dyldError = ""
-            if let errCStr = dlerror() {
-                dyldError = "\ndyld error: \(String(cString: errCStr))"
-            }
-            let errorMsg = "Failed to initialize Python environment in GarageEmbedXPCService: \(error.localizedDescription)\(dyldError)"
-            initializationError = errorMsg
-            fputs("[DYLD_ERROR] \(errorMsg)\n", stderr)
-            fflush(stderr)
-            logger.error("\(errorMsg, privacy: .public)")
-        }
-        isInitialized = true
+    override var exportedInterface: NSXPCInterface {
+        NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
     }
 
-    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
-        newConnection.exportedInterface = NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
-        newConnection.exportedObject = self
-        GarageXPCOutputCapture.shared.addConnection(newConnection)
-        newConnection.invalidationHandler = { [weak newConnection] in
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.interruptionHandler = { [weak newConnection] in
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.resume()
-        return true
+    override func additionalSelfTests() -> [GarageXPCSelfTest] {
+        [
+            GarageXPCStandardSelfTests.serviceModule("garage_rag.embed", attributes: ["get_embedder", "embed_via_grpc"]),
+        ]
     }
 
-    func ping(with reply: @escaping (String) -> Void) {
-        if let initErr = initializationError {
-            reply("pong from GarageEmbedXPCService (with warning: \(initErr))")
-        } else {
-            reply("pong from GarageEmbedXPCService")
-        }
-    }
-
-    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
-        let name = "GarageEmbedXPCService"
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let uptime = ProcessInfo.processInfo.systemUptime
-        let status = initializationError == nil ? "ready" : "warning: \(initializationError!)"
-        reply(name, pid, uptime, status)
-    }
-
-    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        // Start accessing the bundle URL to extend sandbox access
-        _ = bundleURL.startAccessingSecurityScopedResource()
-        reply(true, nil)
-    }
-
-    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
-        initializePythonIfNeeded()
-        if let initErr = initializationError {
-            reply(false, "Python initialization error", initErr)
-            return
-        }
-        do {
-            let embedModule = try Python.attemptImport("garage_rag.embed")
-            let summary = "Embed module verified"
-            let details = "Successfully loaded embed module: \(embedModule)"
-            reply(true, summary, details)
-        } catch {
-            reply(false, "Failed to load embed module", error.localizedDescription)
-        }
-    }
-
-    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
-        reply(out, err)
-    }
-
-    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
-        reply(out, err, nil)
-    }
-
-    func clearLogs(with reply: @escaping (Bool) -> Void) {
-        GarageXPCOutputCapture.shared.clear()
-        reply(true)
-    }
-
-    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
-        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
-    }
-
-    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
-    }
+    // MARK: - GarageEmbedXPCServiceProtocol
 
     func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void) {
-        initializePythonIfNeeded()
-        if let initErr = initializationError {
-            reply(false, "Python initialization error: \(initErr)")
+        logger.info("embedTexts requested (\(texts.count, privacy: .public) text(s), model: \(model ?? "default", privacy: .public))")
+        guard ensurePythonReady() else {
+            reply(false, "Python initialization error: \(runtime.statusSnapshot().error ?? "unavailable")")
             return
         }
-        Task {
-            do {
+        Self.workerQueue.async { [self] in
+            let result = withPython { () -> String in
                 let sampleTexts = texts.isEmpty ? ["Garage local retrieval-augmented generation test."] : texts
                 let embedModule = try Python.attemptImport("garage_rag.embed")
                 var details = "Embed module loaded successfully."
-                
+
                 if embedModule.get_embedder != Python.None {
                     let targetModel = model ?? "llama_xpc:mxbai-embed-xsmall"
                     let provider: String
@@ -177,7 +53,7 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                         provider = "llama_xpc"
                         modelRef = targetModel
                     }
-                    
+
                     let embedder = try embedModule.get_embedder.throwing.dynamicallyCall(withArguments: [provider, modelRef])
                     if embedder.embed != Python.None {
                         let pyTexts = PythonObject(sampleTexts)
@@ -190,8 +66,12 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
                         details = "Embedded \(sampleTexts.count) text(s) with provider '\(provider)' and model '\(modelRef)' successfully. Generated \(count) vector(s) of dimension \(dims)."
                     }
                 }
+                return details
+            }
+            switch result {
+            case .success(let details):
                 reply(true, details)
-            } catch {
+            case .failure(let error):
                 let errDetails = "Embed execution failed: \(error.localizedDescription)"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
@@ -200,33 +80,38 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
     }
 
     func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void) {
-        initializePythonIfNeeded()
-        if let initErr = initializationError {
-            reply(false, "Python initialization error: \(initErr)")
+        logger.info("embedBatches requested (model: \(model ?? "default", privacy: .public), limit: \(limit, privacy: .public), batchSize: \(batchSize, privacy: .public))")
+        guard ensurePythonReady() else {
+            reply(false, "Python initialization error: \(runtime.statusSnapshot().error ?? "unavailable")")
             return
         }
-        Task {
-            do {
+        let host = grpcHost ?? "127.0.0.1"
+        let port = grpcPort > 0 ? grpcPort : 50051
+        mergeConfiguration([GarageXPCConfigurationKey.grpcHost: host, GarageXPCConfigurationKey.grpcPort: String(port)])
+
+        Self.workerQueue.async { [self] in
+            let result = withPython { () -> (Bool, String) in
                 let embedModule = try Python.attemptImport("garage_rag.embed")
-                if embedModule.embed_via_grpc != Python.None {
-                    let host = grpcHost ?? "127.0.0.1"
-                    let port = grpcPort > 0 ? grpcPort : 50051
-                    let pyModel = model != nil ? PythonObject(model!) : Python.None
-                    let pyLimit = limit > 0 ? PythonObject(limit) : Python.None
-                    let pyBatchSize = batchSize > 0 ? PythonObject(batchSize) : Python.None
-                    let resultDict = try await embedModule.embed_via_grpc.throwing.dynamicallyCall(withKeywordArguments: [
-                        ("model_slug", pyModel),
-                        ("limit", pyLimit),
-                        ("batch_size", pyBatchSize),
-                        ("grpc_host", PythonObject(host)),
-                        ("grpc_port", PythonObject(port))
-                    ])
-                    let message = String(resultDict["message"]) ?? "Embed via gRPC completed"
-                    reply(true, message)
-                } else {
-                    reply(false, "embed_via_grpc not found in garage_rag.embed")
+                guard embedModule.embed_via_grpc != Python.None else {
+                    return (false, "embed_via_grpc not found in garage_rag.embed")
                 }
-            } catch {
+                let pyModel = model != nil ? PythonObject(model!) : Python.None
+                let pyLimit = limit > 0 ? PythonObject(limit) : Python.None
+                let pyBatchSize = batchSize > 0 ? PythonObject(batchSize) : Python.None
+                let resultDict = try embedModule.embed_via_grpc.throwing.dynamicallyCall(withKeywordArguments: [
+                    ("model_slug", pyModel),
+                    ("limit", pyLimit),
+                    ("batch_size", pyBatchSize),
+                    ("grpc_host", PythonObject(host)),
+                    ("grpc_port", PythonObject(port))
+                ])
+                let message = String(resultDict["message"]) ?? "Embed via gRPC completed"
+                return (true, message)
+            }
+            switch result {
+            case .success(let (success, message)):
+                reply(success, message)
+            case .failure(let error):
                 let errDetails = "Embed via gRPC failed: \(error.localizedDescription)"
                 logger.error("\(errDetails, privacy: .public)")
                 reply(false, errDetails)
@@ -235,12 +120,8 @@ final class GarageEmbedXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Gara
     }
 }
 
-installCrashHandlers()
-GarageXPCOutputCapture.shared.configure(serviceName: "GarageEmbedXPCService", logFileName: "embed-xpc.log")
-GarageXPCOutputCapture.shared.startCapturing()
-logger.info("GarageEmbedXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
+// MARK: - Process Entry Point
+
 let delegate = GarageEmbedXPCServiceDelegate()
-let listener = NSXPCListener.service()
-listener.delegate = delegate
-listener.resume()
-RunLoop.main.run()
+delegate.bootstrap()
+delegate.run()

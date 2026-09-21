@@ -9,3 +9,11 @@ alias(
     actual = ":PythonKit",
     visibility = ["//visibility:public"],
 )
+
+# PythonKit is linked statically into PythonXPCService.framework; there is no
+# separate PythonKit.framework anymore. Kept for consumers using the old name.
+alias(
+    name = "PythonKit_swift",
+    actual = ":PythonKit",
+    visibility = ["//visibility:public"],
+)

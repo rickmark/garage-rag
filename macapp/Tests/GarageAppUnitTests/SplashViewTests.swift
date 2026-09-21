@@ -1,0 +1,57 @@
+import XCTest
+import SwiftUI
+import AppKit
+@testable import GarageApp
+
+final class SplashViewTests: XCTestCase {
+
+    func testLinksPointAtExpectedDestinations() {
+        XCTAssertEqual(SplashLinks.patreon.absoluteString, "https://www.patreon.com/rickmark")
+        XCTAssertEqual(SplashLinks.releases.absoluteString, "https://github.com/rickmark/garage-rag/releases")
+    }
+
+    func testVersionDisplayWithVersionAndDistinctBuild() {
+        let info = AppVersionInfo(shortVersion: "0.9", build: "42")
+        XCTAssertEqual(info.displayString, "Version 0.9 (build 42)")
+    }
+
+    func testVersionDisplayOmitsBuildWhenIdenticalToVersion() {
+        let info = AppVersionInfo(shortVersion: "0.9", build: "0.9")
+        XCTAssertEqual(info.displayString, "Version 0.9")
+    }
+
+    func testVersionDisplayWithVersionOnly() {
+        let info = AppVersionInfo(shortVersion: "0.9", build: nil)
+        XCTAssertEqual(info.displayString, "Version 0.9")
+    }
+
+    func testVersionDisplayWithBuildOnly() {
+        let info = AppVersionInfo(shortVersion: nil, build: "42")
+        XCTAssertEqual(info.displayString, "Build 42")
+    }
+
+    func testVersionDisplayFallsBackForMissingOrBlankValues() {
+        XCTAssertEqual(AppVersionInfo(shortVersion: nil, build: nil).displayString, "Development build")
+        XCTAssertEqual(AppVersionInfo(shortVersion: "  ", build: "").displayString, "Development build")
+    }
+
+    func testVersionInfoReadsFromBundle() {
+        // Whatever the test host reports, reading must not crash and must
+        // yield a non-empty display string.
+        XCTAssertFalse(AppVersionInfo(bundle: .main).displayString.isEmpty)
+    }
+
+    @MainActor
+    func testSplashViewRenders() {
+        let view = SplashView(version: AppVersionInfo(shortVersion: "1.2.3", build: "7"))
+        let controller = NSHostingController(rootView: view)
+        XCTAssertNotNil(controller.view)
+    }
+
+    @MainActor
+    func testLaunchGateStartsUnset() {
+        // Guards against the gate being accidentally pre-set, which would
+        // silently suppress the splash for the whole session.
+        XCTAssertFalse(SplashLaunchGate.hasPresented)
+    }
+}

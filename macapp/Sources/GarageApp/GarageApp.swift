@@ -16,6 +16,13 @@ struct GarageApp: App {
                 }
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Garage…") {
+                    showSplash()
+                }
+            }
+        }
 
         MenuBarExtra {
             MenuBarView()
@@ -24,6 +31,15 @@ struct GarageApp: App {
             Image(systemName: menuBarSymbol)
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// Brings the main window forward and asks it to present the splash.
+    private func showSplash() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.title == "Garage" {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NotificationCenter.default.post(name: .garageShowSplash, object: nil)
     }
 
     private var menuBarSymbol: String {

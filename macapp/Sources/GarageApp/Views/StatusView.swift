@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PythonXPCService
 
 @MainActor
 struct StatusView: View {
@@ -88,6 +89,9 @@ struct StatusView: View {
             Task {
                 await appState.scanSources()
                 await appState.xpcServices.refreshAll()
+                if appState.xpcServices.statusReports.isEmpty {
+                    await appState.xpcServices.refreshAllStatusReports()
+                }
             }
         }
         .onReceive(refreshTimer) { _ in
@@ -738,6 +742,7 @@ struct StatusView: View {
         let isExpanded = expandedServiceIds.contains(service.id)
         let isTesting = appState.xpcServices.testingServiceIds.contains(service.id)
         let diagResult = appState.xpcServices.diagnosticResults[service.id]
+        let statusReport = appState.xpcServices.statusReports[service.id]
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
@@ -792,6 +797,16 @@ struct StatusView: View {
 
                         if let latency = service.latencyMs {
                             badgeText(String(format: "%.1f ms", latency), bg: Color.green.opacity(0.12), fg: .green)
+                        }
+
+                        if let report = statusReport, !report.tests.isEmpty {
+                            let passedCount = report.tests.filter { $0.status == .passed }.count
+                            let hasFailures = !report.failedTests.isEmpty
+                            badgeText(
+                                "\(passedCount)/\(report.tests.count) tests passed",
+                                bg: (hasFailures ? Color.red : Color.green).opacity(0.12),
+                                fg: hasFailures ? .red : .green
+                            )
                         }
 
                         if service.state == .restarting {
@@ -887,6 +902,10 @@ struct StatusView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Divider()
 
+                    xpcServiceReportSection(for: service, report: statusReport)
+
+                    Divider()
+
                     let testInfo = diagnosticTestInfo(for: service.id)
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -976,6 +995,303 @@ struct StatusView: View {
         .padding(8)
         .background(Color.primary.opacity(0.02))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - In-Service Status Report, Self Tests & Managed Service Actions
+
+    private func xpcServiceReportSection(for service: XPCServiceInfo, report: GarageXPCStatusReport?) -> some View {
+        let isTesting = appState.xpcServices.testingServiceIds.contains(service.id)
+        let isRestarting = appState.xpcServices.restartingServiceIds.contains(service.id)
+        let actionsDisabled = isTesting || isRestarting || service.isChecking
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
+                Text("In-Service Diagnostics")
+                    .font(.caption.bold())
+
+                if let report = report {
+                    badgeText(report.lifecycle.uppercased(), bg: lifecycleColor(report.lifecycle).opacity(0.15), fg: lifecycleColor(report.lifecycle))
+                    badgeText("UP \(formatUptime(report.uptimeSeconds))", bg: Color.secondary.opacity(0.12), fg: .secondary)
+                    if let lastRun = report.lastTestRun {
+                        Text("Tests ran \(Date(timeIntervalSince1970: lastRun), style: .relative) ago")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Spacer()
+
+                if isRestarting {
+                    ProgressView().controlSize(.small)
+                }
+
+                Button {
+                    Task { _ = await appState.xpcServices.runServiceSelfTests(serviceId: service.id) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isTesting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "checklist")
+                        }
+                        Text("Run Tests")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(actionsDisabled)
+
+                Button {
+                    Task { _ = await appState.xpcServices.restartManagedServices(serviceId: service.id, graceful: true) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Restart Services")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(actionsDisabled)
+
+                Button {
+                    Task { _ = await appState.xpcServices.restartManagedServices(serviceId: service.id, graceful: false) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.circle")
+                        Text("Force Restart")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .disabled(actionsDisabled)
+
+                Button {
+                    Task { await appState.xpcServices.restart(serviceId: service.id) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "power.circle")
+                        Text("Restart Process")
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .disabled(actionsDisabled || appState.xpcServices.isRestartingAll)
+            }
+
+            if let report = report {
+                xpcPythonStatusLine(report.python)
+
+                if !report.services.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Managed Services")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                        ForEach(report.services, id: \.name) { managed in
+                            xpcManagedServiceRow(managed)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    let passedCount = report.tests.filter { $0.status == .passed }.count
+                    HStack(spacing: 6) {
+                        Text("Self Tests")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                        if !report.tests.isEmpty {
+                            Text("\(passedCount) of \(report.tests.count) passed")
+                                .font(.caption2)
+                                .foregroundStyle(report.allTestsPassed ? .green : .red)
+                        }
+                    }
+                    if report.tests.isEmpty {
+                        Text("No self tests have been reported yet. Use “Run Tests” to execute them.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(Array(report.tests.enumerated()), id: \.offset) { _, test in
+                            xpcSelfTestRow(test)
+                        }
+                    }
+                }
+
+                if !report.recentErrorLines.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Recent Errors (\(report.recentErrorLines.count))")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.red)
+                        monospacedTextBlock(report.recentErrorLines.joined(separator: "\n"), maxHeight: 200)
+                    }
+                }
+
+                if let crash = report.lastCrashReport, !crash.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.octagon.fill")
+                                .foregroundStyle(.red)
+                            Text("Crash Report")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.red)
+                        }
+                        monospacedTextBlock(crash, maxHeight: 200)
+                    }
+                }
+
+                if let logPath = report.logFilePath {
+                    Text("Log file: \(logPath)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+            } else {
+                Text("No status report received from this helper yet. Ping the service or run its tests to collect diagnostics.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func xpcPythonStatusLine(_ python: GarageXPCPythonStatus) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: python.error == nil ? "terminal" : "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(python.error == nil ? Color.secondary : Color.red)
+            if let error = python.error, !error.isEmpty {
+                Text("Python \(python.state): \(error)")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            } else {
+                Text(pythonSummaryLine(python))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func pythonSummaryLine(_ python: GarageXPCPythonStatus) -> String {
+        let version = python.version?.split(separator: " ").first.map { String($0) } ?? python.state
+        var line = "Python \(version)"
+        if let home = python.home, !home.isEmpty { line += " · home: \(home)" }
+        if let initMs = python.initializationMs { line += String(format: " · init %.0f ms", initMs) }
+        return line
+    }
+
+    private func xpcManagedServiceRow(_ managed: GarageXPCManagedServiceStatus) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(managedServiceColor(managed.state))
+                .frame(width: 7, height: 7)
+            Text(managed.name)
+                .font(.caption2.bold())
+            badgeText(managed.state.uppercased(), bg: managedServiceColor(managed.state).opacity(0.15), fg: managedServiceColor(managed.state))
+            if managed.restartCount > 0 {
+                Text("restarts: \(managed.restartCount)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.orange)
+            }
+            if let detail = managed.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+        }
+    }
+
+    private func xpcSelfTestRow(_ test: GarageXPCTestResult) -> some View {
+        let (icon, color): (String, Color) = {
+            switch test.status {
+            case .passed: return ("checkmark.circle", .green)
+            case .failed: return ("xmark.circle", .red)
+            case .skipped: return ("minus.circle", .gray)
+            }
+        }()
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundStyle(color)
+                Text(test.name)
+                    .font(.caption.bold())
+                Text(String(format: "%.1f ms", test.durationMs))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                Text(test.summary)
+                    .font(.caption2)
+                    .foregroundStyle(test.status == .failed ? .red : .secondary)
+                    .lineLimit(2)
+                Spacer()
+            }
+
+            if test.status == .failed {
+                if let error = test.errorMessage, !error.isEmpty {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                if !test.details.isEmpty {
+                    monospacedTextBlock(test.details, maxHeight: 160)
+                }
+            } else if !test.details.isEmpty {
+                DisclosureGroup {
+                    monospacedTextBlock(test.details, maxHeight: 120)
+                } label: {
+                    Text("Details")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(.leading, 2)
+    }
+
+    private func monospacedTextBlock(_ text: String, maxHeight: CGFloat) -> some View {
+        ScrollView {
+            Text(text)
+                .font(.system(.caption2, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .frame(maxHeight: maxHeight)
+        .padding(8)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func lifecycleColor(_ lifecycle: String) -> Color {
+        switch lifecycle.lowercased() {
+        case "ready": return .green
+        case "degraded": return .orange
+        case "failed": return .red
+        case "bootstrapping": return .blue
+        default: return .secondary
+        }
+    }
+
+    private func managedServiceColor(_ state: String) -> Color {
+        switch state.lowercased() {
+        case "running": return .green
+        case "starting", "restarting", "stopping": return .blue
+        case "failed": return .red
+        case "stopped": return .orange
+        default: return .secondary
+        }
+    }
+
+    private func formatUptime(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total)s" }
+        if total < 3600 { return "\(total / 60)m \(total % 60)s" }
+        if total < 86400 { return "\(total / 3600)h \((total % 3600) / 60)m" }
+        return "\(total / 86400)d \((total % 86400) / 3600)h"
     }
 
     private func diagnosticTestInfo(for serviceId: String) -> (name: String, description: String) {

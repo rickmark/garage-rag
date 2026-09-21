@@ -6,126 +6,51 @@ import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.model-download-xpc", category: "ModelDownloadXPCService")
 
-private func installCrashHandlers() {
-    NSSetUncaughtExceptionHandler { exception in
-        let callStack = exception.callStackSymbols.joined(separator: "\n  ")
-        let msg = "CRITICAL: Uncaught NSException '\(exception.name.rawValue)': \(exception.reason ?? "none")\nUserInfo: \(String(describing: exception.userInfo))\nCall Stack:\n  \(callStack)\n"
-        fputs(msg, stderr)
-        fflush(stderr)
-        logger.fault("CRITICAL: Uncaught NSException '\(exception.name.rawValue, privacy: .public)': \(exception.reason ?? "none", privacy: .public)\nUserInfo: \(String(describing: exception.userInfo), privacy: .public)\nCall Stack:\n  \(callStack, privacy: .public)")
-    }
-
-    let fatalSignals: [Int32] = [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGPIPE]
-    for sig in fatalSignals {
-        signal(sig) { signum in
-            let sigName: String
-            switch signum {
-            case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault)"
-            case SIGBUS: sigName = "SIGBUS (Bus Error)"
-            case SIGABRT: sigName = "SIGABRT (Abort)"
-            case SIGILL: sigName = "SIGILL (Illegal Instruction)"
-            case SIGFPE: sigName = "SIGFPE (Floating Point Exception)"
-            case SIGTRAP: sigName = "SIGTRAP (Trace/BPT Trap)"
-            case SIGPIPE: sigName = "SIGPIPE (Broken Pipe)"
-            default: sigName = "Signal \(signum)"
-            }
-
-            var dyldMsg = ""
-            if let errCStr = dlerror() {
-                dyldMsg = " | dyld error: \(String(cString: errCStr))"
-            }
-
-            let callStack = Thread.callStackSymbols.joined(separator: "\n  ")
-            let msg = "CRITICAL: Process received fatal signal \(sigName) (\(signum))\(dyldMsg).\nCall Stack:\n  \(callStack)\n"
-            fputs(msg, stderr)
-            fflush(stderr)
-            logger.fault("CRITICAL: Process received fatal signal \(sigName, privacy: .public) (\(signum))\(dyldMsg, privacy: .public). Call Stack:\n  \(callStack, privacy: .public)")
-
-            signal(signum, SIG_DFL)
-            raise(signum)
-        }
-    }
-}
-
-final class ModelDownloadXPCServiceDelegate: NSObject, NSXPCListenerDelegate, ModelDownloadXPCServiceProtocol {
+final class ModelDownloadXPCServiceDelegate: GarageXPCServiceBase, ModelDownloadXPCServiceProtocol {
     private let engine = ModelDownloaderEngine.shared
 
-    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        let clientPID = newConnection.processIdentifier
-        logger.info("Accepted incoming XPC connection from PID \(clientPID)")
-        newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
-        newConnection.exportedInterface = NSXPCInterface(with: ModelDownloadXPCServiceProtocol.self)
-        newConnection.exportedObject = self
-        GarageXPCOutputCapture.shared.addConnection(newConnection)
-        newConnection.invalidationHandler = { [weak newConnection] in
-            logger.info("XPC connection from PID \(clientPID) invalidated")
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.interruptionHandler = { [weak newConnection] in
-            logger.warning("XPC connection from PID \(clientPID) interrupted")
-            if let conn = newConnection {
-                GarageXPCOutputCapture.shared.removeConnection(conn)
-            }
-        }
-        newConnection.resume()
-        return true
+    init() {
+        super.init(
+            serviceName: "ModelDownloadXPCService",
+            logFileName: "model-download-xpc.log",
+            usesPython: false
+        )
     }
 
-    func ping(with reply: @escaping (String) -> Void) {
-        logger.debug("Handling ping request")
-        reply("pong from ModelDownloadXPCService")
+    override var exportedInterface: NSXPCInterface {
+        NSXPCInterface(with: ModelDownloadXPCServiceProtocol.self)
     }
 
-    func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
-        let name = "ModelDownloadXPCService"
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let uptime = ProcessInfo.processInfo.systemUptime
-        let activeCount = engine.listDownloads().filter { $0.status == .downloading }.count
-        let status = activeCount > 0 ? "downloading (\(activeCount) active)" : "idle"
-        logger.debug("Returning service info: name=\(name, privacy: .public), pid=\(pid), uptime=\(uptime), status=\(status, privacy: .public)")
-        reply(name, pid, uptime, status)
+    override func additionalSelfTests() -> [GarageXPCSelfTest] {
+        let engine = self.engine
+        return [
+            GarageXPCSelfTest(name: "Models Directory", description: "Models directory exists and is writable.", requiresPython: false) {
+                let path = engine.getModelsDirectoryPath()
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                    throw GarageXPCSelfTestFailure("Models directory does not exist: \(path)")
+                }
+                let probe = URL(fileURLWithPath: path).appendingPathComponent(".write-probe-\(ProcessInfo.processInfo.processIdentifier)")
+                do {
+                    try "ok".write(to: probe, atomically: true, encoding: .utf8)
+                    try? FileManager.default.removeItem(at: probe)
+                } catch {
+                    throw GarageXPCSelfTestFailure("Models directory is not writable: \(path)", details: error.localizedDescription)
+                }
+                let models = engine.listDownloadedModels(directoryPath: nil)
+                return "Models directory: \(path)\nDownloaded models: \(models.count)"
+            },
+            GarageXPCSelfTest(name: "Download Tasks", description: "Reports the state of the model downloader task queue.", requiresPython: false) {
+                let downloads = engine.listDownloads()
+                let active = downloads.filter { $0.status == .downloading }.count
+                let paused = downloads.filter { $0.status == .paused }.count
+                let failed = downloads.filter { $0.status == .failed }.count
+                return "Total tasks: \(downloads.count), Active: \(active), Paused: \(paused), Failed: \(failed)"
+            },
+        ]
     }
 
-    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        _ = bundleURL.startAccessingSecurityScopedResource()
-        reply(true, nil)
-    }
-
-    func runDiagnostic(with reply: @escaping (Bool, String?, String?) -> Void) {
-        let downloads = engine.listDownloads()
-        let active = downloads.filter { $0.status == .downloading }.count
-        let summary = "Model downloader service is healthy (\(active) active downloads)"
-        let details = "Total tasks: \(downloads.count), Active: \(active)"
-        reply(true, summary, details)
-    }
-
-    func fetchLogs(with reply: @escaping (String?, String?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: false)
-        reply(out, err)
-    }
-
-    func fetchBufferedOutput(clearBuffer: Bool, with reply: @escaping (String?, String?, Error?) -> Void) {
-        let (out, err) = GarageXPCOutputCapture.shared.fetchLogs(clearBuffer: clearBuffer)
-        reply(out, err, nil)
-    }
-
-    func clearLogs(with reply: @escaping (Bool) -> Void) {
-        logger.debug("Clearing captured output logs")
-        GarageXPCOutputCapture.shared.clear()
-        reply(true)
-    }
-
-    func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
-        logger.debug("Handling gRPC call over XPC: service=\(service, privacy: .public), method=\(method, privacy: .public)")
-        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
-    }
-
-    func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        logger.debug("Handling RPC over XPC: method=\(method, privacy: .public)")
-        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
-    }
+    // MARK: - ModelDownloadXPCServiceProtocol
 
     func startDownload(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
         do {
@@ -247,12 +172,8 @@ final class ModelDownloadXPCServiceDelegate: NSObject, NSXPCListenerDelegate, Mo
     }
 }
 
-installCrashHandlers()
-GarageXPCOutputCapture.shared.configure(serviceName: "ModelDownloadXPCService", logFileName: "model-download-xpc.log")
-GarageXPCOutputCapture.shared.startCapturing()
-logger.info("ModelDownloadXPCService starting up (PID: \(ProcessInfo.processInfo.processIdentifier))...")
+// MARK: - Process Entry Point
+
 let delegate = ModelDownloadXPCServiceDelegate()
-let listener = NSXPCListener.service()
-listener.delegate = delegate
-listener.resume()
-RunLoop.main.run()
+delegate.bootstrap()
+delegate.run()

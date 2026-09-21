@@ -163,6 +163,32 @@ done
 """,
 )
 
+# Standalone client library, embedded into the app as `Contents/Frameworks/libpq.dylib`
+# (signed by //macapp/externals:libpq) and loaded by psycopg through ctypes. The install
+# name is normalised to `@rpath/libpq.dylib` so the same binary works from any location.
+genrule(
+    name = "libpq_dylib",
+    srcs = [":postgres"],
+    outs = ["libpq.dylib"],
+    cmd = """
+src=""
+for f in $(locations :postgres); do
+    case "$$(basename "$$f")" in
+        libpq.5.dylib) src="$$f"; break ;;
+        libpq.dylib) [ -z "$$src" ] && src="$$f" ;;
+    esac
+done
+if [ -z "$$src" ]; then
+    echo "libpq_dylib: libpq.dylib not found in //ext/postgres:postgres outputs" >&2
+    exit 1
+fi
+cp -L "$$src" "$@"
+chmod u+w "$@"
+/usr/bin/install_name_tool -id "@rpath/libpq.dylib" "$@"
+""",
+    visibility = ["//visibility:public"],
+)
+
 cc_import(
     name = "libpq_import",
     static_library = ":libpq_a",

@@ -26,6 +26,8 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @State private var selection: AppSection? = .status
+    @State private var isSplashPresented = false
+    @AppStorage(SplashPreferences.showAtLaunchKey) private var showSplashAtLaunch = true
 
     var body: some View {
         NavigationSplitView {
@@ -45,5 +47,22 @@ struct ContentView: View {
             case .logs: LogsView()
             }
         }
+        .onAppear(perform: presentSplashAtLaunchIfNeeded)
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in
+            isSplashPresented = true
+        }
+        .sheet(isPresented: $isSplashPresented) {
+            SplashView()
+        }
+    }
+
+    /// Shows the splash once per launch unless the user turned it off (or we
+    /// are running under XCTest, where a modal sheet would get in the way).
+    private func presentSplashAtLaunchIfNeeded() {
+        guard showSplashAtLaunch,
+              !isRunningInTestEnvironment,
+              !SplashLaunchGate.hasPresented else { return }
+        SplashLaunchGate.hasPresented = true
+        isSplashPresented = true
     }
 }

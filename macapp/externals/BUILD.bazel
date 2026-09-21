@@ -47,6 +47,21 @@ codesign(
     visibility = ["//visibility:public"],
 )
 
+# PostgreSQL client library shipped as `Contents/Frameworks/libpq.dylib`. psycopg's pure
+# Python implementation loads it through ctypes; it must carry the app's Team ID
+# (hardened runtime / library validation rejects the Homebrew copy) and the runtime option.
+codesign(
+    name = "libpq",
+    src = "//ext/postgres:libpq_dylib",
+    out = "libpq.dylib",
+    options = ["runtime"],
+    signing_identity = select({
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    }),
+    visibility = ["//visibility:public"],
+)
+
 copy_to_directory(
     name = "schema_output",
     srcs = [

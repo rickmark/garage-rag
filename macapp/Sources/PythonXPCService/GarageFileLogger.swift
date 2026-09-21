@@ -26,24 +26,62 @@ public final class GarageFileLogger: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Resolves the base directory for log files.
-    /// Prefers the shared App Group container so all sandboxed XPC services and host app write to the same location.
-    public static var logsDirectoryURL: URL {
-        if let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.me.rickmark.garage-rag") {
-            let logsDir = container.appendingPathComponent("logs", isDirectory: true)
-            if (try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)) != nil {
+    /// Name of the folder created below `~/Library/Logs` (or the group container's `Library/Logs`).
+    public static let logsFolderName = "Garage"
+
+    /// App Group shared by the host application and its XPC helpers.
+    public static let appGroupIdentifier = "group.me.rickmark.garage-rag"
+
+    private static let resolvedLogsDirectory: URL = {
+        let fm = FileManager.default
+
+        func usable(_ url: URL) -> Bool {
+            if (try? fm.createDirectory(at: url, withIntermediateDirectories: true)) == nil {
+                return false
+            }
+            return fm.isWritableFile(atPath: url.path)
+        }
+
+        // 1. Standard per-user location. Inside the App Sandbox this resolves to the container's
+        //    `Library/Logs`, which Console.app and `log collect` still pick up.
+        if let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            let logsDir = library.appendingPathComponent("Logs", isDirectory: true).appendingPathComponent(logsFolderName, isDirectory: true)
+            if usable(logsDir) {
                 return logsDir
             }
         }
-        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        // 2. Shared App Group container so the host app and every XPC service write to the same place
+        //    even when their individual containers differ (App Store builds).
+        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            let logsDir = container.appendingPathComponent("Library/Logs", isDirectory: true).appendingPathComponent(logsFolderName, isDirectory: true)
+            if usable(logsDir) {
+                return logsDir
+            }
+        }
+        // 3. Application Support fallback.
+        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             let logsDir = appSupport.appendingPathComponent("GarageApp/logs", isDirectory: true)
-            if (try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)) != nil {
+            if usable(logsDir) {
                 return logsDir
             }
         }
         let tempLogs = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("garage-logs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tempLogs, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: tempLogs, withIntermediateDirectories: true)
         return tempLogs
+    }()
+
+    /// Resolves the base directory for log files.
+    ///
+    /// Order of preference: `~/Library/Logs/Garage` (standard macOS location, container-relative when
+    /// sandboxed), the shared App Group container, `~/Library/Application Support/GarageApp/logs`, and
+    /// finally a temporary directory. The result is computed once per process.
+    public static var logsDirectoryURL: URL {
+        resolvedLogsDirectory
+    }
+
+    /// Full path of a log file inside `logsDirectoryURL`.
+    public static func logFileURL(named fileName: String) -> URL {
+        logsDirectoryURL.appendingPathComponent(fileName)
     }
 
     /// Appends a raw or structured log line to a specified log file.

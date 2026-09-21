@@ -4,7 +4,15 @@ load("//bazel:codesign.bzl", "codesign")
 swift_binary(
     name = "garage_bin",
     srcs = ["main.swift"],
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
     linkopts = [
+        # Link the bundled Python.framework directly (PyConfig embedding API); resolved at runtime via the
+        # @executable_path/../Frameworks rpath below.
+        "-F$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
         "-Xlinker",
         "-rpath",
         "-Xlinker",
@@ -25,6 +33,9 @@ swift_binary(
     deps = [
         "//ext/python:python_3_13_framework",
         "//ext/pythonkit:PythonKit_swift",
+        # Shared PyConfig-based interpreter start-up (isolated home / sys.path from Resources/site-python).
+        # Linked statically; the CLI does not load PythonXPCService.framework at runtime.
+        "//macapp/Sources/PythonXPCService:PythonXPCService_swift",
     ],
 )
 
