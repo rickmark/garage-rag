@@ -54,6 +54,8 @@ struct StatusView: View {
     @State private var grpcTestResult: (isSuccess: Bool, summary: String, details: String, durationMs: Double)? = nil
     @State private var isTestingGrpc: Bool = false
     @State private var copiedServiceId: String? = nil
+    @State private var quickAddingModelSlug: String? = nil
+    @State private var quickAddingSourceSlug: String? = nil
 
     var body: some View {
         ScrollView {
@@ -61,6 +63,14 @@ struct StatusView: View {
                 systemHealthHeader
 
                 corpusOverviewSection
+
+                if showDefaultSourcesQuickAdd {
+                    defaultSourcesQuickAddSection
+                }
+
+                if showFeaturedModelsQuickAdd {
+                    featuredModelsQuickAddSection
+                }
 
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(sortedStatusItems) { item in
@@ -175,6 +185,204 @@ struct StatusView: View {
 
     private var effectiveSourcesCount: Int {
         max(appState.registeredSources.count, appState.corpusStats.sourcesCount)
+    }
+
+    // MARK: - Default Sources Quick Add (Empty State)
+
+    private struct QuickSourcePreset: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let slug: String
+        let root: String
+        let kind: String
+        let corpusClass: String
+        let trust: String
+    }
+
+    private var quickSourcePresets: [QuickSourcePreset] {
+        var presets: [QuickSourcePreset] = [
+            QuickSourcePreset(id: "documents", title: "Documents", subtitle: "~/Documents", slug: "documents", root: "~/Documents", kind: "filesystem", corpusClass: "document", trust: "authored"),
+            QuickSourcePreset(id: "apple-sms", title: "Messages (sms.db)", subtitle: "~/Library/Messages", slug: "apple-sms", root: "~/Library/Messages", kind: "sqlite", corpusClass: "communication", trust: "received")
+        ]
+        let dropboxPath = ("~/Dropbox" as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: dropboxPath) {
+            presets.append(QuickSourcePreset(id: "dropbox", title: "Dropbox", subtitle: "~/Dropbox", slug: "dropbox", root: "~/Dropbox", kind: "filesystem", corpusClass: "document", trust: "authored"))
+        }
+        return presets
+    }
+
+    private var showDefaultSourcesQuickAdd: Bool {
+        appState.postgres.status == .running && appState.registeredSources.isEmpty
+    }
+
+    private var defaultSourcesQuickAddSection: some View {
+        GroupBox("Get Started: Add a Source") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("No sources are configured yet. Add one of these common locations to start indexing, or configure a custom source on the Sources page.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(quickSourcePresets) { preset in
+                        quickSourceCard(for: preset)
+                    }
+                }
+
+                Button {
+                    selection = .sources
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Configure Custom Source")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+            }
+            .padding(8)
+        }
+    }
+
+    private func quickSourceCard(for preset: QuickSourcePreset) -> some View {
+        let isAdding = quickAddingSourceSlug == preset.slug
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(preset.title)
+                .font(.subheadline.bold())
+            Text(preset.subtitle)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+            Button {
+                addQuickSource(preset)
+            } label: {
+                if isAdding {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Add")
+                }
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .disabled(quickAddingSourceSlug != nil)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func addQuickSource(_ preset: QuickSourcePreset) {
+        quickAddingSourceSlug = preset.slug
+        let args = ["add-source", preset.slug, preset.root, "--kind", preset.kind, "--class", preset.corpusClass, "--trust", preset.trust]
+        Task {
+            await appState.runGarage(args)
+            await appState.fetchRegisteredSources()
+            quickAddingSourceSlug = nil
+        }
+    }
+
+    // MARK: - Featured Models Quick Add (Empty State)
+
+    private var featuredModelPresets: [ModelPresetEntry] {
+        appState.presetModels.filter { $0.featured }
+    }
+
+    private var showFeaturedModelsQuickAdd: Bool {
+        appState.postgres.status == .running && appState.registeredModels.isEmpty && !featuredModelPresets.isEmpty
+    }
+
+    private var featuredModelsQuickAddSection: some View {
+        GroupBox("Get Started: Add a Model") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("No embedding models are registered yet. Add one of these recommended models to enable chunk embedding and search.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 8) {
+                    ForEach(featuredModelPresets) { preset in
+                        featuredModelCard(for: preset)
+                    }
+                }
+
+                Button {
+                    selection = .models
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("See All Models")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+            }
+            .padding(8)
+        }
+    }
+
+    private func featuredModelCard(for preset: ModelPresetEntry) -> some View {
+        let isAdding = quickAddingModelSlug == preset.slug
+
+        return HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(preset.name)
+                        .font(.subheadline.bold())
+                    badgeText("FEATURED", bg: Color.green.opacity(0.15), fg: .green)
+                    if preset.effectiveDims > 0 {
+                        badgeText("\(preset.effectiveDims) DIMS", bg: Color.blue.opacity(0.12), fg: .blue)
+                    }
+                }
+
+                if let description = preset.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let useCases = preset.useCases, !useCases.isEmpty {
+                    Text("Use cases: \(useCases.joined(separator: ", "))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                addFeaturedModel(preset)
+            } label: {
+                if isAdding {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Add Model")
+                }
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .disabled(quickAddingModelSlug != nil)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func addFeaturedModel(_ preset: ModelPresetEntry) {
+        quickAddingModelSlug = preset.slug
+        var args = ["register-model", preset.slug, "--provider", preset.provider ?? "llama_xpc"]
+        if preset.effectiveDims > 0 {
+            args += ["--dims", "\(preset.effectiveDims)"]
+        }
+        if let ref = preset.modelRef, !ref.isEmpty, ref != preset.slug {
+            args += ["--model-ref", ref]
+        }
+        Task {
+            await appState.runGarage(args)
+            await appState.fetchRegisteredModels()
+            quickAddingModelSlug = nil
+        }
     }
 
     private var sourcesMetricCard: some View {
