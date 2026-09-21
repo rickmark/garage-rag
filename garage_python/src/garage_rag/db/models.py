@@ -199,10 +199,16 @@ class Chunk(Base):
     heading_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_sha256: Mapped[bytes] = mapped_column(LargeBinary)
     chunker: Mapped[str] = mapped_column(Text)
+    # Set when this chunk is a fact's text rather than a slice of
+    # documents.content, so the fact can be embedded like any other chunk.
+    fact_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True
+    )
     # `tsv` is a generated column; it is read-only from the ORM's perspective and
     # is intentionally not mapped.
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+    fact: Mapped[Fact | None] = relationship(back_populates="chunk")
 
     __table_args__ = (
         UniqueConstraint("document_id", "ord", name="chunks_ord_unique"),
@@ -228,6 +234,11 @@ class Fact(Base):
     # intentionally not mapped.
 
     document: Mapped[Document] = relationship(back_populates="facts")
+    # The chunk carrying this fact's embeddings, if it has been queued for
+    # embedding. Deletion is DB-driven (chunks.fact_id ON DELETE CASCADE), not
+    # ORM-driven, so the chunk row -- and its vectors in every per-model
+    # embedding table -- disappear even on a bulk/raw-SQL fact delete.
+    chunk: Mapped[Chunk | None] = relationship(back_populates="fact", uselist=False, passive_deletes=True)
 
     __table_args__ = (
         UniqueConstraint("document_id", "ord", name="facts_ord_unique"),

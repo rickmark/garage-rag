@@ -10,18 +10,27 @@ both explicitly rather than relying on that default.
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
 for "facts" in the abstract rather than anything domain-specific.
+
+Each stored fact is also, optionally, given a ``chunks`` row of its own
+(``chunks.fact_id``). That is the entire embedding story: a chunk is a chunk
+regardless of where its text came from, so ``embed.ollama.backfill_model``
+picks up a fact's chunk the same anti-join pass it already uses for content
+chunks, and every registered embedding model ends up with a vector for it --
+with no fact-specific embedding path to write or maintain.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import textwrap
 
 import langextract as lx
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
-from garage_rag.db.models import Document, Fact
+from garage_rag.db.models import Chunk, Document, Fact
 
 log = logging.getLogger(__name__)
 
@@ -113,18 +122,44 @@ def facts_from_extractions(
     return facts
 
 
+def chunk_for_fact(fact: Fact, *, ord: int, model_id: str = DEFAULT_MODEL_ID) -> Chunk:
+    """Build the ``chunks`` row that gets a fact embedded.
+
+    A fact's chunk carries nothing but its own text -- no heading path, no
+    span into ``documents.content`` (that belongs to the fact itself, via
+    ``char_start``/``char_end``). ``fact.id`` must already be set, i.e. the
+    fact has been flushed.
+    """
+    return Chunk(
+        document_id=fact.document_id,
+        ord=ord,
+        text=fact.fact,
+        chunk_sha256=hashlib.sha256(fact.fact.encode("utf-8")).digest(),
+        chunker=f"facts:langextract:{model_id}",
+        fact_id=fact.id,
+    )
+
+
 def extract_and_store_facts(
     session: Session,
     document: Document,
     *,
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
+    queue_for_embedding: bool = True,
 ) -> list[Fact]:
     """Extract facts for ``document`` and replace its ``facts`` rows.
 
     Re-extraction is idempotent: existing facts for the document are deleted
     before the new ones are inserted, the same replace-on-rebuild pattern
-    ``ingest`` uses when a document's chunks are rebuilt.
+    ``ingest`` uses when a document's chunks are rebuilt. Deleting a fact
+    cascades (``chunks.fact_id`` is ``ON DELETE CASCADE``) into its chunk and,
+    from there, into every per-model embedding table, so a re-extraction never
+    leaves a stale fact vector behind.
+
+    When ``queue_for_embedding`` is true (the default), each new fact also
+    gets a ``chunks`` row appended after the document's existing chunks, ready
+    for ``embed.ollama.backfill_model`` to pick up.
     """
     if not document.content:
         return []
@@ -135,4 +170,18 @@ def extract_and_store_facts(
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     facts = facts_from_extractions(document.id, extractions, model_id=model_id)
     session.add_all(facts)
+
+    if queue_for_embedding and facts:
+        # Facts need ids before a chunk can reference one via fact_id.
+        session.flush()
+        base_ord = (
+            session.query(func.coalesce(func.max(Chunk.ord), -1))
+            .filter(Chunk.document_id == document.id)
+            .scalar()
+            + 1
+        )
+        session.add_all(
+            chunk_for_fact(fact, ord=base_ord + i, model_id=model_id) for i, fact in enumerate(facts)
+        )
+
     return facts
