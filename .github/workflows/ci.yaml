@@ -49,7 +49,15 @@ jobs:
           # lifts it to 5000/hour. Reaches the action through the
           # --action_env in .bazelrc's `ci` config.
           SCIENCE_AUTH_API_GITHUB_COM_BEARER: ${{ github.token }}
-        run: aspect test --task:name test -- //...
+        # //macapp holds only distribution artifacts (Garage.app,
+        # GarageStore.app, GarageStore.xcarchive, the xcodeproj, and aliases to
+        # //macapp/package). Anything there that transitions onto the appstore
+        # platform drags shared targets like //garage_python:site-packages into
+        # a configuration where //bazel:is_store selects the "Apple
+        # Distribution" identity, which no ephemeral runner has. The code those
+        # bundles wrap is still covered: //macapp/Sources/... and
+        # //macapp/Tests/... are their own packages and stay in the pattern.
+        run: aspect test --task:name test -- //... -//macapp:all
 
   gazelle:
     runs-on: macos-latest
