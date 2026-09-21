@@ -44,9 +44,9 @@ configure_make(
 
 extract_foreign_cc_file(
     name = "libreadline_dylib",
-    target = ":libreadline_shared",
-    filename = "libreadline.8.dylib",
     out = "lib/libreadline.8.dylib",
+    filename = "libreadline.8.dylib",
+    target = ":libreadline_shared",
 )
 
 filegroup(

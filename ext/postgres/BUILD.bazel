@@ -117,13 +117,13 @@ done
 
 install_name(
     name = "postgres_rpath",
+    visibility = ["//visibility:public"],
     deps = [
         ":postgres",
         "//ext/libicu:libicu_dylibs",
         "//ext/libreadline:libreadline_dylibs",
         "//ext/libzlib:libzlib_dylibs",
     ],
-    visibility = ["//visibility:public"],
 )
 
 genrule(
@@ -233,13 +233,13 @@ cc_import(
 
 cc_library(
     name = "libpq",
+    visibility = ["//visibility:public"],
     deps = [
-        ":libpq_import",
         ":libpgcommon_import",
         ":libpgport_import",
+        ":libpq_import",
         "//ext:libicu",
         "//ext:libreadline",
         "//ext:libzlib",
     ],
-    visibility = ["//visibility:public"],
 )

@@ -57,37 +57,37 @@ configure_make(
 
 extract_foreign_cc_file(
     name = "libicudata_dylib",
-    target = ":libicu_shared",
-    filename = "libicudata.76.dylib",
     out = "lib/libicudata.76.dylib",
+    filename = "libicudata.76.dylib",
+    target = ":libicu_shared",
 )
 
 extract_foreign_cc_file(
     name = "libicui18n_dylib",
-    target = ":libicu_shared",
-    filename = "libicui18n.76.dylib",
     out = "lib/libicui18n.76.dylib",
+    filename = "libicui18n.76.dylib",
+    target = ":libicu_shared",
 )
 
 extract_foreign_cc_file(
     name = "libicuio_dylib",
-    target = ":libicu_shared",
-    filename = "libicuio.76.dylib",
     out = "lib/libicuio.76.dylib",
+    filename = "libicuio.76.dylib",
+    target = ":libicu_shared",
 )
 
 extract_foreign_cc_file(
     name = "libicutu_dylib",
-    target = ":libicu_shared",
-    filename = "libicutu.76.dylib",
     out = "lib/libicutu.76.dylib",
+    filename = "libicutu.76.dylib",
+    target = ":libicu_shared",
 )
 
 extract_foreign_cc_file(
     name = "libicuuc_dylib",
-    target = ":libicu_shared",
-    filename = "libicuuc.76.dylib",
     out = "lib/libicuuc.76.dylib",
+    filename = "libicuuc.76.dylib",
+    target = ":libicu_shared",
 )
 
 filegroup(

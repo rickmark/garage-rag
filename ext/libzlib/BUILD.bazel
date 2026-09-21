@@ -42,9 +42,9 @@ configure_make(
 
 extract_foreign_cc_file(
     name = "libz_dylib",
-    target = ":libzlib_shared",
-    filename = "libz.1.dylib",
     out = "lib/libz.1.dylib",
+    filename = "libz.1.dylib",
+    target = ":libzlib_shared",
 )
 
 filegroup(
