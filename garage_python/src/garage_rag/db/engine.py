@@ -12,8 +12,6 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-import psycopg
-from pgvector.psycopg import register_vector
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -30,6 +28,12 @@ def get_engine() -> Engine:
     global _engine
     if _engine is not None:
         return _engine
+
+    # Imported here, not at module scope: psycopg loads libpq on import, and
+    # importing this module (search, ops, the gRPC service) must not need a
+    # database driver until something actually connects.
+    import psycopg
+    from pgvector.psycopg import register_vector
 
     settings = get_settings()
     engine = create_engine(

@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 from typing import Annotated
 
-import psycopg
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -1517,6 +1516,15 @@ def serve(
     serve_grpc(host=host, port=port)
 
 
+def _is_database_error(exc: BaseException) -> bool:
+    """A SQLAlchemy or psycopg error. psycopg is consulted only if it was loaded:
+    an exception cannot come from a driver that was never imported."""
+    if isinstance(exc, DBAPIError):
+        return True
+    psycopg = sys.modules.get("psycopg")
+    return psycopg is not None and isinstance(exc, psycopg.Error)
+
+
 def _pgvector_library_hint(exc: BaseException) -> str | None:
     """If ``exc`` was caused by Postgres failing to load the pgvector native
     library (SQLSTATE 58P01, "could not access file ..."), return an
@@ -1527,7 +1535,9 @@ def _pgvector_library_hint(exc: BaseException) -> str | None:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, psycopg.errors.UndefinedFile):
+        # SQLSTATE 58P01 (psycopg.errors.UndefinedFile), read off the exception
+        # so the CLI imports without a database driver.
+        if getattr(current, "sqlstate", None) == "58P01":
             return (
                 "Postgres could not load the pgvector extension's native library "
                 f"({current}). The 'vector' type is registered but its shared "
@@ -1572,7 +1582,9 @@ def main_cli() -> int:
         return 0
     except SystemExit as se:
         return se.code if isinstance(se.code, int) else 0
-    except (DBAPIError, psycopg.Error) as exc:
+    except Exception as exc:
+        if not _is_database_error(exc):
+            raise
         hint = _pgvector_library_hint(exc)
         log.error("database error: %s", exc, exc_info=True)
         console.print(f"[red]database error[/red]: {hint or exc}")

@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import psycopg
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -20,6 +19,18 @@ from sqlalchemy.orm import Session
 from garage_rag.config import get_settings, repo_root
 
 log = logging.getLogger(__name__)
+
+
+def _connect(conninfo: str):
+    """A direct autocommit connection (DDL, extension creation, reachability checks).
+
+    psycopg is imported here rather than at module scope: it loads libpq on
+    import, and modules that only reference the migration helpers (the gRPC
+    service, status checks) must import without a database driver.
+    """
+    import psycopg
+
+    return psycopg.connect(conninfo, autocommit=True)
 
 
 def sql_dir() -> Path:
@@ -81,7 +92,7 @@ def init_extensions(database_url: str | None = None, schema_dir: Path | None = N
     files = migration_files(schema_dir)
     extension_files = [f for f in files if is_extension_migration(f)]
 
-    with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+    with _connect(url) as conn, conn.cursor() as cur:
         # Ensure schema_migrations table exists
         cur.execute(
             """
@@ -149,7 +160,7 @@ def apply_migrations(
     else:
         if remaining_files:
             conninfo = to_psycopg_conninfo(raw_url)
-            with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
+            with _connect(conninfo) as conn, conn.cursor() as cur:
                 for path in remaining_files:
                     log.info("applying %s", path.name)
                     cur.execute(path.read_text(encoding="utf-8"))
@@ -175,7 +186,7 @@ def pending_migrations(
     files = migration_files(schema_dir)
 
     try:
-        with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+        with _connect(url) as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
                 "WHERE table_schema = 'public' AND table_name = 'schema_migrations');"
@@ -231,8 +242,8 @@ def database_exists(url: str) -> bool:
     """Whether the target database is reachable."""
     conninfo = to_psycopg_conninfo(url)
     try:
-        with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
+        with _connect(conninfo) as conn, conn.cursor() as cur:
             cur.execute("SELECT 1")
         return True
-    except (psycopg.OperationalError, psycopg.Error, Exception):
+    except Exception:  # unreachable, refused, bad credentials, no driver: all "not there"
         return False

@@ -210,3 +210,34 @@ class TestCommunicationSourcesStayLocal:
         spec = SourceSpec(slug="sms", root=str(tmp_path), **{"class": "communication"}, allow_cloud_enrichment=True)
         with pytest.raises(SourceArgumentError, match="may never enable cloud enrichment"):
             sync_sources(settings=Settings(sources=[spec]))
+
+
+def test_guards_do_not_need_a_database_driver() -> None:
+    """The egress checks must hold wherever the code runs, libpq or not.
+
+    Run in a fresh interpreter that refuses to import psycopg: the modules the
+    level-3 guard and search live in must still import, so the guard's tests
+    (and the guard) never depend on a database driver being installed.
+    """
+    import subprocess
+    import sys
+
+    script = """
+import sys
+
+class BlockPsycopg:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in ("psycopg", "psycopg_c", "psycopg_binary"):
+            raise ImportError(f"{name} blocked for this test")
+        return None
+
+sys.meta_path.insert(0, BlockPsycopg())
+import garage_rag.ops.sources
+import garage_rag.search.hybrid
+import garage_rag.enrich.egress
+import garage_rag.cli
+print("ok")
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"

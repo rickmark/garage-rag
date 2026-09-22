@@ -232,3 +232,27 @@ def test_ask_reports_an_unavailable_model(tmp_path):
     assert result.exit_code == 1
     assert "model unavailable" in result.output
     assert "LlamaXPCService" in result.output
+
+
+def test_database_errors_are_reported_not_raised(monkeypatch, capsys):
+    """A driver error reaching main_cli prints a message and exits 1."""
+    import psycopg
+
+    def boom():
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr("garage_rag.cli.app", boom)
+    assert main_cli() == 1
+    assert "database error" in capsys.readouterr().out
+
+
+def test_pgvector_hint_keys_on_the_sqlstate():
+    from garage_rag.cli import _pgvector_library_hint
+
+    class Missing(Exception):
+        sqlstate = "58P01"
+
+    wrapped = RuntimeError("outer")
+    wrapped.__cause__ = Missing("could not access file vector")
+    assert "pgvector" in _pgvector_library_hint(wrapped)
+    assert _pgvector_library_hint(RuntimeError("other")) is None

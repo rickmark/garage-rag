@@ -7,12 +7,24 @@ wrapper injects the `@pypi//pytest` dependency it requires, drops the `main`
 that Gazelle sets, and attaches `garage_python/pyproject.toml` as data so
 pytest's `[tool.pytest.ini_options]` (notably `filterwarnings`) lands in the
 test's runfiles where rootdir discovery finds it.
+
+Two more things every test needs, added here rather than per target:
+
+- `garage_rag/__init__.py`. Subpackage libraries (`db`, `service`, ...) do
+  not carry the package's own `__init__`, so without the top-level library a
+  test sees `garage_rag` as a namespace package: no `__version__`, and no
+  libpq set-up before psycopg is imported.
+- libpq. psycopg's pure-Python implementation needs a libpq dylib; the Bazel
+  interpreter has none. On macOS the tests get the one this repo builds for
+  the app, through the same `GARAGE_LIBPQ_PATH` the app itself sets.
 """
 
 load("@aspect_rules_py//py:defs.bzl", _py_pytest_test = "py_pytest_test")
 
 _PYTEST = "@pypi//pytest"
 _PYPROJECT = "//garage_python:pyproject.toml"
+_PACKAGE = "//garage_python/src/garage_rag"
+_LIBPQ = "//macapp/externals:libpq"
 
 def py_test(name, deps = [], data = [], **kwargs):
     """pytest-driven `py_test`; see the module docstring.
@@ -26,11 +38,22 @@ def py_test(name, deps = [], data = [], **kwargs):
     kwargs.pop("main", None)  # py_pytest_test provides its own entrypoint
     if _PYTEST not in deps:
         deps = deps + [_PYTEST]
+    if _PACKAGE not in deps:
+        deps = deps + [_PACKAGE]
     if _PYPROJECT not in data:
         data = data + [_PYPROJECT]
+    env = kwargs.pop("env", {})
     _py_pytest_test(
         name = name,
         deps = deps,
-        data = data,
+        data = data + select({
+            "@platforms//os:macos": [_LIBPQ],
+            "//conditions:default": [],
+        }),
+        env = select({
+            # Relative to the runfiles root, which is the test's working directory.
+            "@platforms//os:macos": dict(env, GARAGE_LIBPQ_PATH = "$(rootpath %s)" % _LIBPQ),
+            "//conditions:default": env,
+        }),
         **kwargs
     )
