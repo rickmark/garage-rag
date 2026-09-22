@@ -6,9 +6,6 @@ py_library(
         "__init__.py",
     ],
     imports = ["../.."],
-    visibility = [
-        "//src:__subpackages__",
-        "//visibility:public",
-    ],
+    visibility = ["//visibility:public"],
     deps = ["@pypi//pydantic"],
 )

@@ -1,97 +1,64 @@
-# Aspect Bazel Starter for Python
+# garage_rag
 
-This repository uses [Aspect Workflows](https://aspect.build) to provide an excellent Bazel developer experience.
-It was generated from the Aspect Workflows template — create your own with `aspect init`
-(see https://aspect.build/docs/cli) or from a starter at https://github.com/aspect-starters.
+The Python half of [Garage](../README.md): a local-first personal RAG pipeline over
+PostgreSQL + pgvector. It walks personal documents, code repositories and communications,
+extracts and chunks their text, attributes authorship, embeds every chunk under each
+registered model, distills documents into span-grounded facts, and serves the corpus over
+MCP 2.0 and gRPC. Communications never leave the machine; see [`docs/privacy.md`](../docs/privacy.md).
 
-## Getting started
+## Entry points
 
-1. Install the Aspect CLI — see https://aspect.build/docs/cli/install. The `aspect`
-   command pins this workspace's CLI version (via `.aspect/version.axl`) and wraps
-   Bazel, so use it in place of `bazel`.
-2. Set up a Bazel-based developer environment with [direnv](https://direnv.net): run `direnv allow`
-   and follow the prompts to `bazel run //tools:bazel_env` (puts the project's tools — including
-   `aspect` itself — on your PATH, so an `aspect` installed in step 1 isn't required once direnv is active).
-3. Build and test everything:
+| Command | Module | Role |
+|---|---|---|
+| `garage` | `garage_rag.cli:main_cli` | ingest, backfill, enrich-facts, search, config, model registry, `serve` (gRPC bridge for the macOS app) |
+| `garage-mcp` | `garage_rag.mcp_server.server:main` | MCP 2.0 server over stdio or local HTTP (`garage mcp-install` wires it into Claude Desktop/Code) |
 
-   ```shell
-   aspect build //...
-   aspect test //...
-   ```
+Both are built by Bazel as PEX/scie binaries (`//garage_python:garage`,
+`//garage_python:garage-mcp`) and bundled into the macOS app.
 
-   A small `hello/` sample is included for each selected language as a starting point.
+## Layout
 
-
-
-
-## Formatting code
-
-`format` is put on your PATH by `bazel_env` (via `.envrc`).
-
-- Run `format` to re-format all files locally.
-- Run `format path/to/file` to re-format a single file.
-- On CI, run the `format` task to verify formatting; see https://aspect.build/docs/cli/tasks-ci
-
-## Linting code
-
-This project uses [rules_lint](https://github.com/aspect-build/rules_lint) to run linters as Bazel
-aspects. The linters are configured in `.aspect/config.axl` and run via the Aspect CLI's `lint`
-command (not the upstream Bazel CLI), which collects the cached report files, applies fixes
-interactively, and sets a matching exit code.
-
-- Run `aspect lint //...` to check Ruff lint rules and Ty type checks.
-- Run `aspect format -- //...` to verify and apply Ruff formatting.
-- Run `aspect buildifier` to format Starlark files.
-
-
-
-## Installing dev tools
-
-For developers to be able to run additional CLI tools without needing manual installation:
-
-1. Add the tool to `tools/tools.lock.json`
-2. Run <code>bazel run //tools:bazel_env</code> (following any instructions it prints)
-3. When working within the workspace, tools will be available on the PATH
-
-See https://aspect.build/blog/run-tools-installed-by-bazel for details.
-
-
-
-
-
-## Working with Python packages
-
-Python targets (`py_binary`, `py_library`, `py_test`) use [aspect_rules_py](https://github.com/aspect-build/rules_py)
-and are maintained by hand — see `hello/py/BUILD.bazel` for the pattern (`py_test` routes
-through `//tools/pytest:defs.bzl`).
-
-Third-party dependencies are managed with [uv](https://docs.astral.sh/uv/): declare them in
-`pyproject.toml` and lock them into `uv.lock`, exposed as the `@pypi` hub.
-
-```shell
-# Add the dependency to pyproject.toml's [project] or [dependency-groups]
-% vim pyproject.toml
-# Regenerate uv.lock (and other lockfiles)
-% ./tools/repin
+```
+src/garage_rag/
+  ingest/     walker, materialization budget, chunking, scanner, pipeline
+  extract/    per-format extractors (text, PDF, Office, images) + quality gate
+  attribute/  git / metadata / path-rule authorship signals
+  embed/      embedding backends (Ollama, LM Studio, llama XPC) and backfill
+  enrich/     fact distillation (LangExtract) and the cloud egress guard
+  search/     hybrid RRF search
+  mcp_server/ MCP tools
+  service/    gRPC GarageService (proto/garage.proto)
+  db/         SQLAlchemy models mirroring data/sql/00*.sql, migrations, model registry
+  config/     ~/.garage.json settings and the generated JSON Schema
+tests/        pytest suite, one Bazel py_test target per file
 ```
 
-Then depend on it as `@pypi//<package>` (e.g. `@pypi//requests`).
+## Building and testing
 
-To create a runnable binary for a console script from a third-party package, add a
-`py_console_script_binary` to `tools/BUILD.bazel`:
+Everything is driven by the Aspect CLI from the repository root:
 
-```starlark
-load("@aspect_rules_py//uv:defs.bzl", "py_console_script_binary")
-
-py_console_script_binary(
-    name = "scriptname",
-    pkg = "@pypi//package_name",
-)
+```bash
+aspect build //garage_python:garage //garage_python:garage-mcp
+aspect test //garage_python/tests:suite
+aspect test //garage_python/tests:test_facts --test_arg=-k --test_arg=some_case
 ```
 
+`tests/BUILD.bazel` has one `py_test` per file (via `//tools/pytest:defs.bzl`, which drives
+pytest); a new test file needs a matching target there and in the `suite` list. Third-party
+dependencies live in `pyproject.toml` and are locked with `uv` (`../tools/repin`), exposed to
+Bazel as `@pypi//<package>`.
 
+For quick iteration outside Bazel, use the `uv`-managed virtualenv:
 
+```bash
+cd garage_python
+uv sync --extra dev
+uv run pytest -q
+```
 
+## Documentation
 
-
-
+`../docs/` — [architecture](../docs/architecture.md), [schema](../docs/schema.md),
+[attribution](../docs/attribution.md), [privacy](../docs/privacy.md), plus support and
+troubleshooting guides. The generated config schema is committed at
+`../data/schema/garage.schema.json`.

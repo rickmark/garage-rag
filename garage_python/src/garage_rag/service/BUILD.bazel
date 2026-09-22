@@ -6,7 +6,6 @@ py_library(
         "__init__.py",
         "client.py",
         "executor.py",
-        "llama_xpc.py",
         "server.py",
         "xpc.py",
     ],
@@ -23,7 +22,6 @@ py_library(
         "//garage_python/src/garage_rag/search",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//grpcio",
-        "@pypi//rich",
         "@pypi//sqlalchemy",
     ],
 )

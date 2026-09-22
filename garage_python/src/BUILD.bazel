@@ -1,7 +1,6 @@
 # gazelle:python_root
 
-load("@aspect_rules_py//py:defs.bzl", "py_library", "py_pex_binary")
-load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
+load("@aspect_rules_py//py:defs.bzl", "py_library")
 
 py_library(
     name = "garage_rag",
@@ -23,16 +22,4 @@ alias(
     name = "garage",
     actual = "//garage_python/src/garage_rag:garage",
     visibility = ["//visibility:public"],
-)
-
-py_package(
-    name = "garage_rag_package",
-    packages = ["garage_rag"],  # Only includes files in this dotted Python path
-)
-
-py_wheel(
-    name = "garage_rag_wheel",
-    distribution = "garage_rag",
-    version = "1.0.0",
-    deps = [":garage"],
 )

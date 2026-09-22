@@ -11,9 +11,9 @@ bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2")
 
 bazel_dep(name = "aspect_gazelle_prebuilt", version = "0.0.20")
 
-# NB: 2.7.0's sarif_parser toolchain is missing the linux_amd64 platform key
-# (breaks lint/format on Linux CI: "key sarif_parser-linux_amd64 not found").
-# Stay on 2.6.0 until that's fixed upstream.
+# NB: 2.7.0's sarif_parser toolchain was missing the linux_amd64 platform key
+# (broke lint/format on Linux CI: "key sarif_parser-linux_amd64 not found");
+# 2.7.1 carries the fix, so don't drop below it.
 bazel_dep(name = "aspect_rules_lint", version = "2.7.1")
 
 # bazel_skylib's native_binary backs //tools/lint's linter wrappers.
@@ -96,6 +96,7 @@ single_version_override(
     patch_strip = 1,
     patches = ["//bazel/patches:rules_apple_xcarchive_symlinks.patch"],
 )
+
 bazel_dep(name = "rules_swift", version = "3.6.1")
 bazel_dep(name = "rules_xcodeproj", version = "4.1.0")
 bazel_dep(name = "rules_pkg", version = "1.3.0")

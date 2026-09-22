@@ -20,6 +20,9 @@ dependencies = [
     # document extraction (all permissive licenses; PyMuPDF avoided due to AGPL)
     "pypdf>=6.16",
     "pdfplumber>=0.11.10",
+    # Not imported directly: pulled in transitively by pdfminer-six (pdfplumber)
+    # and google-auth (langextract). Pinned without recorded reason since the
+    # initial import; keep the ceiling until someone verifies 44+ against both.
     "cryptography<44.0.0",
     "python-docx>=1.2",
     "python-pptx>=1.0.2",
@@ -31,14 +34,20 @@ dependencies = [
     "langextract>=1.7.0",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
     "mcp[cli]==2.1.0",
+    # HTTP transport for garage-mcp (mcp_server/server.py imports it directly)
+    "uvicorn>=0.30",
     # plumbing
     "typer>=0.15",
     "pydantic>=2.7.4",
-    "pydantic-settings>=2.6",
     "rich>=13.9",
     "pyyaml>=6.0",
+    # A runtime dep on purpose: the Bazel @pypi hub (--@pypi//dep_group=garage_rag)
+    # only exposes packages reachable from [project.dependencies], so the py_test
+    # targets can't resolve @pypi//pytest from an optional/dev group.
     "pytest>=9.1.1",
     "anthropic>=1.0.0",
+    # Not imported by garage_rag; //tools/pex builds the garage/garage-mcp
+    # PEX + scie binaries from @pypi//pex.
     "pex>=2.101.0",
     # gRPC & Protobuf
     "grpcio>=1.68.0",
@@ -46,8 +55,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Cloud OCR fallback only. Never used for trust_tier='communication'.
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13", "grpcio-tools>=1.68.0"]
+# Local tooling for the uv venv only; the Bazel @pypi hub does not expose this group.
+dev = ["pytest-asyncio>=0.24", "ruff>=0.8", "grpcio-tools>=1.68.0"]
 
 [project.scripts]
 garage = "garage_rag.cli:main_cli"
@@ -80,11 +89,6 @@ known-first-party = ["garage_rag"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning"]
-
-[tool.mypy]
-python_version = "3.13"
-warn_unused_ignores = true
-exclude = ["garage_pb2\\.py$", "garage_pb2_grpc\\.py$"]
 
 [tool.ty]
 exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]

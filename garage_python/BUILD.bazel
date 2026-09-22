@@ -1,6 +1,6 @@
 # gazelle:map_kind py_binary py_binary @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_library py_library @aspect_rules_py//py:defs.bzl
-# gazelle:map_kind py_test py_test @aspect_rules_py//py:defs.bzl
+# gazelle:map_kind py_test py_test //tools/pytest:defs.bzl
 # gazelle:resolve py grpc @pypi//grpcio
 # gazelle:resolve py garage_rag.proto //garage_python/src/garage_rag/proto
 # gazelle:resolve py garage_rag.proto.garage_pb2 //garage_python/src/garage_rag/proto
@@ -11,7 +11,6 @@ load("@aspect_rules_py//uv:defs.bzl", "gazelle_python_manifest")
 load("//bazel:codesign.bzl", "codesign")
 load("//bazel:python_site_packages.bzl", "python_site_packages")
 load("//tools/pex:pex.bzl", "py_pex_binary", "py_scie_binary")
-load("//tools/pyoxidizer:pyoxidizer.bzl", "apple_pyoxidizer_binary", "uv_export_requirements")
 
 gazelle_python_manifest(
     name = "gazelle_python_manifest",
@@ -24,13 +23,6 @@ exports_files(
         "pyproject.toml",
         "uv.lock",
     ],
-    visibility = ["//visibility:public"],
-)
-
-uv_export_requirements(
-    name = "requirements",
-    lock = ":uv.lock",
-    pyproject = ":pyproject.toml",
     visibility = ["//visibility:public"],
 )
 
@@ -62,10 +54,10 @@ py_scie_binary(
 
 python_site_packages(
     name = "site-packages-raw",
+    visibility = ["//visibility:public"],
     deps = [
         "//garage_python/src:garage_rag",
     ],
-    visibility = ["//visibility:public"],
 )
 
 codesign(

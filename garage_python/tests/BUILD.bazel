@@ -1,4 +1,4 @@
-load("@aspect_rules_py//py:defs.bzl", "py_test")
+load("//tools/pytest:defs.bzl", "py_test")
 
 py_test(
     name = "test_attribution",
@@ -25,6 +25,7 @@ py_test(
 py_test(
     name = "test_config",
     srcs = ["test_config.py"],
+    data = ["//data/schema:config_schema"],
     deps = [
         "//garage_python/src/garage_rag/config",
         "@pypi//pytest",
@@ -34,7 +35,11 @@ py_test(
 py_test(
     name = "test_egress_block",
     srcs = ["test_egress_block.py"],
+    data = ["//data/sql:sql_schema"],
     deps = [
+        # The AST scan walks every garage_rag source file, so it needs the whole
+        # package tree in runfiles, not just the modules it imports.
+        "//garage_python/src:garage_rag",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
         "@pypi//pytest",
@@ -44,7 +49,15 @@ py_test(
 py_test(
     name = "test_migrate",
     srcs = ["test_migrate.py"],
-    deps = ["//garage_python/src/garage_rag/db"],
+    # sql_dir() must resolve to the committed DDL, so the files are needed at test time.
+    data = ["//data/sql:sql_schema"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//psycopg",
+        "@pypi//pytest",
+    ],
 )
 
 py_test(
@@ -52,6 +65,7 @@ py_test(
     srcs = ["test_facts.py"],
     deps = [
         "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
         "@pypi//langextract",
         "@pypi//pytest",
@@ -64,6 +78,7 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
+        "@pypi//pytest",
     ],
 )
 
@@ -93,7 +108,34 @@ py_test(
     name = "test_registry_dims",
     srcs = ["test_registry_dims.py"],
     deps = [
+        "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/search",
+        "@pypi//pgvector",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_grpc_documents",
+    srcs = ["test_grpc_documents.py"],
+    deps = [
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//grpcio",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_grpc_enrich_facts",
+    srcs = ["test_grpc_enrich_facts.py"],
+    deps = [
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//grpcio",
         "@pypi//pytest",
     ],
 )
@@ -134,6 +176,7 @@ py_test(
     srcs = ["test_cli_serve.py"],
     deps = [
         "//garage_python/src/garage_rag",
+        "@pypi//pytest",
         "@pypi//typer",
     ],
 )
@@ -200,6 +243,20 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_scanner",
+    srcs = ["test_scanner.py"],
+    deps = [
+        "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/ingest",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+        "@pypi//typer",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
@@ -211,6 +268,8 @@ test_suite(
         ":test_egress_block",
         ":test_embed_xpc",
         ":test_facts",
+        ":test_grpc_documents",
+        ":test_grpc_enrich_facts",
         ":test_grpc_serialization",
         ":test_grpc_server",
         ":test_ingest_gateway",
@@ -222,6 +281,7 @@ test_suite(
         ":test_mcp_server",
         ":test_migrate",
         ":test_registry_dims",
+        ":test_scanner",
         ":test_xpc_service",
     ],
 )
