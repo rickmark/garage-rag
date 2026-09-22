@@ -59,6 +59,9 @@ public struct LogTableView: View {
     @State private var selectedLineIDs = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\LogLine.date, order: .forward)]
     @State private var showDetailInspector = false
+    /// `filteredLines`, recomputed only when the lines or a filter change. The table
+    /// redraws at the log poll rate; filtering and sorting on every draw showed up.
+    @State private var visibleLines: [LogLine] = []
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -92,6 +95,9 @@ public struct LogTableView: View {
                 Divider()
                 detailInspectorView(for: line)
             }
+        }
+        .onChange(of: filterKey, initial: true) {
+            visibleLines = filteredLines
         }
     }
 
@@ -153,7 +159,7 @@ public struct LogTableView: View {
             Spacer()
 
             // Count Badge
-            Text("\(filteredLines.count) of \(lines.count) entries")
+            Text("\(visibleLines.count) of \(lines.count) entries")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -198,7 +204,7 @@ public struct LogTableView: View {
                 title: "No Logs Recorded",
                 subtitle: sourceName != nil ? "No log output has been produced by \(sourceName!) yet." : "No log output recorded yet."
             )
-        } else if filteredLines.isEmpty {
+        } else if visibleLines.isEmpty {
             emptyStateView(
                 icon: "line.3.horizontal.decrease.circle",
                 title: "No Matches",
@@ -210,7 +216,7 @@ public struct LogTableView: View {
     }
 
     private var tableContent: some View {
-        Table(filteredLines, selection: $selectedLineIDs, sortOrder: $sortOrder) {
+        Table(visibleLines, selection: $selectedLineIDs, sortOrder: $sortOrder) {
             TableColumn("Time", value: \.date) { line in
                 Text(Self.timestampFormatter.string(from: line.date))
                     .font(.system(.caption2, design: .monospaced))
@@ -350,6 +356,28 @@ public struct LogTableView: View {
         searchText = ""
         levelFilter = .all
         streamFilter = .all
+    }
+
+    /// Everything `filteredLines` depends on. Lines are keyed by count and last id
+    /// (O(1)); a trimmed ring buffer changes the last id even at a constant count.
+    private struct FilterKey: Equatable {
+        let lineCount: Int
+        let lastLineID: UUID?
+        let searchText: String
+        let levelFilter: LogLevelFilter
+        let streamFilter: LogStreamFilter
+        let sortOrder: [KeyPathComparator<LogLine>]
+    }
+
+    private var filterKey: FilterKey {
+        FilterKey(
+            lineCount: lines.count,
+            lastLineID: lines.last?.id,
+            searchText: searchText,
+            levelFilter: levelFilter,
+            streamFilter: streamFilter,
+            sortOrder: sortOrder
+        )
     }
 
     public var filteredLines: [LogLine] {

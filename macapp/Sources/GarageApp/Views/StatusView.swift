@@ -60,9 +60,11 @@ struct StatusView: View {
     @State private var isAddingAllModels: Bool = false
 
     var body: some View {
+        // Evaluate the six page checks once per render; the header and the cards share them.
+        let items = Self.statusItems(for: appState)
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                systemHealthHeader
+                systemHealthHeader(HealthSummary(items: items))
 
                 if showDefaultSourcesQuickAdd {
                     defaultSourcesQuickAddSection
@@ -75,7 +77,7 @@ struct StatusView: View {
                 corpusOverviewSection
 
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(sortedStatusItems) { item in
+                    ForEach(Self.sorted(items)) { item in
                         pageStatusCard(for: item)
                     }
                 }
@@ -613,17 +615,17 @@ struct StatusView: View {
 
     // MARK: - System Health Header
 
-    private var systemHealthHeader: some View {
+    private func systemHealthHeader(_ health: HealthSummary) -> some View {
         GroupBox {
             HStack(alignment: .center, spacing: 14) {
-                Image(systemName: overallHealthIcon)
+                Image(systemName: health.symbol)
                     .font(.system(size: 28))
-                    .foregroundStyle(overallHealthColor)
+                    .foregroundStyle(health.color)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(overallHealthTitle)
+                    Text(health.title)
                         .font(.headline)
-                    Text(overallHealthSubtitle)
+                    Text(health.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1552,14 +1554,6 @@ struct StatusView: View {
 
     // MARK: - Page Status Computation & Sorting
 
-    var statusItems: [PageStatusItem] {
-        Self.statusItems(for: appState)
-    }
-
-    var sortedStatusItems: [PageStatusItem] {
-        Self.sortedStatusItems(for: appState)
-    }
-
     static func statusItems(for appState: AppState) -> [PageStatusItem] {
         [
             databaseStatusItem(for: appState),
@@ -1572,7 +1566,12 @@ struct StatusView: View {
     }
 
     static func sortedStatusItems(for appState: AppState) -> [PageStatusItem] {
-        statusItems(for: appState).sorted { (lhs, rhs) -> Bool in
+        sorted(statusItems(for: appState))
+    }
+
+    /// Critical first, then warnings, then the rest; ties in page order.
+    static func sorted(_ items: [PageStatusItem]) -> [PageStatusItem] {
+        items.sorted { (lhs, rhs) -> Bool in
             if lhs.severity != rhs.severity {
                 return lhs.severity < rhs.severity // Failing / Critical at the top
             }
@@ -1954,48 +1953,42 @@ struct StatusView: View {
 
     // MARK: - Overall Health Summary
 
-    private var criticalCount: Int {
-        statusItems.filter { $0.severity == .critical }.count
-    }
+    /// The header's verdict, derived from one evaluation of the page checks.
+    struct HealthSummary {
+        let criticalCount: Int
+        let warningCount: Int
 
-    private var warningCount: Int {
-        statusItems.filter { $0.severity == .warning }.count
-    }
+        init(items: [PageStatusItem]) {
+            criticalCount = items.filter { $0.severity == .critical }.count
+            warningCount = items.filter { $0.severity == .warning }.count
+        }
 
-    private var overallHealthIcon: String {
-        if criticalCount > 0 {
-            return "exclamationmark.triangle.fill"
-        } else if warningCount > 0 {
-            return "exclamationmark.circle.fill"
-        } else {
+        var symbol: String {
+            if criticalCount > 0 { return "exclamationmark.triangle.fill" }
+            if warningCount > 0 { return "exclamationmark.circle.fill" }
             return "checkmark.seal.fill"
         }
-    }
 
-    private var overallHealthColor: Color {
-        if criticalCount > 0 {
-            return .red
-        } else if warningCount > 0 {
-            return .orange
-        } else {
+        var color: Color {
+            if criticalCount > 0 { return .red }
+            if warningCount > 0 { return .orange }
             return .green
         }
-    }
 
-    private var overallHealthTitle: String {
-        if criticalCount > 0 {
-            return "\(criticalCount) Critical Issue\(criticalCount == 1 ? "" : "s") Detected"
-        } else if warningCount > 0 {
-            return "\(warningCount) Component\(warningCount == 1 ? "" : "s") Need Attention"
-        } else {
+        var title: String {
+            if criticalCount > 0 {
+                return "\(criticalCount) Critical Issue\(criticalCount == 1 ? "" : "s") Detected"
+            }
+            if warningCount > 0 {
+                return "\(warningCount) Component\(warningCount == 1 ? "" : "s") Need Attention"
+            }
             return "All Systems Operational"
         }
-    }
 
-    private var overallHealthSubtitle: String {
-        if criticalCount > 0 || warningCount > 0 {
-            return "Components requiring attention are prioritized at the top with direct links to resolve."
-        } else {
+        var subtitle: String {
+            if criticalCount > 0 || warningCount > 0 {
+                return "Components requiring attention are prioritized at the top with direct links to resolve."
+            }
             return "All database, MCP, ingest, and search components are configured and healthy."
         }
     }
