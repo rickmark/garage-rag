@@ -1,4 +1,4 @@
-load("//bazel:codesign.bzl", "codesign_test", "macho_test")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_EXPECTED", "codesign_test", "macho_test")
 
 alias(
     name = "PythonKit",
@@ -29,6 +29,7 @@ macho_test(
 codesign_test(
     name = "pythonkit_codesign_test",
     src = ":PythonKit",
+    hardened_runtime = HARDENED_RUNTIME_EXPECTED,
     is_store = select({
         "//bazel:is_store": True,
         "//conditions:default": False,

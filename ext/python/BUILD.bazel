@@ -2,7 +2,7 @@ load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:codesign.bzl", "codesign", "codesign_test", "macho_test")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_EXPECTED", "codesign", "codesign_test", "macho_test")
 
 configure_make(
     name = "python_3_13",
@@ -148,6 +148,7 @@ macho_test(
 codesign_test(
     name = "python_framework_codesign_test",
     src = ":python_framework",
+    hardened_runtime = HARDENED_RUNTIME_EXPECTED,
     is_store = select({
         "//bazel:is_store": True,
         "//conditions:default": False,

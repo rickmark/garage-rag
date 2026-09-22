@@ -16,9 +16,13 @@ gRPC-Swift, SwiftProtobuf, PythonKit and the vendored Python / Postgres /
 llama.cpp that only the Bazel build provides.
 
 ```bash
-# Developer ID-signed app bundle (alias of //macapp/Sources/GarageApp:GarageApp)
+# Ad-hoc signed app bundle (alias of //macapp/Sources/GarageApp:GarageApp)
 aspect build //macapp:GarageApp          # or: aspect build //:macapp
-open bazel-bin/macapp/Sources/GarageApp/GarageApp.app
+aspect run //:macapp                     # builds, then launches it
+
+# The build output is a .zip, not a loose bundle; `aspect run` unpacks and
+# launches it for you. To open it by hand:
+unzip -q -o bazel-bin/macapp/Sources/GarageApp/GarageApp.zip -d /tmp/garage && open /tmp/garage/Garage.app
 
 # Xcode project for editing/debugging (rules_xcodeproj; includes the XPC services and tests)
 aspect run //:xcodeproj

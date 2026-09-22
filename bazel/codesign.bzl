@@ -31,6 +31,28 @@ HARDENED_RUNTIME_CODESIGNOPTS = select({
     "//conditions:default": [],
 })
 
+# The assertion side of the same rule: codesign_test defaults to requiring
+# hardened runtime, which an ad-hoc build deliberately does not have. Pass this
+# to a codesign_test whose subject is signed by either path so the expectation
+# tracks the config instead of contradicting it.
+HARDENED_RUNTIME_EXPECTED = select({
+    "//bazel:is_developer_id": True,
+    "//bazel:is_store": True,
+    "//conditions:default": False,
+})
+
+def _without_hardened_runtime(codesign_args):
+    """Drops the `runtime` flag from any --options= argument, keeping the rest."""
+    kept = []
+    for arg in codesign_args:
+        if arg.startswith("--options="):
+            flags = [f for f in arg[len("--options="):].split(",") if f and f != "runtime"]
+            if flags:
+                kept.append("--options=" + ",".join(flags))
+        else:
+            kept.append(arg)
+    return kept
+
 def _codesign_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))
@@ -66,6 +88,15 @@ def _codesign_impl(ctx):
     else:
         output = ctx.actions.declare_file(out_name)
 
+    signing_identity = ctx.attr.sign if ctx.attr.sign else ctx.attr.signing_identity
+    if not signing_identity or signing_identity == "-":
+        if hasattr(ctx.attr, "_signing_certificate_name") and ctx.attr._signing_certificate_name:
+            cert_from_setting = ctx.attr._signing_certificate_name[BuildSettingInfo].value
+            if cert_from_setting:
+                signing_identity = cert_from_setting
+    if not signing_identity:
+        signing_identity = "-"
+
     codesign_args = []
     if ctx.attr.codesignopts:
         codesign_args.extend(ctx.attr.codesignopts)
@@ -78,14 +109,14 @@ def _codesign_impl(ctx):
     if not codesign_args:
         codesign_args.append("--options=runtime")
 
-    signing_identity = ctx.attr.sign if ctx.attr.sign else ctx.attr.signing_identity
-    if not signing_identity or signing_identity == "-":
-        if hasattr(ctx.attr, "_signing_certificate_name") and ctx.attr._signing_certificate_name:
-            cert_from_setting = ctx.attr._signing_certificate_name[BuildSettingInfo].value
-            if cert_from_setting:
-                signing_identity = cert_from_setting
-    if not signing_identity:
-        signing_identity = "-"
+    # Hardened runtime implies library validation, and an ad-hoc signature has no
+    # Team ID for that to match against — so an ad-hoc binary signed this way
+    # cannot load its own sibling dylibs ("different Team IDs" at dyld time).
+    # Callers ask for hardened runtime because the *distribution* builds need it
+    # to notarize; silently dropping it for ad-hoc is what makes a locally built
+    # bundle runnable. See HARDENED_RUNTIME_CODESIGNOPTS for the rules_apple side.
+    if signing_identity == "-":
+        codesign_args = _without_hardened_runtime(codesign_args)
 
     extra_inputs = []
     default_entitlements_path = ""
@@ -264,14 +295,14 @@ codesign_file() {
         fi
     done
 
-    sign_opts=("${opts[@]}")
+    sign_opts=(${opts[@]+"${opts[@]}"})
     if [ -n "$entitlements" ]; then
         sign_opts+=("--entitlements" "$entitlements")
     fi
 
     chmod 755 "$file" || echo "CHMOD FAILED ON $file"
     fix_macho "$file"
-    /usr/bin/codesign -f -s "$signing_identity" "${sign_opts[@]}" "$file"
+    /usr/bin/codesign -f -s "$signing_identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file"
 }
 
 if [ "$kind" = "dir" ]; then
