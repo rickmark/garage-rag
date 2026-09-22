@@ -863,6 +863,9 @@ def get_storage_gateway(
     host = grpc_host or env_host
 
     if port:
+        # Imported here, not at module scope: garage_rag.service depends on
+        # ingest, so a top-level import would be a cycle.
+        # gazelle:ignore garage_rag.service.client
         from garage_rag.service.client import GarageClient
 
         client = GarageClient(host=host, port=port, in_process=False)

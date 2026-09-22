@@ -8,21 +8,10 @@ evidence, file references and proposed fix; this file is the index.
 - [ ] [#16](https://github.com/rickmark/garage-rag/issues/16) Replace or fence off the stub `llama_xpc`
       inference engine. The app's default embedding provider returns canned text and byte-histogram
       vectors on both the Swift and Python side, and backfill persists them as real embeddings.
-- [ ] [#17](https://github.com/rickmark/garage-rag/issues/17) Rotate the Postgres password that was
-      committed in `.idea/dataSources.xml` (removed from the tree, still in history).
-- [ ] [#18](https://github.com/rickmark/garage-rag/issues/18) Decide on the README "Dedication" section
-      before the repository is public.
 - [ ] [#20](https://github.com/rickmark/garage-rag/issues/20) Decide the fate of `macapp/Package.swift`:
       `swift run` cannot build the app; either update the manifest or delete it.
 - [ ] [#21](https://github.com/rickmark/garage-rag/issues/21) Fill in the `PRIVACY.md` effective date and
       contact placeholders.
-
-## Verification of PR #15
-
-- [ ] [#19](https://github.com/rickmark/garage-rag/issues/19) Compile and test the Swift changes on macOS;
-      they were made without a toolchain. The issue lists the constructs a compiler must confirm.
-- [ ] [#24](https://github.com/rickmark/garage-rag/issues/24) Regenerate `MODULE.bazel.lock` and
-      `gazelle_python.yaml` with the Aspect CLI, and drop the unused Python 3.14 archive.
 
 ## Follow-up refactors
 

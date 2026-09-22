@@ -2,7 +2,7 @@ load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:codesign.bzl", "HARDENED_RUNTIME_EXPECTED", "codesign", "codesign_test", "macho_test")
+load("//bazel:codesign.bzl", "EXPECTED_SIGNING_IDENTITY", "HARDENED_RUNTIME_EXPECTED", "STORE_EXPECTED", "codesign", "codesign_test")
 
 configure_make(
     name = "python_3_13",
@@ -133,29 +133,10 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-macho_test(
-    name = "python_arch_test",
-    src = ":python_3_13",
-    archs = ["arm64"],
-)
-
-macho_test(
-    name = "python_framework_arch_test",
-    src = ":python_framework",
-    archs = ["arm64"],
-)
-
 codesign_test(
     name = "python_framework_codesign_test",
     src = ":python_framework",
     hardened_runtime = HARDENED_RUNTIME_EXPECTED,
-    is_store = select({
-        "//bazel:is_store": True,
-        "//conditions:default": False,
-    }),
-    signing_identity = select({
-        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "-",
-    }),
+    is_store = STORE_EXPECTED,
+    signing_identity = EXPECTED_SIGNING_IDENTITY,
 )

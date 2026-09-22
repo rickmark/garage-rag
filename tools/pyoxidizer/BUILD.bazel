@@ -1,8 +1,0 @@
-"""BUILD definition for PyOxidizer tool and macros."""
-
-package(default_visibility = ["//visibility:public"])
-
-alias(
-    name = "pyoxidizer",
-    actual = "@multitool//tools/pyoxidizer",
-)

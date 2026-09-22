@@ -27,6 +27,9 @@ def embed_via_grpc(
 
     Zero direct database access is used in this workflow.
     """
+    # Imported here, not at module scope: garage_rag.service depends on search,
+    # which depends on embed, so a top-level import would be a cycle.
+    # gazelle:ignore garage_rag.service.client
     from garage_rag.service.client import GarageClient
 
     # GarageClient opens a gRPC channel on first use; close it on the way out,

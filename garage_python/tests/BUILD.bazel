@@ -37,9 +37,6 @@ py_test(
     srcs = ["test_egress_block.py"],
     data = ["//data/sql:sql_schema"],
     deps = [
-        # The AST scan walks every garage_rag source file, so it needs the whole
-        # package tree in runfiles, not just the modules it imports.
-        "//garage_python/src:garage_rag",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
         "@pypi//pytest",
@@ -78,7 +75,6 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
-        "@pypi//pytest",
     ],
 )
 
@@ -136,7 +132,6 @@ py_test(
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
         "@pypi//grpcio",
-        "@pypi//pytest",
     ],
 )
 
@@ -146,7 +141,6 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
-        "@pypi//pytest",
     ],
 )
 
@@ -176,7 +170,6 @@ py_test(
     srcs = ["test_cli_serve.py"],
     deps = [
         "//garage_python/src/garage_rag",
-        "@pypi//pytest",
         "@pypi//typer",
     ],
 )
@@ -195,7 +188,7 @@ py_test(
     name = "test_llama_xpc",
     srcs = ["test_llama_xpc.py"],
     deps = [
-        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
 )
@@ -205,7 +198,7 @@ py_test(
     srcs = ["test_llama_embedder.py"],
     deps = [
         "//garage_python/src/garage_rag/embed",
-        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
 )
@@ -213,10 +206,7 @@ py_test(
 py_test(
     name = "test_ingest_xpc",
     srcs = ["test_ingest_xpc.py"],
-    deps = [
-        "//garage_python/src/garage_rag/ingest",
-        "@pypi//pytest",
-    ],
+    deps = ["//garage_python/src/garage_rag/ingest"],
 )
 
 py_test(
@@ -238,7 +228,6 @@ py_test(
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
-        "@pypi//grpcio",
         "@pypi//pytest",
     ],
 )
@@ -252,7 +241,6 @@ py_test(
         "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
-        "@pypi//pytest",
         "@pypi//typer",
     ],
 )

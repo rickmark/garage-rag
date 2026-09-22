@@ -61,6 +61,59 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 - `Frameworks/PythonXPCService.framework` — the shared runtime for the six
   `XPCServices/*.xpc` helpers listed under `xpc_services`.
 
+## A stable local signing identity
+
+The app keeps two secrets in the macOS Keychain — the Postgres superuser
+password (`PostgresService`) and the LM Studio API token (`LMStudioTokenStore`)
+— and a Keychain item's ACL names the application by its *designated
+requirement*. For an ad-hoc signature that requirement is
+
+```
+identifier "me.rickmark.garage-rag" and cdhash H"<hash of this exact build>"
+```
+
+which a rebuild invalidates, because the cdhash is a hash of the build. That is
+the "GarageApp wants to access key ..." dialog on every build, and why a build
+can find the cluster it initialized yesterday but not the password to it.
+
+Signing with a certificate anchors the requirement to the certificate instead:
+
+```
+identifier "me.rickmark.garage-rag" and certificate root = H"<hash of the cert>"
+```
+
+which no rebuild changes. `//tools/signing:local_identity` generates a
+self-signed certificate for that and nothing else:
+
+```bash
+bazel run //tools/signing:local_identity          # create it (asks for your password)
+bazel run //tools/signing:local_identity -- show  # what it is, and the requirement it yields
+```
+
+Then build against it by putting this in `user.bazelrc` (git-ignored):
+
+```
+build --config=local_signed
+```
+
+Things worth knowing:
+
+- Answer **Always Allow** the first time macOS asks whether `codesign` may use
+  the key. The setup script signs a test binary at the end specifically so that
+  question gets asked there rather than mid-build.
+- Keychain items the app created under its old ad-hoc identity prompt once more
+  after the switch, for the same reason — "Always Allow" adds the certificate to
+  the item's ACL, and from then on it holds.
+- The identity is per-machine. To have a second machine build the *same*
+  application rather than a different one, move the identity rather than
+  generating another: `local_identity export ~/id.p12` on the first machine and
+  `local_identity ensure --import ~/id.p12` on the second.
+- `--config=local_signed` is not a distribution path. A self-signed certificate
+  has no Apple-issued chain, so it cannot notarize and cannot carry hardened
+  runtime (library validation rejects its Team ID) — `//bazel:codesign.bzl`
+  strips `--options=runtime` for it exactly as it does for ad-hoc. Release
+  builds still go through `--config=developer_id` / `--config=appstore`.
+
 ## Why Postgres is built from source
 
 Homebrew's `postgresql@18` bakes absolute `/opt/homebrew/...` paths for its

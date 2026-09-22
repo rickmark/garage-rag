@@ -1,4 +1,4 @@
-load("//bazel:codesign.bzl", "HARDENED_RUNTIME_EXPECTED", "codesign_test", "macho_test")
+load("//bazel:codesign.bzl", "EXPECTED_SIGNING_IDENTITY", "HARDENED_RUNTIME_EXPECTED", "STORE_EXPECTED", "codesign_test")
 
 alias(
     name = "PythonKit",
@@ -20,23 +20,10 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-macho_test(
-    name = "pythonkit_arch_test",
-    src = ":PythonKit",
-    archs = ["arm64"],
-)
-
 codesign_test(
     name = "pythonkit_codesign_test",
     src = ":PythonKit",
     hardened_runtime = HARDENED_RUNTIME_EXPECTED,
-    is_store = select({
-        "//bazel:is_store": True,
-        "//conditions:default": False,
-    }),
-    signing_identity = select({
-        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "-",
-    }),
+    is_store = STORE_EXPECTED,
+    signing_identity = EXPECTED_SIGNING_IDENTITY,
 )

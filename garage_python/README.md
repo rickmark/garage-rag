@@ -13,8 +13,11 @@ MCP 2.0 and gRPC. Communications never leave the machine; see [`docs/privacy.md`
 | `garage` | `garage_rag.cli:main_cli` | ingest, backfill, enrich-facts, search, config, model registry, `serve` (gRPC bridge for the macOS app) |
 | `garage-mcp` | `garage_rag.mcp_server.server:main` | MCP 2.0 server over stdio or local HTTP (`garage mcp-install` wires it into Claude Desktop/Code) |
 
-Both are built by Bazel as PEX/scie binaries (`//garage_python:garage`,
-`//garage_python:garage-mcp`) and bundled into the macOS app.
+Both are console scripts of the `garage_rag` package. The macOS app does not
+ship them as standalone binaries: it bundles the package as
+`Resources/site-python` (`//garage_python:site-packages`) and runs it through
+`MacOS/garage` (`//macapp/Sources/GarageCLI:garage`), a Swift binary that embeds
+the bundled interpreter.
 
 ## Layout
 
@@ -38,7 +41,7 @@ tests/        pytest suite, one Bazel py_test target per file
 Everything is driven by the Aspect CLI from the repository root:
 
 ```bash
-aspect build //garage_python:garage //garage_python:garage-mcp
+aspect build //garage_python:site-packages
 aspect test //garage_python/tests:suite
 aspect test //garage_python/tests:test_facts --test_arg=-k --test_arg=some_case
 ```

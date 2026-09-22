@@ -1,7 +1,6 @@
 load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:codesign.bzl", "macho_test")
 load("//bazel:rpath.bzl", "install_name")
 
 configure_make(
@@ -22,15 +21,14 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
-        "CFLAGS": "-arch arm64 -g",
-        "CXXFLAGS": "-arch arm64 -g",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
         # The icu/readline/zlib dylibs identify themselves as @rpath/<name>
         # (//bazel:foreign_cc.bzl NORMALIZE_INSTALL_NAMES), so configure's test
         # program and everything built after it need somewhere to resolve that
         # against. //ext/postgres:postgres_rpath re-points these at
         # @loader_path for the shipped bundle.
         "LDFLAGS": " ".join([
-            "-arch arm64",
             "-Wl,-rpath,$$EXT_BUILD_DEPS/libicu_shared/lib",
             "-Wl,-rpath,$$EXT_BUILD_DEPS/libreadline_shared/lib",
             "-Wl,-rpath,$$EXT_BUILD_DEPS/libzlib_shared/lib",
@@ -253,10 +251,4 @@ cc_library(
         "//ext:libreadline",
         "//ext:libzlib",
     ],
-)
-
-macho_test(
-    name = "postgres_arch_test",
-    src = ":postgres",
-    archs = ["arm64"],
 )

@@ -1,6 +1,7 @@
 # gazelle:map_kind py_binary py_binary @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_library py_library @aspect_rules_py//py:defs.bzl
 # gazelle:map_kind py_test py_test //tools/pytest:defs.bzl
+# gazelle:python_generate_pyi_deps false
 # gazelle:resolve py grpc @pypi//grpcio
 # gazelle:resolve py garage_rag.proto //garage_python/src/garage_rag/proto
 # gazelle:resolve py garage_rag.proto.garage_pb2 //garage_python/src/garage_rag/proto
@@ -10,7 +11,6 @@ load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("@aspect_rules_py//uv:defs.bzl", "gazelle_python_manifest")
 load("//bazel:codesign.bzl", "codesign")
 load("//bazel:python_site_packages.bzl", "python_site_packages")
-load("//tools/pex:pex.bzl", "py_pex_binary", "py_scie_binary")
 
 gazelle_python_manifest(
     name = "gazelle_python_manifest",
@@ -23,32 +23,6 @@ exports_files(
         "pyproject.toml",
         "uv.lock",
     ],
-    visibility = ["//visibility:public"],
-)
-
-py_pex_binary(
-    name = "garage-par",
-    binary = "//garage_python/src/garage_rag:garage",
-    visibility = ["//visibility:public"],
-)
-
-py_scie_binary(
-    name = "garage",
-    binary = ":garage-par",
-    scie = "eager",
-    visibility = ["//visibility:public"],
-)
-
-py_pex_binary(
-    name = "garage-mcp-par",
-    binary = "//garage_python/src/garage_rag/mcp_server:garage-mcp",
-    visibility = ["//visibility:public"],
-)
-
-py_scie_binary(
-    name = "garage-mcp",
-    binary = ":garage-mcp-par",
-    scie = "eager",
     visibility = ["//visibility:public"],
 )
 

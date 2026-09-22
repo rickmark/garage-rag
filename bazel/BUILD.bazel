@@ -4,6 +4,7 @@
 """
 
 load("@bazelrc-preset.bzl", "bazelrc_preset")
+load(":signing.bzl", "DEVELOPER_ID_IDENTITY", "LOCAL_SIGNING_IDENTITY", "STORE_IDENTITY")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -55,17 +56,28 @@ config_setting(
     },
 )
 
+# Local builds signed with the self-signed certificate from
+# //tools/signing:local_identity. Like ad-hoc it cannot notarize or carry
+# hardened runtime, but unlike ad-hoc its designated requirement is anchored to
+# the certificate rather than the cdhash, so Keychain ACLs survive a rebuild.
+config_setting(
+    name = "is_local_signed",
+    flag_values = {
+        "@rules_apple//apple/build_settings:signing_certificate_name": LOCAL_SIGNING_IDENTITY,
+    },
+)
+
 config_setting(
     name = "is_developer_id",
     flag_values = {
-        "@rules_apple//apple/build_settings:signing_certificate_name": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "@rules_apple//apple/build_settings:signing_certificate_name": DEVELOPER_ID_IDENTITY,
     },
 )
 
 config_setting(
     name = "is_store",
     flag_values = {
-        "@rules_apple//apple/build_settings:signing_certificate_name": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "@rules_apple//apple/build_settings:signing_certificate_name": STORE_IDENTITY,
     },
 )
 
@@ -86,6 +98,32 @@ platform(
 alias(
     name = "adhoc",
     actual = ":local_adhoc",
+)
+
+# 1b. The same local build, signed with the self-signed certificate from
+# `bazel run //tools/signing:local_identity` so the app keeps one code identity
+# across rebuilds. It differs from :local_adhoc in the signing flag and nothing
+# else — deliberately, including the distribution constraint, which stays at its
+# :distribution_adhoc default. A non-default constraint_value here would make
+# this platform one the host cannot serve as an *execution* platform, and tests
+# resolve a test toolchain against the target platform: that is why
+# `--config=developer_id` cannot run tests, and this config is meant to be one
+# somebody builds and tests with all day.
+platform(
+    name = "local_signed",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    flags = [
+        "--apple_platform_type=macos",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=" + LOCAL_SIGNING_IDENTITY,
+    ],
+)
+
+alias(
+    name = "macos_local_signed",
+    actual = ":local_signed",
 )
 
 alias(
@@ -114,7 +152,7 @@ platform(
     flags = [
         "--apple_generate_dsym",
         "--apple_platform_type=macos",
-        "--@rules_apple//apple/build_settings:signing_certificate_name=Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=" + DEVELOPER_ID_IDENTITY,
     ],
 )
 
@@ -128,7 +166,7 @@ platform(
     flags = [
         "--apple_generate_dsym",
         "--apple_platform_type=macos",
-        "--@rules_apple//apple/build_settings:signing_certificate_name=Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=" + DEVELOPER_ID_IDENTITY,
     ],
 )
 
@@ -163,7 +201,7 @@ platform(
     flags = [
         "--apple_generate_dsym",
         "--apple_platform_type=macos",
-        "--@rules_apple//apple/build_settings:signing_certificate_name=Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=" + STORE_IDENTITY,
     ],
 )
 

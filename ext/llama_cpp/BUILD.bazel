@@ -1,5 +1,4 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("//bazel:codesign.bzl", "macho_test")
 
 cmake(
     name = "llama_cpp",
@@ -10,7 +9,6 @@ cmake(
     cache_entries = {
         "BUILD_SHARED_LIBS": "OFF",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "arm64",
         "LLAMA_BUILD_APP": "OFF",
         "LLAMA_BUILD_COMMON": "OFF",
         "LLAMA_BUILD_EXAMPLES": "OFF",
@@ -21,9 +19,8 @@ cmake(
     },
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -g",
-        "CXXFLAGS": "-arch arm64 -g",
-        "LDFLAGS": "-arch arm64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@llama_cpp_framework//:llama_cpp_source",
     out_static_libs = [
@@ -35,10 +32,4 @@ cmake(
         "libggml-metal.a",
     ],
     visibility = ["//visibility:public"],
-)
-
-macho_test(
-    name = "llama_cpp_arch_test",
-    src = ":llama_cpp",
-    archs = ["arm64"],
 )

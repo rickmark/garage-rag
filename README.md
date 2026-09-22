@@ -134,10 +134,6 @@ This monorepo uses [Aspect CLI](https://aspect.build) / Bazel for hermetic build
 # Build all targets in the repository
 aspect build //...
 
-# Build the Python CLI binaries
-aspect build //garage_python:garage
-aspect build //garage_python:garage-mcp
-
 # Build the macOS application
 aspect build //:macapp
 ```

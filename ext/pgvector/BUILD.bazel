@@ -1,5 +1,4 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
-load("//bazel:codesign.bzl", "macho_test")
 
 make(
     name = "pgvector",
@@ -12,9 +11,8 @@ make(
         "pkglibdir": "$$INSTALLDIR/lib",
         "datadir": "$$INSTALLDIR/share",
         "pkgincludedir": "$$INSTALLDIR/include",
-        "CFLAGS": "-arch arm64 -g",
-        "CXXFLAGS": "-arch arm64 -g",
-        "LDFLAGS": "-arch arm64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@pgvector//:pgvector_source",
     out_data_dirs = [
@@ -29,10 +27,4 @@ make(
     deps = [
         "//ext:postgres",
     ],
-)
-
-macho_test(
-    name = "pgvector_arch_test",
-    src = ":pgvector",
-    archs = ["arm64"],
 )

@@ -46,9 +46,6 @@ dependencies = [
     # targets can't resolve @pypi//pytest from an optional/dev group.
     "pytest>=9.1.1",
     "anthropic>=1.0.0",
-    # Not imported by garage_rag; //tools/pex builds the garage/garage-mcp
-    # PEX + scie binaries from @pypi//pex.
-    "pex>=2.101.0",
     # gRPC & Protobuf
     "grpcio>=1.68.0",
     "protobuf>=5.29.0",

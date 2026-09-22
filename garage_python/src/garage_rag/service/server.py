@@ -120,6 +120,9 @@ logger = logging.getLogger(__name__)
 
 def _version() -> str:
     """Package version as reported by the CLI (``garage version``)."""
+    # Imported here, not at module scope: garage_rag/__init__ pulls in the
+    # submodules that import this one, so a top-level import would be a cycle.
+    # gazelle:ignore garage_rag
     import garage_rag
 
     return garage_rag.__version__

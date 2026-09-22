@@ -28,10 +28,17 @@ build --apple_generate_dsym
 build --apple_platform_type=macos
 build --workspace_status_command=bazel/workspace_status.sh
 
-build --platforms=//bazel:adhoc
+build --platforms=//bazel:local_signed
 # Platform configuration presets
 build:adhoc --platforms=//bazel:adhoc
 build:local --platforms=//bazel:local
+# Like adhoc, but signed with the self-signed certificate from
+# `bazel run //tools/signing:local_identity`. Ad-hoc signatures pin the cdhash,
+# so every rebuild is a new identity and the app's Keychain items (the Postgres
+# password, the LM Studio token) prompt again; a certificate pins its own hash
+# instead, which a rebuild does not change. Put `build --config=local_signed` in
+# user.bazelrc to make it the local default.
+build:local_signed --platforms=//bazel:local_signed
 build:arm_developer_id --platforms=//bazel:arm_developer_id --macos_cpus=arm64
 build:developer_id --platforms=//bazel:universal_developer_id --macos_cpus=arm64
 build:universal --platforms=//bazel:universal_developer_id --macos_cpus=arm64

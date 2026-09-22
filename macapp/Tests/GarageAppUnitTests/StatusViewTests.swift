@@ -368,9 +368,14 @@ final class StatusViewTests: XCTestCase {
         XCTAssertEqual(ingestRes.serviceId, "ingest-xpc")
         XCTAssertEqual(manager.diagnosticResults["ingest-xpc"]?.serviceId, "ingest-xpc")
 
+        // ModelDownloadClient deliberately has no in-process fallback, and a unit
+        // test host ships no XPCServices/, so the round trip cannot succeed here.
+        // Assert the diagnostic still records a result for the right service and
+        // reports the failure rather than silently degrading.
         let dlRes = await manager.runDiagnosticTest(for: "model-download-xpc")
         XCTAssertEqual(dlRes.serviceId, "model-download-xpc")
-        XCTAssertTrue(dlRes.isSuccess)
+        XCTAssertFalse(dlRes.isSuccess)
+        XCTAssertEqual(manager.diagnosticResults["model-download-xpc"]?.serviceId, "model-download-xpc")
     }
 
     @MainActor

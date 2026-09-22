@@ -1,27 +1,24 @@
 """Rules for codesigning binaries and directories of binaries on macOS."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("@rules_apple//apple/internal:providers.bzl", "new_appleframeworkimportinfo", "new_appleresourceinfo")
+load("@rules_apple//apple/internal:providers.bzl", "new_appleresourceinfo")
 load("//bazel:codesign_test.bzl", _codesign_test = "codesign_test", _codesign_validation_test = "codesign_validation_test", _codesign_verify_test = "codesign_verify_test")
-load("//bazel:macho_test.bzl", _mach_o_arch_test = "mach_o_arch_test", _macho_arch_test = "macho_arch_test", _multi_arch_test = "multi_arch_test", _universal_binary_test = "universal_binary_test")
+load("//bazel:signing.bzl", "DEVELOPER_ID_IDENTITY", "LOCAL_SIGNING_IDENTITY", "STORE_IDENTITY", "UNCHAINED_IDENTITIES")
 
 codesign_test = _codesign_test
 codesign_verify_test = _codesign_verify_test
 codesign_validation_test = _codesign_validation_test
-macho_arch_test = _macho_arch_test
-mach_o_arch_test = _mach_o_arch_test
-universal_binary_test = _universal_binary_test
-multi_arch_test = _multi_arch_test
-macho_test = _macho_arch_test
 
 # Hardened runtime also turns on *library validation*: every Mach-O the process
-# loads must carry the same Team ID as the main executable. An ad-hoc signature
-# carries no Team ID at all, so an ad-hoc app cannot load its own bundled
-# frameworks — `bazel run //macapp` dies in dyld with "mapping process and
-# mapped file (non-platform) have different Team IDs".
+# loads must carry the same Team ID as the main executable, and that Team ID has
+# to come from an Apple-issued certificate. An ad-hoc signature carries no Team
+# ID at all, and the self-signed local identity's is not Apple-issued, so
+# neither can load its own bundled frameworks — `bazel run //macapp` dies in
+# dyld with "mapping process and mapped file (non-platform) have different Team
+# IDs".
 #
 # Hardened runtime is only *required* for notarization, so enable it for the
-# signed distribution configs and leave it off for ad-hoc local builds. The
+# signed distribution configs and leave it off for the local ones. The
 # distribution configs sign everything with one Team ID, so validation passes
 # there; the App Store build additionally ships
 # com.apple.security.cs.disable-library-validation in its entitlements.
@@ -37,6 +34,23 @@ HARDENED_RUNTIME_CODESIGNOPTS = select({
 # tracks the config instead of contradicting it.
 HARDENED_RUNTIME_EXPECTED = select({
     "//bazel:is_developer_id": True,
+    "//bazel:is_store": True,
+    "//conditions:default": False,
+})
+
+# The identity a codesign_test should expect, mirroring the platforms in
+# //bazel:BUILD.bazel. Pass this rather than re-listing the configs at each call
+# site, so a new signing config only has to be taught to one select.
+EXPECTED_SIGNING_IDENTITY = select({
+    "//bazel:is_developer_id": DEVELOPER_ID_IDENTITY,
+    "//bazel:is_local_signed": LOCAL_SIGNING_IDENTITY,
+    "//bazel:is_store": STORE_IDENTITY,
+    "//conditions:default": "-",
+})
+
+# Companion to the above for codesign_test's `is_store`, which turns on the
+# Apple-Distribution-specific assertions.
+STORE_EXPECTED = select({
     "//bazel:is_store": True,
     "//conditions:default": False,
 })
@@ -109,13 +123,14 @@ def _codesign_impl(ctx):
     if not codesign_args:
         codesign_args.append("--options=runtime")
 
-    # Hardened runtime implies library validation, and an ad-hoc signature has no
-    # Team ID for that to match against — so an ad-hoc binary signed this way
-    # cannot load its own sibling dylibs ("different Team IDs" at dyld time).
-    # Callers ask for hardened runtime because the *distribution* builds need it
-    # to notarize; silently dropping it for ad-hoc is what makes a locally built
-    # bundle runnable. See HARDENED_RUNTIME_CODESIGNOPTS for the rules_apple side.
-    if signing_identity == "-":
+    # Hardened runtime implies library validation, and neither an ad-hoc
+    # signature nor the self-signed local identity has an Apple-issued Team ID
+    # for that to match against — so a binary signed either way cannot load its
+    # own sibling dylibs ("different Team IDs" at dyld time). Callers ask for
+    # hardened runtime because the *distribution* builds need it to notarize;
+    # silently dropping it locally is what makes a locally built bundle
+    # runnable. See HARDENED_RUNTIME_CODESIGNOPTS for the rules_apple side.
+    if signing_identity in UNCHAINED_IDENTITIES:
         codesign_args = _without_hardened_runtime(codesign_args)
 
     extra_inputs = []

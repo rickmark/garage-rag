@@ -74,6 +74,10 @@ final class IngestService: ObservableObject {
     @Published private(set) var activeMode: IngestExecutionMode? = nil
     @Published private(set) var currentSource: String? = nil
     @Published private(set) var pendingSources: Set<String> = []
+    /// Every source in the current run, kept for the whole run. `pendingSources`
+    /// drains as each source starts, so it cannot distinguish a finished batch
+    /// run from a single-source run; combined progress keys off this instead.
+    @Published private(set) var runSources: Set<String> = []
     @Published private(set) var latestProgress: IngestProgressUpdate? = nil
     @Published private(set) var progressBySource: [String: IngestProgressUpdate] = [:]
     @Published private(set) var lastError: String? = nil
@@ -187,14 +191,21 @@ final class IngestService: ObservableObject {
 
     func setPendingSources(_ slugs: Set<String>) {
         self.pendingSources = slugs
+        self.runSources = slugs
     }
 
     func markSourceActive(_ slug: String) {
         self.pendingSources.remove(slug)
+        self.runSources.insert(slug)
+        // handleProgressBatch only adopts a source when `currentSource` is unset
+        // or the "*" placeholder, so without this the first source of a batch
+        // run would stay current for the whole run.
+        self.currentSource = slug
     }
 
     func clearPendingSources() {
         self.pendingSources.removeAll()
+        self.runSources.removeAll()
     }
 
     // MARK: - OSLogStore Monitoring

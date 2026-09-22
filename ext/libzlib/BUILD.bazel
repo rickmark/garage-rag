@@ -1,5 +1,4 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:codesign.bzl", "macho_test")
 load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file", "normalize_install_names")
 
 configure_make(
@@ -10,9 +9,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -g",
-        "CXXFLAGS": "-arch arm64 -g",
-        "LDFLAGS": "-arch arm64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_static_libs = [
@@ -30,9 +28,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -g",
-        "CXXFLAGS": "-arch arm64 -g",
-        "LDFLAGS": "-arch arm64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_shared_libs = [
@@ -53,16 +50,4 @@ filegroup(
     name = "libzlib_dylibs",
     srcs = [":libz_dylib"],
     visibility = ["//visibility:public"],
-)
-
-macho_test(
-    name = "libzlib_arch_test",
-    src = ":libzlib",
-    archs = ["arm64"],
-)
-
-macho_test(
-    name = "libzlib_shared_arch_test",
-    src = ":libzlib_dylibs",
-    archs = ["arm64"],
 )

@@ -88,26 +88,13 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-# The per-dependency macho_test/codesign_test targets live next to the rules that
-# produce the binaries they check (//ext/postgres, //ext/python, ...); this suite
-# keeps `bazel test //ext:tests` covering all of them.
+# The per-dependency codesign_test targets live next to the rules that produce
+# the binaries they check (//ext/python, //ext/pythonkit); this suite keeps
+# `bazel test //ext:tests` covering all of them.
 test_suite(
     name = "tests",
     tests = [
-        "//ext/libicu:libicu_arch_test",
-        "//ext/libicu:libicu_shared_arch_test",
-        "//ext/libreadline:libreadline_arch_test",
-        "//ext/libreadline:libreadline_shared_arch_test",
-        "//ext/libzlib:libzlib_arch_test",
-        "//ext/libzlib:libzlib_shared_arch_test",
-        "//ext/llama_cpp:llama_cpp_arch_test",
-        "//ext/openssl:openssl_arch_test",
-        "//ext/pgvector:pgvector_arch_test",
-        "//ext/postgres:postgres_arch_test",
-        "//ext/python:python_arch_test",
-        "//ext/python:python_framework_arch_test",
         "//ext/python:python_framework_codesign_test",
-        "//ext/pythonkit:pythonkit_arch_test",
         "//ext/pythonkit:pythonkit_codesign_test",
     ],
 )

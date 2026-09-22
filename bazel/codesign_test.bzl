@@ -1,7 +1,6 @@
 """Bazel test rules for verifying codesign signatures, hardened runtime, and identities."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel:macho_test.bzl", "mach_o_arch_test", "macho_arch_test", "multi_arch_test", "universal_binary_test")
 
 def _codesign_test_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):

@@ -809,7 +809,7 @@ final class AppState: ObservableObject {
     /// Total number of documents processed (seen / scanned) so far in the current ingestion run.
     var combinedIngestProcessedCount: Int {
         // If single source:
-        if ingestService.pendingSources.isEmpty,
+        if ingestService.runSources.count <= 1,
            let current = ingestService.currentSource,
            current != "*",
            let src = registeredSources.first(where: { $0.slug == current }) {
@@ -948,7 +948,7 @@ final class AppState: ObservableObject {
     }
 
     var combinedIngestTitle: String {
-        if ingestService.pendingSources.isEmpty, let current = ingestService.currentSource, current != "*" {
+        if ingestService.runSources.count <= 1, let current = ingestService.currentSource, current != "*" {
             return current
         }
         if let current = ingestService.currentSource, !current.isEmpty, current != "*" {
