@@ -1120,7 +1120,7 @@ struct StatusView: View {
 
                     Divider()
 
-                    let testInfo = diagnosticTestInfo(for: service.id)
+                    let testInfo = ServiceDiagnosticTest.primary(for: service.id)
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
@@ -1484,46 +1484,6 @@ struct StatusView: View {
         if total < 3600 { return "\(total / 60)m \(total % 60)s" }
         if total < 86400 { return "\(total / 3600)h \((total % 3600) / 60)m" }
         return "\(total / 86400)d \((total % 86400) / 3600)h"
-    }
-
-    private func diagnosticTestInfo(for serviceId: String) -> (name: String, description: String) {
-        switch serviceId {
-        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc":
-            return (
-                name: "Model Load & Vector Embeddings",
-                description: "Loads the vector embedding module and computes float vector coordinates on a fixed sample text."
-            )
-        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
-            return (
-                name: "Payload Download & SHA-256 Checksum",
-                description: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity."
-            )
-        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
-            return (
-                name: "Llama Tokenizer & Server Status",
-                description: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt."
-            )
-        case "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc":
-            return (
-                name: "Document Ingest Pipeline & Python Runtime",
-                description: "Inspects PythonKit dynamic library resolution, tests signal handlers, verifies document extractors and chunkers."
-            )
-        case "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc":
-            return (
-                name: "Model Context Protocol (MCP) Tools",
-                description: "Initializes MCP protocol connection and discovers registered tools and capabilities."
-            )
-        case "garage-xpc", "me.rickmark.garage-rag.xpc":
-            return (
-                name: "Garage Backend Core Coordination",
-                description: "Tests Core XPC daemon coordination and backend lifecycle communication."
-            )
-        default:
-            return (
-                name: "Service Check",
-                description: "Functional readiness verification."
-            )
-        }
     }
 
 

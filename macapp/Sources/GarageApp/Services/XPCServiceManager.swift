@@ -76,6 +76,65 @@ public enum XPCServiceState: Equatable, Sendable {
 }
 
 /// Metadata and real-time state for an individual XPC helper service.
+/// The functional ("beyond ping") test a service's diagnostic runs: the name and
+/// description on its result, and what the Status page shows before it runs.
+public struct ServiceDiagnosticTest: Equatable, Sendable {
+    public let name: String
+    public let description: String
+
+    public static let selfTests = ServiceDiagnosticTest(
+        name: "In-Service Self Tests",
+        description: "Runs the self tests embedded in the helper (Python runtime, imports, managed services)."
+    )
+    public static let generic = ServiceDiagnosticTest(
+        name: "Generic Service Check",
+        description: "Basic ping and responsiveness verification."
+    )
+    public static let modelDownload = ServiceDiagnosticTest(
+        name: "Payload Download & SHA-256 Checksum Test",
+        description: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity."
+    )
+    public static let llama = ServiceDiagnosticTest(
+        name: "Llama Tokenizer & Health Status Test",
+        description: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt."
+    )
+
+    // Fallbacks run only when a Python-hosted helper does not answer its self tests.
+    public static let embed = ServiceDiagnosticTest(
+        name: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
+        description: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text."
+    )
+    public static let ingestPing = ServiceDiagnosticTest(
+        name: "Ingest Helper Reachability Test",
+        description: "Pings the ingest helper over XPC and records its reply and latency."
+    )
+    public static let mcpPing = ServiceDiagnosticTest(
+        name: "MCP Helper Reachability Test",
+        description: "Pings the MCP server helper over XPC and records its reply and latency."
+    )
+    public static let backend = ServiceDiagnosticTest(
+        name: "Garage Backend Core Coordination Test",
+        description: "Tests Core XPC daemon coordination and backend lifecycle communication."
+    )
+
+    /// The test `XPCServiceManager.runDiagnosticTest(for:)` runs for a service id or bundle id.
+    public static func primary(for serviceId: String) -> ServiceDiagnosticTest {
+        switch serviceId {
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
+             "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
+             "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc",
+             "garage-xpc", "me.rickmark.garage-rag.xpc":
+            return .selfTests
+        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
+            return .modelDownload
+        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
+            return .llama
+        default:
+            return .generic
+        }
+    }
+}
+
 public struct XPCServiceInfo: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -500,8 +559,8 @@ public final class XPCServiceManager: ObservableObject {
             guard let report = GarageXPCStatusReport.decode(fromJSON: json) else {
                 diagnosticResults[service.id] = ServiceDiagnosticTestResult(
                     serviceId: service.id,
-                    testName: "In-Service Self Tests",
-                    testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                    testName: ServiceDiagnosticTest.selfTests.name,
+                    testDescription: ServiceDiagnosticTest.selfTests.description,
                     isSuccess: false,
                     durationMs: elapsed,
                     summary: "Self tests \(passed ? "passed" : "failed") but the report could not be decoded",
@@ -521,8 +580,8 @@ public final class XPCServiceManager: ObservableObject {
             logger.warning("Self tests failed to run on '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             diagnosticResults[service.id] = ServiceDiagnosticTestResult(
                 serviceId: service.id,
-                testName: "In-Service Self Tests",
-                testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                testName: ServiceDiagnosticTest.selfTests.name,
+                testDescription: ServiceDiagnosticTest.selfTests.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Self tests could not be run: \(error.localizedDescription)",
@@ -563,8 +622,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: serviceId,
-            testName: "In-Service Self Tests",
-            testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+            testName: ServiceDiagnosticTest.selfTests.name,
+            testDescription: ServiceDiagnosticTest.selfTests.description,
             isSuccess: report.allTestsPassed,
             durationMs: durationMs,
             summary: summary,
@@ -934,8 +993,8 @@ public final class XPCServiceManager: ObservableObject {
         default:
             result = ServiceDiagnosticTestResult(
                 serviceId: serviceId,
-                testName: "Generic Service Check",
-                testDescription: "Basic ping and responsiveness verification.",
+                testName: ServiceDiagnosticTest.generic.name,
+                testDescription: ServiceDiagnosticTest.generic.description,
                 isSuccess: false,
                 durationMs: 0,
                 summary: "Unknown service ID: \(serviceId)",
@@ -1031,8 +1090,8 @@ public final class XPCServiceManager: ObservableObject {
             let summary = success ? "Model mxbai-embed-xsmall loaded & embedded test string in \(String(format: "%.1f", elapsed))ms" : "Embedding computation failed"
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
+                testName: ServiceDiagnosticTest.embed.name,
+                testDescription: ServiceDiagnosticTest.embed.description,
                 isSuccess: success,
                 durationMs: elapsed,
                 summary: summary,
@@ -1042,8 +1101,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
+                testName: ServiceDiagnosticTest.embed.name,
+                testDescription: ServiceDiagnosticTest.embed.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Embed XPC service test failed: \(error.localizedDescription)",
@@ -1062,8 +1121,8 @@ public final class XPCServiceManager: ObservableObject {
             let summary = isValid ? "Payload downloaded and SHA-256 hash verified in \(String(format: "%.1f", elapsed))ms" : "SHA-256 integrity verification failed"
             return ServiceDiagnosticTestResult(
                 serviceId: "model-download-xpc",
-                testName: "Payload Download & SHA-256 Checksum Test",
-                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                testName: ServiceDiagnosticTest.modelDownload.name,
+                testDescription: ServiceDiagnosticTest.modelDownload.description,
                 isSuccess: isValid,
                 durationMs: elapsed,
                 summary: summary,
@@ -1073,8 +1132,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "model-download-xpc",
-                testName: "Payload Download & SHA-256 Checksum Test",
-                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                testName: ServiceDiagnosticTest.modelDownload.name,
+                testDescription: ServiceDiagnosticTest.modelDownload.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Download test failed: \(error.localizedDescription)",
@@ -1144,8 +1203,8 @@ public final class XPCServiceManager: ObservableObject {
 
             return ServiceDiagnosticTestResult(
                 serviceId: "llama-xpc",
-                testName: "Llama Tokenizer & Health Status Test",
-                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                testName: ServiceDiagnosticTest.llama.name,
+                testDescription: ServiceDiagnosticTest.llama.description,
                 isSuccess: true,
                 durationMs: elapsed,
                 summary: "Llama XPC tokenizer & health check completed in \(String(format: "%.1f", elapsed))ms",
@@ -1155,8 +1214,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "llama-xpc",
-                testName: "Llama Tokenizer & Health Status Test",
-                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                testName: ServiceDiagnosticTest.llama.name,
+                testDescription: ServiceDiagnosticTest.llama.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Llama XPC test failed: \(error.localizedDescription)",
@@ -1191,8 +1250,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: "ingest-xpc",
-            testName: "Ingest Helper Reachability Test",
-            testDescription: "Pings the ingest helper over XPC and records its reply and latency.",
+            testName: ServiceDiagnosticTest.ingestPing.name,
+            testDescription: ServiceDiagnosticTest.ingestPing.description,
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1225,8 +1284,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: "mcp-server-xpc",
-            testName: "MCP Helper Reachability Test",
-            testDescription: "Pings the MCP server helper over XPC and records its reply and latency.",
+            testName: ServiceDiagnosticTest.mcpPing.name,
+            testDescription: ServiceDiagnosticTest.mcpPing.description,
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1273,8 +1332,8 @@ public final class XPCServiceManager: ObservableObject {
 
             return ServiceDiagnosticTestResult(
                 serviceId: "garage-xpc",
-                testName: "Garage Backend Core Coordination Test",
-                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                testName: ServiceDiagnosticTest.backend.name,
+                testDescription: ServiceDiagnosticTest.backend.description,
                 isSuccess: success,
                 durationMs: elapsed,
                 summary: "\(summaryText) in \(String(format: "%.1f", elapsed))ms",
@@ -1285,8 +1344,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "garage-xpc",
-                testName: "Garage Backend Core Coordination Test",
-                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                testName: ServiceDiagnosticTest.backend.name,
+                testDescription: ServiceDiagnosticTest.backend.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Garage backend helper check failed: \(error.localizedDescription)",
