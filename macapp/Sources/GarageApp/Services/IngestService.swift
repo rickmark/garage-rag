@@ -105,10 +105,6 @@ final class IngestService: ObservableObject {
         self.postgres = postgres
     }
 
-    deinit {
-        osLogMonitorTask?.cancel()
-    }
-
     var client: IngestClient {
         xpcClient
     }
