@@ -15,8 +15,6 @@ evidence, file references and proposed fix; this file is the index.
       `service/server.py` and delete the 24 RPCs nothing calls.
 - [ ] [#25](https://github.com/rickmark/garage-rag/issues/25) Extract shared SwiftUI components (badge,
       output box, presets, status mappings) and split `StatusView.swift`.
-- [ ] [#26](https://github.com/rickmark/garage-rag/issues/26) Remove the remaining `LlamaClient`
-      in-process fallbacks so a dead helper no longer looks healthy.
 - [ ] [#27](https://github.com/rickmark/garage-rag/issues/27) Smaller items: binary-quantized rerank,
       proto `kind` field, unpopulated chunk offsets, `expected_items`, git scan counts, non-loopback
       embedding hosts, duplicate OSLog poller, triplicated model catalog, stray configs, CLI output

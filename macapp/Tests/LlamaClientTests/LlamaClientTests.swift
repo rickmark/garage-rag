@@ -167,29 +167,26 @@ final class LlamaClientTests: XCTestCase {
         XCTAssertGreaterThan(resp.usage.totalTokens, 0)
     }
 
-    func testLlamaClientFallbackWhenHelperUnavailable() async throws {
-        // Test client configured with non-existent helper service name
+    func testLlamaClientSurfacesUnreachableHelper() async throws {
+        // A client pointed at a helper that does not exist must fail every call: nothing answers from an
+        // in-process engine, so a dead or crashed helper can never look healthy to the app.
         let disconnectedClient = LlamaClient(serviceName: "me.rickmark.nonexistent.llama-xpc")
 
-        // ping() reports the helper's real health and must not pretend an unreachable helper answered.
-        do {
-            _ = try await disconnectedClient.ping()
-            XCTFail("ping() should throw when the helper is unreachable")
-        } catch {
-            XCTAssertTrue(error is LlamaClientError)
+        func expectServiceError(_ label: String, _ body: () async throws -> Void) async {
+            do {
+                try await body()
+                XCTFail("\(label) should throw when the helper is unreachable")
+            } catch {
+                XCTAssertTrue(error is LlamaClientError, "\(label) threw \(type(of: error)), expected LlamaClientError")
+            }
         }
 
-        // The request methods still fall back to the in-process engine.
-        let health = try await disconnectedClient.health()
-        XCTAssertEqual(health.status, "ok")
-
-        let props = try await disconnectedClient.props()
-        XCTAssertEqual(props.modelAlias, "default")
-
-        let models = try await disconnectedClient.listModels()
-        XCTAssertEqual(models.object, "list")
-
-        let completion = try await disconnectedClient.complete(prompt: "Hello", maxTokens: 10)
-        XCTAssertFalse(completion.content.isEmpty)
+        await expectServiceError("ping()") { _ = try await disconnectedClient.ping() }
+        await expectServiceError("health()") { _ = try await disconnectedClient.health() }
+        await expectServiceError("props()") { _ = try await disconnectedClient.props() }
+        await expectServiceError("listModels()") { _ = try await disconnectedClient.listModels() }
+        await expectServiceError("complete()") { _ = try await disconnectedClient.complete(prompt: "Hello", maxTokens: 10) }
+        await expectServiceError("embed()") { _ = try await disconnectedClient.embed(texts: ["Hello"]) }
+        await expectServiceError("unloadModel()") { _ = try await disconnectedClient.unloadModel() }
     }
 }
