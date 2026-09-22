@@ -463,6 +463,7 @@ struct SourcesView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
+                    .accessibilityLabel("Source actions")
                     .menuStyle(.borderlessButton)
                     .frame(width: 24)
                 }

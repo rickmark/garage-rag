@@ -120,6 +120,7 @@ public struct LogTableView: View {
                             .foregroundStyle(.secondary)
                             .font(.caption)
                     }
+                    .accessibilityLabel("Clear filter text")
                     .buttonStyle(.plain)
                 }
             }
@@ -314,6 +315,7 @@ public struct LogTableView: View {
                 Button(action: { showDetailInspector = false }) {
                     Image(systemName: "xmark")
                 }
+                .accessibilityLabel("Close log entry details")
                 .buttonStyle(.plain)
                 .font(.caption)
             }

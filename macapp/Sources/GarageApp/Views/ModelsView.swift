@@ -482,6 +482,7 @@ struct ModelsView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
+                    .accessibilityLabel("Model actions")
                     .menuStyle(.borderlessButton)
                     .frame(width: 20)
                 }
@@ -963,6 +964,7 @@ struct ModelsView: View {
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }
+                        .accessibilityLabel("Model actions")
                         .menuStyle(.borderlessButton)
                         .frame(width: 20)
                     }

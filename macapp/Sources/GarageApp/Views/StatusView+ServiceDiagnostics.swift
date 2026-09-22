@@ -137,6 +137,7 @@ extension StatusView {
                         .foregroundStyle(.secondary)
                         .frame(width: 14)
                 }
+                .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
                 .buttonStyle(.plain)
 
                 // Status Icon
@@ -336,6 +337,7 @@ extension StatusView {
                         .foregroundStyle(.secondary)
                         .frame(width: 14)
                 }
+                .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
                 .buttonStyle(.plain)
 
                 // Status Icon

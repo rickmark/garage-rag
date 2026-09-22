@@ -76,6 +76,7 @@ public struct SearchView: View {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
                         }
+                        .accessibilityLabel("Clear search")
                         .buttonStyle(.plain)
                     }
                 }
@@ -115,6 +116,7 @@ public struct SearchView: View {
                 Button(action: { showAdvancedFilters.toggle() }) {
                     Image(systemName: showAdvancedFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Advanced filters")
                 .help("Toggle Advanced Filters")
 
                 Button(action: { runSearch() }) {
@@ -383,6 +385,7 @@ public struct SearchView: View {
                     Button(action: { selectedResultID = nil }) {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close result details")
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(.secondary)

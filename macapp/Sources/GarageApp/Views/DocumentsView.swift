@@ -56,6 +56,7 @@ public struct DocumentsView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityLabel("Clear search")
                     .buttonStyle(.plain)
                 }
             }
@@ -98,6 +99,7 @@ public struct DocumentsView: View {
                         .frame(width: 20)
                 }
             }
+            .accessibilityLabel("Refresh document list")
             .disabled(isLoadingList || appState.postgres.status != .running)
             .help("Refresh document list")
         }
