@@ -6,7 +6,7 @@ description: PostgreSQL schema layout, cascade rules, and HNSW vector indexing.
 
 # Schema reference
 
-DDL lives in `../src/data/sql/00*.sql`, which is the source of truth (it holds the CHECK
+DDL lives in `data/sql/00*.sql` at the repository root, which is the source of truth (it holds the CHECK
 constraints and the generated `tsvector`). `db/models.py` mirrors it for typed
 reads and writes, not for schema creation.
 
@@ -106,6 +106,32 @@ tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
 
 Postgres maintains the keyword index itself; no application bookkeeping.
 
+`chunks.fact_id` (`007_chunk_fact_link.sql`) is a nullable
+`REFERENCES facts(id) ON DELETE CASCADE` column with a partial unique index
+(`WHERE fact_id IS NOT NULL`), so a fact has at most one chunk. It marks a
+chunk as distilled from a fact rather than cut from `documents.content`; such
+chunks carry `chunker = 'facts:langextract:<model>'`. Nothing else about the
+row is special — the backfill's anti-join finds it like any other chunk, which
+is what gets facts embedded under every model without a fact-specific path.
+Deleting a fact cascades into its chunk and, through `chunk_id`, into every
+`emb_*` table.
+
+### `facts`
+
+Atomic, self-contained claims distilled out of a document's text by
+`enrich/facts.py` (`006_facts.sql`). Same shape as chunks: ordered rows scoped
+to a `document_id` (`ON DELETE CASCADE`, unique on `(document_id, ord)`),
+replaced wholesale when the document is re-extracted.
+
+| Column | Purpose |
+|---|---|
+| `fact` | the claim, in the document's own wording |
+| `fact_class` | the extractor's label (its prompt's `extraction_class`, default `'fact'`); unconstrained so the prompt can be specialized per corpus |
+| `attributes` | `jsonb` extractor attributes, default `'{}'` |
+| `char_start` / `char_end` | span of `documents.content` the fact was grounded to; an ungrounded fact is dropped by the extractor rather than stored |
+| `extractor` / `extractor_model` | provenance, default `'langextract'` and the model id |
+| `tsv` | generated `to_tsvector('english', fact)`, GIN-indexed — the keyword half of hybrid search over facts |
+
 ### `conversations` / `messages`
 
 Structured storage for communication sources (`sms`/`imessage` chat.db, `mail`)
@@ -169,5 +195,7 @@ length, and pgvector's cosine operator does not normalize for you.
 ### `ingest_runs` / `ingest_seen`
 
 Coverage bookkeeping that makes deletion safe. `completed` is true only for a
-walk that ran to exhaustion with no `--limit`. `ingest_seen` holds one row per
-observed URI per run; `prune_old_runs` bounds its growth.
+walk that ran to exhaustion (not one cut short by `--limit` or cancellation).
+`ingest_seen` holds one row per observed URI per run, including files that were
+stat-skipped without being opened; nothing prunes old runs yet, so it grows
+with every ingest.

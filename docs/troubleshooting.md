@@ -100,9 +100,11 @@ Inspect your registered model settings:
 ```bash
 garage list-models
 ```
-If registered incorrectly, remove and re-register:
+If registered incorrectly, drop the model (this discards its vectors) and re-register it with the right width, then backfill:
 ```bash
-garage register-model <model-name> --provider ollama --dimensions <correct-dims> --force
+garage drop-model <model-name> --yes
+garage register-model <model-name> --provider ollama --dims <correct-dims>
+garage backfill --model <model-name>
 ```
 
 ---
@@ -113,10 +115,10 @@ garage register-model <model-name> --provider ollama --dimensions <correct-dims>
 
 **Symptom**: Browser or custom client receives `421 Misdirected Request` when connecting to `http://127.0.0.1:8787/mcp`.
 
-**Cause**: The MCP HTTP server includes always-on DNS rebinding protection. Requests must send a valid `Host` header (`127.0.0.1` or `localhost`).
+**Cause**: On a loopback bind the MCP HTTP server checks the `Host` header (DNS rebinding protection). Requests must send `127.0.0.1:8787` or `localhost:8787`.
 
 **Solution**:
-Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web application, specify `--allow-origin <origin>`.
+Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web application, specify `--allow-origin <origin>`. When serving remotely (`--allow-remote`), pass each name clients will use with `--allow-host <host:port>` (or `<host>:*`); with no `--allow-host` the `Host` check is switched off and a warning is logged.
 
 <h3 id="claude-desktop-not-detecting">Claude Desktop Not Detecting Tools</h3>
 
@@ -127,7 +129,7 @@ Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web applica
 2. Confirm the entry for `garage` exists and has the correct path to `garage-mcp`.
 3. Re-install using:
    ```bash
-   garage mcp-install claude-desktop
+   garage mcp-install --target claude-desktop
    ```
 4. Completely quit Claude Desktop (Cmd+Q) and reopen it.
 

@@ -33,7 +33,7 @@ By default, information processed by Garage remains on your device. Any files, t
 
 Garage may offer optional features that allow you to submit selected content to third-party service providers for processing.
 
-For example, if you choose to perform OCR or text extraction on an image containing text, you may have the option to send that image or extracted content to a third-party provider, such as OpenAI, for processing.
+For example, if you choose to perform OCR or text extraction on an image containing text, you may have the option to send that image to a third-party provider, Anthropic (the Claude API), for processing. This is the only third-party cloud service the application can contact, it is disabled by default, and it is never used for private communications (Messages, Mail).
 
 Use of these third-party features is optional. Garage does not send your data to third parties unless you take an action that enables or requests such processing.
 
@@ -44,8 +44,8 @@ When you choose to use a third-party processing feature:
 - Garage does not control how the third-party provider handles data after submission.
 - You should review the third-party provider’s privacy policy before using the feature.
 
-OpenAI’s privacy policy is available at:  
-<https://openai.com/policies/privacy-policy>
+Anthropic’s privacy policy is available at:  
+<https://www.anthropic.com/legal/privacy>
 
 ## 4. User Control
 

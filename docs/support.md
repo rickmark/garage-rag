@@ -114,8 +114,8 @@ Garage supports multiple embedding models simultaneously without re-parsing raw 
    ```
 2. Register and set `bge-m3` as the default model:
    ```bash
-   garage register-model bge-m3 --provider ollama --dimensions 1024
-   garage default-model bge-m3
+   garage register-model bge-m3 --provider ollama --dims 1024
+   garage set-default-model bge-m3
    ```
 3. Generate vector embeddings for all indexed chunks:
    ```bash
@@ -128,7 +128,7 @@ Garage supports multiple embedding models simultaneously without re-parsing raw 
 2. In `GarageApp` under the **Models** tab, select LM Studio as the provider and optionally store your LM Studio API token in the macOS Keychain.
 3. Via CLI:
    ```bash
-   garage register-model nomic-embed-text --provider lmstudio --dimensions 768
+   garage register-model nomic-embed-text --provider lmstudio --dims 768
    garage backfill
    ```
 
@@ -143,7 +143,7 @@ Garage implements the **Model Context Protocol (MCP) 2.0**, allowing AI assistan
 Install the Garage MCP tool directly into your Claude Desktop configuration:
 
 ```bash
-garage mcp-install claude-desktop
+garage mcp-install --target claude-desktop
 ```
 
 This updates `~/Library/Application Support/Claude/claude_desktop_config.json` with the required command and database connection environment. Restart Claude Desktop to start searching your notes and code directly from Claude!
@@ -153,7 +153,7 @@ This updates `~/Library/Application Support/Claude/claude_desktop_config.json` w
 Register Garage with Claude Code:
 
 ```bash
-garage mcp-install claude-code
+garage mcp-install --target claude-code-user
 ```
 
 ### HTTP MCP Endpoint
@@ -191,8 +191,9 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
   # Backup
   pg_dump -Fc -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -f ~/Desktop/garage_backup.dump
 
-  # Reset
-  garage init-db --reset
+  # Reset: there is no reset flag. Drop the schema, then re-apply it.
+  psql -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+  garage init-db
   ```
 
 ---

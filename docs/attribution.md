@@ -113,13 +113,21 @@ somebody else, and your own work is filed as `reference`.
 
 ## Communications
 
-Roles rather than a single author:
+The schema reserves three roles for messages and mail alongside `author` and
+`committer` (`AuthorRole` in `db/models.py`): `sender`, `recipient`, `cc`. The
+intended mapping is:
 
 - Outbound → you are `sender`, the handles are `recipient`
 - Inbound → the handle is `sender`, you are `recipient`
 - Mail `Cc:` → `cc`
 
-Trust is `authored` for what you sent, `received` for what you did not.
+with trust `authored` for what you sent and `received` for what you did not.
+
+**Not yet populated.** Nothing in `attribute/` assigns these roles today: the
+resolver only ever emits `author` and `committer`, and communication sources are
+attributed through the same git → metadata → path → source-default chain as
+everything else. The roles exist so the schema does not need a migration when a
+conversation-aware attributor lands.
 
 ## Corpus class
 

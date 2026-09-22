@@ -51,7 +51,7 @@ Your files, text, images, code, and communications never leave your device unles
 
 Garage may offer optional features that allow you to submit selected content to third-party providers for processing:
 
-- **Cloud Optical Character Recognition (OCR)**: If enabled, image text extraction with low local confidence may optionally escalate to third-party vision models (such as Anthropic or OpenAI).
+- **Cloud Optical Character Recognition (OCR)**: If enabled, image text extraction with low local confidence may optionally escalate to a third-party vision model (Anthropic's Claude API, the only cloud provider the application integrates).
 - **Third-Party Model Providers**: If configured, local embedding requests may connect to user-specified external API endpoints.
 
 ### User Control

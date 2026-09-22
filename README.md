@@ -56,7 +56,7 @@ For detailed architectural and design specifications, see:
 ├── MODULE.bazel              # Bazel dependencies (aspect_rules_py, rules_swift, rules_apple, etc.)
 ├── data/
 │   ├── schema/               # JSON schema for garage configuration validation
-│   └── sql/                  # PostgreSQL migration and DDL scripts (001_extensions, 002_core, 003_registry)
+│   └── sql/                  # PostgreSQL DDL, applied in order (001_extensions … 007_chunk_fact_link)
 ├── docs/                     # In-depth architectural, privacy, schema, and attribution documentation
 ├── ext/                      # Hermetic Bazel builds for PostgreSQL 18, pgvector, and C/C++ libraries
 ├── garage_python/            # Python backend package (garage_rag), CLI (garage), and MCP server (garage-mcp)
@@ -92,8 +92,8 @@ For detailed architectural and design specifications, see:
 
 3. **Register an embedding model**:
    ```bash
-   garage register-model bge-m3 --provider ollama --dimensions 1024
-   garage default-model bge-m3
+   garage register-model bge-m3 --provider ollama --dims 1024
+   garage set-default-model bge-m3
    ```
 
 4. **Add and ingest sources**:
@@ -118,7 +118,8 @@ For detailed architectural and design specifications, see:
    garage-mcp
 
    # Or install into Claude Desktop / Claude Code configurations
-   garage mcp-install claude-desktop
+   garage mcp-install --target claude-desktop
+   garage mcp-install --target claude-code-user
    ```
 
 ---
@@ -172,7 +173,7 @@ open macapp/Garage.xcodeproj
 
 ## License
 
-See [LICENSE](LICENSE) for terms of use.
+See [LICENSE](garage_python/LICENSE) for terms of use.
 
 ## Dedication
 

@@ -55,9 +55,34 @@ erroring mid-run.
 
 ## What can leave, when enabled
 
-Only image bytes, only for OCR, only from sources explicitly opted in, and only
-when Tesseract's confidence falls below `extraction.ocr_min_confidence`. Document
-text, code, and communications are never sent.
+To a **cloud API**: only image bytes, only for OCR, only from sources explicitly
+opted in, and only when Tesseract's confidence falls below
+`extraction.ocr_min_confidence`. Document text, code, and communications are
+never sent to a cloud API. The only cloud client in the codebase is Anthropic's,
+constructed in `enrich/egress.py`.
+
+## Local inference endpoints
+
+Two features post document text over HTTP to a **configured local server**,
+which is assumed to be this machine:
+
+- **Embeddings** — chunk text goes to `ollama_host` (default
+  `http://localhost:11434`) or `lmstudio_host` (default `http://localhost:1234/v1`),
+  depending on the registered model's provider.
+- **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
+  `ollama_host`. The LangExtract provider is **pinned to Ollama** by an explicit
+  `ModelConfig(provider="OllamaLanguageModel")`; without that pin LangExtract
+  chooses its backend by regex on the model name, and a `gemini-*` or `gpt-*`
+  model id would have been sent to Google or OpenAI with an API key from the
+  environment. `test_egress_block.py` asserts the pin structurally.
+
+These hosts are not egress-guarded the way the cloud path is, because they are
+loopback by default and the guard would otherwise block local inference on your
+own messages. If you point `ollama_host` at another machine, fact extraction
+runs each document's class through `assert_egress_allowed` first, so
+communications are still never posted off-box; embeddings do not currently make
+that check, so keep `ollama_host`/`lmstudio_host` on loopback if you index
+communications.
 
 ## macOS permissions (TCC)
 

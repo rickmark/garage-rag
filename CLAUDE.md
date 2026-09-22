@@ -73,13 +73,18 @@ of truth for CI.
 
 ### Swift app dev loop
 
+The app is built by Bazel, not SwiftPM: `macapp/Package.swift` only covers the XPC client/service
+modules and has no targets for the gRPC bridge or `PythonXPCService`, so `swift run` does not
+produce a working app.
+
 ```bash
-cd macapp && swift run   # uses the Homebrew postgresql@18/pgvector install and the repo .venv directly
+aspect build //:macapp     # the .app, with Postgres + pgvector, Python.framework and the garage/garage-mcp scie binaries built from ext/ and garage_python/
+aspect run //:xcodeproj    # generate macapp/Garage.xcodeproj for iterating in Xcode
+open macapp/Garage.xcodeproj
 ```
 
-Building the distributable `.app` (`./Scripts/build-app.sh` under `macapp/`) compiles Postgres +
-pgvector from source and PyInstaller-freezes `garage`/`garage-mcp` — see `macapp/README.md` for why
-Postgres can't just use the Homebrew build (it bakes absolute `/opt/homebrew` paths).
+See `macapp/README.md` for why Postgres can't just use the Homebrew build (it bakes absolute
+`/opt/homebrew` paths).
 
 ## Architecture
 
@@ -117,6 +122,11 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   metadata (filtered through `looks_like_tool_name` so `python-pptx`/`openpyxl` don't self-attribute)
   → path convention (`pathrules.py`, data-driven table) → source default. See `docs/attribution.md`.
 - **Store** — chunks are model-agnostic; see the schema section below.
+- **Distill facts** (`enrich/facts.py`, `garage enrich-facts`, `EnrichFacts` RPC) — optional
+  post-ingest pass: LangExtract against local Ollama distills each document into atomic,
+  span-grounded `facts` rows; every fact also gets its own `chunks` row (`chunks.fact_id`,
+  `chunker = 'facts:...'`), so the ordinary backfill embeds facts under every model with no
+  fact-specific path. Schema in `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
 - **Search** (`search/hybrid.py`) — Reciprocal Rank Fusion over pgvector KNN and Postgres FTS
   (`k=60`, 200 candidates/engine). Keyword side ORs terms rather than ANDing, favoring recall since
   RRF (not the keyword match itself) decides final ordering.
@@ -176,9 +186,10 @@ detail: `docs/privacy.md`.
 One JSON config, nested on disk (`~/.garage.json`, or `./garage.json` for project-local override,
 or `--config PATH`) but flattened into a `Settings` object for code. `SECTIONS` is the single
 source that knows both shapes and drives loading/saving/schema generation together so they can't
-drift. Unknown keys are a hard error, not a silent ignore. The JSON Schema is generated from this
-module (`garage config schema`) and committed at repo root (`garage.schema.json`) — **regenerate it
-whenever a setting is added, renamed, or documented**; a test enforces every field is documented.
+drift. Unknown keys are a hard error, not a silent ignore (retired keys listed in `RETIRED_KEYS`
+are warned about and skipped). The JSON Schema is generated from this module (`garage config
+schema --publish`) and committed at `data/schema/garage.schema.json` — **regenerate it whenever a
+setting is added, renamed, or documented**; a test enforces every field is documented.
 
 ### macOS app (`macapp/`)
 
@@ -186,7 +197,8 @@ whenever a setting is added, renamed, or documented**; a test enforces every fie
   `macapp/README.md` for why Homebrew's build won't work) in
   `~/Library/Application Support/GarageApp/pgdata`.
 - `GarageCLIService` shells out to `garage <subcommand>` one-shot invocations; dedicated instances
-  for `ingest`/`backfill` so long-running jobs don't block ordinary commands.
+  for `backfill`/`enrich-facts` so long-running jobs don't block ordinary commands. Ingest no
+  longer goes through it: `IngestService` drives `GarageIngestXPCService` via `IngestClient`.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.
