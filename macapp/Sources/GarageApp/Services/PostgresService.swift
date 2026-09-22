@@ -327,7 +327,7 @@ final class PostgresService: ObservableObject {
 
         let ready = await waitUntilReady(timeout: 30)
         guard ready else {
-            status = .failed("postgres did not become ready within 20s")
+            status = .failed("postgres did not become ready within 30s")
             throw PostgresError.startupTimeout
         }
 
@@ -370,6 +370,8 @@ final class PostgresService: ObservableObject {
     /// Stops any active Postgres server running against the app's pgdata directory,
     /// even if started by an earlier app instance or process.
     static func stopAnyRunningInstance() {
+        // Paths.pgDataDir is the developer's live cluster; unit tests must never signal or kill it.
+        guard !isRunningInTestEnvironment else { return }
         let pidFile = Paths.pgDataDir.appendingPathComponent("postmaster.pid")
         guard FileManager.default.fileExists(atPath: pidFile.path) else { return }
 
@@ -415,6 +417,8 @@ final class PostgresService: ObservableObject {
     /// re-initializes the database cluster from scratch if stopped or failed.
     /// Preserves the Keychain-managed superuser credential.
     func resetDatabase() async throws {
+        // Never drop the developer's live database or pgdata directory from a unit test run.
+        guard !isRunningInTestEnvironment else { return }
         if status == .running || status == .needsMigration {
             let password = try postgresPassword()
             try dropDatabase(password: password)
@@ -650,11 +654,6 @@ final class PostgresService: ObservableObject {
             let version = (file as NSString).deletingPathExtension
             return !appliedVersions.contains(version) && !appliedVersions.contains(file)
         }
-    }
-
-    /// Checks if there are unapplied migration SQL files in the schema directory.
-    func hasPendingMigrations() throws -> Bool {
-        return try !fetchPendingMigrations().isEmpty
     }
 
     /// Refreshes the pendingMigrations list and returns it.

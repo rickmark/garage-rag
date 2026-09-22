@@ -118,15 +118,13 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testResetDatabaseWhenStoppedOrFailedDoesNotCrash() async {
+    func testResetDatabaseWhenStoppedIsNoOpInTests() async throws {
+        // resetDatabase() re-initializes the live pgdata directory when stopped; under XCTest it must not touch it.
         let service = PostgresService()
         XCTAssertEqual(service.status, .stopped)
-        do {
-            try await service.resetDatabase()
-        } catch {
-            // In test environment without postgres installed, catch is expected
-            XCTAssertNotNil(error)
-        }
+        try await service.resetDatabase()
+        XCTAssertEqual(service.status, .stopped)
+        XCTAssertTrue(service.pendingMigrations.isEmpty)
     }
 
     @MainActor

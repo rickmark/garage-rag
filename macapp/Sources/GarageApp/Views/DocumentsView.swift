@@ -21,8 +21,8 @@ public struct DocumentsView: View {
     @State private var hasLoaded = false
     @State private var isGleaningFacts = false
 
-    private let corpusClasses = ["all", "document", "communication", "code", "reference", "note"]
-    private let trustTiers = ["all", "authored", "trusted", "community", "unverified"]
+    private let corpusClasses = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.corpusClasses)
+    private let trustTiers = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.trustTiers)
 
     public init() {}
 
@@ -313,7 +313,7 @@ public struct DocumentsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Button("Copy URI") { copyToPasteboard(detail.uri) }
+                    Button("Copy URI") { NSPasteboard.general.copy(detail.uri) }
                         .controlSize(.mini)
                     if let url = URL(string: detail.uri), url.isFileURL {
                         Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -412,7 +412,7 @@ public struct DocumentsView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Button("Copy") { copyToPasteboard(fact.fact) }
+                Button("Copy") { NSPasteboard.general.copy(fact.fact) }
                     .controlSize(.mini)
             }
             Text(fact.fact)
@@ -443,7 +443,7 @@ public struct DocumentsView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Button("Copy") { copyToPasteboard(chunk.text) }
+                Button("Copy") { NSPasteboard.general.copy(chunk.text) }
                     .controlSize(.mini)
             }
             Text(chunk.text)
@@ -527,10 +527,5 @@ public struct DocumentsView: View {
                 await MainActor.run { self.isGleaningFacts = false }
             }
         }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }

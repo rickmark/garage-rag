@@ -55,6 +55,11 @@ final class AppDelegateTests: XCTestCase {
         delegate.appState = state
 
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        XCTAssertEqual(state.mcp.status, .stopping)
+        XCTAssertEqual(state.grpc.status, .stopping)
+
+        // terminateImmediately() is idempotent: a second quit path must not re-run the shutdown.
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
 
         // Also test when appState is nil
         delegate.appState = nil
@@ -62,7 +67,9 @@ final class AppDelegateTests: XCTestCase {
     }
 
     @MainActor
-    func testStopAnyRunningInstanceSafeWhenNoPidFile() {
+    func testStopAnyRunningInstancesAreNoOpsInTests() {
+        // Both scan for / signal the developer's live processes; under XCTest they must return without acting.
         PostgresService.stopAnyRunningInstance()
+        XPCServiceManager.stopAnyRunningInstances()
     }
 }

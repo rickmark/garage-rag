@@ -145,8 +145,11 @@ final class AppStateTests: XCTestCase {
     @MainActor
     func testResetDatabaseUpdatesState() async {
         let state = AppState()
+        XCTAssertEqual(state.postgres.status, .stopped)
         await state.resetDatabase()
-        XCTAssertNotNil(state.lastCommandSucceeded)
+        // PostgresService.resetDatabase() is a no-op under XCTest, so the stopped cluster stays untouched.
+        XCTAssertEqual(state.postgres.status, .stopped)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
     }
 
@@ -200,19 +203,19 @@ final class AppStateTests: XCTestCase {
         let state = AppState()
 
         let now = Date()
-        let line1 = LogLine(date: now.addingTimeInterval(-10), stream: .stdout, text: "CLI Ingest Line 1", source: "ingest")
+        let line1 = LogLine(date: now.addingTimeInterval(-10), stream: .stdout, text: "XPC Ingest Line 1", source: "ingest-xpc")
         let line2 = LogLine(date: now.addingTimeInterval(-5), stream: .stdout, text: "XPC Ingest Line 2", source: "ingest-xpc")
-        let line3 = LogLine(date: now, stream: .stdout, text: "CLI Ingest Line 3", source: "ingest")
+        let line3 = LogLine(date: now, stream: .stdout, text: "XPC Ingest Line 3", source: "ingest-xpc")
 
-        state.ingest.appendLog(line1.text)
+        state.ingestService.appendLog(line1.text)
         state.ingestService.appendLog(line2.text)
-        state.ingest.appendLog(line3.text)
+        state.ingestService.appendLog(line3.text)
 
         let combined = state.combinedIngestLogs
         XCTAssertEqual(combined.count, 3)
-        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 1" })
+        XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 1" })
         XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 2" })
-        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 3" })
+        XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 3" })
 
         // Check chronological ordering
         for i in 0..<(combined.count - 1) {
@@ -221,19 +224,16 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testClearLogsForIngestClearsBothStreams() {
+    func testClearLogsForIngestClearsStream() {
         let state = AppState()
 
-        state.ingest.appendLog("CLI log")
         state.ingestService.appendLog("XPC log")
 
-        XCTAssertFalse(state.ingest.logs.isEmpty)
         XCTAssertFalse(state.ingestService.logs.isEmpty)
         XCTAssertFalse(state.combinedIngestLogs.isEmpty)
 
         state.clearLogs(for: "Ingest")
 
-        XCTAssertTrue(state.ingest.logs.isEmpty)
         XCTAssertTrue(state.ingestService.logs.isEmpty)
         XCTAssertTrue(state.combinedIngestLogs.isEmpty)
     }

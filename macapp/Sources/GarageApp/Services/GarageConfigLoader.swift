@@ -228,7 +228,7 @@ public enum GarageConfigLoader {
     public static var candidateConfigFiles: [URL] {
         var paths: [URL] = []
 
-        // 1. Current working directory for garage CLI
+        // 1. The garage working directory (Application Support) the app runs the CLI in
         let workDir = Paths.garageWorkingDirectory.appendingPathComponent("garage.json")
         paths.append(workDir)
 
@@ -238,32 +238,11 @@ public enum GarageConfigLoader {
             paths.append(cwd)
         }
 
-        // 3. User home directory ~/.garage.json
+        // 3. User home directory ~/.garage.json (the Python side searches only ./garage.json and ~/.garage.json)
         let homeDotfile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".garage.json")
         paths.append(homeDotfile)
 
-        // 4. ~/.config/garage/garage.json
-        let homeXDG = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config")
-            .appendingPathComponent("garage")
-            .appendingPathComponent("garage.json")
-        paths.append(homeXDG)
-
-        // 5. Application Support directory
-        let appSupport = Paths.appSupportDir.appendingPathComponent("garage.json")
-        paths.append(appSupport)
-
         return paths
-    }
-
-    /// Finds the first existing configuration file path.
-    public static func findExistingConfigFile() -> URL? {
-        for url in candidateConfigFiles {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-        return nil
     }
 
     /// Built-in fallback presets catalog.

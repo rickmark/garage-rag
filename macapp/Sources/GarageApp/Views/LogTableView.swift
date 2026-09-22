@@ -370,8 +370,7 @@ public struct LogTableView: View {
                 }
                 Spacer()
                 Button("Copy Text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(line.rawText ?? line.text, forType: .string)
+                    NSPasteboard.general.copy(line.rawText ?? line.text)
                 }
                 .controlSize(.small)
 
@@ -451,15 +450,13 @@ public struct LogTableView: View {
 
     private func copyFilteredLogs() {
         let content = filteredLines.map { formatLogLineForExport($0) }.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(content, forType: .string)
+        NSPasteboard.general.copy(content)
     }
 
     private func copySelectedLines(ids: Set<UUID>) {
         let matched = filteredLines.filter { ids.contains($0.id) }
         let content = matched.map { formatLogLineForExport($0) }.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(content, forType: .string)
+        NSPasteboard.general.copy(content)
     }
 
     private func formatLogLineForExport(_ line: LogLine) -> String {

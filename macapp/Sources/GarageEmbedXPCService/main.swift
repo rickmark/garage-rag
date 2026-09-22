@@ -78,46 +78,6 @@ final class GarageEmbedXPCServiceDelegate: GarageXPCServiceBase, GarageEmbedXPCS
             }
         }
     }
-
-    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("embedBatches requested (model: \(model ?? "default", privacy: .public), limit: \(limit, privacy: .public), batchSize: \(batchSize, privacy: .public))")
-        guard ensurePythonReady() else {
-            reply(false, "Python initialization error: \(runtime.statusSnapshot().error ?? "unavailable")")
-            return
-        }
-        let host = grpcHost ?? "127.0.0.1"
-        let port = grpcPort > 0 ? grpcPort : 50051
-        mergeConfiguration([GarageXPCConfigurationKey.grpcHost: host, GarageXPCConfigurationKey.grpcPort: String(port)])
-
-        Self.workerQueue.async { [self] in
-            let result = withPython { () -> (Bool, String) in
-                let embedModule = try Python.attemptImport("garage_rag.embed")
-                guard embedModule.embed_via_grpc != Python.None else {
-                    return (false, "embed_via_grpc not found in garage_rag.embed")
-                }
-                let pyModel = model != nil ? PythonObject(model!) : Python.None
-                let pyLimit = limit > 0 ? PythonObject(limit) : Python.None
-                let pyBatchSize = batchSize > 0 ? PythonObject(batchSize) : Python.None
-                let resultDict = try embedModule.embed_via_grpc.throwing.dynamicallyCall(withKeywordArguments: [
-                    ("model_slug", pyModel),
-                    ("limit", pyLimit),
-                    ("batch_size", pyBatchSize),
-                    ("grpc_host", PythonObject(host)),
-                    ("grpc_port", PythonObject(port))
-                ])
-                let message = String(resultDict["message"]) ?? "Embed via gRPC completed"
-                return (true, message)
-            }
-            switch result {
-            case .success(let (success, message)):
-                reply(success, message)
-            case .failure(let error):
-                let errDetails = "Embed via gRPC failed: \(error.localizedDescription)"
-                logger.error("\(errDetails, privacy: .public)")
-                reply(false, errDetails)
-            }
-        }
-    }
 }
 
 // MARK: - Process Entry Point

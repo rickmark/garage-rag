@@ -1,4 +1,7 @@
 // swift-tools-version:5.10
+// NOTE: This manifest only builds the client/XPC library targets (LlamaClient, ModelDownloadClient, IngestClient,
+// MCPServerClient) for quick iteration. It does NOT build GarageApp or the XPC services: those need gRPC-Swift,
+// SwiftProtobuf, PythonKit and the vendored Python/Postgres/llama.cpp from the Bazel build (see README.md).
 import PackageDescription
 
 let package = Package(

@@ -634,7 +634,7 @@ public final class GaragePythonRuntime: @unchecked Sendable {
     }
 
     /// Executes `body` on the calling thread with the GIL held (`PyGILState_Ensure`/`Release`). Every use of
-    /// PythonKit from Swift must go through this (or `perform`/`run`) so the GIL is owned by the calling thread
+    /// PythonKit from Swift must go through this (or `perform`) so the GIL is owned by the calling thread
     /// and released again when Swift is done, letting Python's own threads make progress.
     ///
     /// Calls are *not* serialized: CPython's GIL arbitrates between concurrent callers, so a long running
@@ -650,7 +650,20 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         return try withGILUnchecked(body)
     }
 
-    /// Background queue for fire-and-forget Python work (`perform`/`run`). Concurrent so that independent
+    /// Like `withGIL`, but a `PythonError` raised by `body` is converted to `GarageXPCServiceError.python` with the
+    /// full traceback *while the GIL is still held*. Only the resulting string leaves the GIL scope, so callers can
+    /// log the error without re-entering Python (`describe` itself needs the GIL to format the traceback).
+    public func withGILDescribingErrors<T>(_ body: () throws -> T) throws -> T {
+        try withGIL {
+            do {
+                return try body()
+            } catch let error as PythonError {
+                throw GarageXPCServiceError.python(Self.describe(error))
+            }
+        }
+    }
+
+    /// Background queue for fire-and-forget Python work (`perform`). Concurrent so that independent
     /// requests do not queue behind each other; the GIL provides the actual mutual exclusion.
     private let workQueue = DispatchQueue(label: "me.rickmark.garage-rag.python-work", qos: .userInitiated, attributes: .concurrent)
 
@@ -663,25 +676,6 @@ public final class GaragePythonRuntime: @unchecked Sendable {
             }
             try? withGILUnchecked(body)
         }
-    }
-
-    /// Async/await convenience: runs `body` on a background thread with the GIL held.
-    public func run<T>(_ body: @escaping () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            workQueue.async { [self] in
-                do {
-                    let value = try withGIL(body)
-                    continuation.resume(returning: value)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    /// Imports a module while holding the GIL. Convenience for diagnostics.
-    public func importModule(_ name: String) throws -> PythonObject {
-        try withGIL { try Python.attemptImport(name) }
     }
 
     // MARK: - Diagnostics

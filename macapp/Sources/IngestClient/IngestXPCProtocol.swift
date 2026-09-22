@@ -1,11 +1,5 @@
 import Foundation
-import PythonXPCService_protocol
-
-/// Objective-C protocol matching the standard `ping` method implemented across all Garage XPC services.
-@objc(GarageGenericXPCPingProtocol)
-public protocol GarageGenericXPCPingProtocol: NSObjectProtocol {
-    func ping(with reply: @escaping (String) -> Void)
-}
+import PythonXPCService
 
 /// Objective-C protocol for receiving progress updates and log entries from GarageIngestXPCService across XPC.
 @objc(GarageIngestProgressReceiverProtocol)
@@ -22,9 +16,6 @@ public protocol GarageIngestProgressReceiverProtocol: GarageXPCLogReceiverProtoc
 public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     /// Ingest a source by slug (or "*") with JSON-serialized options.
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void)
-
-    /// Ingest a path directly with options dictionary (backwards compatibility).
-    func ingestPath(_ path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
 
     /// Set root volume security-scoped bookmark data so the sandboxed XPC service can access the filesystem.
     func setRootVolumeBookmark(_ bookmarkData: Data, with reply: @escaping (Bool, String?) -> Void)
@@ -52,10 +43,8 @@ public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
 @objc(GarageEmbedXPCServiceProtocol)
 public protocol GarageEmbedXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     func embedTexts(_ texts: [String], model: String?, with reply: @escaping (Bool, String?) -> Void)
-    func embedBatches(model: String?, limit: Int, batchSize: Int, grpcHost: String?, grpcPort: Int, with reply: @escaping (Bool, String?) -> Void)
 }
 
 public enum IngestXPCConstants {
     public static let serviceName = "me.rickmark.garage-rag.ingest-xpc"
-    public static let machServiceName = "me.rickmark.garage-rag.ingest-xpc"
 }

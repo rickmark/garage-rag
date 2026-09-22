@@ -15,7 +15,6 @@ final class AppState: ObservableObject {
 
     let postgres = PostgresService()
     let garage: GarageCLIService
-    let ingest: GarageCLIService
     let backfill: GarageCLIService
     let enrichFacts: GarageCLIService
     let mcp: GarageMCPService
@@ -35,7 +34,6 @@ final class AppState: ObservableObject {
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
     @Published private(set) var presetModels: [ModelPresetEntry] = []
-    @Published private(set) var factDistilPresetModels: [ModelPresetEntry] = []
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
@@ -64,6 +62,7 @@ final class AppState: ObservableObject {
 
     private var commandInProgress = false
     private var hasLaunched = false
+    private var hasTerminated = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
     private var pendingMaintenanceTask: Task<Void, Never>?
 
@@ -84,7 +83,6 @@ final class AppState: ObservableObject {
         self.xpcServices = xpcMgr
         self.osLogStreamService = osLogSvc
         garage = GarageCLIService(postgres: postgres)
-        ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
         backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
         enrichFacts = GarageCLIService(postgres: postgres, commandLabel: "garage enrich-facts")
         mcp = GarageMCPService(postgres: postgres)
@@ -108,7 +106,6 @@ final class AppState: ObservableObject {
         grpc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         enrichFacts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -127,6 +124,7 @@ final class AppState: ObservableObject {
     }
 
     func launch() {
+        guard !hasLaunched else { return }
         hasLaunched = true
         fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
@@ -160,7 +158,6 @@ final class AppState: ObservableObject {
 
     func fetchPresetModels() {
         self.presetModels = GarageConfigLoader.loadModelPresets()
-        self.factDistilPresetModels = GarageConfigLoader.loadFactDistilPresets()
     }
 
     func fetchRegisteredModels() async {
@@ -252,27 +249,29 @@ final class AppState: ObservableObject {
     }
 
     func stopPostgres() async {
-        scheduledMaintenanceTask?.cancel()
-        scheduledMaintenanceTask = nil
         await mcp.stop()
         await grpc.stop()
         await postgres.stop()
     }
 
     /// Synchronously terminates all child and daemon processes, CLI runs, and XPC helper services.
+    /// Idempotent: every quit path (applicationShouldTerminate, applicationWillTerminate) calls it once.
     func terminateImmediately() {
+        guard !hasTerminated else { return }
+        hasTerminated = true
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = nil
         mcp.terminateImmediately()
         grpc.terminateImmediately()
+        // postgres.terminateImmediately() already runs PostgresService.stopAnyRunningInstance().
         postgres.terminateImmediately()
         garage.cancel()
-        ingest.cancel()
         backfill.cancel()
         enrichFacts.cancel()
+        // xpcServices.terminateAll() already runs XPCServiceManager.stopAnyRunningInstances().
         xpcServices.terminateAll()
-        XPCServiceManager.stopAnyRunningInstances()
-        PostgresService.stopAnyRunningInstance()
     }
 
     func resetDatabase() async {
@@ -524,13 +523,6 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
-    /// Runs ingestion in an independent process and log stream.
-    @discardableResult
-    func runIngest(_ arguments: [String]) async -> Bool {
-        let result = await ingest.run(arguments)
-        return result.succeeded
-    }
-
     /// Runs ingestion through the configured execution mode (XPC helper or CLI) streaming real-time progress.
     @discardableResult
     func ingestSource(slug: String, options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
@@ -573,8 +565,7 @@ final class AppState: ObservableObject {
                 limit: options.limit,
                 force: options.force,
                 grpcHost: options.grpcHost,
-                grpcPort: options.grpcPort,
-                extraArguments: options.extraArguments
+                grpcPort: options.grpcPort
             )
             let result = await ingestService.ingest(slug: source.slug, options: sourceOptions, mode: mode)
             await fetchRegisteredSources()
@@ -584,12 +575,6 @@ final class AppState: ObservableObject {
             }
         }
         return allSucceeded
-    }
-
-    /// Runs ingestion specifically through the XPC service streaming real-time progress to the UI.
-    @discardableResult
-    func ingestViaXPC(slug: String, options: IngestOptions = .default) async -> Bool {
-        await ingestSource(slug: slug, options: options, mode: .xpcService)
     }
 
     /// Runs embedding backfill in an independent process and log stream.
@@ -608,9 +593,9 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
-    /// Combines CLI ingest logs and XPC ingestion logs into a single chronologically ordered stream.
+    /// XPC ingestion logs as a chronologically ordered stream.
     var combinedIngestLogs: [LogLine] {
-        (ingest.logs + ingestService.logs).sorted { $0.date < $1.date }
+        ingestService.logs.sorted { $0.date < $1.date }
     }
 
     func clearLogs(for sourceName: String) {
@@ -618,14 +603,13 @@ final class AppState: ObservableObject {
         case "Postgres":
             postgres.clearLogs()
             osLogStreamService.clearLogs(for: .postgres)
-        case "garage CLI", "garage":
+        case "garage CLI", "garage", "App":
             garage.clearLogs()
             osLogStreamService.clearLogs(for: .garage)
         case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (CLI)":
-            ingest.clearLogs()
             ingestService.clearLogs()
             osLogStreamService.clearLogs(for: .ingest)
-        case "Embedding", "Backfill":
+        case "Embedding", "Backfill", "Embed":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
         case "Enrich Facts", "garage enrich-facts":
@@ -636,10 +620,10 @@ final class AppState: ObservableObject {
         case "gRPC Server":
             grpc.clearLogs()
             osLogStreamService.clearLogs(for: .grpc)
-        case "Llama Service", "Llama XPC":
+        case "Llama Service", "Llama XPC", "LLaMa":
             llama.clearLogs()
             osLogStreamService.clearLogs(for: .llama)
-        case "Model Downloader", "Model Download XPC":
+        case "Model Downloader", "Model Download XPC", "Downloader":
             modelDownload.clearLogs()
             osLogStreamService.clearLogs(for: .modelDownload)
         case "XPC Services", "XPC Service", "XPC":
@@ -724,7 +708,7 @@ final class AppState: ObservableObject {
     }
 
     var isIngesting: Bool {
-        ingestService.isRunning || ingest.isRunning
+        ingestService.isRunning
     }
 
     var isScanning: Bool {
@@ -739,13 +723,10 @@ final class AppState: ObservableObject {
         if ingestService.isRunning {
             _ = await ingestService.cancel()
         }
-        if ingest.isRunning {
-            ingest.cancel()
-        }
     }
 
     private func runScheduledMaintenance() async {
-        guard postgres.status == .running, !ingestService.isRunning, !ingest.isRunning, !backfill.isRunning else { return }
+        guard postgres.status == .running, !ingestService.isRunning, !backfill.isRunning else { return }
 
         _ = await scanSources()
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)

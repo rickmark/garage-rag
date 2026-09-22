@@ -14,7 +14,6 @@ struct SourcesView: View {
     @State private var corpusClass = "document"
     @State private var trust = "authored"
     @State private var allowCloud = false
-    @State private var includeCodeInSource = false
 
     @State private var busy = false
     @State private var ingestAutoDismissTask: Task<Void, Never>?
@@ -57,6 +56,10 @@ struct SourcesView: View {
         .navigationTitle("Sources & Ingest")
         .onAppear {
             refreshSourcesAndTestDisk()
+        }
+        .onDisappear {
+            ingestAutoDismissTask?.cancel()
+            ingestAutoDismissTask = nil
         }
         .onReceive(refreshTimer) { _ in
             if appState.ingestService.isRunning || appState.isScanning {
@@ -252,7 +255,7 @@ struct SourcesView: View {
                     ingestAutoDismissTask = Task {
                         try? await Task.sleep(nanoseconds: 4_000_000_000)
                         guard !Task.isCancelled else { return }
-                        appState.ingestService.clearMessages()
+                        appState.ingestService.clearTransientMessages()
                     }
                 }
             }
@@ -1027,16 +1030,6 @@ struct SourcesView: View {
     private func enrichFacts(source: String) {
         Task {
             await appState.runEnrichFacts(["enrich-facts", "--source", source])
-        }
-    }
-
-    private func runIngest(_ args: [String]) {
-        busy = true
-        Task {
-            await appState.runIngest(args)
-            await appState.fetchRegisteredSources()
-            await appState.fetchCorpusStats()
-            busy = false
         }
     }
 

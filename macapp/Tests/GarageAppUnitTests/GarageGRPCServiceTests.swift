@@ -140,7 +140,7 @@ final class GarageGRPCServiceTests: XCTestCase {
         let classController = NSHostingController(rootView: classBadge)
         XCTAssertNotNil(classController.view)
 
-        let trustBadge = TrustTierBadge(tier: "trusted")
+        let trustBadge = TrustTierBadge(tier: "reference")
         let trustController = NSHostingController(rootView: trustBadge)
         XCTAssertNotNil(trustController.view)
     }

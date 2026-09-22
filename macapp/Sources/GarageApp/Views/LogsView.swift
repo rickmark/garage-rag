@@ -17,7 +17,6 @@ public struct LogsView: View {
         case llama = "LLaMa"
         case modelDownload = "Downloader"
 
-
         public var id: String { rawValue }
 
         public var osLogPredicate: NSPredicate {
@@ -38,7 +37,7 @@ public struct LogsView: View {
                 return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.llama-xpc'")
             case .modelDownload:
                 return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.model-download-xpc'")
-            default:
+            case .unifiedLog:
                 return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
             }
         }

@@ -104,6 +104,10 @@ final class IngestService: ObservableObject {
         }
     }
 
+    deinit {
+        osLogMonitorTask?.cancel()
+    }
+
     var client: IngestClient {
         xpcClient
     }
@@ -167,6 +171,14 @@ final class IngestService: ObservableObject {
         lastSuccess = nil
         latestProgress = nil
         progressBySource.removeAll()
+    }
+
+    /// Clears the transient banner state after a run finishes while keeping the
+    /// per-source "Last Ingest" summaries in `progressBySource`.
+    func clearTransientMessages() {
+        lastError = nil
+        lastSuccess = nil
+        latestProgress = nil
     }
 
     func clearProgressBySource() {
@@ -500,7 +512,6 @@ final class IngestService: ObservableObject {
             force: options.force,
             grpcHost: options.grpcHost,
             grpcPort: options.grpcPort,
-            extraArguments: options.extraArguments,
             databaseUrl: prep.dbURL,
             lmStudioApiToken: prep.lmToken
         )

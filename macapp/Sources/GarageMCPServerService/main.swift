@@ -32,11 +32,6 @@ final class GarageMCPManagedServer: GarageManagedService {
         lock.unlock()
     }
 
-    var isConfigured: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return autoStart
-    }
-
     var isRunning: Bool {
         lock.lock()
         let flag = running
@@ -59,7 +54,8 @@ final class GarageMCPManagedServer: GarageManagedService {
             return
         }
 
-        try GaragePythonRuntime.shared.withGIL {
+        // A PythonError is converted to a string error inside the GIL scope, so the host can report it safely.
+        try GaragePythonRuntime.shared.withGILDescribingErrors {
             let os = Python.import("os")
             for (key, value) in opts {
                 os.environ[key] = PythonObject(value)
@@ -99,14 +95,15 @@ final class GarageMCPManagedServer: GarageManagedService {
         guard wasRunning else { return }
 
         do {
-            try GaragePythonRuntime.shared.withGIL {
+            try GaragePythonRuntime.shared.withGILDescribingErrors {
                 let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
                 _ = try mcpModule.stop_background_server.throwing.dynamicallyCall(withArguments: [])
             }
             logger.info("Garage MCP server stopped (graceful: \(graceful, privacy: .public))")
         } catch {
             // Mirror the previous behaviour: a failing stop is a warning, the server is considered stopped.
-            logger.warning("MCP server stopped with warning: \(GaragePythonRuntime.describe(error), privacy: .public)")
+            // The error was already described inside the GIL scope; do not call back into Python here.
+            logger.warning("MCP server stopped with warning: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

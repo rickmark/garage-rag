@@ -27,9 +27,7 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
     public var serviceName: String = "GarageXPC"
     public var logFileName: String = "garage-xpc.log"
 
-    public weak var logReceiver: GarageXPCLogReceiverProtocol?
     private var activeConnections = Set<NSXPCConnection>()
-    private var activeReceivers: [GarageXPCLogReceiverProtocol] = []
 
     public init(maxBufferSize: Int = 1_048_576) { // 1 MB default buffer
         self.maxBufferSize = maxBufferSize
@@ -58,20 +56,6 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         defer { lock.unlock() }
         activeConnections.remove(connection)
         logger.debug("Removed active XPC log streaming connection for PID \(connection.processIdentifier, privacy: .public) (total: \(self.activeConnections.count, privacy: .public))")
-    }
-
-    /// Adds a direct log receiver.
-    public func addReceiver(_ receiver: GarageXPCLogReceiverProtocol) {
-        lock.lock()
-        defer { lock.unlock() }
-        activeReceivers.append(receiver)
-    }
-
-    /// Removes a direct log receiver.
-    public func removeReceiver(_ receiver: GarageXPCLogReceiverProtocol) {
-        lock.lock()
-        defer { lock.unlock() }
-        activeReceivers.removeAll { $0 === receiver }
     }
 
     /// Starts capturing stdout and stderr descriptors (fd 1 and fd 2).
@@ -139,13 +123,13 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
     /// Appends data to the stdout buffer, writes to log file, and streams over XPC.
     private func appendStdoutData(_ data: Data) {
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+        // Decode lossily rather than dropping the whole chunk when a multibyte character straddles two pipe reads.
+        let text = String(decoding: data, as: UTF8.self)
+        guard !text.isEmpty else { return }
 
         let currentFile: String
         let currentSource: String
         let conns: [NSXPCConnection]
-        let receivers: [GarageXPCLogReceiverProtocol]
-        let primaryReceiver: GarageXPCLogReceiverProtocol?
 
         lock.lock()
         stdoutBuffer.append(data)
@@ -156,8 +140,6 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         currentFile = logFileName
         currentSource = serviceName
         conns = Array(activeConnections)
-        receivers = activeReceivers
-        primaryReceiver = logReceiver
         lock.unlock()
 
         // Write to log file
@@ -166,12 +148,6 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         // Log to unified logging
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             logger.info("[\(currentSource, privacy: .public)] \(line, privacy: .public)")
-        }
-
-        // Stream to registered receivers
-        primaryReceiver?.didReceiveStdout(text)
-        for r in receivers {
-            r.didReceiveStdout(text)
         }
 
         // Stream over active XPC connections
@@ -185,13 +161,13 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
     /// Appends data to the stderr buffer, writes to log file, and streams over XPC.
     private func appendStderrData(_ data: Data) {
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+        // Decode lossily rather than dropping the whole chunk when a multibyte character straddles two pipe reads.
+        let text = String(decoding: data, as: UTF8.self)
+        guard !text.isEmpty else { return }
 
         let currentFile: String
         let currentSource: String
         let conns: [NSXPCConnection]
-        let receivers: [GarageXPCLogReceiverProtocol]
-        let primaryReceiver: GarageXPCLogReceiverProtocol?
 
         lock.lock()
         stderrBuffer.append(data)
@@ -202,8 +178,6 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         currentFile = logFileName
         currentSource = serviceName
         conns = Array(activeConnections)
-        receivers = activeReceivers
-        primaryReceiver = logReceiver
         lock.unlock()
 
         // Write to log file
@@ -212,12 +186,6 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
         // Log to unified logging
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             logger.error("[\(currentSource, privacy: .public)] \(line, privacy: .public)")
-        }
-
-        // Stream to registered receivers
-        primaryReceiver?.didReceiveStderr(text)
-        for r in receivers {
-            r.didReceiveStderr(text)
         }
 
         // Stream over active XPC connections
@@ -248,14 +216,10 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
         let currentFile: String
         let conns: [NSXPCConnection]
-        let receivers: [GarageXPCLogReceiverProtocol]
-        let primaryReceiver: GarageXPCLogReceiverProtocol?
 
         lock.lock()
         currentFile = logFileName
         conns = Array(activeConnections)
-        receivers = activeReceivers
-        primaryReceiver = logReceiver
         lock.unlock()
 
         // Write to log file
@@ -273,11 +237,7 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
             logger.info("[\(src, privacy: .public)] \(message, privacy: .public)")
         }
 
-        // Broadcast structured log
-        primaryReceiver?.didReceiveLog(source: src, level: level, message: message, timestamp: timestamp)
-        for r in receivers {
-            r.didReceiveLog(source: src, level: level, message: message, timestamp: timestamp)
-        }
+        // Broadcast structured log over active XPC connections
         for conn in conns {
             guard let proxy = conn.remoteObjectProxyWithErrorHandler({ _ in }) as? GarageXPCLogReceiverProtocol else {
                 continue

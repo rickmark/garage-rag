@@ -43,11 +43,6 @@ final class LlamaEngineManagedService: GarageManagedService {
         lock.unlock()
     }
 
-    var isConfigured: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return autoStart
-    }
-
     var isRunning: Bool {
         engine.currentModelPath != nil
     }

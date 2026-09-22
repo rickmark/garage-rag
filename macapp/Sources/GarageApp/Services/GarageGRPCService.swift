@@ -50,7 +50,6 @@ final class GarageGRPCService: ObservableObject {
     private let client: GarageXPCClient
     private var group: EventLoopGroup?
     private var channel: GRPCChannel?
-    private var isStopping = false
     private let maxLogLines = 4000
     private var logPollTask: Task<Void, Never>?
 
@@ -140,7 +139,6 @@ final class GarageGRPCService: ObservableObject {
             let currentPort = port
             triedPorts.insert(currentPort)
             status = .starting
-            isStopping = false
 
             do {
                 let options = try environment()
@@ -187,7 +185,6 @@ final class GarageGRPCService: ObservableObject {
     func stop() async {
         guard status == .running || status == .starting else { return }
         status = .stopping
-        isStopping = true
         stopLogPolling()
         cleanupChannel()
         _ = try? await client.stopServer()
@@ -197,7 +194,6 @@ final class GarageGRPCService: ObservableObject {
     /// Fire-and-forget termination for application quit paths.
     func terminateImmediately() {
         status = .stopping
-        isStopping = true
         stopLogPolling()
         cleanupChannel()
         Task { [client] in

@@ -520,14 +520,6 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         reply(true)
     }
 
-    public func handleGRPCCall(service: String, method: String, payload: Data, with reply: @escaping (Data?, String?, Error?) -> Void) {
-        GarageGRPCOverXPCDispatcher.shared.dispatchGRPCCall(service: service, method: method, payload: payload, completion: reply)
-    }
-
-    public func handleRPC(method: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        GarageGRPCOverXPCDispatcher.shared.dispatchRPC(method: method, requestJson: requestJson, completion: reply)
-    }
-
     // MARK: - Helpers for subclasses
 
     /// Runs `body` with the GIL held and converts Python exceptions into readable error strings.

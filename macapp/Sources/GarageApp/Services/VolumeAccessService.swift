@@ -269,13 +269,6 @@ public protocol VolumeBookmarkStoring {
     func loadAllSourceBookmarks() -> [String: Data]
 }
 
-public extension VolumeBookmarkStoring {
-    func loadBookmarkData(forPath path: String) -> Data? { nil }
-    func saveBookmarkData(_ data: Data, forPath path: String) {}
-    func clearBookmark(forPath path: String) {}
-    func loadAllSourceBookmarks() -> [String: Data] { [:] }
-}
-
 /// Standard UserDefaults-backed bookmark store.
 public final class UserDefaultsVolumeBookmarkStore: VolumeBookmarkStoring {
     private let defaults: UserDefaults
@@ -412,20 +405,20 @@ public final class MockVolumeBookmarkStore: VolumeBookmarkStoring, @unchecked Se
         sourceBookmarks.removeAll()
     }
 
-    public func saveSourceBookmark(path: String, data: Data) {
+    public func loadBookmarkData(forPath path: String) -> Data? {
+        sourceBookmarks[path]
+    }
+
+    public func saveBookmarkData(_ data: Data, forPath path: String) {
         sourceBookmarks[path] = data
     }
 
-    public func loadSourceBookmark(path: String) -> Data? {
-        sourceBookmarks[path]
+    public func clearBookmark(forPath path: String) {
+        sourceBookmarks.removeValue(forKey: path)
     }
 
     public func loadAllSourceBookmarks() -> [String: Data] {
         sourceBookmarks
-    }
-
-    public func clearSourceBookmark(path: String) {
-        sourceBookmarks.removeValue(forKey: path)
     }
 }
 

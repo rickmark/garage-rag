@@ -171,9 +171,15 @@ final class LlamaClientTests: XCTestCase {
         // Test client configured with non-existent helper service name
         let disconnectedClient = LlamaClient(serviceName: "me.rickmark.nonexistent.llama-xpc")
 
-        let ping = try await disconnectedClient.ping()
-        XCTAssertTrue(ping.contains("pong"))
+        // ping() reports the helper's real health and must not pretend an unreachable helper answered.
+        do {
+            _ = try await disconnectedClient.ping()
+            XCTFail("ping() should throw when the helper is unreachable")
+        } catch {
+            XCTAssertTrue(error is LlamaClientError)
+        }
 
+        // The request methods still fall back to the in-process engine.
         let health = try await disconnectedClient.health()
         XCTAssertEqual(health.status, "ok")
 

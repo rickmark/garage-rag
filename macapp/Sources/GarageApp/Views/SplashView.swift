@@ -6,7 +6,7 @@ import AppKit
 /// External destinations surfaced by the splash dialog.
 enum SplashLinks {
     static let patreon = URL(string: "https://www.patreon.com/rickmark")!
-    static let linkedin = URL("https://linkedin.com/in/penwellr")!
+    static let linkedin = URL(string: "https://linkedin.com/in/penwellr")!
     static let releases = URL(string: "https://github.com/rickmark/garage-rag/releases")!
 }
 

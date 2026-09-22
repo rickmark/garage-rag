@@ -122,7 +122,7 @@ final class LogTableViewTests: XCTestCase {
 
         XCTAssertTrue(appState.postgres.logs.isEmpty)
         XCTAssertTrue(appState.garage.logs.isEmpty)
-        XCTAssertTrue(appState.ingest.logs.isEmpty)
+        XCTAssertTrue(appState.ingestService.logs.isEmpty)
         XCTAssertTrue(appState.backfill.logs.isEmpty)
         XCTAssertTrue(appState.mcp.logs.isEmpty)
         XCTAssertTrue(appState.llama.logs.isEmpty)

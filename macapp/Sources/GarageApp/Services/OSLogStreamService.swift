@@ -89,10 +89,11 @@ public final class OSLogStreamService: ObservableObject {
             while !Task.isCancelled {
                 guard let self = self else { break }
 
-                let paused = await MainActor.run { self.isPaused }
+                let (paused, scope) = await MainActor.run { (self.isPaused, self.scopeFilter) }
                 if !paused {
                     do {
-                        let entries = try store.getEntries(at: lastPosition, matching: predicate)
+                        // A narrower scope set via `setPredicate` overrides the broad default predicate.
+                        let entries = try store.getEntries(at: lastPosition, matching: scope ?? predicate)
                         var maxDate = lastDate
                         var collected: [OSLogEntry] = []
 
@@ -152,11 +153,6 @@ public final class OSLogStreamService: ObservableObject {
         } else {
             isPaused.toggle()
         }
-    }
-
-    /// Restarts streaming with the current scope filter and time bounds.
-    public func restartStreaming() {
-        startStreaming(since: lastStreamDate)
     }
 
     /// Drains recent entries from `OSLogStore` within a given time window.

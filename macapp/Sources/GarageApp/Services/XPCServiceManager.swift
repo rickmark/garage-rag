@@ -313,14 +313,6 @@ public final class XPCServiceManager: ObservableObject {
         "GarageXPCService"
     ]
 
-    /// Services whose diagnostics are provided by the in-service self tests of the shared Python runtime base.
-    public nonisolated static let selfTestDrivenServiceIds: Set<String> = [
-        "garage-xpc", "me.rickmark.garage-rag.xpc",
-        "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
-        "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
-        "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc"
-    ]
-
     private static let statusCallTimeout: UInt64 = 20_000_000_000
     private static let selfTestCallTimeout: UInt64 = 180_000_000_000
     private static let restartCallTimeout: UInt64 = 120_000_000_000
@@ -614,42 +606,6 @@ public final class XPCServiceManager: ObservableObject {
         return outcome
     }
 
-    /// Pushes configuration (database URL, gRPC endpoint, ...) to every registered helper. Failures are logged and ignored.
-    public func pushConfiguration(_ options: [String: String]) async {
-        guard !options.isEmpty else { return }
-        let targets = services
-        await withTaskGroup(of: Void.self) { group in
-            for service in targets {
-                group.addTask { [weak self] in
-                    do {
-                        let (success, message): (Bool, String?) = try await Self.performCommonCall(bundleId: service.bundleId, timeoutNanoseconds: Self.statusCallTimeout) { proxy, relay in
-                            proxy.updateConfiguration(options) { success, message in
-                                relay.resume(returning: (success, message))
-                            }
-                        }
-                        if !success {
-                            await self?.appendLog("[\(service.name)] Configuration update rejected: \(message ?? "unknown reason")", stream: .stderr, source: service.id, level: .warning)
-                        }
-                    } catch {
-                        logger.debug("Configuration push to '\(service.bundleId, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)")
-                        await self?.appendLog("[\(service.name)] Configuration push failed: \(error.localizedDescription)", stream: .stderr, source: service.id, level: .warning)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Convenience wrapper that maps the app's known endpoints onto `GarageXPCConfigurationKey` and pushes them to all helpers.
-    public func pushKnownConfiguration(databaseURL: String?, grpcHost: String?, grpcPort: Int?) async {
-        var options: [String: String] = [:]
-        if let databaseURL = databaseURL, !databaseURL.isEmpty { options[GarageXPCConfigurationKey.databaseURL] = databaseURL }
-        if let grpcHost = grpcHost, !grpcHost.isEmpty { options[GarageXPCConfigurationKey.grpcHost] = grpcHost }
-        if let grpcPort = grpcPort, grpcPort > 0 { options[GarageXPCConfigurationKey.grpcPort] = String(grpcPort) }
-        guard !options.isEmpty else { return }
-        appendLog("Pushing configuration to XPC helpers: \(options.keys.sorted().joined(separator: ", "))", source: "xpc-services", level: .info)
-        await pushConfiguration(options)
-    }
-
     // MARK: - Restart Operations
 
     /// Restarts an individual XPC helper service by terminating its process and re-initiating connection.
@@ -698,9 +654,10 @@ public final class XPCServiceManager: ObservableObject {
 
     // MARK: - Termination Operations
 
-    /// Terminates all known running XPC helper services.
+    /// Terminates all known running XPC helper services and drops the live log streaming connections.
     public func terminateAll() {
         appendLog("Terminating all active XPC helper processes...", source: "xpc-services", level: .warning)
+        stopAllStreaming()
         for service in services {
             if let currentPid = service.pid, currentPid > 0 {
                 logger.info("Terminating XPC service '\(service.bundleId, privacy: .public)' (pid: \(currentPid))")
@@ -713,6 +670,8 @@ public final class XPCServiceManager: ObservableObject {
 
     /// Finds and terminates any active Garage XPC service helper processes across the system.
     public static func stopAnyRunningInstances() {
+        // This walks the whole process table and SIGTERM/SIGKILLs by executable name; never do that from a unit test.
+        guard !isRunningInTestEnvironment else { return }
         let targetNames = Set(knownServiceExecutableNames)
         var pids = [pid_t](repeating: 0, count: 2048)
         let bytesReturned = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(MemoryLayout<pid_t>.size * pids.count))
@@ -772,10 +731,13 @@ public final class XPCServiceManager: ObservableObject {
         connection.interruptionHandler = {
             logger.warning("Live log streaming connection for '\(bundleId, privacy: .public)' was interrupted")
         }
-        connection.invalidationHandler = { [weak self] in
+        // Only drop the registry entry if it still belongs to this connection: a restart replaces the entry with a
+        // new connection, and the old connection's invalidation must not remove the new one.
+        connection.invalidationHandler = { [weak self, weak connection] in
             Task { @MainActor [weak self] in
-                self?.streamingConnections.removeValue(forKey: key)
-                self?.streamingAdapters.removeValue(forKey: key)
+                guard let self = self, let connection = connection, self.streamingConnections[key] === connection else { return }
+                self.streamingConnections.removeValue(forKey: key)
+                self.streamingAdapters.removeValue(forKey: key)
             }
         }
 
@@ -871,6 +833,16 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Invalidates `connection` (which fails every call pending on it) once the timeout elapses, unless the returned
+    /// task is cancelled first. Every one-shot helper call goes through this so a hung helper cannot wedge a caller.
+    private static func invalidate(_ connection: NSXPCConnection, bundleId: String, afterNanoseconds timeoutNanoseconds: UInt64) -> Task<Void, Error> {
+        Task {
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            logger.warning("XPC call to '\(bundleId, privacy: .public)' timed out; invalidating connection")
+            connection.invalidate()
+        }
+    }
+
     /// Opens a one-shot connection using the common protocol, performs the bundle handshake, and runs `body`.
     /// The connection is invalidated (which fails the pending call) if no reply arrives within the timeout.
     private static func performCommonCall<T>(
@@ -883,11 +855,7 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         defer { connection.invalidate() }
 
-        let timeoutTask = Task {
-            try await Task.sleep(nanoseconds: timeoutNanoseconds)
-            logger.warning("XPC call to '\(bundleId, privacy: .public)' timed out; invalidating connection")
-            connection.invalidate()
-        }
+        let timeoutTask = invalidate(connection, bundleId: bundleId, afterNanoseconds: timeoutNanoseconds)
         defer { timeoutTask.cancel() }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -913,6 +881,10 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         defer { connection.invalidate() }
 
+        // Same timeout as the other status calls: a helper that never answers must not wedge refreshAll().
+        let timeoutTask = invalidate(connection, bundleId: bundleId, afterNanoseconds: statusCallTimeout)
+        defer { timeoutTask.cancel() }
+
         return try await withCheckedThrowingContinuation { continuation in
             let relay = ContinuationRelay(continuation)
 
@@ -933,58 +905,6 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
                 }
             }
-        }
-    }
-
-    /// Fetches captured stdout and stderr logs from an XPC service and incorporates them into the log stream.
-    public func fetchServiceLogs(serviceId: String, clear: Bool = false) async -> (stdout: String?, stderr: String?) {
-        guard let service = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId }) else {
-            return (nil, nil)
-        }
-        let bundleId = service.bundleId
-        let connection = NSXPCConnection(serviceName: bundleId)
-        let adapter = XPCLogReceiverAdapter(serviceId: service.id, manager: self, osLogStreamService: osLogStreamService)
-        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
-        connection.exportedInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
-        connection.exportedObject = adapter
-        connection.resume()
-        defer { connection.invalidate() }
-
-        do {
-            let (stdout, stderr): (String?, String?) = try await withCheckedThrowingContinuation { continuation in
-                let relay = ContinuationRelay(continuation)
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    relay.resume(throwing: error)
-                }) as? GarageCommonXPCServiceProtocol else {
-                    relay.resume(throwing: NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                    return
-                }
-
-                Self.configureBundle(on: proxy) {
-                    proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
-                        if let error = error {
-                            relay.resume(throwing: error)
-                        } else {
-                            relay.resume(returning: (out, err))
-                        }
-                    }
-                }
-            }
-
-            if let out = stdout, !out.isEmpty {
-                for line in out.components(separatedBy: .newlines) where !line.isEmpty {
-                    appendLog(line, stream: .stdout, source: service.id, level: .info)
-                }
-            }
-            if let err = stderr, !err.isEmpty {
-                for line in err.components(separatedBy: .newlines) where !line.isEmpty {
-                    appendLog(line, stream: .stderr, source: service.id, level: .error)
-                }
-            }
-            return (stdout, stderr)
-        } catch {
-            logger.warning("Failed to fetch logs from \(bundleId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return (nil, nil)
         }
     }
 
@@ -1088,6 +1008,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let (success, details): (Bool, String) = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1170,6 +1092,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: LlamaXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let pingResponse: String = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1267,8 +1191,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: "ingest-xpc",
-            testName: "Document Ingest Pipeline & Python Runtime Test",
-            testDescription: "Inspects PythonKit dynamic library resolution, tests signal handlers, verifies document extractors and chunkers.",
+            testName: "Ingest Helper Reachability Test",
+            testDescription: "Pings the ingest helper over XPC and records its reply and latency.",
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1295,16 +1219,14 @@ public final class XPCServiceManager: ObservableObject {
 
         var lines: [String] = []
         lines.append("MCP Server XPC: \(pingResult ?? "Unreachable (\(pingErr?.localizedDescription ?? "error"))")")
-        lines.append("Registered Standard MCP Tools: rag_search, rag_stats, rag_sources, rag_ingest")
-        lines.append("Protocol: Model Context Protocol (JSON-RPC 2.0)")
         lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
 
-        let summary = isSuccess ? "MCP server handshake & tools check completed in \(String(format: "%.1f", elapsed))ms" : "MCP server check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
+        let summary = isSuccess ? "MCP helper ping completed in \(String(format: "%.1f", elapsed))ms" : "MCP server check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
 
         return ServiceDiagnosticTestResult(
             serviceId: "mcp-server-xpc",
-            testName: "Model Context Protocol (MCP) Server & Tools Test",
-            testDescription: "Initializes MCP protocol connection and discovers registered tools and capabilities.",
+            testName: "MCP Helper Reachability Test",
+            testDescription: "Pings the MCP server helper over XPC and records its reply and latency.",
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1322,6 +1244,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let (success, summaryText, detailsText): (Bool, String, String) = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1342,7 +1266,6 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             var lines: [String] = []
             lines.append("Garage Core Backend XPC: \(summaryText)")
-            lines.append("Coordination: CLI dispatch, daemon lifecycle, and SQLite/Postgres backend interfaces")
             if !detailsText.isEmpty {
                 lines.append("Details: \(detailsText)")
             }

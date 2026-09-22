@@ -1,6 +1,5 @@
 import Foundation
 import OSLog
-import IngestClient
 import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "ModelDownloadClient")
@@ -9,6 +8,7 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickm
 public final class ModelDownloadClient: Sendable {
     public static let serviceName = "me.rickmark.garage-rag.model-download-xpc"
 
+    /// Only set by the test initializer; the XPC-backed client never silently falls back to an in-process engine.
     private let inProcessEngine: ModelDownloaderEngine?
     private let customServiceName: String?
 
@@ -90,14 +90,10 @@ public final class ModelDownloadClient: Sendable {
             return "pong from in-process ModelDownloadClient"
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.ping { reply in
-                    relay.resume(returning: reply)
-                }
+        return try await performRemoteCall { proxy, relay in
+            proxy.ping { reply in
+                relay.resume(returning: reply)
             }
-        } catch {
-            return "pong (in-process fallback)"
         }
     }
 
@@ -110,25 +106,21 @@ public final class ModelDownloadClient: Sendable {
             throw NSError(domain: "ModelDownloadClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to encode download request"])
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.startDownload(requestJson: jsonString) { replyJson, error in
-                    if let error = error {
+        return try await performRemoteCall { proxy, relay in
+            proxy.startDownload(requestJson: jsonString) { replyJson, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let replyJson = replyJson {
+                    do {
+                        let taskInfo = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
+                        relay.resume(returning: taskInfo)
+                    } catch {
                         relay.resume(throwing: error)
-                    } else if let replyJson = replyJson {
-                        do {
-                            let taskInfo = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
-                            relay.resume(returning: taskInfo)
-                        } catch {
-                            relay.resume(throwing: error)
-                        }
-                    } else {
-                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty reply from service"]))
                     }
+                } else {
+                    relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty reply from service"]))
                 }
             }
-        } catch {
-            return try ModelDownloaderEngine.shared.startDownload(request: request)
         }
     }
 
@@ -142,18 +134,14 @@ public final class ModelDownloadClient: Sendable {
             return engine.cancelDownload(taskId: taskId)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.cancelDownload(taskId: taskId) { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: success)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.cancelDownload(taskId: taskId) { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else {
+                    relay.resume(returning: success)
                 }
             }
-        } catch {
-            return ModelDownloaderEngine.shared.cancelDownload(taskId: taskId)
         }
     }
 
@@ -162,18 +150,14 @@ public final class ModelDownloadClient: Sendable {
             return engine.pauseDownload(taskId: taskId)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.pauseDownload(taskId: taskId) { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: success)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.pauseDownload(taskId: taskId) { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else {
+                    relay.resume(returning: success)
                 }
             }
-        } catch {
-            return ModelDownloaderEngine.shared.pauseDownload(taskId: taskId)
         }
     }
 
@@ -182,18 +166,14 @@ public final class ModelDownloadClient: Sendable {
             return engine.resumeDownload(taskId: taskId)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.resumeDownload(taskId: taskId) { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: success)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.resumeDownload(taskId: taskId) { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else {
+                    relay.resume(returning: success)
                 }
             }
-        } catch {
-            return ModelDownloaderEngine.shared.resumeDownload(taskId: taskId)
         }
     }
 
@@ -205,28 +185,21 @@ public final class ModelDownloadClient: Sendable {
             return info
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.getDownloadStatus(taskId: taskId) { replyJson, error in
-                    if let error = error {
+        return try await performRemoteCall { proxy, relay in
+            proxy.getDownloadStatus(taskId: taskId) { replyJson, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let replyJson = replyJson {
+                    do {
+                        let info = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
+                        relay.resume(returning: info)
+                    } catch {
                         relay.resume(throwing: error)
-                    } else if let replyJson = replyJson {
-                        do {
-                            let info = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: replyJson)
-                            relay.resume(returning: info)
-                        } catch {
-                            relay.resume(throwing: error)
-                        }
-                    } else {
-                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"]))
                     }
+                } else {
+                    relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"]))
                 }
             }
-        } catch {
-            guard let info = ModelDownloaderEngine.shared.getDownloadStatus(taskId: taskId) else {
-                throw NSError(domain: "ModelDownloadClient", code: 404, userInfo: [NSLocalizedDescriptionKey: "Task not found"])
-            }
-            return info
         }
     }
 
@@ -235,25 +208,21 @@ public final class ModelDownloadClient: Sendable {
             return engine.listDownloads()
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.listDownloads { replyJson, error in
-                    if let error = error {
+        return try await performRemoteCall { proxy, relay in
+            proxy.listDownloads { replyJson, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let replyJson = replyJson {
+                    do {
+                        let list = try ModelDownloaderEngine.shared.deserialize([DownloadTaskInfo].self, from: replyJson)
+                        relay.resume(returning: list)
+                    } catch {
                         relay.resume(throwing: error)
-                    } else if let replyJson = replyJson {
-                        do {
-                            let list = try ModelDownloaderEngine.shared.deserialize([DownloadTaskInfo].self, from: replyJson)
-                            relay.resume(returning: list)
-                        } catch {
-                            relay.resume(throwing: error)
-                        }
-                    } else {
-                        relay.resume(returning: [])
                     }
+                } else {
+                    relay.resume(returning: [])
                 }
             }
-        } catch {
-            return ModelDownloaderEngine.shared.listDownloads()
         }
     }
 
@@ -262,25 +231,21 @@ public final class ModelDownloadClient: Sendable {
             return engine.listDownloadedModels(directoryPath: directoryPath)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.listDownloadedModels(directoryPath: directoryPath) { replyJson, error in
-                    if let error = error {
+        return try await performRemoteCall { proxy, relay in
+            proxy.listDownloadedModels(directoryPath: directoryPath) { replyJson, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let replyJson = replyJson {
+                    do {
+                        let list = try ModelDownloaderEngine.shared.deserialize([DownloadedModelInfo].self, from: replyJson)
+                        relay.resume(returning: list)
+                    } catch {
                         relay.resume(throwing: error)
-                    } else if let replyJson = replyJson {
-                        do {
-                            let list = try ModelDownloaderEngine.shared.deserialize([DownloadedModelInfo].self, from: replyJson)
-                            relay.resume(returning: list)
-                        } catch {
-                            relay.resume(throwing: error)
-                        }
-                    } else {
-                        relay.resume(returning: [])
                     }
+                } else {
+                    relay.resume(returning: [])
                 }
             }
-        } catch {
-            return ModelDownloaderEngine.shared.listDownloadedModels(directoryPath: directoryPath)
         }
     }
 
@@ -289,18 +254,14 @@ public final class ModelDownloadClient: Sendable {
             return try engine.deleteDownloadedModel(filePath: path)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.deleteDownloadedModel(filePath: path) { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: success)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.deleteDownloadedModel(filePath: path) { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else {
+                    relay.resume(returning: success)
                 }
             }
-        } catch {
-            return try ModelDownloaderEngine.shared.deleteDownloadedModel(filePath: path)
         }
     }
 
@@ -309,14 +270,10 @@ public final class ModelDownloadClient: Sendable {
             return engine.getModelsDirectoryPath()
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.getModelsDirectory { path in
-                    relay.resume(returning: path)
-                }
+        return try await performRemoteCall { proxy, relay in
+            proxy.getModelsDirectory { path in
+                relay.resume(returning: path)
             }
-        } catch {
-            return ModelDownloaderEngine.shared.getModelsDirectoryPath()
         }
     }
 
@@ -326,19 +283,14 @@ public final class ModelDownloadClient: Sendable {
             return true
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.setModelsDirectory(path: path) { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else {
-                        relay.resume(returning: success)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.setModelsDirectory(path: path) { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else {
+                    relay.resume(returning: success)
                 }
             }
-        } catch {
-            try ModelDownloaderEngine.shared.setModelsDirectory(path: path)
-            return true
         }
     }
 
@@ -348,21 +300,16 @@ public final class ModelDownloadClient: Sendable {
             return (res.isValid, res.computedSha256)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.verifyModelFile(filePath: path, expectedSha256: expectedSha256) { isValid, computedHash, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else if let computedHash = computedHash {
-                        relay.resume(returning: (isValid, computedHash))
-                    } else {
-                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty checksum verification reply"]))
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.verifyModelFile(filePath: path, expectedSha256: expectedSha256) { isValid, computedHash, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let computedHash = computedHash {
+                    relay.resume(returning: (isValid, computedHash))
+                } else {
+                    relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty checksum verification reply"]))
                 }
             }
-        } catch {
-            let res = try ModelDownloaderEngine.shared.verifyModelFile(filePath: path, expectedSha256: expectedSha256)
-            return (res.isValid, res.computedSha256)
         }
     }
 
@@ -373,21 +320,16 @@ public final class ModelDownloadClient: Sendable {
             return (res.isValid, res.details)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.testDownloadAndVerifySha256 { isValid, details, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                    } else if let details = details {
-                        relay.resume(returning: (isValid, details))
-                    } else {
-                        relay.resume(returning: (isValid, "Completed without details"))
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.testDownloadAndVerifySha256 { isValid, details, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let details = details {
+                    relay.resume(returning: (isValid, details))
+                } else {
+                    relay.resume(returning: (isValid, "Completed without details"))
                 }
             }
-        } catch {
-            let res = try ModelDownloaderEngine.shared.testDownloadAndVerifySha256()
-            return (res.isValid, res.details)
         }
     }
 
@@ -397,25 +339,21 @@ public final class ModelDownloadClient: Sendable {
             return try engine.downloadFixedTestModel(destinationDirectory: destinationDirectory)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.downloadFixedTestModel(destinationDirectory: destinationDirectory) { jsonString, error in
-                    if let error = error {
+        return try await performRemoteCall { proxy, relay in
+            proxy.downloadFixedTestModel(destinationDirectory: destinationDirectory) { jsonString, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                } else if let jsonString = jsonString {
+                    do {
+                        let task = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: jsonString)
+                        relay.resume(returning: task)
+                    } catch {
                         relay.resume(throwing: error)
-                    } else if let jsonString = jsonString {
-                        do {
-                            let task = try ModelDownloaderEngine.shared.deserialize(DownloadTaskInfo.self, from: jsonString)
-                            relay.resume(returning: task)
-                        } catch {
-                            relay.resume(throwing: error)
-                        }
-                    } else {
-                        relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty download task response"]))
                     }
+                } else {
+                    relay.resume(throwing: NSError(domain: "ModelDownloadClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Empty download task response"]))
                 }
             }
-        } catch {
-            return try ModelDownloaderEngine.shared.downloadFixedTestModel(destinationDirectory: destinationDirectory)
         }
     }
 }

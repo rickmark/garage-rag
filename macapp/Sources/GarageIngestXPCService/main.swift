@@ -90,21 +90,6 @@ private let globalProgressCallback: ProgressCFunction = { cStr in
 private let globalLogCallback: LogCFunction = { level, cStr in
     guard let cStr = cStr else { return }
     let msg = String(cString: cStr)
-    switch level {
-    case 10: // DEBUG
-        logger.debug("[Python] \(msg, privacy: .public)")
-    case 20: // INFO
-        logger.info("[Python] \(msg, privacy: .public)")
-    case 30: // WARNING
-        logger.warning("[Python] \(msg, privacy: .public)")
-    case 40: // ERROR
-        logger.error("[Python] \(msg, privacy: .public)")
-    case 50: // CRITICAL / FAULT
-        logger.fault("[Python] \(msg, privacy: .public)")
-    default:
-        logger.info("[Python] \(msg, privacy: .public)")
-    }
-    let stream = level >= 40 ? "stderr" : "stdout"
     let lvlStr: String
     switch level {
     case 10: lvlStr = "DEBUG"
@@ -114,7 +99,8 @@ private let globalLogCallback: LogCFunction = { level, cStr in
     case 50: lvlStr = "FATAL"
     default: lvlStr = "INFO"
     }
-    GarageXPCOutputCapture.shared.appendCustomLog(stream: stream, message: msg, source: "IngestPython", level: lvlStr)
+    // Single sink: `log` writes the file log, unified logging and the common XPC log stream once; the ingest
+    // progress receivers additionally get the structured copy through `sendLog`.
     GarageXPCOutputCapture.shared.log(source: "IngestPython", level: lvlStr, message: msg)
     GarageIngestActiveConnections.shared.sendLog(message: msg, level: level)
 }
@@ -170,7 +156,8 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
         guard !already else { return }
 
         do {
-            try runtime.withGIL {
+            // Python errors are described (traceback formatted) inside the GIL scope; only the string escapes it.
+            try runtime.withGILDescribingErrors {
                 let ingestModule = try Python.attemptImport("garage_rag.ingest")
                 logger.info("Successfully imported garage_rag.ingest: \(String(describing: ingestModule), privacy: .public)")
                 try registerIngestCallbacks(on: ingestModule)
@@ -180,7 +167,7 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
             callbackLock.lock()
             callbacksRegistered = false
             callbackLock.unlock()
-            logger.error("Failed to register ingest callbacks: \(GaragePythonRuntime.describe(error), privacy: .public)")
+            logger.error("Failed to register ingest callbacks: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -226,13 +213,12 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
 
     func cancelIngest(with reply: @escaping (Bool) -> Void) {
         logger.info("Cancel ingest requested")
-        engine.cancel()
         guard ensurePythonReady() else {
             logger.warning("Cannot cancel ingest via Python because Python is not initialized: \(self.runtime.statusSnapshot().error ?? "unavailable", privacy: .public)")
             reply(true)
             return
         }
-        // Acknowledge right away (the Swift-side cancel flag is already set) and deliver the Python-side cancel
+        // Acknowledge right away and deliver the Python-side cancel
         // from a background thread. `withGIL` is not serialized, so this acquires the GIL as soon as the running
         // `ingest_xpc` call yields it (CPython switches between threads every few milliseconds).
         reply(true)
@@ -332,7 +318,7 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
     }
 
     /// Runs `garage_rag.ingest.ingest_xpc` on the worker queue with the GIL held, keeping the process alive and
-    /// forwarding progress to connected clients. Shared by `ingestSource` and `ingestPath`.
+    /// forwarding progress to connected clients. Used by `ingestSource`.
     private func runIngest(
         source: String,
         includeCode: Bool,
@@ -426,37 +412,6 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
             databaseUrl: options.databaseUrl,
             lmStudioApiToken: options.lmStudioApiToken,
             successPrefix: "Ingestion completed successfully for",
-            with: reply
-        )
-    }
-
-    func ingestPath(_ source: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("Received ingestPath request for source: '\(source, privacy: .public)', options: \(options, privacy: .public)")
-        guard ensurePythonReady() else {
-            let errorMsg = "Python initialization error: \(runtime.statusSnapshot().error ?? "unavailable")"
-            logger.error("\(errorMsg, privacy: .public)")
-            reply(false, errorMsg)
-            return
-        }
-
-        let dbURL = options["GARAGE_DATABASE_URL"] ?? options["database_url"] ?? options["databaseUrl"]
-        let lmToken = options["GARAGE_LMSTUDIO_API_TOKEN"] ?? options["lmstudio_api_token"] ?? options["lmStudioApiToken"]
-        let includeCode = options["include_code"] == "true" || options["includeCode"] == "true"
-        let force = options["force"] == "true"
-        let limitVal = options["limit"].flatMap { Int($0) }
-        let grpcPortVal = options["grpc_port"].flatMap { Int($0) } ?? options["grpcPort"].flatMap { Int($0) }
-        let grpcHostVal = options["grpc_host"] ?? options["grpcHost"]
-
-        runIngest(
-            source: source,
-            includeCode: includeCode,
-            force: force,
-            limit: limitVal,
-            grpcHost: grpcHostVal,
-            grpcPort: grpcPortVal,
-            databaseUrl: dbURL,
-            lmStudioApiToken: lmToken,
-            successPrefix: "Ingest completed successfully for:",
             with: reply
         )
     }

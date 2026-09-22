@@ -192,7 +192,7 @@ struct MCPServerView: View {
                         Button("Execute Tool") {
                             executeSelectedTool()
                         }
-                        .disabled(appState.mcp.status != .running || isExecutingCustomTool)
+                        .disabled(appState.mcp.status != .running || isExecutingCustomTool || !isCustomToolInputValid)
 
                         if isExecutingCustomTool {
                             ProgressView().controlSize(.small)
@@ -214,8 +214,7 @@ struct MCPServerView: View {
                                     .foregroundStyle(.secondary)
                                 Spacer()
                                 Button("Copy") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(output, forType: .string)
+                                    NSPasteboard.general.copy(output)
                                 }
                                 .controlSize(.small)
                             }
@@ -513,6 +512,14 @@ struct MCPServerView: View {
         }
     }
 
+    private var parsedTestDocumentId: Int? {
+        Int(testDocumentId.trimmingCharacters(in: .whitespaces))
+    }
+
+    private var isCustomToolInputValid: Bool {
+        selectedToolName != "rag_get_document" || parsedTestDocumentId != nil
+    }
+
     private func executeSelectedTool() {
         isExecutingCustomTool = true
         customToolError = nil
@@ -523,7 +530,10 @@ struct MCPServerView: View {
                 if selectedToolName == "rag_search" {
                     args["query"] = testSearchQuery
                 } else if selectedToolName == "rag_get_document" {
-                    let docId = Int(testDocumentId.trimmingCharacters(in: .whitespaces)) ?? 1
+                    guard let docId = parsedTestDocumentId else {
+                        customToolError = "Document ID must be an integer."
+                        return
+                    }
                     args["document_id"] = docId
                 }
                 let output = try await appState.mcp.executeToolCall(toolName: selectedToolName, arguments: args)

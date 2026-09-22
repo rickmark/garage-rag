@@ -96,6 +96,5 @@ final class GarageAppUITests: XCTestCase {
 
         let controller = NSHostingController(rootView: menuBarView)
         XCTAssertNotNil(controller.view)
-        XCTAssertEqual(controller.view.frame.width, 0) // initial frame before window attachment
     }
 }

@@ -111,18 +111,16 @@ public final class LlamaClient: @unchecked Sendable {
 
     // MARK: - Status & Info
 
+    /// Health check of the helper. Unlike the request methods below, this never falls back to the in-process
+    /// engine: a dead helper must surface as an error so status displays are honest.
     public func ping() async throws -> String {
         if inProcessEngine != nil {
             return "pong (in-process)"
         }
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.ping { reply in
-                    relay.resume(returning: reply)
-                }
+        return try await performRemoteCall { proxy, relay in
+            proxy.ping { reply in
+                relay.resume(returning: reply)
             }
-        } catch {
-            return "pong (in-process fallback)"
         }
     }
 

@@ -14,12 +14,6 @@ final class PathsTests: XCTestCase {
         XCTAssertEqual(pgData.deletingLastPathComponent().standardizedFileURL, Paths.appSupportDir.standardizedFileURL)
     }
 
-    func testPgSocketDirIsSubdirectoryOfAppSupport() {
-        let pgSocket = Paths.pgSocketDir
-        XCTAssertEqual(pgSocket.lastPathComponent, "sockets")
-        XCTAssertEqual(pgSocket.deletingLastPathComponent().standardizedFileURL, Paths.appSupportDir.standardizedFileURL)
-    }
-
     func testLogsDirIsSubdirectoryOfAppSupport() {
         let logs = Paths.logsDir
         XCTAssertEqual(logs.lastPathComponent, "logs")

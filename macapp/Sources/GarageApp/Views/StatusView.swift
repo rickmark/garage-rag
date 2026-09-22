@@ -100,7 +100,8 @@ struct StatusView: View {
         .navigationTitle("Status")
         .onAppear {
             Task {
-                await appState.scanSources()
+                await appState.fetchRegisteredSources()
+                await appState.fetchCorpusStats()
                 await appState.xpcServices.refreshAll()
                 if appState.xpcServices.statusReports.isEmpty {
                     await appState.xpcServices.refreshAllStatusReports()
@@ -530,17 +531,6 @@ struct StatusView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-            } else if appState.ingest.isRunning {
-                Text("Ingesting…")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.blue)
-
-                ProgressView(value: stats.ingestionProgressFraction)
-                    .progressViewStyle(.linear)
-
-                Text("Running CLI ingest in background…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } else {
                 Text("\(stats.uningestedElements)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
@@ -985,8 +975,7 @@ struct StatusView: View {
                                 Spacer()
 
                                 Button {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(res.details, forType: .string)
+                                    NSPasteboard.general.copy(res.details)
                                     copiedServiceId = "grpc"
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                         if copiedServiceId == "grpc" { copiedServiceId = nil }
@@ -1246,8 +1235,7 @@ struct StatusView: View {
                                     .foregroundStyle(.secondary)
 
                                 Button {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(res.details, forType: .string)
+                                    NSPasteboard.general.copy(res.details)
                                     copiedServiceId = service.id
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                         if copiedServiceId == service.id { copiedServiceId = nil }
@@ -1704,30 +1692,6 @@ struct StatusView: View {
         Self.sortedStatusItems(for: appState)
     }
 
-    var databaseStatusItem: PageStatusItem {
-        Self.databaseStatusItem(for: appState)
-    }
-
-    var mcpStatusItem: PageStatusItem {
-        Self.mcpStatusItem(for: appState)
-    }
-
-    var sourcesStatusItem: PageStatusItem {
-        Self.sourcesStatusItem(for: appState)
-    }
-
-    var modelsStatusItem: PageStatusItem {
-        Self.modelsStatusItem(for: appState)
-    }
-
-    var searchStatusItem: PageStatusItem {
-        Self.searchStatusItem(for: appState)
-    }
-
-    var logsStatusItem: PageStatusItem {
-        Self.logsStatusItem(for: appState)
-    }
-
     static func statusItems(for appState: AppState) -> [PageStatusItem] {
         [
             databaseStatusItem(for: appState),
@@ -1945,13 +1909,6 @@ struct StatusView: View {
                 details = "Scanning configured sources to calculate element counts."
                 quickAction = PageStatusItem.QuickAction(label: "Cancel Scan") {
                     appState.cancelScan()
-                }
-            } else if appState.ingest.isRunning {
-                severity = .info
-                headline = "Ingestion in Progress"
-                details = "Currently ingesting files into personal archive."
-                quickAction = PageStatusItem.QuickAction(label: "Cancel Ingest") {
-                    Task { await appState.cancelIngest() }
                 }
             } else if appState.registeredSources.isEmpty {
                 severity = .warning

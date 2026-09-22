@@ -19,25 +19,6 @@ public protocol GarageManagedService: AnyObject {
     var isRunning: Bool { get }
 }
 
-/// Simple closure-backed managed service for cases where a full type is overkill.
-public final class GarageClosureManagedService: GarageManagedService {
-    public let name: String
-    private let startBody: () throws -> Void
-    private let stopBody: (Bool) throws -> Void
-    private let runningBody: () -> Bool
-
-    public init(name: String, start: @escaping () throws -> Void, stop: @escaping (Bool) throws -> Void, isRunning: @escaping () -> Bool) {
-        self.name = name
-        self.startBody = start
-        self.stopBody = stop
-        self.runningBody = isRunning
-    }
-
-    public func start() throws { try startBody() }
-    public func stop(graceful: Bool) throws { try stopBody(graceful) }
-    public var isRunning: Bool { runningBody() }
-}
-
 /// Manages the lifecycle of `GarageManagedService`s on a dedicated background thread and supports graceful and
 /// non-graceful restarts. State is observable through `statusSnapshot()`.
 public final class GarageXPCServiceHost: @unchecked Sendable {
@@ -71,7 +52,6 @@ public final class GarageXPCServiceHost: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [Entry] = []
-    private var pendingWork = 0
 
     /// Serial background queue that owns every start/stop transition.
     private let queue: DispatchQueue
@@ -95,20 +75,9 @@ public final class GarageXPCServiceHost: @unchecked Sendable {
         logger.info("Registered managed service '\(service.name, privacy: .public)'")
     }
 
-    public func unregister(named name: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        entries.removeAll { $0.service.name == name }
-    }
-
     public var registeredServiceNames: [String] {
         lock.lock(); defer { lock.unlock() }
         return entries.map { $0.service.name }
-    }
-
-    public var hasPendingWork: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return pendingWork > 0
     }
 
     // MARK: - Lifecycle
@@ -212,14 +181,8 @@ public final class GarageXPCServiceHost: @unchecked Sendable {
     // MARK: - Internals (run on `queue`)
 
     private func enqueue(_ body: @escaping () -> Void) {
-        lock.lock()
-        pendingWork += 1
-        lock.unlock()
-        queue.async { [self] in
+        queue.async {
             body()
-            lock.lock()
-            pendingWork -= 1
-            lock.unlock()
         }
     }
 

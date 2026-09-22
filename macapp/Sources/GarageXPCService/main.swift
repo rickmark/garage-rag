@@ -31,11 +31,6 @@ final class GarageGRPCManagedServer: GarageManagedService {
         lock.unlock()
     }
 
-    var isConfigured: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return autoStart
-    }
-
     var isRunning: Bool {
         lock.lock(); defer { lock.unlock() }
         return server != nil
@@ -51,7 +46,8 @@ final class GarageGRPCManagedServer: GarageManagedService {
             return
         }
 
-        try GaragePythonRuntime.shared.withGIL {
+        // A PythonError is converted to a string error inside the GIL scope, so the host can report it safely.
+        try GaragePythonRuntime.shared.withGILDescribingErrors {
             let os = Python.import("os")
             for (key, value) in opts {
                 if key == GarageXPCConfigurationKey.databaseURL || key == "database_url" {
@@ -152,11 +148,10 @@ final class GarageXPCServiceDelegate: GarageXPCServiceBase, GarageXPCServiceProt
             reply(false, "Python initialization error: \(message)")
             return
         }
-        mergeConfiguration(options)
         var merged = options
         merged[GarageXPCConfigurationKey.grpcHost] = host
         merged[GarageXPCConfigurationKey.grpcPort] = String(port)
-        mergeConfiguration([GarageXPCConfigurationKey.grpcHost: host, GarageXPCConfigurationKey.grpcPort: String(port)])
+        mergeConfiguration(merged)
         grpcServer.configure(host: host, port: port, options: merged)
 
         self.host.restart(named: grpcServer.name, graceful: true) { state in
@@ -188,20 +183,6 @@ final class GarageXPCServiceDelegate: GarageXPCServiceBase, GarageXPCServiceProt
 
     func isServerRunning(with reply: @escaping (Bool) -> Void) {
         reply(grpcServer.isRunning)
-    }
-
-    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
-        logger.info("executeCommand '\(command, privacy: .public)' \(arguments, privacy: .public)")
-        let result = withPython { () -> String in
-            let serviceModule = try Python.attemptImport("garage_rag.service")
-            return "Service module loaded successfully: \(serviceModule)"
-        }
-        switch result {
-        case .success(let message):
-            reply(0, message, nil)
-        case .failure(let error):
-            reply(1, nil, "Failed to load service module: \(error.localizedDescription)")
-        }
     }
 }
 

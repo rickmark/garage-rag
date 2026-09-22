@@ -32,7 +32,6 @@ swift_library(
     name = "PythonXPCService_swift",
     srcs = [
         "GarageFileLogger.swift",
-        "GarageGRPCOverXPC.swift",
         "GaragePythonRuntime.swift",
         "GarageXPCCrashHandler.swift",
         "GarageXPCOutputCapture.swift",

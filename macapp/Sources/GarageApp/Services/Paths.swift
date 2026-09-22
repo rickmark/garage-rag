@@ -1,12 +1,11 @@
 import Foundation
 
-/// Resolves where the Postgres install and the frozen `garage` CLI live.
+/// Resolves where the Postgres install and the `garage` CLI live.
 ///
-/// Packaged builds (produced by Scripts/build-app.sh) vendor both under the
-/// app bundle's Resources/ so the app runs with zero prerequisites. When run
-/// unpackaged (`swift run`, during development) there is no bundle to vendor
-/// into, so we fall back to the Homebrew install and the repo's uv venv —
-/// the same tools the README already asks a developer to have.
+/// The Bazel-built app bundle (`//macapp:GarageApp`) vendors both under the
+/// app bundle's Resources/ so the app runs with zero prerequisites; the
+/// `devRepoRoot` fallbacks below only matter when a resource is missing
+/// from the bundle.
 enum Paths {
     static let appSupportDir: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -16,7 +15,6 @@ enum Paths {
     }()
 
     static let pgDataDir = appSupportDir.appendingPathComponent("pgdata", isDirectory: true)
-    static let pgSocketDir = appSupportDir.appendingPathComponent("sockets", isDirectory: true)
     static let modelsDir: URL = {
         let dir = appSupportDir.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -33,7 +31,6 @@ enum Paths {
         return Bundle.main.resourceURL!
     }
 
-    private static let postgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
     private static let devRepoRoot: URL = {
         let candidate1 = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Developer/garage"))
         if FileManager.default.fileExists(atPath: candidate1.path) {

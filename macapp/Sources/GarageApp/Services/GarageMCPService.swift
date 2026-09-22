@@ -41,7 +41,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
     public var path: URL
     public var existsOnDisk: Bool
     public var isRegistered: Bool
-    public var isProjectScoped: Bool
     public var note: String
 
     public init(
@@ -50,7 +49,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
         path: URL,
         existsOnDisk: Bool,
         isRegistered: Bool,
-        isProjectScoped: Bool = false,
         note: String = ""
     ) {
         self.id = id
@@ -58,7 +56,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
         self.path = path
         self.existsOnDisk = existsOnDisk
         self.isRegistered = isRegistered
-        self.isProjectScoped = isProjectScoped
         self.note = note
     }
 }
@@ -133,7 +130,6 @@ final class GarageMCPService: ObservableObject {
     private let client: GarageMCPServerClient
     private let defaults: UserDefaults
     private let maxLogLines = 4000
-    private var isStopping = false
     private var logPollTask: Task<Void, Never>?
 
     init(
@@ -270,7 +266,6 @@ final class GarageMCPService: ObservableObject {
                 path: target.path,
                 existsOnDisk: exists,
                 isRegistered: isRegistered,
-                isProjectScoped: target.projectScoped,
                 note: target.note
             )
         }
@@ -624,7 +619,6 @@ final class GarageMCPService: ObservableObject {
             let currentPort = port
             triedPorts.insert(currentPort)
             status = .starting
-            isStopping = false
             sessionId = nil
 
             do {
@@ -674,7 +668,6 @@ final class GarageMCPService: ObservableObject {
     func stop() async {
         guard status == .running || status == .starting else { return }
         status = .stopping
-        isStopping = true
         sessionId = nil
         stopLogPolling()
         _ = try? await client.stopServer()
@@ -683,7 +676,6 @@ final class GarageMCPService: ObservableObject {
 
     func terminateImmediately() {
         status = .stopping
-        isStopping = true
         sessionId = nil
         stopLogPolling()
         Task { [client] in

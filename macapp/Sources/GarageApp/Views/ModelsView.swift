@@ -23,14 +23,11 @@ struct ModelsView: View {
     @State private var dims: String = "1024"
     @State private var modelRef: String = "bge-m3"
     @State private var provider: ModelProvider = .llamaXPC
-    @State private var customSha256: String = ""
     @State private var makeDefault: Bool = false
     @State private var busy: Bool = false
     @State private var lmStudioToken: String = ""
 
     // Llama model loading configuration state
-    @State private var modelAlias: String = "bge-m3"
-    @State private var contextSize: Int = 8192
     @State private var gpuLayers: Int = 33
     @State private var cpuThreads: Int = 4
     @State private var showUnloadConfirmation: Bool = false
@@ -39,7 +36,6 @@ struct ModelsView: View {
     @State private var selectedTestModelSlug: String = ""
     @State private var testPrompt: String = "Garage provides local retrieval-augmented generation for personal archives."
     @State private var testEmbeddingDimensions: String = ""
-    @State private var showCopiedAlert: Bool = false
     @State private var searchText: String = ""
     @State private var registeringPresetSlug: String? = nil
 
@@ -90,7 +86,6 @@ struct ModelsView: View {
         let storedDims: Int?
         let contextSize: Int?
         let isDefault: Bool
-        let isRegistered: Bool
         let downloadModelId: String?
         let downloadFile: String?
         let sha256: String?
@@ -100,7 +95,6 @@ struct ModelsView: View {
 
         static func == (lhs: UnifiedModelItem, rhs: UnifiedModelItem) -> Bool {
             lhs.slug == rhs.slug &&
-            lhs.isRegistered == rhs.isRegistered &&
             lhs.isDefault == rhs.isDefault &&
             lhs.dims == rhs.dims &&
             lhs.provider == rhs.provider
@@ -108,7 +102,6 @@ struct ModelsView: View {
 
         func hash(into hasher: inout Hasher) {
             hasher.combine(slug)
-            hasher.combine(isRegistered)
             hasher.combine(isDefault)
         }
 
@@ -135,7 +128,8 @@ struct ModelsView: View {
     private var unifiedModels: [UnifiedModelItem] {
         var items: [UnifiedModelItem] = []
 
-        // Only registered models are shown in the models list
+        // The list is built from the database's registered models only; presets that
+        // are not registered yet are listed separately in `unregisteredPresetModels`.
         for reg in appState.registeredModels {
             let prov = ModelProvider.from(string: reg.provider)
             let preset = appState.presetModels.first { $0.slug == reg.slug || $0.modelId == reg.modelRef }
@@ -150,7 +144,6 @@ struct ModelsView: View {
                     storedDims: reg.storedDims > 0 ? reg.storedDims : nil,
                     contextSize: preset?.contextSize ?? 8192,
                     isDefault: reg.isDefault,
-                    isRegistered: true,
                     downloadModelId: preset?.downloadModelId,
                     downloadFile: preset?.downloadFile,
                     sha256: preset?.sha256 ?? catItem?.sha256,
@@ -203,12 +196,12 @@ struct ModelsView: View {
                 // Section 1: Registered Models List & Status
                 modelCatalogSection
 
-                // Section 1.5: Available Models (Not Yet Registered)
+                // Section 2: Available Models (Not Yet Registered)
                 if !unregisteredPresetModels.isEmpty {
                     availableModelsSection
                 }
 
-                // Section 2: Model Configuration & Registration (Preset or Custom)
+                // Section 3: Model Configuration & Registration (Preset or Custom)
                 configurationSection
 
                 // Section 4: Non-Truncated Embedding Testing & Inspection
@@ -342,11 +335,7 @@ struct ModelsView: View {
                             badgeText("DEFAULT", bg: Color.green.opacity(0.18), fg: .green)
                         }
 
-                        if item.isRegistered {
-                            badgeText("REGISTERED", bg: Color.blue.opacity(0.15), fg: .blue)
-                        } else {
-                            badgeText("PRESET", bg: Color.orange.opacity(0.15), fg: .orange)
-                        }
+                        badgeText("REGISTERED", bg: Color.blue.opacity(0.15), fg: .blue)
 
                         if isActiveInLlama {
                             badgeText("ACTIVE IN LLAMA XPC", bg: Color.purple.opacity(0.2), fg: .purple)
@@ -519,13 +508,11 @@ struct ModelsView: View {
                     }
 
                     // Backfill Embeddings button
-                    if item.isRegistered {
-                        Button("Backfill") {
-                            backfillModel(slug: item.slug)
-                        }
-                        .controlSize(.small)
-                        .disabled(notReady || appState.backfill.isRunning)
+                    Button("Backfill") {
+                        backfillModel(slug: item.slug)
                     }
+                    .controlSize(.small)
+                    .disabled(notReady || appState.backfill.isRunning)
 
                     // Test Embeddings button
                     Button("Test") {
@@ -545,27 +532,20 @@ struct ModelsView: View {
                             }
                         }
 
-                        if !item.isRegistered {
-                            Button("Register in Database") {
-                                registerModel(item: item)
-                            }
-                            .disabled(notReady)
-                        } else {
-                            Button("Backfill Embeddings") {
-                                backfillModel(slug: item.slug)
-                            }
-                            .disabled(notReady || appState.backfill.isRunning)
-
-                            Button("Set as Default Model") {
-                                run(["set-default-model", item.slug])
-                            }
-                            .disabled(notReady)
-
-                            Button("Drop from Database", role: .destructive) {
-                                run(["drop-model", item.slug, "--yes"])
-                            }
-                            .disabled(notReady)
+                        Button("Backfill Embeddings") {
+                            backfillModel(slug: item.slug)
                         }
+                        .disabled(notReady || appState.backfill.isRunning)
+
+                        Button("Set as Default Model") {
+                            run(["set-default-model", item.slug])
+                        }
+                        .disabled(notReady)
+
+                        Button("Drop from Database", role: .destructive) {
+                            run(["drop-model", item.slug, "--yes"])
+                        }
+                        .disabled(notReady)
 
                         if isDownloaded, let dl = downloadedInfo {
                             Divider()
@@ -588,53 +568,51 @@ struct ModelsView: View {
             }
 
             // Embedding progress details for model
-            if item.isRegistered {
-                let embeddedCount = stats?.embeddedCount ?? 0
-                let remaining = max(0, totalChunks - embeddedCount)
-                let progressFraction = totalChunks > 0 ? min(1.0, max(0.0, Double(embeddedCount) / Double(totalChunks))) : 0.0
-                let percentText = totalChunks > 0 ? String(format: "%.1f%%", progressFraction * 100) : "0%"
+            let embeddedCount = stats?.embeddedCount ?? 0
+            let remaining = max(0, totalChunks - embeddedCount)
+            let progressFraction = totalChunks > 0 ? min(1.0, max(0.0, Double(embeddedCount) / Double(totalChunks))) : 0.0
+            let percentText = totalChunks > 0 ? String(format: "%.1f%%", progressFraction * 100) : "0%"
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "circle.hexagongrid.fill")
-                            .foregroundStyle(.purple)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.hexagongrid.fill")
+                        .foregroundStyle(.purple)
+                        .font(.caption)
+                    Text("Embedding Progress:")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+
+                    if totalChunks == 0 {
+                        Text("No document chunks in corpus")
                             .font(.caption)
-                        Text("Embedding Progress:")
-                            .font(.caption.bold())
                             .foregroundStyle(.secondary)
-
-                        if totalChunks == 0 {
-                            Text("No document chunks in corpus")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if remaining == 0 {
-                            Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText))")
-                                .font(.caption.monospaced())
-                            badgeText("100% EMBEDDED", bg: Color.green.opacity(0.18), fg: .green)
-                        } else {
-                            Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText)) • \(remaining) remaining")
-                                .font(.caption.monospaced())
-                            badgeText("\(remaining) PENDING", bg: Color.orange.opacity(0.18), fg: .orange)
-                        }
-                        Spacer()
+                    } else if remaining == 0 {
+                        Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText))")
+                            .font(.caption.monospaced())
+                        badgeText("100% EMBEDDED", bg: Color.green.opacity(0.18), fg: .green)
+                    } else {
+                        Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText)) • \(remaining) remaining")
+                            .font(.caption.monospaced())
+                        badgeText("\(remaining) PENDING", bg: Color.orange.opacity(0.18), fg: .orange)
                     }
-
-                    if totalChunks > 0 && remaining > 0 {
-                        ProgressView(value: progressFraction)
-                            .progressViewStyle(.linear)
-                    }
+                    Spacer()
                 }
-                .padding(6)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                if totalChunks > 0 && remaining > 0 {
+                    ProgressView(value: progressFraction)
+                        .progressViewStyle(.linear)
+                }
             }
+            .padding(6)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .padding(10)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Section 1.5: Available Models (Not Yet Registered)
+    // MARK: - Section 2: Available Models (Not Yet Registered)
 
     private var availableModelsSection: some View {
         GroupBox("Available Models (Not Yet Registered)") {
@@ -718,7 +696,7 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 2: Model Configuration & Registration
+    // MARK: - Section 3: Model Configuration & Registration
 
     private var configurationSection: some View {
         GroupBox("Model Configuration & Registration") {
@@ -806,11 +784,6 @@ struct ModelsView: View {
                     LabeledContent("Slug") {
                         TextField("e.g. bge-m3", text: $slug)
                             .textFieldStyle(.roundedBorder)
-                            .onChange(of: slug) { _, newSlug in
-                                if modelAlias.isEmpty || modelAlias == slug {
-                                    modelAlias = newSlug
-                                }
-                            }
                     }
 
                     LabeledContent("Dimensions (optional)") {
@@ -820,11 +793,6 @@ struct ModelsView: View {
 
                     LabeledContent("Model Ref (optional)") {
                         TextField("Provider-side name if different (e.g. BAAI/bge-m3)", text: $modelRef)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    LabeledContent("SHA-256 Hash (optional)") {
-                        TextField("Expected SHA-256 hex digest for file verification", text: $customSha256)
                             .textFieldStyle(.roundedBorder)
                     }
 
@@ -900,7 +868,6 @@ struct ModelsView: View {
                             if let dimsVal = matched.dims {
                                 testEmbeddingDimensions = "\(dimsVal)"
                             }
-                            modelAlias = matched.slug
                         }
                     }
                 }
@@ -1020,7 +987,7 @@ struct ModelsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    // MARK: - Section 6: LM Studio Token Section
+    // MARK: - Section 5: LM Studio Token Section
 
     private var lmStudioTokenSection: some View {
         GroupBox("LM Studio API Token") {
@@ -1291,7 +1258,6 @@ struct ModelsView: View {
 
     private func selectForTesting(item: UnifiedModelItem) {
         selectedTestModelSlug = item.slug
-        modelAlias = item.slug
         if let dimsVal = item.dims {
             testEmbeddingDimensions = "\(dimsVal)"
         }
@@ -1304,8 +1270,6 @@ struct ModelsView: View {
         dims = preset.effectiveDims > 0 ? "\(preset.effectiveDims)" : ""
         modelRef = preset.modelRef ?? preset.slug
         provider = ModelProvider.from(string: preset.provider)
-        modelAlias = preset.slug
-        contextSize = preset.contextSize ?? 8192
     }
 
     private func populateForm(from item: UnifiedModelItem) {
@@ -1314,25 +1278,12 @@ struct ModelsView: View {
         dims = item.dims.map(String.init) ?? ""
         modelRef = item.modelRef
         provider = item.provider
-        modelAlias = item.slug
-        contextSize = item.contextSize ?? 8192
         if let preset = item.presetEntry {
             configMode = .preset
             selectedPresetSlug = preset.slug
         } else {
             configMode = .custom
         }
-    }
-
-    private func registerModel(item: UnifiedModelItem) {
-        var args = ["register-model", item.slug, "--provider", item.provider.cliValue]
-        if let dims = item.dims, dims > 0 {
-            args += ["--dims", "\(dims)"]
-        }
-        if !item.modelRef.isEmpty && item.modelRef != item.slug {
-            args += ["--model-ref", item.modelRef]
-        }
-        run(args)
     }
 
     private func run(_ args: [String]) {
@@ -1373,16 +1324,13 @@ struct ModelsView: View {
     private func copyVectorToClipboard(vector: [Float]) {
         if let data = try? JSONSerialization.data(withJSONObject: vector, options: []),
            let jsonStr = String(data: data, encoding: .utf8) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(jsonStr, forType: .string)
-            llama.clearMessages()
+            NSPasteboard.general.copy(jsonStr)
         }
     }
 
     private func copyCSVToClipboard(vector: [Float]) {
         let formatted = vector.map { String(format: "%.8f", $0) }.joined(separator: ", ")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(formatted, forType: .string)
+        NSPasteboard.general.copy(formatted)
     }
 
 }
@@ -1416,6 +1364,3 @@ struct EmbeddingVectorStats {
         self.l2Norm = Float(sqrt(sumSquares))
     }
 }
-
-// Backward compatibility views
-typealias EmbeddingModelsView = ModelsView
