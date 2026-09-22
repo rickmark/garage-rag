@@ -28,11 +28,36 @@ enum AppSection: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var appState: AppState
     @State private var selection: AppSection? = .status
     @State private var isSplashPresented = false
     @AppStorage(SplashPreferences.showAtLaunchKey) private var showSplashAtLaunch = true
 
     var body: some View {
+        Group {
+            if appState.firstRun.isActive {
+                FirstRunView()
+            } else {
+                mainWindow
+            }
+        }
+        .onAppear(perform: presentSplashAtLaunchIfNeeded)
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in
+            isSplashPresented = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
+            isSplashPresented = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowFirstRun)) { _ in
+            isSplashPresented = false
+            appState.firstRun.begin(force: true)
+        }
+        .sheet(isPresented: $isSplashPresented) {
+            SplashView()
+        }
+    }
+
+    private var mainWindow: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { section in
                 Label(section.rawValue, systemImage: section.symbol)
@@ -51,20 +76,12 @@ struct ContentView: View {
             case .logs: LogsView()
             }
         }
-        .onAppear(perform: presentSplashAtLaunchIfNeeded)
-        .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in
-            isSplashPresented = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
-            isSplashPresented = false
-        }
-        .sheet(isPresented: $isSplashPresented) {
-            SplashView()
-        }
     }
 
     /// Shows the splash once per launch unless the user turned it off (or we
     /// are running under XCTest, where a modal sheet would get in the way).
+    /// The setup assistant takes the whole window on a fresh install, so the
+    /// splash is skipped for that launch rather than stacked on top of it.
     private func presentSplashAtLaunchIfNeeded() {
         guard showSplashAtLaunch,
               !isRunningInTestEnvironment,
@@ -72,6 +89,7 @@ struct ContentView: View {
               !CommandLine.arguments.contains(GarageAppLaunch.databaseResetArgument),
               !SplashLaunchGate.hasPresented else { return }
         SplashLaunchGate.hasPresented = true
+        guard !appState.firstRun.isActive, !appState.firstRun.shouldPresentAtLaunch else { return }
         isSplashPresented = true
     }
 }

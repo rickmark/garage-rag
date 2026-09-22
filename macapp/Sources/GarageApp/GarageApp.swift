@@ -25,6 +25,9 @@ struct GarageApp: App {
             }
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesButton(updater: appState.updater)
+                Button("Setup Assistant…") {
+                    showFirstRun()
+                }
             }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit Garage") {
@@ -53,6 +56,15 @@ struct GarageApp: App {
             window.makeKeyAndOrderFront(nil)
         }
         NotificationCenter.default.post(name: .garageShowSplash, object: nil)
+    }
+
+    /// Brings the main window forward and re-runs the first-run setup assistant.
+    private func showFirstRun() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.title == "Garage" {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NotificationCenter.default.post(name: .garageShowFirstRun, object: nil)
     }
 
     private var menuBarSymbol: String {

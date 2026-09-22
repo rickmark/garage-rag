@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
     /// Sparkle front end. Inert in App Store builds, which update
     /// through the App Store rather than embedding Sparkle at all.
     let updater = UpdaterService.shared
+    /// First-run setup assistant state (pages, picks, and the commands they run).
+    let firstRun = FirstRunCoordinator()
     @Published var ingestService: IngestService
     let xpcServices: XPCServiceManager
     @Published var osLogStreamService: OSLogStreamService
@@ -135,6 +137,8 @@ final class AppState: ObservableObject {
         self.xpcServices.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.osLogStreamService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         updater.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        firstRun.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        firstRun.attach(to: self)
 
         do {
             lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil
@@ -201,6 +205,12 @@ final class AppState: ObservableObject {
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
         guard startsPostgres else { return }
+        if firstRun.shouldPresentAtLaunch {
+            // The assistant's first page drives Postgres and service startup
+            // itself so it can show progress and retry on failure.
+            firstRun.begin()
+            return
+        }
         Task { await startPostgres() }
     }
 

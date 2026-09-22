@@ -88,6 +88,14 @@ struct MenuBarView: View {
                 NotificationCenter.default.post(name: .garageShowSplash, object: nil)
             }
 
+            Button("Setup Assistant…") {
+                NSApp.activate(ignoringOtherApps: true)
+                for window in NSApp.windows where window.title == "Garage" {
+                    window.makeKeyAndOrderFront(nil)
+                }
+                NotificationCenter.default.post(name: .garageShowFirstRun, object: nil)
+            }
+
             Button("Quit Garage") {
                 AppDelegate.quit()
             }

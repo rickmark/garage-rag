@@ -248,6 +248,29 @@ with the embedding app's identity when it bundles it, and `macos_lipo_app`
 re-signs the nested `Updater.app` and `XPCServices/*.xpc` on the way to
 notarization.
 
+## First-run setup assistant
+
+On a fresh install (no `garage.firstRun.completed` default) the main window opens straight into a
+four-page assistant instead of the sidebar UI:
+
+1. **Setting things up** — starts the bundled Postgres, applies pending migrations, and brings up the
+   gRPC and MCP daemons, showing each as a checklist row. It advances by itself once the database,
+   schema and gRPC bridge are ready (MCP is optional here so a port clash can't trap the user).
+   An install that already has sources in `~/.garage.json` or models in the database skips the rest.
+2. **Select your data** — template sources (Documents, Desktop, Downloads, iCloud Drive, Dropbox,
+   `~/Developer`, Messages, Mail) with unavailable ones greyed out, plus a custom folder chooser.
+   "Next" sends an `AddSource` RPC for each pick; "I'll decide later" moves on without adding any.
+3. **Select your models** — embedding presets (featured first; the first pick becomes the default)
+   and an optional fact-distillation preset from `models.json`. "Next" sends `RegisterModel` for
+   each embedding model, sets `facts.model`/`facts.provider` for the distillation pick, and, if
+   enabled, queues GGUF downloads through the model download XPC service.
+4. **Set up your agent** — MCP server status/port and the detected client configs (Claude Desktop,
+   Claude Code, Cursor, …); "Connect selected agents" registers Garage in each selected config.
+
+The flow lives in `Services/FirstRunCoordinator.swift` (state + the commands each page runs) and
+`Views/FirstRunView.swift` (the pages). It can be re-run any time from **Garage ▸ Setup Assistant…**
+or the menu bar item, and skipped from any page.
+
 ## App architecture
 
 - `PostgresService` — owns a private cluster in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`, port 14824, database `garage-rag`. On first initialization it generates a random Postgres superuser password, stores it in the macOS Keychain, and creates the cluster with SCRAM authentication.
