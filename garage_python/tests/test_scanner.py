@@ -21,8 +21,6 @@ from garage_rag.ingest.scanner import (
     scan_source,
     scan_sqlite,
 )
-from garage_rag.proto.garage_pb2 import ScanRequest
-from garage_rag.service.server import GarageRpcServicer
 
 runner = CliRunner()
 
@@ -369,45 +367,7 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. gRPC Servicer Scan & Ingest Tests
-# ---------------------------------------------------------------------------
-
-
-def test_grpc_scan_rpc(tmp_path: Path) -> None:
-    (tmp_path / "file1.txt").write_text("file 1", encoding="utf-8")
-    (tmp_path / "file2.txt").write_text("file 2", encoding="utf-8")
-
-    src = Source(
-        id=1,
-        slug="rpc-source",
-        kind="filesystem",
-        root=str(tmp_path),
-        default_class=CorpusClass.DOCUMENT,
-        default_trust=TrustTier.AUTHORED,
-    )
-
-    servicer = GarageRpcServicer()
-    mock_context = MagicMock()
-
-    with patch("garage_rag.db.engine.get_session_factory") as mock_factory:
-        mock_session = MagicMock()
-        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = src
-        mock_session.query.return_value.order_by.return_value.all.return_value = [src]
-        mock_session.__enter__.return_value = mock_session
-        mock_factory.return_value = MagicMock(return_value=mock_session)
-
-        req = ScanRequest(source="rpc-source")
-        resp = servicer.Scan(req, mock_context)
-
-        assert len(resp.sources) == 1
-        assert resp.sources[0].source == "rpc-source"
-        assert resp.sources[0].item_count == 2
-        assert resp.sources[0].item_type == "files"
-        assert resp.total_items == 2
-
-
-# ---------------------------------------------------------------------------
-# 9. CLI Scan Command Tests
+# 8. CLI Scan Command Tests
 # ---------------------------------------------------------------------------
 
 

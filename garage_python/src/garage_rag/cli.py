@@ -1464,6 +1464,7 @@ def search(
 ) -> None:
     """Search the corpus with hybrid vector and keyword retrieval."""
     from garage_rag.search.hybrid import search as run_search
+    from garage_rag.search.hybrid import snippet
 
     with session_scope() as session:
         hits = run_search(
@@ -1494,7 +1495,7 @@ def search(
             console.print(f"   [dim]section: {hit.heading_path}[/dim]")
         if hit.authors:
             console.print(f"   [dim]authors: {', '.join(hit.authors[:4])}[/dim]")
-        body = hit.text if full else hit.text[:300].replace("\n", " ")
+        body = hit.text if full else snippet(hit.text)
         console.print(f"   {body}")
 
 
@@ -1657,40 +1658,12 @@ def version_cmd() -> None:
 def serve(
     host: Annotated[str, typer.Option("--host", "-h", help="gRPC host binding.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="gRPC port.")] = 50051,
-    xpc: Annotated[bool, typer.Option("--xpc", help="Run as macOS XPC Mach Service instead of TCP gRPC.")] = False,
-    service_name: Annotated[
-        str,
-        typer.Option("--service-name", help="macOS XPC Mach service name (when --xpc is enabled)."),
-    ] = "me.rickmark.garage.xpc",
-    team_id: Annotated[
-        str | None,
-        typer.Option("--team-id", help="Expected peer Apple Team ID for peer codesigning authentication."),
-    ] = "DWVXMLB45Y",
-    bundle_id: Annotated[
-        str | None,
-        typer.Option("--bundle-id", help="Expected peer Bundle ID for peer codesigning authentication."),
-    ] = None,
-    allow_unsigned: Annotated[
-        bool,
-        typer.Option("--allow-unsigned", help="Allow unsigned peers in dev mode."),
-    ] = False,
 ) -> None:
-    """Start the long-running gRPC or macOS XPC server for Garage."""
-    if xpc:
-        console.print(f"[bold green]Starting Garage macOS XPC Service[/bold green] on '{service_name}'...")
-        from garage_rag.service.xpc import serve_xpc
+    """Start the long-running gRPC server the macOS app reads the corpus through."""
+    console.print(f"[bold green]Starting Garage gRPC Server[/bold green] on {host}:{port}...")
+    from garage_rag.service.server import serve_grpc
 
-        serve_xpc(
-            service_name=service_name,
-            team_id=team_id,
-            bundle_id=bundle_id,
-            allow_unsigned_in_dev=allow_unsigned,
-        )
-    else:
-        console.print(f"[bold green]Starting Garage gRPC Server[/bold green] on {host}:{port}...")
-        from garage_rag.service.server import serve_grpc
-
-        serve_grpc(host=host, port=port)
+    serve_grpc(host=host, port=port)
 
 
 def _pgvector_library_hint(exc: BaseException) -> str | None:

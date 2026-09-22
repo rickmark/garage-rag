@@ -20,10 +20,7 @@ def test_cli_serve_help():
     assert result.exit_code == 0
     assert "--host" in result.output
     assert "--port" in result.output
-    assert "--xpc" in result.output
-    assert "--service-name" in result.output
-    assert "--team-id" in result.output
-    assert "--bundle-id" in result.output
+    assert "--xpc" not in result.output
 
 
 def test_main_cli_returns_exit_code(monkeypatch):

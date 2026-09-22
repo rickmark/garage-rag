@@ -14,8 +14,10 @@ Fusion), and serves the corpus over MCP 2.0. Three deployable pieces:
   and `garage-mcp` (MCP stdio/HTTP server).
 - **`macapp/`** — `GarageApp`, a native Swift/SwiftUI macOS menu-bar app that bundles a relocatable
   Postgres 18 + pgvector instance and drives the Python pipeline through XPC services and gRPC.
-- **`proto/garage.proto`** — the gRPC contract between the Swift app and the Python `GarageService`,
-  covering ingest/backfill/search/models/config, several as server-streaming RPCs for progress.
+- **`proto/garage.proto`** — the gRPC contract between the Swift app and the Python `GarageService`:
+  read-only corpus access for the app (search, documents, sources, models, stats) plus the database
+  facade the ingest and embed XPC workers persist through. Pipeline stages and configuration
+  changes are `garage` CLI commands the app invokes directly, not RPCs.
 
 ## Build system
 
@@ -155,8 +157,13 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   RRF (not the keyword match itself) decides final ordering.
 - **Serve** (`mcp_server/server.py`) — MCP 2.0 over stdio or local HTTP. Every tool returns a
   dataclass so MCP 2.0 maps it field-for-field instead of wrapping scalars in `{"result": ...}`.
-- **gRPC bridge** (`service/server.py`, `proto/garage.proto`) — a `GarageService` used by the
-  Swift app to drive ingest/backfill/search/models over streaming RPCs instead of shelling out.
+- **gRPC bridge** (`service/server.py`, `proto/garage.proto`) — the `GarageService` the Swift
+  app's Search and Documents views read through, and the database facade `GrpcIngestStorageGateway`
+  and the embed worker persist through; the server side of that facade is the same
+  `SqlAlchemyIngestStorageGateway` the in-process pipeline uses. Handlers translate proto messages
+  to and from the plain functions the CLI also calls, with a `_grpc_errors` decorator mapping
+  `LookupError`/`ValueError`/`FileExistsError`/`PermissionError` onto gRPC status codes. There are
+  no RPCs for pipeline stages or configuration; those are CLI commands.
 
 Two independent hashes drive idempotency: `source_sha256` (raw bytes — skip unopened) and
 `content_sha256` (extracted text — rebuild chunks when an extractor improves). One DB transaction

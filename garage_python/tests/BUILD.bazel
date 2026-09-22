@@ -137,18 +137,6 @@ py_test(
 )
 
 py_test(
-    name = "test_grpc_enrich_facts",
-    srcs = ["test_grpc_enrich_facts.py"],
-    deps = [
-        "//garage_python/src/garage_rag/config",
-        "//garage_python/src/garage_rag/db",
-        "//garage_python/src/garage_rag/proto",
-        "//garage_python/src/garage_rag/service",
-        "@pypi//grpcio",
-    ],
-)
-
-py_test(
     name = "test_grpc_serialization",
     srcs = ["test_grpc_serialization.py"],
     deps = [
@@ -164,16 +152,6 @@ py_test(
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
         "@pypi//grpcio",
-        "@pypi//pytest",
-    ],
-)
-
-py_test(
-    name = "test_xpc_service",
-    srcs = ["test_xpc_service.py"],
-    deps = [
-        "//garage_python/src/garage_rag/proto",
-        "//garage_python/src/garage_rag/service",
         "@pypi//pytest",
     ],
 )
@@ -256,8 +234,6 @@ py_test(
         "//garage_python/src/garage_rag",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/ingest",
-        "//garage_python/src/garage_rag/proto",
-        "//garage_python/src/garage_rag/service",
         "@pypi//typer",
     ],
 )
@@ -275,7 +251,6 @@ test_suite(
         ":test_facts",
         ":test_generation",
         ":test_grpc_documents",
-        ":test_grpc_enrich_facts",
         ":test_grpc_serialization",
         ":test_grpc_server",
         ":test_ingest_gateway",
@@ -288,6 +263,5 @@ test_suite(
         ":test_migrate",
         ":test_registry_dims",
         ":test_scanner",
-        ":test_xpc_service",
     ],
 )

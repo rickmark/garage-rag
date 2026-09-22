@@ -201,13 +201,13 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             if source_slug == "*":
                 sources = session.query(Source).filter_by(enabled=True).order_by(Source.id).all()
                 if not sources:
-                    raise RuntimeError("No sources registered")
+                    raise LookupError("No sources registered")
                 source_slugs = [s.slug for s in sources]
                 src = sources[0]
             else:
                 src = session.query(Source).filter_by(slug=source_slug).one_or_none()
                 if src is None:
-                    raise RuntimeError(f"No such source: {source_slug}")
+                    raise LookupError(f"No such source: {source_slug}")
                 source_slugs = [src.slug]
 
             ensure_self_author(session)
@@ -240,7 +240,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is None:
                 return ExistingDocStat(exists=False)
@@ -276,7 +276,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is None:
                 mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None
@@ -316,7 +316,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 doc.state = IngestState.EXTRACT_FAILED
@@ -339,7 +339,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 session.delete(doc)
@@ -377,7 +377,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 doc.byte_size = byte_size
@@ -435,7 +435,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
 
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None

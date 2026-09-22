@@ -43,6 +43,14 @@ RRF_K = 60
 CANDIDATE_DEPTH = 200
 
 
+SNIPPET_CHARS = 300
+
+
+def snippet(text: str, chars: int = SNIPPET_CHARS) -> str:
+    """One-line preview of a hit for listings; ``SearchHit.text`` keeps the whole excerpt."""
+    return text[:chars].replace("\n", " ")
+
+
 @dataclass
 class SearchHit:
     chunk_id: int
