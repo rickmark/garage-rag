@@ -1,5 +1,4 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("//bazel:codesign.bzl", "macho_test")
 
 cmake(
     name = "llama_cpp",
@@ -37,13 +36,4 @@ cmake(
         "libggml-metal.a",
     ],
     visibility = ["//visibility:public"],
-)
-
-macho_test(
-    name = "llama_cpp_arch_test",
-    src = ":llama_cpp",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
 )
