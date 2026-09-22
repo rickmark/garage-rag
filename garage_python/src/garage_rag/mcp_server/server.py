@@ -604,7 +604,8 @@ def rag_ask(
 
     Retrieval is exactly rag_search; the excerpts then go to the model named by
     facts.model on facts.provider (the app's LlamaXPCService or a local Ollama
-    server), so nothing leaves the machine. Use rag_search instead when you want
+    server), so Garage sends nothing off the machine; the answer comes back to
+    the calling client like any other tool result. Use rag_search instead when you want
     to read the excerpts yourself.
     """
     hits, _ = _retrieve(question, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source)
