@@ -108,7 +108,10 @@ mkdir -p "$STAGE_DIR"
 for item in "${{resolved_inputs[@]}}"; do
     if [ -d "$item" ]; then
         mkdir -p "$STAGE_DIR/$(basename "$item")"
-        tar -chf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)
+        # Keep symlinks (no -h): a versioned framework's Versions/Current, top-level
+        # binary and Resources are links, and flattening them makes codesign call the
+        # bundle "ambiguous" and fail a correctly signed framework.
+        tar -cf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)
     elif [[ "$item" == *.zip ]]; then
         /usr/bin/unzip -q -o "$item" -d "$STAGE_DIR"
     else

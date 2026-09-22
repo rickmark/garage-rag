@@ -37,6 +37,9 @@ _developer_id_transition = transition(
     ],
 )
 
+# For other rules that stage the Developer ID app (lipo.bzl's macos_lipo_app).
+developer_id_transition = _developer_id_transition
+
 def _transition_app_impl(ctx):
     target = ctx.attr.app[0]
     orig_executable = target[DefaultInfo].files_to_run.executable

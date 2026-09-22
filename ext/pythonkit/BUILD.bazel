@@ -1,5 +1,3 @@
-load("//bazel:codesign.bzl", "EXPECTED_SIGNING_IDENTITY", "HARDENED_RUNTIME_EXPECTED", "STORE_EXPECTED", "codesign_test")
-
 alias(
     name = "PythonKit",
     actual = "@PythonKit//:PythonKit",
@@ -20,10 +18,5 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-codesign_test(
-    name = "pythonkit_codesign_test",
-    src = ":PythonKit",
-    hardened_runtime = HARDENED_RUNTIME_EXPECTED,
-    is_store = STORE_EXPECTED,
-    signing_identity = EXPECTED_SIGNING_IDENTITY,
-)
+# No codesign_test: PythonKit is a static Swift library with nothing of its own to
+# sign. Its code is covered by the tests of the binaries that link it.

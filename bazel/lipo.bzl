@@ -1,10 +1,13 @@
 """Rules for staging a macOS application for distribution: prune, thin via lipo, codesign."""
 
+load("//bazel:macos_application.bzl", "developer_id_transition")
+
 def _macos_lipo_app_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))
 
-    app_target = ctx.attr.app
+    # A list: `app` is built through the Developer ID transition.
+    app_target = ctx.attr.app[0]
     app_files = app_target[DefaultInfo].files.to_list()
     if not app_files:
         fail("{}: 'app' target did not produce any files".format(ctx.label))
@@ -237,6 +240,10 @@ macos_lipo_app = rule(
     attrs = {
         "app": attr.label(
             mandatory = True,
+            # The app (and everything it signs, like site-packages) must be built for
+            # the Developer ID platform, not whatever the command line selected; without
+            # this it was signed under the default local identity.
+            cfg = developer_id_transition,
             doc = "The application target (.zip or .app) providing universal binary.",
         ),
         "arch": attr.string(
@@ -254,6 +261,9 @@ macos_lipo_app = rule(
         "signing_identity": attr.string(
             default = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
             doc = "Codesigning identity Common Name for Developer ID signing.",
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
         "_macos_constraint": attr.label(
             default = Label("@platforms//os:macos"),
