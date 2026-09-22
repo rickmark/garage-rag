@@ -330,7 +330,6 @@ final class IngestService: ObservableObject {
             return prep.errorResult ?? IngestResult(succeeded: false, message: "Ingestion is already running")
         }
 
-        let runStartDate = prep.runStartDate
         let targetMode = prep.targetMode
         let selectedClient = self.xpcClient
 

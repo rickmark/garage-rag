@@ -55,7 +55,9 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   hidden (`--background`: services start, no window) and waits for Postgres; it then reads the
   database password from the Keychain and exports `GARAGE_DATABASE_URL` itself. An explicit
   `GARAGE_DATABASE_URL` wins; `GARAGE_NO_APP_LAUNCH=1` fails instead of opening the app.
-  `garage-mcp` never mirrors its stdout (the MCP stream) into the unified log.
+  `garage-mcp` does not wait for Postgres (only its tool calls use the database, and the MCP
+  handshake must not sit behind a cold start) unless the app has never stored a password, and
+  never mirrors its stdout (the MCP stream) into the unified log.
 - `Resources/postgres` — Postgres 18 + pgvector built from source (`//ext/postgres`,
   `//ext/pgvector`, vendored through `//macapp/externals:postgres_output`), with
   `libpq` in `Frameworks/`.

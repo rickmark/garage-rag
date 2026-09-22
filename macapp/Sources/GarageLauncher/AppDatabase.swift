@@ -6,6 +6,12 @@ import PythonXPCService
 /// hidden when nothing is listening, then exports `GARAGE_DATABASE_URL` with the
 /// password read from the Keychain. Runs before Python starts, so the interpreter's
 /// environment already has the URL.
+///
+/// With `waitUntilReady` false (`garage-mcp`) the app is started but not waited
+/// for: the URL only needs the password, and a tool call made while Postgres is
+/// still starting fails with a connection error rather than the whole handshake
+/// timing out. The one exception is a first run, where the app has not stored a
+/// password yet; then it waits for the app to create the cluster.
 enum AppDatabase {
     enum Failure: LocalizedError {
         case launchDisabled
@@ -34,23 +40,32 @@ enum AppDatabase {
     /// How long a cold start (the app launching, Postgres starting, maybe initdb) may take.
     static let readyTimeout: TimeInterval = 60
 
-    static func prepare(appBundle: URL?, executable: String) throws {
+    static func prepare(appBundle: URL?, executable: String, waitUntilReady: Bool) throws {
         let environment = ProcessInfo.processInfo.environment
         // An explicit URL wins: someone pointing the launcher at another database.
         if let url = environment["GARAGE_DATABASE_URL"], !url.trimmingCharacters(in: .whitespaces).isEmpty {
             return
         }
 
+        var launched = false
         if !GaragePostgresEndpoint.isAcceptingConnections() {
             guard environment["GARAGE_NO_APP_LAUNCH"] == nil else { throw Failure.launchDisabled }
             guard let appBundle else { throw Failure.noAppBundle(executable) }
             // stderr only: for garage-mcp, stdout is the protocol stream.
             fputs("Starting Garage…\n", stderr)
             try launchHidden(appBundle)
-            try waitUntilReady()
+            launched = true
+            if waitUntilReady {
+                try waitForDatabase()
+            }
         }
 
-        guard let password = try GaragePostgresEndpoint.readPassword() else { throw Failure.noPassword }
+        var password = try GaragePostgresEndpoint.readPassword()
+        if password == nil, launched, !waitUntilReady {
+            try waitForDatabase()
+            password = try GaragePostgresEndpoint.readPassword()
+        }
+        guard let password else { throw Failure.noPassword }
         setenv("GARAGE_DATABASE_URL", try GaragePostgresEndpoint.connectionURL(password: password), 1)
     }
 
@@ -80,7 +95,7 @@ enum AppDatabase {
         }
     }
 
-    private static func waitUntilReady() throws {
+    private static func waitForDatabase() throws {
         let deadline = Date().addingTimeInterval(readyTimeout)
         while Date() < deadline {
             if GaragePostgresEndpoint.isAcceptingConnections() {

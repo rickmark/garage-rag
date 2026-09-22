@@ -825,7 +825,7 @@ final class AppState: ObservableObject {
     /// Total number of expected documents from prior scan across active / registered sources.
     var combinedIngestTotalExpected: Int {
         // If ingesting a single source and not in a batch run:
-        if ingestService.pendingSources.isEmpty,
+        if ingestService.runSources.count <= 1,
            let current = ingestService.currentSource,
            current != "*",
            let src = registeredSources.first(where: { $0.slug == current }) {

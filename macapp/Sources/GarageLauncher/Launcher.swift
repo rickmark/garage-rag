@@ -13,13 +13,18 @@ public struct LauncherEntryPoint {
     let mirrorsOutputToLog: Bool
     /// Whether this invocation talks to the database, so the app has to be running.
     let needsDatabase: ([String]) -> Bool
+    /// Hold Python back until Postgres accepts connections. Off for `garage-mcp`: it
+    /// only opens the database inside tool calls, and an MCP client times out a
+    /// server whose `initialize` waits on a cold start.
+    let waitsForDatabase: Bool
 
     /// `garage`: the full CLI.
     public static let cli = LauncherEntryPoint(
         module: "garage_rag.cli",
         function: "main_cli",
         mirrorsOutputToLog: true,
-        needsDatabase: LauncherEntryPoint.cliNeedsDatabase
+        needsDatabase: LauncherEntryPoint.cliNeedsDatabase,
+        waitsForDatabase: true
     )
 
     /// `garage-mcp [--config PATH]`: the stdio MCP server that clients spawn.
@@ -27,7 +32,8 @@ public struct LauncherEntryPoint {
         module: "garage_rag.mcp_server.server",
         function: "main",
         mirrorsOutputToLog: false,
-        needsDatabase: { arguments in !arguments.contains("--help") && !arguments.contains("-h") }
+        needsDatabase: { arguments in !arguments.contains("--help") && !arguments.contains("-h") },
+        waitsForDatabase: false
     )
 
     /// Subcommands that never open the database.
@@ -61,7 +67,11 @@ public enum Launcher {
 
         if entry.needsDatabase(CommandLine.arguments) {
             do {
-                try AppDatabase.prepare(appBundle: appBundle, executable: executable.path)
+                try AppDatabase.prepare(
+                    appBundle: appBundle,
+                    executable: executable.path,
+                    waitUntilReady: entry.waitsForDatabase
+                )
             } catch {
                 fputs("\(error.localizedDescription)\n", stderr)
                 exit(1)
