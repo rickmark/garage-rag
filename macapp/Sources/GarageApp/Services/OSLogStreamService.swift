@@ -28,13 +28,19 @@ public enum OSLogTimeWindow: String, CaseIterable, Identifiable, Sendable {
 
 /// A service that continuously queries and streams real-time log entries from Apple's Unified Logging System (`OSLogStore`),
 /// distributing logs to per-service streams.
+///
+/// `OSLogStore(scope: .currentProcessIdentifier)` sees only this process: the app logs everything under its bundle
+/// identifier, and `targetSources` routes each entry by category. Helper processes are not visible here; their logs
+/// arrive over the XPC services' log streams and from the files `loadAllPersistedLogs` reads.
 @MainActor
 public final class OSLogStreamService: ObservableObject {
     @Published public private(set) var serviceLogs: [LogsView.LogSource: [LogLine]] = [:]
     @Published public private(set) var isStreaming: Bool = false
     @Published public private(set) var isPaused: Bool = true
     @Published public private(set) var lastPolledDate: Date? = nil
-    @Published public var scopeFilter: NSPredicate? = nil
+
+    /// Everything this process logs under the app's subsystems.
+    nonisolated static let appPredicateFormat = "subsystem BEGINSWITH 'me.rickmark.garage'"
 
     private var streamTask: Task<Void, Never>? = nil
     private var seenLogKeys: Set<String> = []
@@ -74,8 +80,7 @@ public final class OSLogStreamService: ObservableObject {
 
         guard #available(macOS 12.0, *) else { return }
 
-        // Broad predicate to capture all garage-related unified logs in one pass
-        let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
+        let predicate = NSPredicate(format: Self.appPredicateFormat)
 
         streamTask = Task { [weak self] in
             guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else {
@@ -89,11 +94,10 @@ public final class OSLogStreamService: ObservableObject {
             while !Task.isCancelled {
                 guard let self = self else { break }
 
-                let (paused, scope) = await MainActor.run { (self.isPaused, self.scopeFilter) }
+                let paused = await MainActor.run { self.isPaused }
                 if !paused {
                     do {
-                        // A narrower scope set via `setPredicate` overrides the broad default predicate.
-                        let entries = try store.getEntries(at: lastPosition, matching: scope ?? predicate)
+                        let entries = try store.getEntries(at: lastPosition, matching: predicate)
                         var maxDate = lastDate
                         var collected: [OSLogEntry] = []
 
@@ -155,18 +159,15 @@ public final class OSLogStreamService: ObservableObject {
         }
     }
 
-    /// Drains recent entries from `OSLogStore` within a given time window.
-    public func fetchRecentLogs(for source: LogsView.LogSource, timeWindow: TimeInterval = 300) {
+    /// Drains recent entries from `OSLogStore` within a given time window, routing each to its sources.
+    public func fetchRecentLogs(timeWindow: TimeInterval = 300) {
         guard #available(macOS 12.0, *) else { return }
         let startDate = Date().addingTimeInterval(-timeWindow)
         guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
         let position = store.position(date: startDate)
 
-        let predicate: NSPredicate
-        predicate = source.osLogPredicate
-
         do {
-            let entries = try store.getEntries(at: position, matching: predicate)
+            let entries = try store.getEntries(at: position, matching: NSPredicate(format: Self.appPredicateFormat))
             for entry in entries {
                 processOSLogEntry(entry)
             }
@@ -188,10 +189,6 @@ public final class OSLogStreamService: ObservableObject {
     }
 
     // MARK: - Entry Processing
-
-    public func setPredicate(_ predicate: NSPredicate) {
-        self.scopeFilter = predicate
-    }
 
     /// Target mapping: routes an OSLogEntryLog to the appropriate service log streams.
     public func targetSources(for logEntry: OSLogEntryLog) -> Set<LogsView.LogSource> {

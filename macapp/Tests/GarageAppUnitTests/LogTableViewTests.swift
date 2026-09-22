@@ -147,10 +147,6 @@ final class LogTableViewTests: XCTestCase {
         streamer.appendLog(line1, for: [.ingest, .unifiedLog])
         XCTAssertEqual(streamer.logs(for: .ingest).count, 1)
 
-        // Test scope filters
-        streamer.scopeFilter = LogsView.LogSource.ingest.osLogPredicate
-        XCTAssertEqual(streamer.scopeFilter, LogsView.LogSource.ingest.osLogPredicate)
-
         // Test time windows
         XCTAssertEqual(OSLogTimeWindow.allCases.count, 5)
         XCTAssertEqual(OSLogTimeWindow.recent5m.interval, 300)
@@ -187,12 +183,12 @@ final class LogTableViewTests: XCTestCase {
         XCTAssertTrue(streamer.logs(for: .unifiedLog).isEmpty)
     }
 
-    func testLogsViewSourceScopeMapping() {
-        XCTAssertNotNil(LogsView.LogSource.postgres.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.garage.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.ingest.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.grpc.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.unifiedLog.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.llama.osLogPredicate)
+    /// The store sees only this process, which logs under the app's bundle identifier;
+    /// the one predicate must cover it (per-source routing is by category).
+    func testAppPredicateCoversTheAppSubsystem() {
+        let bundleID = "me.rickmark.garage-rag"
+        let predicate = NSPredicate(format: OSLogStreamService.appPredicateFormat)
+        XCTAssertTrue(predicate.evaluate(with: ["subsystem": bundleID]))
+        XCTAssertFalse(predicate.evaluate(with: ["subsystem": "com.apple.network"]))
     }
 }

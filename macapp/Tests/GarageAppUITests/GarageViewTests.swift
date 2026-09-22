@@ -114,10 +114,5 @@ final class GarageViewTests: XCTestCase {
         let cases = LogsView.LogSource.allCases
         XCTAssertEqual(cases.count, 9)
         XCTAssertEqual(cases.map(\.rawValue), ["Unified Log", "Postgres", "App", "Ingest", "Embed", "MCP Server", "gRPC Server", "LLaMa", "Downloader"])
-        XCTAssertNotNil(LogsView.LogSource.ingest.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.grpc.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.unifiedLog.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.postgres.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.garage.osLogPredicate)
     }
 }

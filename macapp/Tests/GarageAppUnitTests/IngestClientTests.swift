@@ -211,10 +211,8 @@ final class IngestClientTests: XCTestCase {
     }
 
     @MainActor
-    func testIngestServiceOSLogStoreDrainingAndFetch() {
+    func testIngestServiceLogsAppendAndClear() {
         let service = IngestService()
-        // Ensure fetchRecentLogsFromOSLogStore executes without crashing
-        service.fetchRecentLogsFromOSLogStore(timeWindow: 60)
         // Verify logs can be appended and cleared
         service.appendLog("Sample ingest line", stream: .stdout)
         XCTAssertFalse(service.logs.isEmpty)

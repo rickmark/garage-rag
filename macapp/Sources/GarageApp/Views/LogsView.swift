@@ -18,29 +18,6 @@ public struct LogsView: View {
         case modelDownload = "Downloader"
 
         public var id: String { rawValue }
-
-        public var osLogPredicate: NSPredicate {
-            switch self {
-            case .postgres:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage-rag.postgres' AND category='postgres')")
-            case .garage:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage'")
-            case .ingest:
-                return NSPredicate(format: "(subsystem == 'me.rickmark.garage-rag.ingest-xpc' OR subsystem == 'me.rickmark.garage-rag.ingest')")
-            case .embed:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.embed-xpc'")
-            case .mcp:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.mcp-server-xpc'")
-            case .grpc:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.xpc'")
-            case .llama:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.llama-xpc'")
-            case .modelDownload:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage-rag.model-download-xpc'")
-            case .unifiedLog:
-                return NSPredicate(format: "subsystem == 'me.rickmark.garage' OR process CONTAINS[c] 'Garage'")
-            }
-        }
     }
 
     public init() {}
@@ -149,15 +126,16 @@ public struct LogsView: View {
 
     // MARK: - Streaming Actions
 
+    /// One stream serves every source: entries are routed by category, so switching
+    /// sources only changes which routed lines are shown.
     private func configureStreamingForCurrentSource() {
-        appState.osLogStreamService.setPredicate(source.osLogPredicate)
         if !appState.osLogStreamService.isStreaming {
             appState.osLogStreamService.startStreaming(since: Date().addingTimeInterval(-300), paused: true)
         }
     }
 
     private func fetchHistoricalOSLogs(window: OSLogTimeWindow) {
-        appState.osLogStreamService.fetchRecentLogs(for: source, timeWindow: window.interval)
+        appState.osLogStreamService.fetchRecentLogs(timeWindow: window.interval)
     }
 
     // MARK: - Status Helpers
