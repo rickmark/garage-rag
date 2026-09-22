@@ -177,7 +177,36 @@ class TestCommunicationSourcesStayLocal:
             "sources.allow_cloud_enrichment must default to false"
         )
 
-    def test_cli_refuses_cloud_on_communication_sources(self) -> None:
-        cli = (SRC / "cli.py").read_text()
-        assert "CorpusClass.COMMUNICATION" in cli
-        assert "may never enable cloud enrichment" in cli
+    def test_source_operations_refuse_cloud_on_communication_sources(self) -> None:
+        """Level 3 lives in ops/sources.py, shared by `garage add-source`, `garage sync`
+        and the AddSource/Sync RPCs, so no entry point can register such a source."""
+        ops = (SRC / "ops" / "sources.py").read_text()
+        assert "CorpusClass.COMMUNICATION" in ops
+        assert "may never enable cloud enrichment" in ops
+
+    def test_add_source_refuses_before_touching_the_database(self, tmp_path: Path) -> None:
+        from garage_rag.ops.sources import SourceArgumentError, add_source
+
+        with pytest.raises(SourceArgumentError, match="may never enable cloud enrichment"):
+            add_source("sms", tmp_path, corpus_class="communication", allow_cloud_enrichment=True)
+
+    def test_cli_add_source_refuses(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from garage_rag.cli import app
+
+        result = CliRunner().invoke(
+            app,
+            ["add-source", "sms", str(tmp_path), "--class", "communication", "--allow-cloud-enrichment"],
+        )
+        assert result.exit_code != 0
+        # Rich wraps the error inside a box; compare the words, not the layout.
+        assert "may never enable cloud enrichment" in " ".join(result.output.replace("│", " ").split())
+
+    def test_sync_refuses_a_declared_communication_source_with_cloud(self, tmp_path: Path) -> None:
+        from garage_rag.config import Settings, SourceSpec
+        from garage_rag.ops.sources import SourceArgumentError, sync_sources
+
+        spec = SourceSpec(slug="sms", root=str(tmp_path), **{"class": "communication"}, allow_cloud_enrichment=True)
+        with pytest.raises(SourceArgumentError, match="may never enable cloud enrichment"):
+            sync_sources(settings=Settings(sources=[spec]))

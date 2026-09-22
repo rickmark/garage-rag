@@ -37,9 +37,13 @@ py_test(
     srcs = ["test_egress_block.py"],
     data = ["//data/sql:sql_schema"],
     deps = [
+        "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/ops",
         "@pypi//pytest",
+        "@pypi//typer",
     ],
 )
 

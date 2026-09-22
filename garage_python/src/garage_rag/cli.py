@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -24,7 +23,6 @@ from garage_rag.config import (
     Settings,
     candidate_paths,
     default_config_path,
-    ensure_psycopg_database_url,
     get_settings,
     json_schema,
     load_config,
@@ -34,20 +32,14 @@ from garage_rag.config import (
     save_config,
     set_settings,
     setting_names,
-    update_config,
 )
 from garage_rag.db.emb_tables import (
     count_vectors,
-    drop_model,
-    get_model,
     list_models,
-    register_model,
-    resolve_spec,
-    set_default_model,
 )
 from garage_rag.db.engine import session_scope
 from garage_rag.db.migrate import apply_migrations, redact_url, schema_summary
-from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
+from garage_rag.db.models import Document, Source
 from garage_rag.mcp_server.install import MULTI_TARGETS, target_keys
 from garage_rag.search import SearchMode
 
@@ -165,39 +157,14 @@ def config_import_sources(
     what already exists so the file becomes the source of truth without you
     retyping it.
     """
-    from garage_rag.config import SourceSpec
+    from garage_rag.ops.sources import import_sources_into_config
 
-    settings = get_settings()
-    target = (path or settings.config_path or (Path.cwd() / CONFIG_FILENAME)).expanduser()
-
-    with session_scope() as session:
-        rows = session.query(Source).order_by(Source.slug).all()
-        existing = {spec.slug for spec in settings.sources}
-        added: list[str] = []
-        for row in rows:
-            if row.slug in existing:
-                continue
-            settings.sources.append(
-                SourceSpec(
-                    slug=row.slug,
-                    root=str(row.root),
-                    kind=row.kind,
-                    **{"class": str(row.default_class)},
-                    trust=str(row.default_trust),
-                    include_code=bool((row.config or {}).get("include_code", False)),
-                    allow_cloud_enrichment=bool(row.allow_cloud_enrichment),
-                    enabled=bool(row.enabled),
-                )
-            )
-            added.append(row.slug)
-
-    if not added:
+    result = import_sources_into_config(path)
+    if not result.added:
         console.print("[green]config already lists every database source[/green]")
         return
-
-    save_config(settings, target)
-    console.print(f"[green]added {len(added)} sources[/green] to {target}")
-    for slug in added:
+    console.print(f"[green]added {len(result.added)} sources[/green] to {result.path}")
+    for slug in result.added:
         console.print(f"  {slug}")
 
 
@@ -262,18 +229,18 @@ def config_set(
     in its nested layout with the one value changed; when no file exists yet,
     one is created from the defaults, as `config init --user` would.
     """
-    target = (path or get_settings().config_path or default_config_path()).expanduser()
+    from garage_rag.ops.settings import set_setting
+
     try:
-        settings, stored = update_config(target, name, value)
+        written, stored = set_setting(name, value, path=path)
     except ConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         if "unknown" in str(exc) or "expected SECTION.KEY" in str(exc):
             console.print("[dim]valid keys:[/dim] " + ", ".join(setting_names()))
         raise typer.Exit(code=2) from None
-    set_settings(load_config(target))
     # stdout is exactly the assignment, for callers that parse it; the note goes to stderr.
     typer.echo(f"{name} = {_format_setting(stored)}")
-    typer.echo(f"wrote {settings.config_path}", err=True)
+    typer.echo(f"wrote {written}", err=True)
 
 
 @config_app.command("schema")
@@ -313,84 +280,27 @@ def sync(
     that exist only in the database are reported but never deleted, since that
     would discard indexed documents on the strength of an edit.
     """
-    settings = get_settings()
-    if not settings.sources:
-        console.print(f"[yellow]no sources declared[/yellow] in {settings.config_path or 'the config file'}")
+    from garage_rag.ops.sources import SourceArgumentError, sync_sources
+
+    try:
+        result = sync_sources(apply=apply)
+    except SourceArgumentError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    if not result.declared:
+        console.print(f"[yellow]no sources declared[/yellow] in {result.config_path or 'the config file'}")
         return
 
-    created: list[str] = []
-    updated: list[str] = []
-    with session_scope() as session:
-        declared = {spec.slug for spec in settings.sources}
-        for spec in settings.sources:
-            klass = CorpusClass(spec.corpus_class)
-            tier = TrustTier(spec.trust)
-            if klass is CorpusClass.COMMUNICATION and spec.allow_cloud_enrichment:
-                console.print(f"[red]{spec.slug}[/red]: communication sources may never enable cloud enrichment")
-                raise typer.Exit(code=1)
-
-            row = session.query(Source).filter_by(slug=spec.slug).one_or_none()
-            if row is None:
-                if apply:
-                    session.add(
-                        Source(
-                            slug=spec.slug,
-                            kind=spec.kind,
-                            root=str(spec.expanded_root),
-                            default_class=klass,
-                            default_trust=tier,
-                            allow_cloud_enrichment=spec.allow_cloud_enrichment,
-                            enabled=spec.enabled,
-                            config={"include_code": spec.include_code},
-                        )
-                    )
-                created.append(spec.slug)
-                continue
-
-            changes = (
-                row.kind != spec.kind
-                or row.root != str(spec.expanded_root)
-                or row.default_class != klass
-                or row.default_trust != tier
-                or row.allow_cloud_enrichment != spec.allow_cloud_enrichment
-                or row.enabled != spec.enabled
-                or bool((row.config or {}).get("include_code", False)) != spec.include_code
-            )
-            if changes:
-                if apply:
-                    row.kind = spec.kind
-                    row.root = str(spec.expanded_root)
-                    row.default_class = klass
-                    row.default_trust = tier
-                    row.allow_cloud_enrichment = spec.allow_cloud_enrichment
-                    row.enabled = spec.enabled
-                    row.config = {**(row.config or {}), "include_code": spec.include_code}
-                updated.append(spec.slug)
-
-        # Rows are (slug, count) tuples, so unpack them rather than treating the
-        # first element as an ORM object.
-        undeclared = [
-            (slug, int(count))
-            for slug, count in (
-                session.query(Source.slug, func.count(Document.id))
-                .outerjoin(Document, Document.source_id == Source.id)
-                .group_by(Source.slug)
-                .all()
-            )
-            if slug not in declared
-        ]
-        # No rollback needed: every mutation above is already gated on `apply`.
-
     verb = "" if apply else "would "
-    if created:
-        console.print(f"[green]{verb}create[/green]: {', '.join(created)}")
-    if updated:
-        console.print(f"[cyan]{verb}update[/cyan]: {', '.join(updated)}")
-    if not created and not updated:
+    if result.created:
+        console.print(f"[green]{verb}create[/green]: {', '.join(result.created)}")
+    if result.updated:
+        console.print(f"[cyan]{verb}update[/cyan]: {', '.join(result.updated)}")
+    if not result.created and not result.updated:
         console.print("[green]database already matches the config[/green]")
-    if undeclared:
+    if result.undeclared:
         console.print("\n[dim]in the database but not declared (left untouched):[/dim]")
-        for slug, count in undeclared:
+        for slug, count in result.undeclared:
             console.print(f"  {slug} ({count:,} documents)")
         console.print("  [dim]add them to the config, or remove with 'garage remove-source <slug>'[/dim]")
 
@@ -459,21 +369,16 @@ def register_model_cmd(
     default: Annotated[bool, typer.Option("--default", help="Make this the default.")] = False,
 ) -> None:
     """Register an embedding model and create its table and index."""
-    spec = resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id)
-    with session_scope() as session:
-        row = register_model(session, spec, make_default=default)
-        console.print(
-            f"[green]registered[/green] {row.slug}: {row.dims}-dim -> "
-            f"{row.storage_kind}({row.stored_dims}), index={row.index_kind}, "
-            f"table={row.table_name}"
-        )
-        if row.stored_dims < row.dims:
-            console.print(
-                f"  [yellow]note[/yellow]: truncated {row.dims} -> {row.stored_dims} "
-                "(Matryoshka) to fit the halfvec HNSW ceiling"
-            )
-        if row.index_kind == "hnsw_bq":
-            console.print("  [yellow]note[/yellow]: binary-quantized index; queries re-rank on exact cosine")
+    from garage_rag.ops.models import register_model as register
+
+    row = register(slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id, make_default=default)
+    console.print(
+        f"[green]registered[/green] {row.slug}: {row.dims}-dim -> "
+        f"{row.storage_kind}({row.stored_dims}), index={row.index_kind}, "
+        f"table={row.table_name}"
+    )
+    for note in row.notes:
+        console.print(f"  [yellow]note[/yellow]: {note}")
 
 
 @app.command("list-models")
@@ -525,9 +430,9 @@ def list_models_cmd(
 @app.command("set-default-model")
 def set_default_model_cmd(slug: str) -> None:
     """Point the default embedding model at SLUG."""
-    with session_scope() as session:
-        get_model(session, slug)
-        set_default_model(session, slug)
+    from garage_rag.ops.models import set_default_model as set_default
+
+    set_default(slug)
     console.print(f"[green]default model[/green] = {slug}")
 
 
@@ -537,10 +442,11 @@ def drop_model_cmd(
     yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation.")] = False,
 ) -> None:
     """Deregister a model and drop its vectors."""
+    from garage_rag.ops.models import drop_model as drop
+
     if not yes:
         typer.confirm(f"Drop model {slug} and discard all its vectors?", abort=True)
-    with session_scope() as session:
-        drop_model(session, slug)
+    drop(slug)
     console.print(f"[green]dropped[/green] {slug}")
 
 
@@ -569,41 +475,24 @@ def add_source(
     ] = False,
 ) -> None:
     """Register a source root to be walked."""
-    tier = TrustTier(trust)
-    klass = CorpusClass(corpus_class)
-    # Egress guard, level 3: keyed on the class, since "is this a private
-    # conversation" is a property of what the content is, not how trusted it is.
-    if klass is CorpusClass.COMMUNICATION and allow_cloud:
-        raise typer.BadParameter(
-            "communication sources may never enable cloud enrichment",
-            param_hint="--allow-cloud-enrichment",
+    from garage_rag.ops.sources import SourceArgumentError
+    from garage_rag.ops.sources import add_source as register
+
+    try:
+        result = register(
+            slug,
+            root,
+            kind=kind,
+            corpus_class=corpus_class,
+            trust=trust,
+            allow_cloud_enrichment=allow_cloud,
         )
-
-    expanded = root.expanduser()
-    if not expanded.exists():
-        raise typer.BadParameter(f"{expanded} does not exist", param_hint="ROOT")
-
-    with session_scope() as session:
-        existing = session.query(Source).filter_by(slug=slug).one_or_none()
-        if existing is not None:
-            existing.root = str(expanded)
-            existing.kind = kind
-            existing.default_trust = tier
-            existing.default_class = klass
-            existing.allow_cloud_enrichment = allow_cloud
-            console.print(f"[green]updated source[/green] {slug} -> {expanded}")
-        else:
-            session.add(
-                Source(
-                    slug=slug,
-                    kind=kind,
-                    root=str(expanded),
-                    default_trust=tier,
-                    default_class=klass,
-                    allow_cloud_enrichment=allow_cloud,
-                )
-            )
-            console.print(f"[green]added source[/green] {slug} -> {expanded} ({klass}/{tier})")
+    except SourceArgumentError as exc:
+        raise typer.BadParameter(str(exc), param_hint=exc.param_hint) from None
+    if result.created:
+        console.print(f"[green]added source[/green] {slug} -> {result.root} ({result.corpus_class}/{result.trust})")
+    else:
+        console.print(f"[green]updated source[/green] {slug} -> {result.root}")
 
 
 @app.command("remove-source")
@@ -612,17 +501,18 @@ def remove_source(
     yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation.")] = False,
 ) -> None:
     """Deregister a source and delete its documents, chunks, and vectors."""
-    with session_scope() as session:
-        source = session.query(Source).filter_by(slug=slug).one_or_none()
-        if source is None:
-            console.print(f"[yellow]no such source[/yellow]: {slug}")
-            raise typer.Exit(code=1)
-        count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
-        if not yes:
-            typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
-        # Cascades through chunks into every per-model embedding table.
-        session.delete(source)
-    console.print(f"[green]removed[/green] {slug} ({count:,} documents)")
+    from garage_rag.ops.sources import document_count
+    from garage_rag.ops.sources import remove_source as deregister
+
+    try:
+        count = document_count(slug)
+    except LookupError:
+        console.print(f"[yellow]no such source[/yellow]: {slug}")
+        raise typer.Exit(code=1) from None
+    if not yes:
+        typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
+    result = deregister(slug)
+    console.print(f"[green]removed[/green] {slug} ({result.deleted_documents:,} documents)")
 
 
 @app.command("list-sources")
@@ -664,32 +554,16 @@ def scan(
     json_output: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
 ) -> None:
     """Scan sources and count items by source type before ingesting."""
-    from garage_rag.db.engine import get_session_factory
-    from garage_rag.ingest.scanner import persist_scan_result, scan_source
+    from garage_rag.ops.sources import scan_sources
 
-    factory = get_session_factory()
-    with factory() as session:
-        if source == "*":
-            # '*' means every *enabled* source; a disabled one must be named to be scanned.
-            sources = list(session.query(Source).filter_by(enabled=True).order_by(Source.id).all())
-        else:
-            s = session.query(Source).filter_by(slug=source).one_or_none()
-            if s is None:
-                console.print(f"[red]no such source:[/red] {source}")
-                raise typer.Exit(code=1)
-            sources = [s]
-
-    if not sources:
+    try:
+        results = scan_sources(source, include_code=include_code)
+    except LookupError:
+        console.print(f"[red]no such source:[/red] {source}")
+        raise typer.Exit(code=1) from None
+    if not results:
         console.print("[yellow]no sources registered to scan[/yellow]")
         return
-
-    results = []
-    with factory() as session:
-        for src in sources:
-            res = scan_source(src, include_code=include_code)
-            results.append(res)
-            persist_scan_result(session, res)
-        session.commit()
 
     if json_output:
         console.print_json(json.dumps([r.to_dict() for r in results]))
@@ -845,60 +719,44 @@ def backfill(
     verify: Annotated[bool, typer.Option("--verify/--no-verify", help="Probe the model's width first.")] = True,
 ) -> None:
     """Embed chunks that a model has no vectors for. Pure insert; safe to re-run."""
-    from garage_rag.embed.ollama import (
-        EmbeddingError,
-        backfill_model,
-        count_pending,
-        verify_model_dims,
-    )
+    from garage_rag.ops.backfill import BackfillEvent
+    from garage_rag.ops.backfill import backfill as run_backfill
 
-    with session_scope() as session:
-        targets = [get_model(session, model)] if model and model != "*" else list_models(session)
-        if not targets:
+    status = None
+
+    def on_event(event: BackfillEvent) -> None:
+        nonlocal status
+        if event.phase == "complete":
+            console.print(f"[green]{event.model}[/green]: already complete")
+        elif event.phase == "skipped":
+            console.print(f"[red]{event.model}[/red]: {event.message.removeprefix(event.model + ': ')}")
+        elif event.phase == "started":
+            console.print(f"[cyan]{event.model}[/cyan]: embedding {event.total:,} chunks")
+            status = console.status(f"{event.model}...")
+            status.start()
+        elif event.phase == "progress" and status is not None:
+            status.update(f"{event.model}: {event.embedded:,}/{event.total:,} ({event.batches} batches)")
+        elif event.phase == "finished":
+            if status is not None:
+                status.stop()
+                status = None
+            summary = f"embedded {event.embedded:,}"
+            if event.failed:
+                summary += f", [red]failed {event.failed:,}[/red]"
+            if event.remaining:
+                summary += f", remaining {event.remaining:,}"
+            console.print(f"  {event.model}: {summary}")
+
+    try:
+        run_backfill(model, batch_size=batch_size, limit=limit, verify=verify, on_event=on_event)
+    except LookupError as exc:
+        if str(exc) == "no models registered":
             console.print("[yellow]no models registered[/yellow]")
-            raise typer.Exit(code=1)
-
-        for row in targets:
-            pending = count_pending(session, row)
-            if pending == 0:
-                console.print(f"[green]{row.slug}[/green]: already complete")
-                continue
-
-            if verify:
-                try:
-                    ok, actual = verify_model_dims(row)
-                except EmbeddingError as exc:
-                    console.print(f"[red]{row.slug}[/red]: {exc}")
-                    continue
-                if not ok:
-                    # Every insert would fail the column type check; stop now
-                    # rather than after an hour of work.
-                    console.print(
-                        f"[red]{row.slug}[/red]: registered {row.dims} dims but the "
-                        f"model emits {actual}. Re-register with --dims {actual}."
-                    )
-                    continue
-
-            console.print(f"[cyan]{row.slug}[/cyan]: embedding {pending:,} chunks")
-            with console.status(f"{row.slug}...") as status:
-
-                def on_progress(state, slug=row.slug) -> None:
-                    status.update(f"{slug}: {state.embedded:,}/{state.total:,} ({state.batches} batches)")
-
-                state = backfill_model(
-                    session,
-                    row,
-                    batch_size=batch_size,
-                    limit=limit,
-                    progress=on_progress,
-                )
-
-            summary = f"embedded {state.embedded:,}"
-            if state.failed:
-                summary += f", [red]failed {state.failed:,}[/red]"
-            if state.remaining:
-                summary += f", remaining {state.remaining:,}"
-            console.print(f"  {row.slug}: {summary}")
+            raise typer.Exit(code=1) from None
+        raise
+    finally:
+        if status is not None:
+            status.stop()
 
 
 @app.command(name="enrich-facts")
@@ -924,46 +782,43 @@ def enrich_facts(
     ] = None,
 ) -> None:
     """Distill documents into atomic facts. Re-extraction replaces a document's prior facts."""
-    from garage_rag.enrich.facts import configured_backend, extract_and_store_facts
+    from garage_rag.ops.facts import EnrichEvent
+    from garage_rag.ops.facts import enrich_facts as run_enrich
 
-    model_id, provider = configured_backend(model, provider)
+    status = None
 
-    with session_scope() as session:
-        if document_id:
-            document = session.get(Document, document_id)
-            documents = [document] if document else []
-            if not documents:
-                console.print(f"[red]document {document_id} not found[/red]")
-                raise typer.Exit(code=1)
-        else:
-            query = session.query(Document)
-            if source and source != "*":
-                query = query.join(Source, Document.source_id == Source.id).filter(Source.slug == source)
-            documents = query.order_by(Document.id).all()
+    def on_start(total: int, model_id: str, backend: str) -> None:
+        nonlocal status
+        console.print(f"[cyan]enriching[/cyan] {total:,} document(s) via [cyan]{backend}[/cyan]/{model_id}")
+        status = console.status("enriching...")
+        status.start()
 
-        if not documents:
-            console.print("[yellow]no documents to enrich[/yellow]")
-            raise typer.Exit(code=1)
+    def on_event(event: EnrichEvent) -> None:
+        if status is not None:
+            status.update(f"{event.index}/{event.total}: {event.uri or event.document_id}")
+        if event.error:
+            console.print(f"  [red]{event.uri or event.document_id}[/red]: {event.error}")
 
-        console.print(f"[cyan]enriching[/cyan] {len(documents):,} document(s) via [cyan]{provider}[/cyan]/{model_id}")
-        failed = 0
-        total_facts = 0
-        with console.status("enriching...") as status:
-            for i, document in enumerate(documents, start=1):
-                status.update(f"{i}/{len(documents)}: {document.uri or document.id}")
-                try:
-                    facts = extract_and_store_facts(session, document, model_id=model_id, provider=provider)
-                    session.commit()
-                    total_facts += len(facts)
-                except Exception as exc:
-                    session.rollback()
-                    failed += 1
-                    console.print(f"  [red]{document.uri or document.id}[/red]: {exc}")
+    try:
+        summary = run_enrich(
+            source=source,
+            document_id=document_id,
+            model=model,
+            provider=provider,
+            on_start=on_start,
+            on_event=on_event,
+        )
+    except LookupError as exc:
+        console.print(f"[red]{exc}[/red]" if document_id else f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(code=1) from None
+    finally:
+        if status is not None:
+            status.stop()
 
-        summary = f"{len(documents) - failed}/{len(documents)} documents enriched, {total_facts:,} facts extracted"
-        if failed:
-            summary += f", [red]{failed} failed[/red]"
-        console.print(summary)
+    line = f"{summary.enriched}/{summary.total} documents enriched, {summary.facts:,} facts extracted"
+    if summary.failed:
+        line += f", [red]{summary.failed} failed[/red]"
+    console.print(line)
 
 
 @app.command()
@@ -1046,106 +901,84 @@ def mcp_install(
     Merges into any existing config: other servers and unrelated keys are kept,
     the previous file is backed up, and the writing is atomic.
     """
-    from garage_rag.mcp_server.install import http_url, install, plan_targets, server_command
+    from garage_rag.ops.mcp import McpTargetOutcome, install_mcp_server
 
     if http is True and stdio is True:
         raise typer.BadParameter("choose either --http or --stdio")
+    use_stdio = bool(stdio or http is False)
 
-    use_http = bool(http is not False and not stdio)
+    def announce(outcome: McpTargetOutcome) -> None:
+        console.print(f"\n[bold]{outcome.label}[/bold] -> {outcome.path}")
+        if outcome.note:
+            console.print(f"  [dim]{outcome.note}[/dim]")
+        if outcome.project_scoped and use_stdio:
+            console.print(
+                "  [yellow]note[/yellow]: project-scoped config records an absolute "
+                "path to this virtualenv, which will not resolve on another machine"
+            )
+        if outcome.other_servers:
+            console.print(f"  preserving: {', '.join(outcome.other_servers)}")
+
+    def confirm(outcome: McpTargetOutcome) -> bool:
+        announce(outcome)
+        if yes:
+            return True
+        action = "Replace" if outcome.replaced_entry else "Add"
+        typer.confirm(f"{action} {name!r} in {outcome.path}?", abort=True)
+        return True
 
     try:
-        plan = plan_targets(target, path=path, all_configs=all_configs)
+        report = install_mcp_server(
+            target=target,
+            path=path,
+            all_configs=all_configs,
+            name=name,
+            stdio=use_stdio,
+            host=host,
+            port=port,
+            route=path_route,
+            force=force,
+            dry_run=dry_run,
+            confirm=confirm,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--target") from None
-    if plan.fell_back:
+    except FileExistsError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(code=1) from None
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+    if report.fell_back:
         console.print("[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]")
-    is_multi_install = plan.multi
-    chosen_list = plan.targets
-
-    url: str | None = None
-    config_file: Path | None = None
-    database_environment: dict[str, str] | None = None
-
-    if use_http:
-        settings = get_settings()
-        url = http_url(
-            host or settings.mcp_host,
-            port or settings.mcp_port,
-            path_route or settings.mcp_http_path,
-        )
-        console.print(f"  url     : {url}")
+    if report.url:
+        console.print(f"  url     : {report.url}")
         console.print(
             "  [dim]the client connects to this URL; run `garage mcp-serve --http` "
             "or use the macOS app to keep it up[/dim]"
         )
     else:
-        settings = get_settings()
-        config_file = settings.config_path
-        if config_file is None:
+        if report.config_file is None:
             console.print(
                 "[yellow]note[/yellow]: no config file in use; the server will run "
                 "on defaults. Create one with 'garage config init'."
             )
-        command, args = server_command(config_file)
-        console.print(f"  command : {command} {' '.join(args)}")
-        if database_url := os.environ.get("GARAGE_DATABASE_URL"):
-            database_environment = {"GARAGE_DATABASE_URL": ensure_psycopg_database_url(database_url)}
+        console.print(f"  command : {report.command} {' '.join(report.args)}")
 
-    for chosen in chosen_list:
-        console.print(f"\n[bold]{chosen.label}[/bold] -> {chosen.path}")
-        if chosen.note:
-            console.print(f"  [dim]{chosen.note}[/dim]")
-        if chosen.project_scoped and not use_http:
-            console.print(
-                "  [yellow]note[/yellow]: project-scoped config records an absolute "
-                "path to this virtualenv, which will not resolve on another machine"
-            )
-
-        try:
-            preview = install(
-                chosen,
-                server_name=name,
-                config_path=config_file,
-                extra_env=database_environment,
-                url=url,
-                force=force,
-                dry_run=True,
-            )
-        except FileExistsError as exc:
-            console.print(f"[yellow]{exc}[/yellow]")
-            if not is_multi_install:
-                raise typer.Exit(code=1) from None
-            continue
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            if not is_multi_install:
-                raise typer.Exit(code=1) from None
-            continue
-
-        if preview.other_servers:
-            console.print(f"  preserving: {', '.join(preview.other_servers)}")
-
-        if dry_run:
+    for outcome in report.outcomes:
+        if outcome.skipped:
+            announce(outcome)
+            console.print(f"[yellow]{outcome.skipped}[/yellow]")
+        elif outcome.preview is not None:
+            announce(outcome)
             console.print("\n[cyan]would write[/cyan]:")
-            console.print(json.dumps({"mcpServers": {name: preview.entry}}, indent=2))
-            continue
-
-        action = "Replace" if preview.replaced_entry else "Add"
-        if not yes:
-            typer.confirm(f"{action} {name!r} in {chosen.path}?", abort=True)
-
-        result = install(
-            chosen,
-            server_name=name,
-            config_path=config_file,
-            extra_env=database_environment,
-            url=url,
-            force=force,
-        )
-        verb = "created" if result.created_file else "updated"
-        console.print(f"[green]{verb}[/green] {result.path}")
-        if result.backup:
-            console.print(f"  backup: {result.backup.name}")
+            console.print(json.dumps(outcome.preview, indent=2))
+        elif outcome.written:
+            verb = "created" if outcome.created_file else "updated"
+            console.print(f"[green]{verb}[/green] {outcome.path}")
+            if outcome.backup:
+                console.print(f"  backup: {outcome.backup.name}")
 
     if not dry_run:
         console.print(
@@ -1160,41 +993,37 @@ def mcp_uninstall(
     name: Annotated[str, typer.Option("--name")] = "garage-rag",
 ) -> None:
     """Remove this server from a client's config."""
-    from garage_rag.mcp_server.install import ClientTarget, client_targets, uninstall
+    from garage_rag.ops.mcp import uninstall_mcp_server
 
-    targets = client_targets()
-    if path is not None:
-        chosen = ClientTarget("custom", "custom path", path.expanduser().resolve())
-    elif target in targets:
-        chosen = targets[target]
+    try:
+        config, removed = uninstall_mcp_server(target=target, path=path, name=name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--target") from None
+    if removed:
+        console.print(f"[green]removed[/green] {name} from {config}")
     else:
-        raise typer.BadParameter(f"unknown target {target!r}", param_hint="--target")
-
-    if uninstall(chosen, server_name=name):
-        console.print(f"[green]removed[/green] {name} from {chosen.path}")
-    else:
-        console.print(f"[yellow]{name} was not configured in {chosen.path}[/yellow]")
+        console.print(f"[yellow]{name} was not configured in {config}[/yellow]")
 
 
 @app.command("mcp-status")
 def mcp_status() -> None:
     """Show which MCP clients this server is registered with."""
-    from garage_rag.mcp_server.install import client_targets, installed_in, server_command
+    from garage_rag.ops.mcp import mcp_status as status
 
-    command, args = server_command()
-    console.print(f"[dim]server command: {command} {' '.join(args)}[/dim]\n")
+    report = status()
+    console.print(f"[dim]server command: {report.server_command}[/dim]\n")
 
     table = Table()
     for col in ("target", "client", "registered", "config"):
         table.add_column(col)
-    for key, chosen in client_targets().items():
-        if installed_in(chosen):
+    for client in report.clients:
+        if client.registered:
             state = "[green]yes[/green]"
-        elif chosen.path.is_file():
+        elif client.config_exists:
             state = "no"
         else:
             state = "[dim]no config[/dim]"
-        table.add_row(key, chosen.label, state, str(chosen.path).replace(str(Path.home()), "~"))
+        table.add_row(client.key, client.label, state, str(client.path).replace(str(Path.home()), "~"))
     console.print(table)
 
 
