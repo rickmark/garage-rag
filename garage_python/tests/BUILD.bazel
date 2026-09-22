@@ -197,6 +197,7 @@ py_test(
         "//garage_python/src/garage_rag",
         "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/mcp_server",
+        "@pypi//psycopg",
         "@pypi//typer",
     ],
 )

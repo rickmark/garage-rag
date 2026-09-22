@@ -24,7 +24,7 @@ load("@aspect_rules_py//py:defs.bzl", _py_pytest_test = "py_pytest_test")
 _PYTEST = "@pypi//pytest"
 _PYPROJECT = "//garage_python:pyproject.toml"
 _PACKAGE = "//garage_python/src/garage_rag"
-_LIBPQ = "//macapp/externals:libpq"
+_LIBPQ = "//tools/pytest:libpq"
 
 def py_test(name, deps = [], data = [], **kwargs):
     """pytest-driven `py_test`; see the module docstring.
@@ -42,16 +42,16 @@ def py_test(name, deps = [], data = [], **kwargs):
         deps = deps + [_PACKAGE]
     if _PYPROJECT not in data:
         data = data + [_PYPROJECT]
+    if _LIBPQ not in data:
+        data = data + [_LIBPQ]
     env = kwargs.pop("env", {})
     _py_pytest_test(
         name = name,
         deps = deps,
-        data = data + select({
-            "@platforms//os:macos": [_LIBPQ],
-            "//conditions:default": [],
-        }),
+        data = data,
         env = select({
-            # Relative to the runfiles root, which is the test's working directory.
+            # Relative to the runfiles root, which is the test's working directory. Only
+            # on macOS: elsewhere the filegroup is empty and $(rootpath) would fail.
             "@platforms//os:macos": dict(env, GARAGE_LIBPQ_PATH = "$(rootpath %s)" % _LIBPQ),
             "//conditions:default": env,
         }),
