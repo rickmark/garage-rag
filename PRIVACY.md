@@ -1,7 +1,8 @@
 # Privacy Policy
 
-**Effective Date:** [Insert Date]  
-**Application:** Garage
+**Effective Date:** September 12, 2026  
+**Application:** Garage & GarageApp  
+**Developer:** Rick Mark
 
 Garage is designed as a local-first application. We respect your privacy and have designed the application so that it does not collect, track, sell, or transmit user data by default.
 
@@ -85,3 +86,5 @@ This Privacy Policy may be updated from time to time. If material changes are ma
 
 If you have questions about this Privacy Policy, please contact:
 
+- **GitHub Issues**: [https://github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
+- **Email**: [privacy@rickmark.com](mailto:privacy@rickmark.com)

@@ -15,7 +15,7 @@ We welcome questions, bug reports, feature suggestions, and security vulnerabili
 ### 1. Bug Reports & Issues
 If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `garage` CLI:
 
-- **Open a GitHub Issue**: [github.com/rickmark/garage/issues](https://github.com/rickmark/garage/issues)
+- **Open a GitHub Issue**: [github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
 - Please include:
   - macOS version and hardware architecture (e.g., macOS 15.0 Sequoia, Apple Silicon M3)
   - Garage version / commit hash
@@ -24,7 +24,7 @@ If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `gar
 
 ### 2. Feature Requests & Discussions
 Have an idea for a new extractor, embedding provider, or MCP tool?
-- Join the discussion and submit proposals under [GitHub Issues / Feature Requests](https://github.com/rickmark/garage/issues).
+- Join the discussion and submit proposals under [GitHub Issues / Feature Requests](https://github.com/rickmark/garage-rag/issues).
 
 ### 3. Security Vulnerability Disclosures
 If you discover a potential security issue or data leakage vulnerability:

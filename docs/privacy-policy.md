@@ -85,5 +85,5 @@ This Privacy Policy may be updated from time to time. Any material updates will 
 
 If you have questions about this Privacy Policy or our local-first security architecture, please reach out:
 
-- **GitHub Issues**: [https://github.com/rickmark/garage/issues](https://github.com/rickmark/garage/issues)
+- **GitHub Issues**: [https://github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
 - **Email**: [privacy@rickmark.com](mailto:privacy@rickmark.com)
