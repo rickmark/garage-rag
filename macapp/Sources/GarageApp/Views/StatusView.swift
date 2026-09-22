@@ -384,9 +384,9 @@ struct StatusView: View {
                 HStack(spacing: 6) {
                     Text(preset.name)
                         .font(.subheadline.bold())
-                    badgeText("FEATURED", bg: Color.green.opacity(0.15), fg: .green)
+                    StatusBadge("FEATURED", tint: .green)
                     if preset.effectiveDims > 0 {
-                        badgeText("\(preset.effectiveDims) DIMS", bg: Color.blue.opacity(0.12), fg: .blue)
+                        StatusBadge("\(preset.effectiveDims) DIMS", tint: .blue)
                     }
                 }
 
@@ -860,18 +860,18 @@ struct StatusView: View {
                             .foregroundStyle(.secondary)
 
                         if isRunning {
-                            badgeText("RUNNING", bg: Color.green.opacity(0.12), fg: .green)
+                            StatusBadge("RUNNING", tint: .green)
                         } else if case .failed = appState.grpc.status {
-                            badgeText("FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                            StatusBadge("FAILED", tint: .red)
                         } else {
-                            badgeText("STOPPED", bg: Color.orange.opacity(0.15), fg: .orange)
+                            StatusBadge("STOPPED", tint: .orange)
                         }
 
                         if let res = grpcTestResult {
                             if res.isSuccess {
-                                badgeText("TEST PASSED", bg: Color.green.opacity(0.15), fg: .green)
+                                StatusBadge("TEST PASSED", tint: .green)
                             } else {
-                                badgeText("TEST FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                                StatusBadge("TEST FAILED", tint: .red)
                             }
                         }
                     }
@@ -930,7 +930,7 @@ struct StatusView: View {
                             HStack(spacing: 6) {
                                 Text("Beyond-Ping Functional Test: gRPC Services Query")
                                     .font(.caption.bold())
-                                badgeText("gRPC RPC", bg: Color.purple.opacity(0.12), fg: .purple)
+                                StatusBadge("gRPC RPC", tint: .purple)
                             }
                             Text("Executes GetStatus, GetVersion, ListModels, ListSources, and GetStats to verify gRPC server subsystem integrity.")
                                 .font(.caption2)
@@ -1068,36 +1068,32 @@ struct StatusView: View {
                             .foregroundStyle(.secondary)
 
                         if let pid = service.pid {
-                            badgeText("PID: \(pid)", bg: Color.blue.opacity(0.12), fg: .blue)
+                            StatusBadge("PID: \(pid)", tint: .blue)
                         }
 
                         if let latency = service.latencyMs {
-                            badgeText(String(format: "%.1f ms", latency), bg: Color.green.opacity(0.12), fg: .green)
+                            StatusBadge(String(format: "%.1f ms", latency), tint: .green)
                         }
 
                         if let report = statusReport, !report.tests.isEmpty {
                             let passedCount = report.tests.filter { $0.status == .passed }.count
                             let hasFailures = !report.failedTests.isEmpty
-                            badgeText(
-                                "\(passedCount)/\(report.tests.count) tests passed",
-                                bg: (hasFailures ? Color.red : Color.green).opacity(0.12),
-                                fg: hasFailures ? .red : .green
-                            )
+                            StatusBadge("\(passedCount)/\(report.tests.count) tests passed", tint: hasFailures ? .red : .green)
                         }
 
                         if service.state == .restarting {
-                            badgeText("RESTARTING", bg: Color.orange.opacity(0.15), fg: .orange)
+                            StatusBadge("RESTARTING", tint: .orange)
                         } else if service.state == .checking {
-                            badgeText("CHECKING", bg: Color.blue.opacity(0.15), fg: .blue)
+                            StatusBadge("CHECKING", tint: .blue)
                         } else if case .unreachable = service.state {
-                            badgeText("UNREACHABLE", bg: Color.red.opacity(0.15), fg: .red)
+                            StatusBadge("UNREACHABLE", tint: .red)
                         }
 
                         if let res = diagResult {
                             if res.isSuccess {
-                                badgeText("TEST PASSED", bg: Color.green.opacity(0.15), fg: .green)
+                                StatusBadge("TEST PASSED", tint: .green)
                             } else {
-                                badgeText("TEST FAILED", bg: Color.red.opacity(0.15), fg: .red)
+                                StatusBadge("TEST FAILED", tint: .red)
                             }
                         }
                     }
@@ -1188,7 +1184,7 @@ struct StatusView: View {
                             HStack(spacing: 6) {
                                 Text("Beyond-Ping Functional Test: \(testInfo.name)")
                                     .font(.caption.bold())
-                                badgeText("Beyond Ping", bg: Color.blue.opacity(0.12), fg: .blue)
+                                StatusBadge("Beyond Ping", tint: .blue)
                             }
                             Text(testInfo.description)
                                 .font(.caption2)
@@ -1285,8 +1281,8 @@ struct StatusView: View {
                     .font(.caption.bold())
 
                 if let report = report {
-                    badgeText(report.lifecycle.uppercased(), bg: lifecycleColor(report.lifecycle).opacity(0.15), fg: lifecycleColor(report.lifecycle))
-                    badgeText("UP \(formatUptime(report.uptimeSeconds))", bg: Color.secondary.opacity(0.12), fg: .secondary)
+                    StatusBadge(report.lifecycle.uppercased(), tint: lifecycleColor(report.lifecycle))
+                    StatusBadge("UP \(formatUptime(report.uptimeSeconds))", tint: .secondary)
                     if let lastRun = report.lastTestRun {
                         Text("Tests ran \(Date(timeIntervalSince1970: lastRun), style: .relative) ago")
                             .font(.caption2)
@@ -1462,7 +1458,7 @@ struct StatusView: View {
                 .frame(width: 7, height: 7)
             Text(managed.name)
                 .font(.caption2.bold())
-            badgeText(managed.state.uppercased(), bg: managedServiceColor(managed.state).opacity(0.15), fg: managedServiceColor(managed.state))
+            StatusBadge(managed.state.uppercased(), tint: managedServiceColor(managed.state))
             if managed.restartCount > 0 {
                 Text("restarts: \(managed.restartCount)")
                     .font(.caption2.monospaced())
@@ -1609,15 +1605,6 @@ struct StatusView: View {
         }
     }
 
-    private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
 
     // MARK: - Page Status Card
 

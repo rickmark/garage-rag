@@ -163,10 +163,10 @@ struct MCPServerView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 if let model = answer.model, !model.isEmpty {
-                    badgeView(text: model, bg: Color.purple.opacity(0.15), fg: .purple)
+                    StatusBadge(model, tint: .purple)
                 }
                 if let provider = answer.provider, !provider.isEmpty {
-                    badgeView(text: provider, bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge(provider, tint: .blue)
                 }
                 Spacer()
                 Button("Copy") {
@@ -385,27 +385,11 @@ struct MCPServerView: View {
                             .foregroundStyle(.secondary)
                     } else if let res = appState.mcp.lastTestResult {
                         if res.isSuccess {
-                            badgeView(
-                                text: "PASS (200 OK)",
-                                bg: Color.green.opacity(0.15),
-                                fg: .green
-                            )
-                            badgeView(
-                                text: String(format: "%.1f ms", res.latencyMs),
-                                bg: Color.blue.opacity(0.15),
-                                fg: .blue
-                            )
-                            badgeView(
-                                text: "\(res.tools.count) TOOLS",
-                                bg: Color.purple.opacity(0.15),
-                                fg: .purple
-                            )
+                            StatusBadge("PASS (200 OK)", tint: .green)
+                            StatusBadge(String(format: "%.1f ms", res.latencyMs), tint: .blue)
+                            StatusBadge("\(res.tools.count) TOOLS", tint: .purple)
                         } else {
-                            badgeView(
-                                text: "FAILED",
-                                bg: Color.red.opacity(0.15),
-                                fg: .red
-                            )
+                            StatusBadge("FAILED", tint: .red)
                         }
                     }
 
@@ -578,13 +562,13 @@ struct MCPServerView: View {
                                         .font(.subheadline.bold())
 
                                     if client.existsOnDisk {
-                                        badgeView(text: "Config Found", bg: Color.green.opacity(0.12), fg: .green)
+                                        StatusBadge("Config Found", tint: .green)
                                     } else {
-                                        badgeView(text: "No config file", bg: Color.secondary.opacity(0.12), fg: .secondary)
+                                        StatusBadge("No config file", tint: .secondary)
                                     }
 
                                     if client.isRegistered {
-                                        badgeView(text: "Registered", bg: Color.blue.opacity(0.15), fg: .blue)
+                                        StatusBadge("Registered", tint: .blue)
                                     }
                                 }
 
@@ -718,15 +702,6 @@ struct MCPServerView: View {
         }
     }
 
-    private func badgeView(text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(fg)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(bg)
-            .clipShape(Capsule())
-    }
 
     private func startServer() {
         busy = true

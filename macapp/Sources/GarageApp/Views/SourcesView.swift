@@ -179,11 +179,11 @@ struct SourcesView: View {
                                 Text(appState.combinedIngestTitle)
                                     .font(.headline)
 
-                                badgeText(progress.phase.uppercased(), bg: Color.blue.opacity(0.15), fg: .blue)
+                                StatusBadge(progress.phase.uppercased(), tint: .blue)
                                 if let mode = appState.ingestService.activeMode {
-                                    badgeText(mode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge(mode.shortTitle.uppercased(), tint: .purple)
                                 } else {
-                                    badgeText(appState.ingestService.executionMode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge(appState.ingestService.executionMode.shortTitle.uppercased(), tint: .purple)
                                 }
 
                                 Spacer()
@@ -205,17 +205,17 @@ struct SourcesView: View {
                                 .progressViewStyle(.linear)
 
                             HStack(spacing: 8) {
-                                badgeText("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", bg: Color.primary.opacity(0.06), fg: .primary)
-                                badgeText("\(appState.combinedIngestIndexedCount) indexed", bg: Color.green.opacity(0.15), fg: .green)
-                                badgeText("\(appState.combinedIngestSkippedCount) skipped", bg: Color.gray.opacity(0.15), fg: .secondary)
+                                StatusBadge("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", tint: .primary)
+                                StatusBadge("\(appState.combinedIngestIndexedCount) indexed", tint: .green)
+                                StatusBadge("\(appState.combinedIngestSkippedCount) skipped", tint: .secondary)
                                 if appState.combinedIngestFailedCount > 0 {
-                                    badgeText("\(appState.combinedIngestFailedCount) failed", bg: Color.red.opacity(0.15), fg: .red)
+                                    StatusBadge("\(appState.combinedIngestFailedCount) failed", tint: .red)
                                 }
                                 if appState.combinedIngestPlaceholdersCount > 0 {
-                                    badgeText("\(appState.combinedIngestPlaceholdersCount) placeholders", bg: Color.orange.opacity(0.15), fg: .orange)
+                                    StatusBadge("\(appState.combinedIngestPlaceholdersCount) placeholders", tint: .orange)
                                 }
                                 if appState.combinedIngestChunksCount > 0 {
-                                    badgeText("\(appState.combinedIngestChunksCount) chunks", bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge("\(appState.combinedIngestChunksCount) chunks", tint: .purple)
                                 }
                                 Spacer()
                             }
@@ -357,39 +357,39 @@ struct SourcesView: View {
                 originBadge(for: source.origin)
 
                 if isCurrentIngest {
-                    badgeText("INGESTING", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("INGESTING", tint: .blue)
                 }
 
                 if source.expectedElements > 0 {
                     if source.documentCount >= source.expectedElements {
-                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", bg: Color.green.opacity(0.15), fg: .green)
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
                     } else {
-                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS", bg: Color.blue.opacity(0.15), fg: .blue)
-                        badgeText("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", bg: Color.orange.opacity(0.15), fg: .orange)
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
+                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
                     }
                 } else {
-                    badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
                 }
 
                 if !source.enabled {
-                    badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
+                    StatusBadge("DISABLED", tint: .secondary)
                 }
 
                 if source.allowCloudEnrichment {
-                    badgeText("CLOUD OCR", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("CLOUD OCR", tint: .blue)
                 }
 
                 if source.includeCode {
-                    badgeText("CODE", bg: Color.purple.opacity(0.15), fg: .purple)
+                    StatusBadge("CODE", tint: .purple)
                 }
 
                 if let access = accessResult {
                     if access.isAccessible {
-                        badgeText("DISK OK", bg: Color.green.opacity(0.15), fg: .green)
+                        StatusBadge("DISK OK", tint: .green)
                     } else if access.requiresTCCPermission || access.tccCategory != nil {
-                        badgeText("PERMISSIONS NEEDED", bg: Color.orange.opacity(0.15), fg: .orange)
+                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
                     } else {
-                        badgeText("DISK INACCESSIBLE", bg: Color.red.opacity(0.15), fg: .red)
+                        StatusBadge("DISK INACCESSIBLE", tint: .red)
                     }
                 }
 
@@ -733,23 +733,14 @@ struct SourcesView: View {
     private func originBadge(for origin: RegisteredSource.SourceOrigin) -> some View {
         switch origin {
         case .config:
-            return badgeText("CONFIG", bg: Color.orange.opacity(0.15), fg: .orange)
+            return StatusBadge("CONFIG", tint: .orange)
         case .database:
-            return badgeText("DB", bg: Color.teal.opacity(0.15), fg: .teal)
+            return StatusBadge("DB", tint: .teal)
         case .both:
-            return badgeText("CONFIG & DB", bg: Color.indigo.opacity(0.15), fg: .indigo)
+            return StatusBadge("CONFIG & DB", tint: .indigo)
         }
     }
 
-    private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
 
     // MARK: - Add / Update Source Section
 

@@ -391,12 +391,7 @@ public struct SearchView: View {
                 HStack(spacing: 6) {
                     CorpusClassBadge(corpusClass: item.corpusClass)
                     TrustTierBadge(tier: item.trustTier)
-                    Text("Matched: \(item.matchedBy)")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    TagBadge("Matched: \(item.matchedBy)")
                 }
 
                 if !item.headingPath.isEmpty {
@@ -583,78 +578,6 @@ public struct SearchView: View {
                     self.lastSearchedQuery = trimmed
                 }
             }
-        }
-    }
-}
-
-// MARK: - Visual Badges
-
-public struct CorpusClassBadge: View {
-    public let corpusClass: String
-
-    public init(corpusClass: String) {
-        self.corpusClass = corpusClass
-    }
-
-    public var body: some View {
-        Text(corpusClass.capitalized)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(backgroundColor)
-            .foregroundStyle(foregroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var backgroundColor: Color {
-        switch corpusClass.lowercased() {
-        case "code": return Color.purple.opacity(0.15)
-        case "communication": return Color.green.opacity(0.15)
-        default: return Color.blue.opacity(0.15)
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch corpusClass.lowercased() {
-        case "code": return .purple
-        case "communication": return .green
-        default: return .blue
-        }
-    }
-}
-
-public struct TrustTierBadge: View {
-    public let tier: String
-
-    public init(tier: String) {
-        self.tier = tier
-    }
-
-    public var body: some View {
-        Text(tier.capitalized)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(backgroundColor)
-            .foregroundStyle(foregroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var backgroundColor: Color {
-        switch tier.lowercased() {
-        case "authored": return Color.teal.opacity(0.15)
-        case "reference": return Color.indigo.opacity(0.15)
-        case "received": return Color.orange.opacity(0.15)
-        default: return Color.secondary.opacity(0.12)
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch tier.lowercased() {
-        case "authored": return .teal
-        case "reference": return .indigo
-        case "received": return .orange
-        default: return .secondary
         }
     }
 }

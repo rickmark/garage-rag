@@ -364,31 +364,31 @@ struct ModelsView: View {
                         providerBadge(for: item.provider)
 
                         if item.isDefault {
-                            badgeText("DEFAULT", bg: Color.green.opacity(0.18), fg: .green)
+                            StatusBadge("DEFAULT", tint: .green)
                         }
 
-                        badgeText("REGISTERED", bg: Color.blue.opacity(0.15), fg: .blue)
+                        StatusBadge("REGISTERED", tint: .blue)
 
                         if isActiveInLlama {
-                            badgeText("ACTIVE IN LLAMA XPC", bg: Color.purple.opacity(0.2), fg: .purple)
+                            StatusBadge("ACTIVE IN LLAMA XPC", tint: .purple)
                         }
 
                         if isDownloaded {
-                            badgeText("DOWNLOADED (GGUF)", bg: Color.teal.opacity(0.15), fg: .teal)
+                            StatusBadge("DOWNLOADED (GGUF)", tint: .teal)
 
                             if isVerifying {
-                                badgeText("VERIFYING SHA-256…", bg: Color.blue.opacity(0.18), fg: .blue)
+                                StatusBadge("VERIFYING SHA-256…", tint: .blue)
                             } else if let v = verification {
                                 if v.isValid {
-                                    badgeText("SHA-256 VERIFIED", bg: Color.green.opacity(0.18), fg: .green)
+                                    StatusBadge("SHA-256 VERIFIED", tint: .green)
                                 } else {
-                                    badgeText("SHA-256 MISMATCH", bg: Color.red.opacity(0.18), fg: .red)
+                                    StatusBadge("SHA-256 MISMATCH", tint: .red)
                                 }
                             } else if item.effectiveSha256 != nil {
-                                badgeText("SHA-256 UNVERIFIED", bg: Color.secondary.opacity(0.15), fg: .secondary)
+                                StatusBadge("SHA-256 UNVERIFIED", tint: .secondary)
                             }
                         } else if isDownloading {
-                            badgeText("DOWNLOADING", bg: Color.yellow.opacity(0.2), fg: .orange)
+                            StatusBadge("DOWNLOADING", tint: .orange)
                         }
                     }
 
@@ -622,11 +622,11 @@ struct ModelsView: View {
                     } else if remaining == 0 {
                         Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText))")
                             .font(.caption.monospaced())
-                        badgeText("100% EMBEDDED", bg: Color.green.opacity(0.18), fg: .green)
+                        StatusBadge("100% EMBEDDED", tint: .green)
                     } else {
                         Text("\(embeddedCount) / \(totalChunks) chunks (\(percentText)) • \(remaining) remaining")
                             .font(.caption.monospaced())
-                        badgeText("\(remaining) PENDING", bg: Color.orange.opacity(0.18), fg: .orange)
+                        StatusBadge("\(remaining) PENDING", tint: .orange)
                     }
                     Spacer()
                 }
@@ -673,10 +673,10 @@ struct ModelsView: View {
                     Text(preset.name)
                         .font(.subheadline.bold())
                     if preset.featured {
-                        badgeText("FEATURED", bg: Color.green.opacity(0.15), fg: .green)
+                        StatusBadge("FEATURED", tint: .green)
                     }
                     if preset.effectiveDims > 0 {
-                        badgeText("\(preset.effectiveDims) DIMS", bg: Color.blue.opacity(0.12), fg: .blue)
+                        StatusBadge("\(preset.effectiveDims) DIMS", tint: .blue)
                     }
                 }
 
@@ -948,10 +948,10 @@ struct ModelsView: View {
                             Text("Embedding Vector Details")
                                 .font(.headline)
                             if !selectedTestModelSlug.isEmpty {
-                                badgeText(selectedTestModelSlug.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                StatusBadge(selectedTestModelSlug.uppercased(), tint: .purple)
                             }
-                            badgeText("\(stats.count) DIMENSIONS", bg: Color.green.opacity(0.18), fg: .green)
-                            badgeText("NO TRUNCATION", bg: Color.blue.opacity(0.15), fg: .blue)
+                            StatusBadge("\(stats.count) DIMENSIONS", tint: .green)
+                            StatusBadge("NO TRUNCATION", tint: .blue)
                             Spacer()
 
                             Button("Copy Full Vector (JSON)") {
@@ -1043,9 +1043,9 @@ struct ModelsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             if llama.isModelLoaded(alias: appState.factsModel) {
-                                badgeText("LOADED", bg: Color.purple.opacity(0.2), fg: .purple)
+                                StatusBadge("LOADED", tint: .purple)
                             } else {
-                                badgeText("NOT LOADED", bg: Color.orange.opacity(0.18), fg: .orange)
+                                StatusBadge("NOT LOADED", tint: .orange)
                             }
                         }
                         Text("Stored in garage.json under facts.model / facts.provider. Load the model here before running enrich-facts or rag_ask.")
@@ -1099,17 +1099,17 @@ struct ModelsView: View {
                         providerBadge(for: item.provider)
 
                         if isFactsModel {
-                            badgeText("ACTIVE FACTS MODEL", bg: Color.green.opacity(0.18), fg: .green)
+                            StatusBadge("ACTIVE FACTS MODEL", tint: .green)
                         }
 
                         if isLoaded {
-                            badgeText("LOADED IN LLAMA XPC", bg: Color.purple.opacity(0.2), fg: .purple)
+                            StatusBadge("LOADED IN LLAMA XPC", tint: .purple)
                         }
 
                         if isDownloaded {
-                            badgeText("DOWNLOADED (GGUF)", bg: Color.teal.opacity(0.15), fg: .teal)
+                            StatusBadge("DOWNLOADED (GGUF)", tint: .teal)
                         } else if isDownloading {
-                            badgeText("DOWNLOADING", bg: Color.yellow.opacity(0.2), fg: .orange)
+                            StatusBadge("DOWNLOADING", tint: .orange)
                         }
                     }
 
@@ -1379,23 +1379,14 @@ struct ModelsView: View {
     private func providerBadge(for prov: ModelProvider) -> some View {
         switch prov {
         case .llamaXPC:
-            return badgeText("LLAMA XPC", bg: Color.purple.opacity(0.15), fg: .purple)
+            return StatusBadge("LLAMA XPC", tint: .purple)
         case .ollama:
-            return badgeText("OLLAMA", bg: Color.orange.opacity(0.15), fg: .orange)
+            return StatusBadge("OLLAMA", tint: .orange)
         case .lmStudio:
-            return badgeText("LM STUDIO", bg: Color.teal.opacity(0.15), fg: .teal)
+            return StatusBadge("LM STUDIO", tint: .teal)
         }
     }
 
-    private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
 
     private var notReady: Bool {
         appState.postgres.status != .running || busy

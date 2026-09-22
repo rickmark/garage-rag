@@ -212,12 +212,7 @@ public struct DocumentsView: View {
             HStack(spacing: 6) {
                 CorpusClassBadge(corpusClass: doc.corpusClass)
                 TrustTierBadge(tier: doc.trustTier)
-                Text(doc.sourceSlug)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                TagBadge(doc.sourceSlug)
                 Spacer()
                 if doc.factCount > 0 {
                     Text("\(doc.factCount) fact\(doc.factCount == 1 ? "" : "s")")
@@ -288,20 +283,9 @@ public struct DocumentsView: View {
                 HStack(spacing: 6) {
                     CorpusClassBadge(corpusClass: detail.corpusClass)
                     TrustTierBadge(tier: detail.trustTier)
-                    Text(detail.sourceSlug)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    TagBadge(detail.sourceSlug)
                     if !detail.state.isEmpty {
-                        Text(detail.state.uppercased())
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background((detail.state == "ok" ? Color.green : Color.red).opacity(0.15))
-                            .foregroundStyle(detail.state == "ok" ? .green : .red)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        StatusBadge(detail.state.uppercased(), tint: detail.state == "ok" ? .green : .red)
                     }
                 }
 
