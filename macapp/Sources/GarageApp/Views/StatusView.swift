@@ -82,18 +82,7 @@ struct StatusView: View {
 
                 xpcServicesSection
 
-                if !appState.lastCommandOutput.isEmpty {
-                    GroupBox("Last Command Output") {
-                        ScrollView {
-                            Text(appState.lastCommandOutput)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 220)
-                        .padding(8)
-                    }
-                }
+                LastCommandOutputBox(text: appState.lastCommandOutput)
             }
             .padding(20)
         }
@@ -989,16 +978,7 @@ struct StatusView: View {
                                 .controlSize(.small)
                             }
 
-                            ScrollView {
-                                Text(res.details)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .frame(maxHeight: 140)
-                            .padding(8)
-                            .background(Color.primary.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            MonospaceOutputBox(res.details, maxHeight: 140)
                         }
                     }
                 }
@@ -1245,16 +1225,7 @@ struct StatusView: View {
                                 .controlSize(.small)
                             }
 
-                            ScrollView {
-                                Text(res.details)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .frame(maxHeight: 140)
-                            .padding(8)
-                            .background(Color.primary.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            MonospaceOutputBox(res.details, maxHeight: 140)
                         }
                     }
                 }
@@ -1393,7 +1364,7 @@ struct StatusView: View {
                         Text("Recent Errors (\(report.recentErrorLines.count))")
                             .font(.caption2.bold())
                             .foregroundStyle(.red)
-                        monospacedTextBlock(report.recentErrorLines.joined(separator: "\n"), maxHeight: 200)
+                        MonospaceOutputBox(report.recentErrorLines.joined(separator: "\n"), maxHeight: 200)
                     }
                 }
 
@@ -1406,7 +1377,7 @@ struct StatusView: View {
                                 .font(.caption2.bold())
                                 .foregroundStyle(.red)
                         }
-                        monospacedTextBlock(crash, maxHeight: 200)
+                        MonospaceOutputBox(crash, maxHeight: 200)
                     }
                 }
 
@@ -1508,11 +1479,11 @@ struct StatusView: View {
                         .textSelection(.enabled)
                 }
                 if !test.details.isEmpty {
-                    monospacedTextBlock(test.details, maxHeight: 160)
+                    MonospaceOutputBox(test.details, maxHeight: 160)
                 }
             } else if !test.details.isEmpty {
                 DisclosureGroup {
-                    monospacedTextBlock(test.details, maxHeight: 120)
+                    MonospaceOutputBox(test.details, maxHeight: 120)
                 } label: {
                     Text("Details")
                         .font(.caption2)
@@ -1524,18 +1495,6 @@ struct StatusView: View {
         .padding(.leading, 2)
     }
 
-    private func monospacedTextBlock(_ text: String, maxHeight: CGFloat) -> some View {
-        ScrollView {
-            Text(text)
-                .font(.system(.caption2, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-        .frame(maxHeight: maxHeight)
-        .padding(8)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
 
     private func lifecycleColor(_ lifecycle: String) -> Color {
         switch lifecycle.lowercased() {

@@ -185,18 +185,7 @@ struct DatabaseView: View {
                     .padding(8)
                 }
 
-                if !appState.lastCommandOutput.isEmpty {
-                    GroupBox("Last command output") {
-                        ScrollView {
-                            Text(appState.lastCommandOutput)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 260)
-                        .padding(8)
-                    }
-                }
+                LastCommandOutputBox(text: appState.lastCommandOutput, maxHeight: 260)
             }
             .padding(20)
         }

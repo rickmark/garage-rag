@@ -68,9 +68,7 @@ struct MCPServerView: View {
                 promptPlaygroundSection
                 clientIntegrationsSection
                 serverDetailsSection
-                if !appState.lastCommandOutput.isEmpty {
-                    lastCommandOutputSection
-                }
+                LastCommandOutputBox(text: appState.lastCommandOutput)
             }
             .padding(20)
         }
@@ -644,21 +642,6 @@ struct MCPServerView: View {
                     .padding(.top, 4)
             }
             .padding(10)
-        }
-    }
-
-    // MARK: - Last Command Output Section
-
-    private var lastCommandOutputSection: some View {
-        GroupBox("Last Command Output") {
-            ScrollView {
-                Text(appState.lastCommandOutput)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 220)
-            .padding(8)
         }
     }
 
