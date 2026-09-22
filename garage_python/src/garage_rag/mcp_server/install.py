@@ -191,8 +191,27 @@ def plan_targets(
     return TargetPlan([table[target]])
 
 
-# Set by the macOS app's `garage` launcher (macapp/Sources/GarageCLI) to its own path.
+# Set by the macOS app's launchers (macapp/Sources/GarageLauncher), and by the app for
+# its gRPC server, to the bundled `garage` and `garage-mcp` executables.
 CLI_EXECUTABLE_ENV = "GARAGE_CLI_EXECUTABLE"
+MCP_EXECUTABLE_ENV = "GARAGE_MCP_EXECUTABLE"
+
+
+def _exported_executable(variable: str) -> str | None:
+    path = os.environ.get(variable)
+    if path and Path(path).is_absolute() and os.access(path, os.X_OK):
+        return path
+    return None
+
+
+def app_launcher() -> str | None:
+    """The macOS app's bundled `garage-mcp` (else `garage`), when running under the app.
+
+    Those launchers start the app if it is not running and read the database
+    password from the Keychain, so a registration naming one needs no
+    environment -- in particular no database URL with its password in it.
+    """
+    return _exported_executable(MCP_EXECUTABLE_ENV) or _exported_executable(CLI_EXECUTABLE_ENV)
 
 
 def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
@@ -216,11 +235,13 @@ def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
     if config_path is not None:
         head = ["--config", str(config_path.expanduser().resolve())]
 
-    # Inside the macOS app, Python is embedded in the Swift `garage` launcher and
-    # sys.executable names an interpreter the bundle does not ship. The launcher
-    # exports its own path so the command points at something that runs.
-    launcher = os.environ.get(CLI_EXECUTABLE_ENV)
-    if launcher and Path(launcher).is_absolute() and os.access(launcher, os.X_OK):
+    # Inside the macOS app, Python is embedded in the Swift launchers and
+    # sys.executable names an interpreter the bundle does not ship. The launchers
+    # export their paths so the command points at something that runs; the
+    # bundled `garage-mcp` serves stdio and accepts --config.
+    if mcp := _exported_executable(MCP_EXECUTABLE_ENV):
+        return mcp, head
+    if launcher := _exported_executable(CLI_EXECUTABLE_ENV):
         return launcher, [*head, "mcp-serve", "--stdio"]
 
     garage = interpreter.parent / "garage"

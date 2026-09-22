@@ -391,12 +391,12 @@ enum PageStatus {
         let headline: String
         let details: String
 
-        // The app itself runs everything over gRPC; the launcher is what stdio MCP
-        // clients (Claude Desktop / Code) spawn as `garage mcp-serve --stdio`.
-        if !FileManager.default.isExecutableFile(atPath: Paths.garageCLI.path) {
+        // The app itself runs everything over gRPC; `garage-mcp` is what stdio MCP
+        // clients (Claude Desktop / Code) spawn.
+        if !FileManager.default.isExecutableFile(atPath: Paths.garageMCP.path) {
             severity = .warning
-            headline = "garage Launcher Missing"
-            details = "Not found at \(Paths.garageCLI.path); stdio MCP clients cannot start the server."
+            headline = "garage-mcp Launcher Missing"
+            details = "Not found at \(Paths.garageMCP.path); stdio MCP clients cannot start the server."
         } else {
             severity = .healthy
             headline = "Logs Active"

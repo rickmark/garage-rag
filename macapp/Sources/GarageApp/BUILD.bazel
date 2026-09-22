@@ -46,6 +46,7 @@ macos_application(
     name = "GarageApp",
     additional_contents = {
         "//macapp/Sources/GarageCLI:garage": "MacOS",
+        "//macapp/Sources/GarageMCPCLI:garage-mcp": "MacOS",
         "//macapp/externals:libpq": "Frameworks",
         "//macapp/externals:postgres_output": "Resources/postgres",
         "//macapp/externals:schema_output": "Resources/schema",

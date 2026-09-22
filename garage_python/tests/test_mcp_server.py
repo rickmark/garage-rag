@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -599,8 +600,33 @@ class TestServerLifecycle:
 
     def test_main_calls_serve_stdio(self) -> None:
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
-            main()
+            main([])
             mock_serve.assert_called_once_with("stdio")
+
+    def test_main_loads_the_config_it_is_given(self, tmp_path: Path) -> None:
+        """Clients spawn garage-mcp from anywhere, so registrations pass --config."""
+        from garage_rag.config import get_settings, reset_settings
+
+        cfg = tmp_path / "garage.json"
+        cfg.write_text(json.dumps({"mcp": {"port": 9123}}))
+        try:
+            with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+                main(["--config", str(cfg)])
+            mock_serve.assert_called_once_with("stdio")
+            assert get_settings().mcp_port == 9123
+        finally:
+            reset_settings()
+
+    def test_main_reports_a_bad_config_on_stderr(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        cfg = tmp_path / "garage.json"
+        cfg.write_text(json.dumps({"no_such_section": {}}))
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve, pytest.raises(SystemExit) as exit_info:
+            main(["--config", str(cfg)])
+        assert exit_info.value.code == 2
+        mock_serve.assert_not_called()
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "config error" in captured.err
 
 
 # ---------------------------------------------------------------------------

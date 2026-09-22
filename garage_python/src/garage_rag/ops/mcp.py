@@ -11,6 +11,7 @@ from typing import Any
 from garage_rag.config import ensure_psycopg_database_url, get_settings
 from garage_rag.mcp_server.install import (
     ClientTarget,
+    app_launcher,
     client_targets,
     http_url,
     install,
@@ -103,7 +104,9 @@ def install_mcp_server(
     if stdio:
         config_file = settings.config_path
         command, args = server_command(config_file)
-        if database_url := os.environ.get("GARAGE_DATABASE_URL"):
+        # The app's launchers find the database themselves (password from the
+        # Keychain); writing the URL would put that password in the client's config.
+        if (database_url := os.environ.get("GARAGE_DATABASE_URL")) and app_launcher() is None:
             extra_env = {"GARAGE_DATABASE_URL": ensure_psycopg_database_url(database_url)}
     else:
         url = http_url(host or settings.mcp_host, port or settings.mcp_port, route or settings.mcp_http_path)

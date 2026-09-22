@@ -48,8 +48,14 @@ aspect run //macapp/Sources/PythonXPCService:python_embed_smoke -- /path/to/Gara
 What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 (`macos_application(name = "GarageApp")`):
 
-- `MacOS/garage` — the `garage` CLI, a Swift binary (`//macapp/Sources/GarageCLI:garage`)
-  that embeds the bundled Python and runs `garage_rag`'s Typer app in-process.
+- `MacOS/garage` and `MacOS/garage-mcp` — Swift launchers (`//macapp/Sources/GarageCLI:garage`,
+  `//macapp/Sources/GarageMCPCLI:garage-mcp`, sharing `Sources/GarageLauncher`) that embed the
+  bundled Python and run `garage_rag`'s Typer app or the stdio MCP server in-process. When a
+  command needs the database and nothing listens on port 14824, the launcher opens Garage.app
+  hidden (`--background`: services start, no window) and waits for Postgres; it then reads the
+  database password from the Keychain and exports `GARAGE_DATABASE_URL` itself. An explicit
+  `GARAGE_DATABASE_URL` wins; `GARAGE_NO_APP_LAUNCH=1` fails instead of opening the app.
+  `garage-mcp` never mirrors its stdout (the MCP stream) into the unified log.
 - `Resources/postgres` — Postgres 18 + pgvector built from source (`//ext/postgres`,
   `//ext/pgvector`, vendored through `//macapp/externals:postgres_output`), with
   `libpq` in `Frameworks/`.
@@ -160,15 +166,16 @@ postgres's fork-safety check runs.
   changed between Ollama and LM Studio; start the selected provider locally
   before backfilling embeddings. An LM Studio API token can be saved in the
   macOS Keychain from this view and is passed as `GARAGE_LMSTUDIO_API_TOKEN`
-  to each `garage` command.
+  to the gRPC server.
 
 The app-managed HTTP MCP server has its own lifecycle and logs. Claude
-Desktop/Code still spawn their own `garage-mcp` process over stdio when
-registered via `garage mcp-install`; this allows both connection modes. The
-app supplies the authenticated database URL as `GARAGE_DATABASE_URL` to every
-`garage` command and XPC helper; registration writes the same environment
-variable into the MCP entry so each spawned `garage-mcp` process connects to the
-app-managed database.
+Desktop/Code can instead spawn the bundled `garage-mcp` over stdio when
+registered with `garage mcp-install --stdio`; this allows both connection modes.
+The app hands the authenticated database URL to its XPC helpers as
+`GARAGE_DATABASE_URL`. A stdio registration names the bundled `garage-mcp`,
+which starts the app if needed and reads the password from the Keychain, so the
+client's config carries no database URL or password. The first connection from
+a launcher may show a Keychain prompt; choose Always Allow.
 
 The Status view also provides database reset, backup, and restore controls.
 Backups are PostgreSQL custom-format dumps; restore replaces the private Garage

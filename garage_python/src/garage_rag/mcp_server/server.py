@@ -789,8 +789,24 @@ def serve(
     )
 
 
-def main() -> None:
-    """Console-script entry point: stdio, which is what MCP clients spawn."""
+def main(argv: list[str] | None = None) -> None:
+    """Console-script entry point: stdio, which is what MCP clients spawn.
+
+    ``garage-mcp [--config PATH]``. A client spawns it from an arbitrary working
+    directory, so a registration passes the config file explicitly.
+    """
+    import argparse
+
+    from garage_rag.config import ConfigError, load_config, set_settings
+
+    parser = argparse.ArgumentParser(prog="garage-mcp", description="Serve the Garage corpus over MCP on stdio.")
+    parser.add_argument("--config", "-c", type=Path, help="Config file. Default: ./garage.json, then ~/.garage.json.")
+    options = parser.parse_args(argv)
+    try:
+        set_settings(load_config(options.config))
+    except ConfigError as exc:
+        # stdout is the protocol channel; errors go to stderr only.
+        parser.exit(2, f"garage-mcp: config error: {exc}\n")
     serve("stdio")
 
 

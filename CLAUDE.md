@@ -234,8 +234,12 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
 - `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which
-  drives `GarageIngestXPCService` via `IngestClient`. The bundled `garage` launcher is only for
-  stdio MCP clients and people at a terminal.
+  drives `GarageIngestXPCService` via `IngestClient`.
+- `garage` and `garage-mcp` in `Contents/MacOS` are Swift launchers (`Sources/GarageLauncher`)
+  for people at a terminal and for stdio MCP clients. When a command needs the database and
+  nothing listens on 14824 they open the app hidden (`--background`), then read the Postgres
+  password from the Keychain and export `GARAGE_DATABASE_URL`; stdio registrations therefore
+  carry no database URL. Only these Mach-O launchers do this; `garage` from a venv is untouched.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.

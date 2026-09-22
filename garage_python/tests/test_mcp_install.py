@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
     CLI_EXECUTABLE_ENV,
+    MCP_EXECUTABLE_ENV,
     MULTI_TARGETS,
     ClientTarget,
     client_targets,
@@ -73,6 +74,26 @@ class TestCliInstall:
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert entry["env"]["GARAGE_DATABASE_URL"] == database_url
 
+    def test_app_launcher_registration_carries_no_database_url(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The app's launchers read the password from the Keychain; the URL (password
+        included) must not be copied into a client's config file."""
+        launcher = tmp_path / "garage-mcp"
+        launcher.write_text("#!/bin/sh\n")
+        launcher.chmod(0o755)
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg://user:secret@localhost:14824/garage-rag")
+        target_path = tmp_path / "mcp.json"
+
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        entry = _read(target_path)["mcpServers"]["garage-rag"]
+        assert entry["command"] == str(launcher)
+        assert "env" not in entry
+        assert "secret" not in target_path.read_text()
+
 
 class TestServerCommand:
     def test_uses_unresolved_sys_executable(self) -> None:
@@ -110,7 +131,6 @@ class TestServerCommand:
         supplied = Path(args[args.index("--config") + 1])
         assert supplied.is_absolute()
         assert supplied == cfg.resolve()
-        # The `garage` entry point is required, since garage-mcp takes no flags.
         assert Path(command).name in {"garage", Path(sys.executable).name}
 
     def test_app_launcher_wins_when_exported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,6 +145,21 @@ class TestServerCommand:
         command, args = server_command(cfg)
         assert command == str(launcher)
         assert args == ["--config", str(cfg.resolve()), "mcp-serve", "--stdio"]
+
+    def test_bundled_garage_mcp_wins_over_the_cli_launcher(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The app ships a `garage-mcp` launcher that serves stdio and takes --config."""
+        for name, variable in (("garage", CLI_EXECUTABLE_ENV), ("garage-mcp", MCP_EXECUTABLE_ENV)):
+            launcher = tmp_path / name
+            launcher.write_text("#!/bin/sh\n")
+            launcher.chmod(0o755)
+            monkeypatch.setenv(variable, str(launcher))
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        command, args = server_command(cfg)
+        assert command == str(tmp_path / "garage-mcp")
+        assert args == ["--config", str(cfg.resolve())]
 
     def test_non_executable_launcher_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         launcher = tmp_path / "garage"

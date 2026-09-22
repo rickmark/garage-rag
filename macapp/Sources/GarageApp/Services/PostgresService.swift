@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import Security
 import AppKit
+import PythonXPCService
 
 public struct RegisteredModel: Identifiable, Hashable, Sendable {
     public var id: String { slug }
@@ -254,8 +255,8 @@ final class PostgresService: ObservableObject {
     @Published private(set) var pendingMigrations: [String] = []
 
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
-    let port = 14824
-    let databaseName = "garage-rag"
+    let port = GaragePostgresEndpoint.port
+    let databaseName = GaragePostgresEndpoint.databaseName
 
     private let runner = ProcessRunner()
     private let maxLogLines = 2000
@@ -1048,8 +1049,9 @@ final class PostgresService: ObservableObject {
 }
 
 private enum KeychainPostgresPassword {
-    private static let service = "com.rickmark.garage.postgres"
-    private static var account: String { NSUserName() }
+    // Shared with the bundled launchers, which read the same item to connect.
+    private static let service = GaragePostgresEndpoint.keychainService
+    private static var account: String { GaragePostgresEndpoint.keychainAccount }
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
     private static var inMemoryPassword: String?

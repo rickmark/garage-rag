@@ -29,6 +29,9 @@ struct GarageApp: App {
                 .environmentObject(appState)
         } label: {
             Image(systemName: menuBarSymbol)
+                // The menu bar item exists even when the window does not (a `--background`
+                // launch by the garage / garage-mcp launchers), so services start from here too.
+                .onAppear { appState.launch() }
         }
         .menuBarExtraStyle(.window)
     }

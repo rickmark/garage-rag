@@ -102,6 +102,12 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+alias(
+    name = "garage-mcp",
+    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
+    visibility = ["//visibility:public"],
+)
+
 # Primary alias used by the build and tests to reference the main executable.
 alias(
     name = "macapp",

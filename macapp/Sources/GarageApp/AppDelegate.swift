@@ -1,4 +1,5 @@
 import AppKit
+import PythonXPCService
 
 /// Keeps the app running in the menu bar after the main window closes (this
 /// is a menu-bar-resident app, not a document-based one), and makes sure the
@@ -16,6 +17,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// The `garage` / `garage-mcp` launchers open the app with `--background` when its
+    /// database is not running: start the services, keep to the menu bar, and close
+    /// the window SwiftUI opens at launch (the Dock icon or menu bar item reopens it).
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard CommandLine.arguments.contains(GarageAppLaunch.backgroundArgument) else { return }
+        Task { @MainActor [weak self] in
+            self?.appState?.launch()
+            for window in NSApp.windows where window.title == "Garage" {
+                window.close()
+            }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

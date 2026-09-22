@@ -8,6 +8,7 @@ swift_library(
     name = "PythonXPCService_protocol",
     srcs = [
         "GarageCommonXPCProtocol.swift",
+        "GaragePostgresEndpoint.swift",
     ],
     module_name = "PythonXPCService_protocol",
     visibility = ["//visibility:public"],

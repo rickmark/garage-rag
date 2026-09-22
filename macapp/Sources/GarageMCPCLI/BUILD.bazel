@@ -2,7 +2,7 @@ load("@rules_swift//swift:swift.bzl", "swift_binary")
 load("//bazel:codesign.bzl", "codesign")
 
 swift_binary(
-    name = "garage_bin",
+    name = "garage_mcp_bin",
     srcs = ["main.swift"],
     additional_linker_inputs = [
         "//ext/python:python_framework",
@@ -32,15 +32,15 @@ swift_binary(
     ],
     deps = [
         "//ext/python:python_3_13",
-        # Interpreter start-up, app launch and the database URL, shared with garage-mcp.
+        # Interpreter start-up, app launch and the database URL, shared with garage.
         # Linked statically; the launcher does not load PythonXPCService.framework at runtime.
         "//macapp/Sources/GarageLauncher",
     ],
 )
 
 codesign(
-    name = "garage",
-    src = ":garage_bin",
+    name = "garage-mcp",
+    src = ":garage_mcp_bin",
     entitlements = select({
         "//bazel:is_store": "//macapp/externals:GarageServer.entitlements",
         "//conditions:default": None,
