@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
+load("//bazel:codesign.bzl", "macho_test")
 
 make(
     name = "pgvector",
@@ -26,5 +27,14 @@ make(
     visibility = ["//visibility:public"],
     deps = [
         "//ext:postgres",
+    ],
+)
+
+macho_test(
+    name = "pgvector_arch_test",
+    src = ":pgvector",
+    archs = [
+        "arm64",
+        "x86_64",
     ],
 )

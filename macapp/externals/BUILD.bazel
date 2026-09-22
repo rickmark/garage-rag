@@ -50,6 +50,33 @@ codesign(
     visibility = ["//visibility:public"],
 )
 
+# libtesseract, shipped as `Contents/Frameworks/libtesseract.dylib` and loaded in-process by
+# garage_rag.extract.tesseract through ctypes. Like libpq it must carry the app's Team ID
+# for library validation. GarageApp's Python runtime exports its location
+# (GARAGE_LIBTESSERACT_PATH) along with the language data's (TESSDATA_PREFIX).
+codesign(
+    name = "libtesseract",
+    src = "//ext/tesseract",
+    out = "libtesseract.dylib",
+    options = ["runtime"],
+    signing_identity = select({
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# `Contents/Resources/tesseract/tessdata/eng.traineddata`, the TESSDATA_PREFIX above.
+copy_to_directory(
+    name = "tessdata_output",
+    srcs = ["//ext/tesseract:tessdata"],
+    out = "tessdata",
+    include_external_repositories = ["+http_file+tessdata_eng"],
+    root_paths = ["file"],
+    visibility = ["//visibility:public"],
+)
+
 # PostgreSQL client library shipped as `Contents/Frameworks/libpq.dylib`. psycopg's pure
 # Python implementation loads it through ctypes; it must carry the app's Team ID
 # (hardened runtime / library validation rejects the Homebrew copy) and the runtime option.
