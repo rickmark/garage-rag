@@ -390,8 +390,12 @@ final class PostgresService: ObservableObject {
 
         do {
             try await ensureInitialized()
+            // Read the password before launching anything, so a Keychain problem shows
+            // up as the reason the database is down rather than as an authentication
+            // failure from the first connection.
+            _ = try postgresPassword()
         } catch {
-            status = .failed("\(error)")
+            status = .failed(error.localizedDescription)
             throw error
         }
 
@@ -433,7 +437,12 @@ final class PostgresService: ObservableObject {
             throw PostgresError.startupTimeout
         }
 
-        try await ensureDatabaseExists(runner: try commandRunner())
+        do {
+            try await ensureDatabaseExists(runner: try commandRunner())
+        } catch {
+            status = .failed(error.localizedDescription)
+            throw error
+        }
         let pending = (try? await fetchPendingMigrations()) ?? []
         self.pendingMigrations = pending
         if !pending.isEmpty {
@@ -1014,27 +1023,16 @@ final class PostgresService: ObservableObject {
         if let cachedPassword {
             return cachedPassword
         }
-        do {
-            if let storedPassword = try KeychainPostgresPassword.load() {
-                cachedPassword = storedPassword
-                return storedPassword
-            }
-        } catch {
-            // In headless/test environments without keychain access, fall through to in-memory generation
+        // A failed read is not "no password yet". Generating one here would overwrite
+        // the cluster's real password in the Keychain (save updates the existing item)
+        // and lock the app out of its own database, so read and save errors surface
+        // as they are. Tests never reach the Keychain: load/save keep it in memory.
+        if let storedPassword = try KeychainPostgresPassword.load() {
+            cachedPassword = storedPassword
+            return storedPassword
         }
-
         let generatedPassword = try KeychainPostgresPassword.generate()
-        do {
-            try KeychainPostgresPassword.save(generatedPassword)
-        } catch {
-            if let storedPassword = try? KeychainPostgresPassword.load() {
-                cachedPassword = storedPassword
-                return storedPassword
-            }
-            // In headless/test environments without keychain access, keep in-memory
-            cachedPassword = generatedPassword
-            return generatedPassword
-        }
+        try KeychainPostgresPassword.save(generatedPassword)
         cachedPassword = generatedPassword
         return generatedPassword
     }
@@ -1060,22 +1058,8 @@ private enum KeychainPostgresPassword {
         if isRunningInTestEnvironment {
             return inMemoryPassword
         }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound {
-            return nil
-        }
-        guard status == errSecSuccess, let data = result as? Data, let password = String(data: data, encoding: .utf8) else {
-            throw PostgresError.other("could not read Postgres password from Keychain (OSStatus \(status))")
-        }
-        return password
+        // The same read the bundled launchers do.
+        return try GaragePostgresEndpoint.readPassword()
     }
 
     static func save(_ password: String) throws {
