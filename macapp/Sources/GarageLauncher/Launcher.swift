@@ -134,7 +134,7 @@ public enum Launcher {
             return 1
         }
         do {
-            return try GaragePythonRuntime.shared.withGIL {
+            return try GaragePythonRuntime.shared.withGIL { () throws -> Int32 in
                 let sys = try Python.attemptImport("sys")
                 sys.argv = PythonObject(CommandLine.arguments)
                 attachStandardStreams(sys)

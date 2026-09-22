@@ -92,9 +92,12 @@ final class AppState: ObservableObject {
         garage = OperationRunner(label: "garage")
         backfill = OperationRunner(label: "garage backfill")
         enrichFacts = OperationRunner(label: "garage enrich-facts")
-        mcp = GarageMCPService(postgres: postgres)
-        grpc = GarageGRPCService(postgres: postgres)
-        mcp.grpc = grpc
+        let grpcService = GarageGRPCService(postgres: postgres)
+        let mcpService = GarageMCPService(postgres: postgres)
+        // Client registration (McpInstall) goes over gRPC.
+        mcpService.grpc = grpcService
+        mcp = mcpService
+        grpc = grpcService
 
         if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
             scheduledMaintenanceEnabled = storedEnabled

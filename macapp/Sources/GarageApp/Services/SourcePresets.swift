@@ -69,7 +69,7 @@ extension AppState {
     func registerModel(preset: ModelPresetEntry) async -> Bool {
         let dims = preset.effectiveDims
         let ref = preset.modelRef
-        await runOperation(triggersMaintenance: true) {
+        return await runOperation(triggersMaintenance: true) {
             try await $0.registerModel(
                 slug: preset.slug,
                 dims: dims > 0 ? dims : nil,

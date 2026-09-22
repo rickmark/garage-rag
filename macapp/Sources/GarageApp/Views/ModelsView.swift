@@ -721,11 +721,12 @@ struct ModelsView: View {
 
                 HStack {
                     Button("Register \(provider.displayName) Model") {
-                        let slug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Snapshot the form for the async operation.
+                        let slugValue = slug.trimmingCharacters(in: .whitespacesAndNewlines)
                         let dimsText = dims.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let modelRef = modelRef.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let provider = provider.cliValue
-                        let makeDefault = makeDefault
+                        let refValue = modelRef.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let providerValue = provider.cliValue
+                        let defaultValue = makeDefault
                         run(triggersMaintenance: true) { grpc in
                             var dimsValue: Int?
                             if !dimsText.isEmpty {
@@ -735,11 +736,11 @@ struct ModelsView: View {
                                 dimsValue = parsed
                             }
                             return try await grpc.registerModel(
-                                slug: slug,
+                                slug: slugValue,
                                 dims: dimsValue,
-                                modelRef: modelRef.isEmpty ? nil : modelRef,
-                                provider: provider,
-                                makeDefault: makeDefault
+                                modelRef: refValue.isEmpty ? nil : refValue,
+                                provider: providerValue,
+                                makeDefault: defaultValue
                             ).message
                         }
                     }
