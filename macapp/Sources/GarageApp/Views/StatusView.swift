@@ -1688,27 +1688,27 @@ struct StatusView: View {
         switch appState.mcp.status {
         case .failed(let message):
             severity = .critical
-            headline = "MCP Server Failed"
+            headline = "MCP Server \(appState.mcp.status.title)"
             details = message
             quickAction = PageStatusItem.QuickAction(label: "Retry") {
                 Task { try? await appState.mcp.start() }
             }
         case .stopped:
             severity = .warning
-            headline = "MCP Server Stopped"
-            details = "Loopback HTTP MCP server is stopped."
+            headline = "MCP Server \(appState.mcp.status.title)"
+            details = appState.mcp.status.detail(endpoint: appState.mcp.endpoint)
             quickAction = appState.postgres.status == .running
                 ? PageStatusItem.QuickAction(label: "Start") { Task { try? await appState.mcp.start() } }
                 : nil
         case .starting:
             severity = .info
-            headline = "MCP Server Starting…"
-            details = "Starting garage-mcp on \(appState.mcp.endpoint.absoluteString)…"
+            headline = "MCP Server \(appState.mcp.status.title)"
+            details = appState.mcp.status.detail(endpoint: appState.mcp.endpoint)
             quickAction = nil
         case .stopping:
             severity = .info
-            headline = "MCP Server Stopping…"
-            details = "Stopping garage-mcp service…"
+            headline = "MCP Server \(appState.mcp.status.title)"
+            details = appState.mcp.status.detail(endpoint: appState.mcp.endpoint)
             quickAction = nil
         case .running:
             if let testRes = appState.mcp.lastTestResult {
@@ -1757,21 +1757,21 @@ struct StatusView: View {
         switch appState.volumeAccess.status {
         case .accessDenied(let reason):
             severity = .critical
-            headline = "Disk Access Denied"
+            headline = appState.volumeAccess.status.title
             details = "App Sandbox permissions prevent reading local document sources: \(reason). Select root volume to restore access."
             quickAction = PageStatusItem.QuickAction(label: "Select Root…") {
                 appState.promptAndSelectRootVolume()
             }
         case .notConfigured:
             severity = .warning
-            headline = "Disk Access Not Configured"
+            headline = appState.volumeAccess.status.title
             details = "Sandbox disk access must be granted before indexing local directories."
             quickAction = PageStatusItem.QuickAction(label: "Select Root…") {
                 appState.promptAndSelectRootVolume()
             }
         case .staleBookmark(let url):
             severity = .warning
-            headline = "Disk Access Stale"
+            headline = appState.volumeAccess.status.title
             details = "Saved bookmark for \(url.path) needs re-granting."
             quickAction = PageStatusItem.QuickAction(label: "Re-grant…") {
                 appState.promptAndSelectRootVolume()

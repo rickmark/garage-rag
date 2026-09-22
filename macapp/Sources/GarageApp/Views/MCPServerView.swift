@@ -301,20 +301,20 @@ struct MCPServerView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center, spacing: 12) {
                     Circle()
-                        .fill(mcpStatusColor)
+                        .fill(appState.mcp.status.color)
                         .frame(width: 12, height: 12)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(mcpStatusTitle)
+                        Text(appState.mcp.status.title)
                             .font(.headline)
-                        Text(mcpStatusDescription)
+                        Text(appState.mcp.status.detail(endpoint: appState.mcp.endpoint))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     Spacer()
 
-                    if isTransitioning || busy {
+                    if appState.mcp.status.isTransitioning || busy {
                         ProgressView().controlSize(.small)
                     }
 
@@ -646,44 +646,6 @@ struct MCPServerView: View {
     }
 
     // MARK: - Helpers & Actions
-
-    private var isTransitioning: Bool {
-        appState.mcp.status == .starting || appState.mcp.status == .stopping
-    }
-
-    private var mcpStatusTitle: String {
-        switch appState.mcp.status {
-        case .stopped: "Stopped"
-        case .starting: "Starting…"
-        case .running: "Running"
-        case .stopping: "Stopping…"
-        case .failed: "Failed"
-        }
-    }
-
-    private var mcpStatusDescription: String {
-        switch appState.mcp.status {
-        case .stopped:
-            return "MCP server is not running."
-        case .starting:
-            return "Starting garage-mcp on \(appState.mcp.endpoint.absoluteString)…"
-        case .running:
-            return "Listening for requests on \(appState.mcp.endpoint.absoluteString)."
-        case .stopping:
-            return "Stopping garage-mcp process…"
-        case .failed(let message):
-            return message
-        }
-    }
-
-    private var mcpStatusColor: Color {
-        switch appState.mcp.status {
-        case .running: return .green
-        case .starting, .stopping: return .blue
-        case .stopped: return .secondary
-        case .failed: return .red
-        }
-    }
 
 
     private func startServer() {

@@ -58,11 +58,11 @@ struct SourcesView: View {
         GroupBox("App Sandbox & Disk Access") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: volumeStatusIcon)
+                    Image(systemName: appState.volumeAccess.status.symbol)
                         .font(.title2)
-                        .foregroundStyle(volumeStatusColor)
+                        .foregroundStyle(appState.volumeAccess.status.color)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(volumeStatusTitle)
+                        Text(appState.volumeAccess.status.title)
                             .fontWeight(.semibold)
                         Text(appState.volumeAccess.status.displayDescription)
                             .font(.caption)
@@ -851,45 +851,6 @@ struct SourcesView: View {
 
     private var notReady: Bool {
         appState.postgres.status != .running || busy || appState.isIngesting || appState.isScanning
-    }
-
-    private var volumeStatusIcon: String {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return "checkmark.seal.fill"
-        case .staleBookmark:
-            return "exclamationmark.triangle.fill"
-        case .accessDenied:
-            return "xmark.octagon.fill"
-        case .notConfigured:
-            return "lock.trianglebadge.exclamationmark"
-        }
-    }
-
-    private var volumeStatusColor: Color {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return .green
-        case .staleBookmark:
-            return .yellow
-        case .accessDenied:
-            return .red
-        case .notConfigured:
-            return .orange
-        }
-    }
-
-    private var volumeStatusTitle: String {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return "Full Volume Access Granted"
-        case .staleBookmark:
-            return "Root Volume Bookmark Stale"
-        case .accessDenied:
-            return "Full Volume Access Denied"
-        case .notConfigured:
-            return "Root Hard Drive Not Selected"
-        }
     }
 
     private func chooseRoot() {
