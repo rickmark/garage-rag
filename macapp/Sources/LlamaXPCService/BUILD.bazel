@@ -10,11 +10,13 @@ swift_library(
     visibility = ["//visibility:private"],
     deps = [
         "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/LlamaEngine",
         "//macapp/Sources/PythonXPCService",
     ],
 )
 
-# The actual XPC service binary
+# The actual XPC service binary. It is the only target that links llama.cpp (through
+# //macapp/Sources/LlamaEngine); the app and the client modules never carry the engine.
 macos_xpc_service(
     name = "LlamaXPCService",
     additional_linker_inputs = [

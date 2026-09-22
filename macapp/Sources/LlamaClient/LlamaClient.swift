@@ -27,7 +27,7 @@ public enum LlamaClientError: LocalizedError {
 /// High-level Swift client for connecting to `LlamaXPCService` over macOS XPC or in-process.
 public final class LlamaClient: @unchecked Sendable {
     private let connection: NSXPCConnection?
-    private let inProcessEngine: LlamaServerEngine?
+    private let inProcessEngine: (any LlamaInferenceEngine)?
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
 
@@ -49,8 +49,9 @@ public final class LlamaClient: @unchecked Sendable {
         self.inProcessEngine = nil
     }
 
-    /// Initialize client using an in-process LlamaServerEngine (ideal for testing or direct embedded use).
-    public init(inProcessEngine: LlamaServerEngine) {
+    /// Initialize client against an in-process engine. Only tests use this (with `MockLlamaServerEngine`);
+    /// the app always talks to `LlamaXPCService` over XPC.
+    public init(inProcessEngine: any LlamaInferenceEngine) {
         self.connection = nil
         self.inProcessEngine = inProcessEngine
     }

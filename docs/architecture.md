@@ -162,3 +162,7 @@ invocations, not from a pool inside the pipeline.
 
 Embedding is a single batching producer at 64 chunks per request: Ollama
 serializes model execution, so client fan-out buys contention, not throughput.
+The `llama_xpc` provider (embeddings and, with `--provider llama_xpc`, facts)
+talks to the app's `LlamaXPCService` over loopback HTTP (`llama_host`, a
+llama-server-compatible API); the app loads and unloads models over XPC, so
+the Python side is a plain client with no model lifecycle of its own.

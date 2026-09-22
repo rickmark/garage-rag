@@ -8,4 +8,5 @@ py_library(
     ],
     imports = ["../.."],
     visibility = ["//visibility:public"],
+    deps = ["//garage_python/src/garage_rag/config"],
 )

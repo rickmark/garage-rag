@@ -1,0 +1,36 @@
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+# llama.cpp C API as a Clang module. Mirrors //macapp/Sources/PythonXPCService:GaragePythonEmbed:
+# an objc_library whose umbrella header includes llama.h from the cmake install prefix. The
+# static archives (libllama, libggml*) and the frameworks Metal/Accelerate need come along
+# through deps, so a single dependency on :LlamaEngine links a working engine.
+objc_library(
+    name = "LlamaCAPI",
+    hdrs = ["LlamaCAPI/LlamaCAPI.h"],
+    includes = ["LlamaCAPI"],
+    linkopts = ["-lc++"],
+    module_name = "LlamaCAPI",
+    sdk_frameworks = [
+        "Accelerate",
+        "Foundation",
+        "Metal",
+        "MetalKit",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//ext:llama_cpp",
+    ],
+)
+
+# The real inference engine (LlamaCppEngine) plus the loopback HTTP listener that exposes it to
+# the Python side. Only LlamaXPCService depends on this; LlamaClient stays engine-free.
+swift_library(
+    name = "LlamaEngine",
+    srcs = glob(["*.swift"]),
+    module_name = "LlamaEngine",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":LlamaCAPI",
+        "//macapp/Sources/LlamaClient",
+    ],
+)

@@ -262,6 +262,13 @@ class Settings(BaseModel):
         default="http://localhost:1234/v1",
         description="Base URL of the LM Studio OpenAI-compatible API (include /v1).",
     )
+    llama_host: str = Field(
+        default="http://127.0.0.1:8790",
+        description=(
+            "Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService "
+            "(loopback only)."
+        ),
+    )
     lmstudio_api_token_file: str | None = Field(
         default=None,
         description=(
@@ -450,6 +457,7 @@ SECTIONS: dict[str, dict[str, str]] = {
     "embedding": {
         "ollama_host": "ollama_host",
         "lmstudio_host": "lmstudio_host",
+        "llama_host": "llama_host",
         "lmstudio_api_token_file": "lmstudio_api_token_file",
         "default_model": "default_embedding_model",
         "batch_size": "embed_batch_size",

@@ -868,7 +868,10 @@ def enrich_facts(
     ] = None,
     provider: Annotated[
         str,
-        typer.Option("--provider", help='Inference backend: "ollama" (default, real inference) or "llama_xpc".'),
+        typer.Option(
+            "--provider",
+            help='Inference backend: "ollama" (default) or "llama_xpc" (the app\'s LlamaXPCService on loopback).',
+        ),
     ] = "ollama",
 ) -> None:
     """Distill documents into atomic facts. Re-extraction replaces a document's prior facts."""

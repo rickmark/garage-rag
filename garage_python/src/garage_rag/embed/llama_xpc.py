@@ -1,6 +1,9 @@
 """Llama XPC embedding provider.
 
-Calls LlamaXPCService via LlamaXPCClient to generate embedding vectors.
+Posts chunk text to the llama.cpp HTTP API that the app's LlamaXPCService
+serves on loopback (``settings.llama_host``) via :class:`LlamaXPCClient`.
+Connection failures and server errors surface as :class:`EmbeddingError`
+through the :class:`Embedder` base, like every other backend.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ __all__ = ["EmbeddingError", "LlamaXPCEmbedder"]
 
 
 class LlamaXPCEmbedder(Embedder):
-    """Embedding backend backed by LlamaXPCService over macOS XPC."""
+    """Embedding backend backed by LlamaXPCService's loopback HTTP API."""
 
     provider_name = "llama_xpc"
 

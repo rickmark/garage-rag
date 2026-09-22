@@ -1,99 +1,115 @@
 """Tests for LlamaXPCEmbedder and factory integration.
 
-The live tests need a running LlamaXPCService and local GGUF model files, which
-only exist on the developer's machine. They are skipped -- not silently passed
--- anywhere those files are absent (CI, Linux, a fresh checkout).
+Pure-unit tests drive the embedder with hand-rolled clients; one test runs it
+end to end against a fake llama-server on loopback. Nothing here needs the
+real LlamaXPCService or a GGUF file -- that belongs in an integration test.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+import json
+import threading
+from collections.abc import Iterator
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 import pytest
 
+from garage_rag.config import Settings, reset_settings, set_settings
 from garage_rag.embed.base import Embedder, EmbeddingError
 from garage_rag.embed.factory import get_embedder
 from garage_rag.embed.llama_xpc import LlamaXPCEmbedder
 from garage_rag.xpc.llama_xpc import LlamaXPCClient
 
-MXBAI_MODEL_PATH = Path("/Users/rickmark/Developer/garage/models/mxbai-embed-xsmall-v1-q8_0.gguf")
-BGE_M3_MODEL_PATH = Path("/Users/rickmark/Desktop/bge-m3-Q8_0.gguf")
-
-needs_live_xpc = pytest.mark.skipif(
-    not MXBAI_MODEL_PATH.exists(),
-    reason=f"requires a live LlamaXPCService and {MXBAI_MODEL_PATH}",
-)
+DIMS = 6
 
 
-@needs_live_xpc
-def test_llama_embedder_protocol():
-    client = LlamaXPCClient()
-    embedder = LlamaXPCEmbedder(model_ref="default", client=client)
+class _EmbeddingsHandler(BaseHTTPRequestHandler):
+    """Just enough of llama-server for the embedder: ``POST /v1/embeddings``."""
+
+    seen: list[dict[str, Any]]
+
+    def log_message(self, *_args: Any) -> None:
+        pass
+
+    def do_POST(self) -> None:  # noqa: N802 - http.server API
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.seen.append(body)
+        if self.path != "/v1/embeddings":
+            payload, status = {"error": {"message": "not found", "code": 404}}, 404
+        else:
+            inputs = body["input"]
+            data = [
+                {"object": "embedding", "index": i, "embedding": [float(i + 1)] + [0.0] * (DIMS - 1)}
+                for i in range(len(inputs))
+            ]
+            payload, status = {"object": "list", "data": data, "model": body.get("model"), "usage": {}}, 200
+        raw = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+@dataclass
+class FakeServer:
+    url: str
+    seen: list[dict[str, Any]]
+
+
+@pytest.fixture
+def fake_server() -> Iterator[FakeServer]:
+    seen: list[dict[str, Any]] = []
+    handler = type("Handler", (_EmbeddingsHandler,), {"seen": seen})
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield FakeServer(url=f"http://127.0.0.1:{server.server_address[1]}", seen=seen)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_llama_embedder_against_fake_server(fake_server: FakeServer) -> None:
+    embedder = LlamaXPCEmbedder(model_ref="bge-m3", client=LlamaXPCClient(fake_server.url, timeout=5.0))
     assert isinstance(embedder, Embedder)
 
-    texts = ["First test document", "Second document for embeddings"]
-    vectors = embedder.embed(texts)
+    vectors = embedder.embed(["first", "second"])
     assert len(vectors) == 2
-    assert len(vectors[0]) == 768
-    assert len(vectors[1]) == 768
+    assert vectors[0][0] == 1.0 and vectors[1][0] == 2.0
+    assert all(len(v) == DIMS for v in vectors)
+    assert embedder.probe_dims() == DIMS
 
-    dims = embedder.probe_dims()
-    assert dims == 768
-
-
-@needs_live_xpc
-def test_embedder_factory_llama_xpc():
-    embedder = get_embedder("llama_xpc", "default")
-    assert isinstance(embedder, LlamaXPCEmbedder)
-    assert embedder.model_ref == "default"
-
-    dims = embedder.probe_dims()
-    assert dims == 768
+    assert fake_server.seen[0] == {"input": ["first", "second"], "model": "bge-m3"}
+    assert fake_server.seen[1] == {"input": ["dimension probe"], "model": "bge-m3"}
 
 
-@needs_live_xpc
-def test_llama_embedder_mxbai_embed_xsmall():
-    client = LlamaXPCClient()
-    load_res = client.load_model(str(MXBAI_MODEL_PATH), alias="mxbai-embed-xsmall")
-    assert load_res["success"] is True
-
-    embedder = LlamaXPCEmbedder(model_ref="mxbai-embed-xsmall", client=client)
-    assert isinstance(embedder, Embedder)
-
-    dims = embedder.probe_dims()
-    assert dims == 384
-
-    texts = [
-        "First document for mxbai-embed-xsmall test embeddings.",
-        "Second query testing semantic search indexing with 384-dimension vectors.",
-    ]
-    vectors = embedder.embed(texts)
-    assert len(vectors) == 2
-    assert len(vectors[0]) == 384
-    assert len(vectors[1]) == 384
+def test_embedder_factory_llama_xpc_uses_configured_host(fake_server: FakeServer) -> None:
+    set_settings(Settings(llama_host=fake_server.url))
+    try:
+        embedder = get_embedder("llama_xpc", "bge-m3")
+        assert isinstance(embedder, LlamaXPCEmbedder)
+        assert embedder.model_ref == "bge-m3"
+        assert embedder.client.base_url == fake_server.url
+        assert embedder.probe_dims() == DIMS
+    finally:
+        reset_settings()
 
 
-@pytest.mark.skipif(
-    not BGE_M3_MODEL_PATH.exists(),
-    reason=f"requires a live LlamaXPCService and {BGE_M3_MODEL_PATH}",
-)
-def test_llama_embedder_bge_m3():
-    client = LlamaXPCClient()
-    load_res = client.load_model(str(BGE_M3_MODEL_PATH), alias="bge-m3")
-    assert load_res["success"] is True
+def test_llama_embedder_unreachable_server_is_embedding_error() -> None:
+    """A connection failure comes out as the one EmbeddingError callers catch."""
+    import socket
 
-    embedder = LlamaXPCEmbedder(model_ref="bge-m3", client=client)
-    assert isinstance(embedder, Embedder)
-
-    dims = embedder.probe_dims()
-    assert dims == 1024
-
-    texts = [
-        "First document for BGE-M3 dense multilingual embeddings.",
-        "Second query testing semantic search indexing with 1024-dimension vectors.",
-    ]
-    vectors = embedder.embed(texts)
-    assert len(vectors) == 2
-    assert len(vectors[0]) == 1024
-    assert len(vectors[1]) == 1024
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    embedder = LlamaXPCEmbedder(model_ref="bge-m3", client=LlamaXPCClient(f"http://127.0.0.1:{port}", timeout=2.0))
+    with pytest.raises(EmbeddingError, match="llama_xpc embed failed for bge-m3.*cannot reach"):
+        embedder.embed(["hello"])
 
 
 class _FailingClient:
@@ -137,8 +153,10 @@ def test_llama_embedder_probe_rejects_empty_vector():
 
 def test_embedding_error_is_one_class_everywhere():
     """cli.py and service/server.py catch the ollama spelling; it must be the same class."""
+    from garage_rag.embed.llama_xpc import EmbeddingError as llama_error
     from garage_rag.embed.lmstudio import EmbeddingError as lmstudio_error
     from garage_rag.embed.ollama import EmbeddingError as ollama_error
 
     assert ollama_error is EmbeddingError
     assert lmstudio_error is EmbeddingError
+    assert llama_error is EmbeddingError

@@ -2,24 +2,25 @@ import Foundation
 import Darwin
 import OSLog
 import LlamaClient
+import LlamaEngine
 import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.llama-xpc", category: "LlamaXPCService")
 
-/// Wraps the in-process llama inference engine as a managed service so the host can (re)load / unload the
-/// configured model. `start()` is a no-op until `loadModel` has configured a model path.
+/// Wraps the llama.cpp engine as a managed service so the host can (re)load / unload the configured
+/// model. `start()` is a no-op until `loadModel` has configured a model path.
 final class LlamaEngineManagedService: GarageManagedService {
     let name = "llama-engine"
 
     private let lock = NSLock()
-    private let engine: LlamaServerEngine
+    private let engine: LlamaCppEngine
     private var modelPath: String?
     private var alias: String?
     private var configJson: String?
     private var autoStart = false
     private(set) var lastMessage: String?
 
-    init(engine: LlamaServerEngine) {
+    init(engine: LlamaCppEngine) {
         self.engine = engine
     }
 
@@ -62,7 +63,7 @@ final class LlamaEngineManagedService: GarageManagedService {
         lastMessage = res.message
         lock.unlock()
         if res.success {
-            logger.info("Model loaded successfully: \(res.message, privacy: .public)")
+            logger.info("Model loaded: \(res.message, privacy: .public)")
             GarageXPCOutputCapture.shared.log(message: "llama-engine loaded model \(path)")
         } else {
             logger.error("Failed to load model: \(res.message, privacy: .public)")
@@ -80,17 +81,59 @@ final class LlamaEngineManagedService: GarageManagedService {
     }
 }
 
+/// The loopback HTTP listener as a managed service: up for the lifetime of the helper, independent
+/// of whether a model is loaded (so `/health` can say "no_model_loaded"). The Python `llama_xpc`
+/// provider talks to this port; the app keeps using XPC.
+final class LlamaHTTPManagedService: GarageManagedService {
+    let name = "llama-http"
+    let server: LlamaHTTPServer
+
+    init(server: LlamaHTTPServer) {
+        self.server = server
+    }
+
+    var isRunning: Bool { server.isListening }
+
+    func start() throws {
+        do {
+            try server.start()
+        } catch {
+            throw GarageXPCServiceError.notRunning(error.localizedDescription)
+        }
+        logger.info("llama HTTP API listening on \(self.server.url, privacy: .public)")
+        GarageXPCOutputCapture.shared.log(message: "llama HTTP API listening on \(server.url)")
+    }
+
+    func stop(graceful: Bool) throws {
+        server.stop()
+    }
+}
+
 final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtocol {
-    private let engine = LlamaServerEngine.shared
+    private let engine: LlamaCppEngine
     private let engineService: LlamaEngineManagedService
+    private let httpService: LlamaHTTPManagedService
 
     init() {
-        engineService = LlamaEngineManagedService(engine: engine)
+        let engine = LlamaCppEngine()
+        let server = LlamaHTTPServer(engine: engine, port: LlamaXPCServiceDelegate.configuredHTTPPort())
+        engine.httpURL = server.url
+        self.engine = engine
+        self.engineService = LlamaEngineManagedService(engine: engine)
+        self.httpService = LlamaHTTPManagedService(server: server)
         super.init(
             serviceName: "LlamaXPCService",
             logFileName: "llama-xpc.log",
             usesPython: false
         )
+    }
+
+    /// `GARAGE_LLAMA_HTTP_PORT` overrides the default so two builds can coexist on one machine.
+    private static func configuredHTTPPort() -> UInt16 {
+        if let raw = ProcessInfo.processInfo.environment["GARAGE_LLAMA_HTTP_PORT"], let port = UInt16(raw), port > 0 {
+            return port
+        }
+        return LlamaXPCConstants.defaultHTTPPort
     }
 
     override var exportedInterface: NSXPCInterface {
@@ -99,16 +142,17 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
 
     override func additionalSelfTests() -> [GarageXPCSelfTest] {
         let engine = self.engine
+        let server = self.httpService.server
         return [
-            GarageXPCSelfTest(name: "Llama Engine", description: "Queries the llama inference engine health endpoint and reports slot usage.", requiresPython: false) {
+            GarageXPCSelfTest(name: "Llama Engine", description: "Queries the llama.cpp engine health route and reports the loaded model.", requiresPython: false) {
                 let health = engine.handleHealth()
                 guard let status = health["status"] as? String else {
                     throw GarageXPCSelfTestFailure("Llama engine health returned no status", details: String(describing: health))
                 }
-                let idle = health["slots_idle"] as? Int ?? 0
-                let processing = health["slots_processing"] as? Int ?? 0
-                let modelState = engine.currentModelPath != nil ? "model_loaded" : "idle"
-                return "Status: \(status)\nEngine: \(modelState)\nModel: \(engine.currentModelPath ?? "none")\nSlots idle: \(idle), processing: \(processing)"
+                let props = engine.handleProps()
+                let model = engine.currentModelPath ?? "none"
+                let desc = (props["model_description"] as? String) ?? ""
+                return "Status: \(status)\nModel: \(model)\n\(desc)"
             },
             GarageXPCSelfTest(name: "Model File", description: "Verifies the currently loaded model path exists on disk.", requiresPython: false) {
                 guard let path = engine.currentModelPath else {
@@ -121,137 +165,80 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
                 let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
                 return "Model: \(path)\nSize: \(size) bytes"
             },
+            GarageXPCSelfTest(name: "HTTP API", description: "Reports whether the loopback llama-server API is listening.", requiresPython: false) {
+                guard server.isListening else {
+                    throw GarageXPCSelfTestFailure("llama HTTP API is not listening on \(server.url)")
+                }
+                return "Listening on \(server.url)"
+            },
         ]
     }
 
     override func registerManagedServices(in host: GarageXPCServiceHost) {
+        host.register(httpService)
         host.register(engineService)
     }
 
     // MARK: - LlamaXPCServiceProtocol
 
+    private func reply(_ route: String, _ reply: @escaping (String?, Error?) -> Void, _ body: () throws -> [String: Any]) {
+        do {
+            reply(engine.serializeJson(try body()), nil)
+        } catch {
+            logger.error("\(route, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            reply(nil, error)
+        }
+    }
+
     func health(with reply: @escaping (String?, Error?) -> Void) {
-        let dict = engine.handleHealth()
-        let json = engine.serializeJson(dict)
-        reply(json, nil)
+        reply(engine.serializeJson(engine.handleHealth()), nil)
     }
 
     func props(with reply: @escaping (String?, Error?) -> Void) {
-        let dict = engine.handleProps()
-        let json = engine.serializeJson(dict)
-        reply(json, nil)
+        reply(engine.serializeJson(engine.handleProps()), nil)
     }
 
     func models(with reply: @escaping (String?, Error?) -> Void) {
-        let dict = engine.handleModels()
-        let json = engine.serializeJson(dict)
-        reply(json, nil)
+        reply(engine.serializeJson(engine.handleModels()), nil)
     }
 
     func completion(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling completion request")
-            let dict = try engine.handleCompletion(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Completion request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("completion", reply) { try engine.handleCompletion(jsonString: requestJson) }
     }
 
     func chatCompletion(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling chatCompletion request")
-            let dict = try engine.handleChatCompletion(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Chat completion request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("chatCompletion", reply) { try engine.handleChatCompletion(jsonString: requestJson) }
     }
 
     func embeddings(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling embeddings request")
-            let dict = try engine.handleEmbeddings(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Embeddings request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("embeddings", reply) { try engine.handleEmbeddings(jsonString: requestJson) }
     }
 
     func tokenize(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling tokenize request")
-            let dict = try engine.handleTokenize(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Tokenize request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("tokenize", reply) { try engine.handleTokenize(jsonString: requestJson) }
     }
 
     func detokenize(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling detokenize request")
-            let dict = try engine.handleDetokenize(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Detokenize request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("detokenize", reply) { try engine.handleDetokenize(jsonString: requestJson) }
     }
 
     func rerank(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling rerank request")
-            let dict = try engine.handleRerank(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Rerank request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("rerank", reply) { try engine.handleRerank(jsonString: requestJson) }
     }
 
     func infill(requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling infill request")
-            let dict = try engine.handleInfill(jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("Infill request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("infill", reply) { try engine.handleInfill(jsonString: requestJson) }
     }
 
     func slots(with reply: @escaping (String?, Error?) -> Void) {
-        let dict = engine.handleSlots()
-        let json = engine.serializeJson(dict)
-        reply(json, nil)
+        reply(engine.serializeJson(engine.handleSlots()), nil)
     }
 
     func slotAction(slotId: Int, action: String, requestJson: String, with reply: @escaping (String?, Error?) -> Void) {
-        do {
-            logger.debug("Handling slotAction request: slotId=\(slotId), action=\(action, privacy: .public)")
-            let dict = try engine.handleSlotAction(slotId: slotId, action: action, jsonString: requestJson)
-            let json = engine.serializeJson(dict)
-            reply(json, nil)
-        } catch {
-            logger.error("SlotAction request failed: \(error.localizedDescription, privacy: .public)")
-            reply(nil, error)
-        }
+        self.reply("slotAction", reply) { try engine.handleSlotAction(slotId: slotId, action: action, jsonString: requestJson) }
     }
 
     func handleServerRequest(endpoint: String, method: String, jsonBody: String?, with reply: @escaping (Int, String?, String?) -> Void) {
-        logger.debug("Handling server request: method=\(method, privacy: .public), endpoint=\(endpoint, privacy: .public)")
         let result = engine.handleRoute(endpoint: endpoint, method: method, jsonBody: jsonBody)
         reply(result.statusCode, result.responseBody, nil)
     }
@@ -278,12 +265,13 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
             reply(true, nil)
             return
         }
-        host.stopAll(graceful: true) { [engineService] states in
-            if case .failed(let message)? = states[engineService.name] {
+        host.restart(named: engineService.name, graceful: true) { [engineService] state in
+            // With no configuration, restart stops the engine and start() becomes a no-op.
+            if case .failed(let message) = state {
                 logger.error("Failed to unload model: \(message, privacy: .public)")
                 reply(false, nil)
             } else {
-                reply(true, nil)
+                reply(!engineService.isRunning, nil)
             }
         }
     }

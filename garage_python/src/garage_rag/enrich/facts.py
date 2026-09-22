@@ -38,7 +38,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import textwrap
-from urllib.parse import urlsplit
 
 import langextract as lx
 from sqlalchemy import func
@@ -48,6 +47,7 @@ from garage_rag.config import get_settings
 from garage_rag.db.models import Chunk, Document, Fact
 from garage_rag.enrich.egress import assert_egress_allowed
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
+from garage_rag.xpc.llama_xpc import is_loopback_url
 
 log = logging.getLogger(__name__)
 
@@ -55,10 +55,9 @@ log = logging.getLogger(__name__)
 DEFAULT_MODEL_ID = "gemma2:2b"
 
 # Fact-distillation backends. "ollama" talks to a local Ollama server (the
-# default, and the only one that runs real inference today); "llama_xpc"
-# routes through LlamaXPCLanguageModel -- see that module's docstring for why
-# that's an in-process call rather than an HTTP one, and for the current
-# caveat that LlamaXPCService has no real model backend yet.
+# default); "llama_xpc" routes through LlamaXPCLanguageModel, which posts to
+# the llama.cpp HTTP API the app's LlamaXPCService serves on loopback
+# (``llama_host``) -- see that module's docstring.
 FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
 DEFAULT_PROVIDER = "ollama"
 
@@ -66,7 +65,6 @@ DEFAULT_PROVIDER = "ollama"
 # explicit ``provider`` bypasses model-id pattern matching entirely.
 OLLAMA_PROVIDER = "OllamaLanguageModel"
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 PROMPT = textwrap.dedent("""\
     Extract every standalone fact stated in this document.
@@ -107,12 +105,6 @@ def resolve_model_url(model_url: str | None = None) -> str:
     return model_url or get_settings().ollama_host
 
 
-def is_loopback_url(url: str) -> bool:
-    """Whether ``url`` points at this machine."""
-    host = (urlsplit(url).hostname or "").lower()
-    return host in _LOOPBACK_HOSTS or host.startswith("127.")
-
-
 def ollama_model_config(model_id: str, model_url: str) -> lx.factory.ModelConfig:
     """Build the LangExtract config that pins inference to the local Ollama server.
 
@@ -144,8 +136,8 @@ def extract_facts(
     ``provider`` selects the inference backend: "ollama" (default) talks to a
     local Ollama server via LangExtract's built-in provider, pinned explicitly
     (see the module docstring); "llama_xpc" runs the prompt through
-    ``LlamaXPCLanguageModel`` in-process instead. Neither path ever hands
-    ``lx.extract`` a bare ``model_id``.
+    ``LlamaXPCLanguageModel``, which posts to the app's LlamaXPCService on
+    loopback. Neither path ever hands ``lx.extract`` a bare ``model_id``.
 
     ``use_schema_constraints`` is off because both backends already emit JSON
     (that is all the example-derived constraint would set for them), and

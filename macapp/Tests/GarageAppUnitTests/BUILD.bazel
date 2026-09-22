@@ -17,6 +17,7 @@ swift_library(
         "//macapp/Sources/MCPServerClient",
         "//macapp/Sources/ModelDownloadClient",
         "//macapp/Sources/PythonXPCService",
+        "//macapp/Tests/LlamaTestSupport",
     ],
 )
 

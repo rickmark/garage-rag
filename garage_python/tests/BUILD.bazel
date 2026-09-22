@@ -188,6 +188,7 @@ py_test(
     name = "test_llama_xpc",
     srcs = ["test_llama_xpc.py"],
     deps = [
+        "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
@@ -197,6 +198,7 @@ py_test(
     name = "test_llama_embedder",
     srcs = ["test_llama_embedder.py"],
     deps = [
+        "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",

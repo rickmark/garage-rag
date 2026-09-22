@@ -67,10 +67,12 @@ Two features post document text over HTTP to a **configured local server**,
 which is assumed to be this machine:
 
 - **Embeddings** — chunk text goes to `ollama_host` (default
-  `http://localhost:11434`) or `lmstudio_host` (default `http://localhost:1234/v1`),
-  depending on the registered model's provider.
+  `http://localhost:11434`), `lmstudio_host` (default `http://localhost:1234/v1`)
+  or `llama_host` (default `http://127.0.0.1:8790`, the llama.cpp API served by
+  the app's own `LlamaXPCService`), depending on the registered model's provider.
 - **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
-  `ollama_host`. The LangExtract provider is **pinned to Ollama** by an explicit
+  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. The LangExtract
+  provider is **pinned to Ollama** by an explicit
   `ModelConfig(provider="OllamaLanguageModel")`; without that pin LangExtract
   chooses its backend by regex on the model name, and a `gemini-*` or `gpt-*`
   model id would have been sent to Google or OpenAI with an API key from the
@@ -82,7 +84,10 @@ own messages. If you point `ollama_host` at another machine, fact extraction
 runs each document's class through `assert_egress_allowed` first, so
 communications are still never posted off-box; embeddings do not currently make
 that check, so keep `ollama_host`/`lmstudio_host` on loopback if you index
-communications.
+communications. `llama_host` is different: it exists only for on-device
+inference, so `LlamaXPCClient` refuses to construct at all unless the host is
+loopback (`127.0.0.1`, `localhost` or `::1`) and never routes through an HTTP
+proxy, whatever `http_proxy` says.
 
 ## macOS permissions (TCC)
 

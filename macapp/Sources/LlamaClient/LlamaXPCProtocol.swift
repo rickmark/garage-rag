@@ -52,4 +52,8 @@ public protocol LlamaXPCServiceProtocol: GarageCommonXPCServiceProtocol {
 
 public enum LlamaXPCConstants {
     public static let serviceName = "me.rickmark.garage-rag.llama-xpc"
+    /// Port of the loopback HTTP listener LlamaXPCService runs beside its XPC interface. The Python
+    /// `llama_xpc` provider (backfill, enrich-facts) reaches the engine here; the default must match
+    /// `llama_host` in garage_python/src/garage_rag/config/__init__.py.
+    public static let defaultHTTPPort: UInt16 = 8790
 }

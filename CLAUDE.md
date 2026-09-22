@@ -202,6 +202,11 @@ setting is added, renamed, or documented**; a test enforces every field is docum
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.
+- `LlamaXPCService` hosts llama.cpp itself (`macapp/Sources/LlamaEngine`, statically linked from
+  `//ext/llama_cpp`, Metal + Accelerate) and serves it two ways: NSXPC for the app (load/unload,
+  health, test calls) and a llama-server-compatible HTTP API on `127.0.0.1:8790` for the Python
+  `llama_xpc` provider (`backfill`, `enrich-facts` run in their own process). `MockLlamaServerEngine`
+  in `macapp/Tests/LlamaTestSupport` is the only other `LlamaInferenceEngine` and is test-only.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this
