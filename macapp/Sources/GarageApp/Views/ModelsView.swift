@@ -14,39 +14,39 @@ struct ModelsView: View {
         var id: String { rawValue }
     }
 
-    @State private var configMode: ConfigMode = .preset
-    @State private var selectedPresetSlug: String = "bge-m3"
-    @State private var showAdvancedSettings: Bool = false
+    @State var configMode: ConfigMode = .preset
+    @State var selectedPresetSlug: String = "bge-m3"
+    @State var showAdvancedSettings: Bool = false
 
-    @State private var slug: String = "bge-m3"
-    @State private var modelName: String = "BGE-M3 (Embeddings)"
-    @State private var dims: String = "1024"
-    @State private var modelRef: String = "bge-m3"
-    @State private var provider: ModelProvider = .llamaXPC
-    @State private var makeDefault: Bool = false
-    @State private var busy: Bool = false
-    @State private var lmStudioToken: String = ""
+    @State var slug: String = "bge-m3"
+    @State var modelName: String = "BGE-M3 (Embeddings)"
+    @State var dims: String = "1024"
+    @State var modelRef: String = "bge-m3"
+    @State var provider: ModelProvider = .llamaXPC
+    @State var makeDefault: Bool = false
+    @State var busy: Bool = false
+    @State var lmStudioToken: String = ""
 
     // Llama model loading configuration state
-    @State private var gpuLayers: Int = 33
-    @State private var cpuThreads: Int = 4
-    @State private var showUnloadConfirmation: Bool = false
+    @State var gpuLayers: Int = 33
+    @State var cpuThreads: Int = 4
+    @State var showUnloadConfirmation: Bool = false
     /// Alias the pending "Unload" confirmation applies to; `nil` unloads every model.
-    @State private var pendingUnloadAlias: String? = nil
-    @State private var settingFactsModelSlug: String? = nil
+    @State var pendingUnloadAlias: String? = nil
+    @State var settingFactsModelSlug: String? = nil
 
     // Testing Playground state
-    @State private var selectedTestModelSlug: String = ""
-    @State private var testPrompt: String = "Garage provides local retrieval-augmented generation for personal archives."
-    @State private var testEmbeddingDimensions: String = ""
-    @State private var searchText: String = ""
-    @State private var registeringPresetSlug: String? = nil
+    @State var selectedTestModelSlug: String = ""
+    @State var testPrompt: String = "Garage provides local retrieval-augmented generation for personal archives."
+    @State var testEmbeddingDimensions: String = ""
+    @State var searchText: String = ""
+    @State var registeringPresetSlug: String? = nil
 
-    private var llama: LlamaService {
+    var llama: LlamaService {
         appState.llama
     }
 
-    private var modelDownload: ModelDownloadService {
+    var modelDownload: ModelDownloadService {
         appState.modelDownload
     }
 
@@ -76,119 +76,6 @@ struct ModelsView: View {
             if str.contains("lmstudio") || str.contains("lm_studio") || str.contains("lm studio") { return .lmStudio }
             return .llamaXPC
         }
-    }
-
-    // MARK: - Unified Model Item
-    struct UnifiedModelItem: Identifiable, Hashable {
-        var id: String { slug }
-        let name: String
-        let slug: String
-        let provider: ModelProvider
-        let modelRef: String
-        let dims: Int?
-        let storedDims: Int?
-        let contextSize: Int?
-        let isDefault: Bool
-        let downloadModelId: String?
-        let downloadFile: String?
-        let sha256: String?
-        let catalogItem: ModelCatalogItem?
-        let registeredModel: RegisteredModel?
-        let presetEntry: ModelPresetEntry?
-
-        static func == (lhs: UnifiedModelItem, rhs: UnifiedModelItem) -> Bool {
-            lhs.slug == rhs.slug &&
-            lhs.isDefault == rhs.isDefault &&
-            lhs.dims == rhs.dims &&
-            lhs.provider == rhs.provider
-        }
-
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(slug)
-            hasher.combine(isDefault)
-        }
-
-        var effectiveDownloadURL: String? {
-            if let downloadModelId = downloadModelId, let downloadFile = downloadFile,
-               !downloadModelId.isEmpty, !downloadFile.isEmpty {
-                return "https://huggingface.co/\(downloadModelId)/resolve/main/\(downloadFile)"
-            }
-            return catalogItem?.downloadUrl
-        }
-
-        var effectiveFilename: String? {
-            if let downloadFile = downloadFile, !downloadFile.isEmpty {
-                return downloadFile
-            }
-            return catalogItem?.filename
-        }
-
-        var effectiveSha256: String? {
-            sha256 ?? presetEntry?.sha256 ?? catalogItem?.sha256
-        }
-    }
-
-    private var unifiedModels: [UnifiedModelItem] {
-        var items: [UnifiedModelItem] = []
-
-        // The list is built from the database's registered models only; presets that
-        // are not registered yet are listed separately in `unregisteredPresetModels`.
-        for reg in appState.registeredModels {
-            let prov = ModelProvider.from(string: reg.provider)
-            let preset = appState.presetModels.first { $0.slug == reg.slug || $0.modelId == reg.modelRef }
-            let catItem = ModelPresetCatalog.item(forModelIdOrSlug: reg.slug) ?? (preset != nil ? ModelPresetCatalog.item(forModelIdOrSlug: preset!.slug) : nil)
-            items.append(
-                UnifiedModelItem(
-                    name: preset?.name ?? reg.slug,
-                    slug: reg.slug,
-                    provider: prov,
-                    modelRef: reg.modelRef,
-                    dims: reg.dims > 0 ? reg.dims : preset?.effectiveDims,
-                    storedDims: reg.storedDims > 0 ? reg.storedDims : nil,
-                    contextSize: preset?.contextSize ?? 8192,
-                    isDefault: reg.isDefault,
-                    downloadModelId: preset?.downloadModelId,
-                    downloadFile: preset?.downloadFile,
-                    sha256: preset?.sha256 ?? catItem?.sha256,
-                    catalogItem: catItem,
-                    registeredModel: reg,
-                    presetEntry: preset
-                )
-            )
-        }
-
-        return items.sorted {
-            if $0.isDefault != $1.isDefault {
-                return $0.isDefault && !$1.isDefault
-            }
-            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-        }
-    }
-
-    private var filteredModels: [UnifiedModelItem] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed.isEmpty {
-            return unifiedModels
-        }
-        return unifiedModels.filter {
-            $0.name.lowercased().contains(trimmed) ||
-            $0.slug.lowercased().contains(trimmed) ||
-            $0.provider.displayName.lowercased().contains(trimmed) ||
-            $0.modelRef.lowercased().contains(trimmed)
-        }
-    }
-
-    /// Presets from `models.json` that aren't registered yet, with featured presets surfaced first.
-    private var unregisteredPresetModels: [ModelPresetEntry] {
-        let registeredSlugs = Set(appState.registeredModels.map(\.slug))
-        return appState.presetModels
-            .filter { !registeredSlugs.contains($0.slug) }
-            .sorted { lhs, rhs in
-                if lhs.featured != rhs.featured {
-                    return lhs.featured && !rhs.featured
-                }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
     }
 
     // MARK: - Body
@@ -269,7 +156,7 @@ struct ModelsView: View {
         }
     }
 
-    private func sectionHeading(_ title: String, subtitle: String) -> some View {
+    func sectionHeading(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.title2.bold())
@@ -282,7 +169,7 @@ struct ModelsView: View {
 
     // MARK: - Section 1: Model Catalog & Registered Models List
 
-    private var modelCatalogSection: some View {
+    var modelCatalogSection: some View {
         GroupBox("Registered Models & Status") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -343,7 +230,7 @@ struct ModelsView: View {
         }
     }
 
-    private func modelCard(for item: UnifiedModelItem) -> some View {
+    func modelCard(for item: UnifiedModelItem) -> some View {
         let isDownloaded = isModelFileDownloaded(item: item)
         let downloadedInfo = getDownloadedInfo(item: item)
         let isDownloading = isModelDownloading(item: item)
@@ -647,7 +534,7 @@ struct ModelsView: View {
 
     // MARK: - Section 2: Available Models (Not Yet Registered)
 
-    private var availableModelsSection: some View {
+    var availableModelsSection: some View {
         GroupBox("Available Models (Not Yet Registered)") {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Presets from models.json that aren't registered yet. Register one to enable embedding and search with it.")
@@ -664,7 +551,7 @@ struct ModelsView: View {
         }
     }
 
-    private func availablePresetCard(_ preset: ModelPresetEntry) -> some View {
+    func availablePresetCard(_ preset: ModelPresetEntry) -> some View {
         let isRegistering = registeringPresetSlug == preset.slug
 
         return HStack(alignment: .top, spacing: 12) {
@@ -713,7 +600,7 @@ struct ModelsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func registerPreset(_ preset: ModelPresetEntry) {
+    func registerPreset(_ preset: ModelPresetEntry) {
         registeringPresetSlug = preset.slug
         Task {
             await appState.registerModel(preset: preset)
@@ -724,7 +611,7 @@ struct ModelsView: View {
 
     // MARK: - Section 3: Model Configuration & Registration
 
-    private var configurationSection: some View {
+    var configurationSection: some View {
         GroupBox("Model Configuration & Registration") {
             VStack(alignment: .leading, spacing: 12) {
                 Picker("Configuration Mode", selection: $configMode) {
@@ -872,156 +759,15 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 4: Non-Truncated Embedding Testing & Inspection
-
-    private var embeddingInspectionSection: some View {
-        GroupBox("Embeddings Inspection & Testing (Full Vector)") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Test and inspect the complete embedding vector of any model without truncation.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Model") {
-                    Picker("Model", selection: $selectedTestModelSlug) {
-                        Text("Active / Default Model").tag("")
-                        ForEach(unifiedModels) { m in
-                            Text("\(m.name) (\(m.slug))").tag(m.slug)
-                        }
-                    }
-                    .labelsHidden()
-                    .onChange(of: selectedTestModelSlug) { _, newSlug in
-                        if !newSlug.isEmpty, let matched = unifiedModels.first(where: { $0.slug == newSlug }) {
-                            if let dimsVal = matched.dims {
-                                testEmbeddingDimensions = "\(dimsVal)"
-                            }
-                        }
-                    }
-                }
-
-                LabeledContent("Input Text to Embed") {
-                    TextEditor(text: $testPrompt)
-                        .font(.system(.body, design: .default))
-                        .frame(height: 60)
-                        .border(Color.secondary.opacity(0.3), width: 1)
-                }
-
-                HStack {
-                    LabeledContent("Target Dimensions (optional)") {
-                        TextField("default", text: $testEmbeddingDimensions)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 100)
-                    }
-
-                    Spacer()
-
-                    Button("Generate Embedding Vector") {
-                        let parsedDims = Int(testEmbeddingDimensions.trimmingCharacters(in: .whitespacesAndNewlines))
-                        let targetModel = selectedTestModelSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Task {
-                            await llama.testEmbedding(
-                                text: testPrompt,
-                                model: targetModel.isEmpty ? nil : targetModel,
-                                dimensions: parsedDims
-                            )
-                        }
-                    }
-                    .disabled(llama.isBusy || (llama.health?.status == "no_model_loaded" && selectedTestModelSlug.isEmpty) || testPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .buttonStyle(.borderedProminent)
-
-                    if llama.isBusy {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-
-                if let vector = llama.lastEmbeddingVector, let stats = EmbeddingVectorStats(vector: vector) {
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Embedding Vector Details")
-                                .font(.headline)
-                            if !selectedTestModelSlug.isEmpty {
-                                StatusBadge(selectedTestModelSlug.uppercased(), tint: .purple)
-                            }
-                            StatusBadge("\(stats.count) DIMENSIONS", tint: .green)
-                            StatusBadge("NO TRUNCATION", tint: .blue)
-                            Spacer()
-
-                            Button("Copy Full Vector (JSON)") {
-                                copyVectorToClipboard(vector: vector)
-                            }
-                            .controlSize(.small)
-
-                            Button("Copy Values (CSV)") {
-                                copyCSVToClipboard(vector: vector)
-                            }
-                            .controlSize(.small)
-                        }
-
-                        // Statistical summary grid
-                        HStack(spacing: 12) {
-                            statBox(title: "Dimensions", value: "\(stats.count)")
-                            statBox(title: "Min Value", value: String(format: "%.6f", stats.min))
-                            statBox(title: "Max Value", value: String(format: "%.6f", stats.max))
-                            statBox(title: "Mean", value: String(format: "%.6f", stats.mean))
-                            statBox(title: "L2 Norm", value: String(format: "%.6f", stats.l2Norm))
-                        }
-
-                        Text("Complete Vector Elements [0 .. \(stats.count - 1)] (Full, Non-Truncated):")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-
-                        // Full non-truncated scrollable vector view
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 2) {
-                                ForEach(0..<vector.count, id: \.self) { idx in
-                                    HStack(spacing: 8) {
-                                        Text("[\(idx)]")
-                                            .font(.caption2.monospaced())
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 48, alignment: .trailing)
-                                        Text(String(format: "%.8f", vector[idx]))
-                                            .font(.system(.caption, design: .monospaced))
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .padding(8)
-                        }
-                        .frame(height: 180)
-                        .background(Color.primary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private func statBox(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption.monospaced().bold())
-        }
-        .padding(6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
     // MARK: - Section 5: Distillation Model
 
     /// The `fact_distil` presets, wrapped so the download/load helpers written for
     /// embedding rows apply unchanged.
-    private var distillationModelItems: [UnifiedModelItem] {
+    var distillationModelItems: [UnifiedModelItem] {
         appState.factDistilPresets.map { UnifiedModelItem(preset: $0) }
     }
 
-    private var distillationModelSection: some View {
+    var distillationModelSection: some View {
         GroupBox("Fact Distillation Model") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -1073,7 +819,7 @@ struct ModelsView: View {
         }
     }
 
-    private func distillationCard(for item: UnifiedModelItem) -> some View {
+    func distillationCard(for item: UnifiedModelItem) -> some View {
         let isDownloaded = isModelFileDownloaded(item: item)
         let downloadedInfo = getDownloadedInfo(item: item)
         let isDownloading = isModelDownloading(item: item)
@@ -1228,7 +974,7 @@ struct ModelsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func useForFacts(item: UnifiedModelItem) {
+    func useForFacts(item: UnifiedModelItem) {
         settingFactsModelSlug = item.slug
         Task {
             await appState.setFactsModel(item.slug, provider: item.provider.cliValue)
@@ -1238,7 +984,7 @@ struct ModelsView: View {
 
     // MARK: - Section 6: LM Studio Token Section
 
-    private var lmStudioTokenSection: some View {
+    var lmStudioTokenSection: some View {
         GroupBox("LM Studio API Token") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
@@ -1271,7 +1017,7 @@ struct ModelsView: View {
 
     // MARK: - Section 7: Llama Service Status Section
 
-    private var llamaServiceSection: some View {
+    var llamaServiceSection: some View {
         GroupBox("Llama XPC Service Status") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -1307,7 +1053,7 @@ struct ModelsView: View {
 
     // MARK: - Section 8: Backfill / Enrichment Output Section
 
-    private var backfillOutputSection: some View {
+    var backfillOutputSection: some View {
         Group {
             if !appState.backfill.logs.isEmpty {
                 GroupBox("Embedding Backfill Output") {
@@ -1334,7 +1080,7 @@ struct ModelsView: View {
 
     // MARK: - Section 9: Output Section
 
-    private var outputSection: some View {
+    var outputSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             if llama.lastError != nil || llama.lastSuccess != nil || llama.testOutput != nil {
                 GroupBox("Llama Output") {
@@ -1369,7 +1115,7 @@ struct ModelsView: View {
 
     // MARK: - Badges & Helpers
 
-    private func providerBadge(for prov: ModelProvider) -> some View {
+    func providerBadge(for prov: ModelProvider) -> some View {
         switch prov {
         case .llamaXPC:
             return StatusBadge("LLAMA XPC", tint: .purple)
@@ -1381,11 +1127,11 @@ struct ModelsView: View {
     }
 
 
-    private var notReady: Bool {
+    var notReady: Bool {
         appState.postgres.status != .running || busy
     }
 
-    private func refreshAll() {
+    func refreshAll() {
         Task {
             appState.fetchPresetModels()
             await appState.fetchRegisteredModels()
@@ -1395,21 +1141,21 @@ struct ModelsView: View {
         }
     }
 
-    private func isModelFileDownloaded(item: UnifiedModelItem) -> Bool {
+    func isModelFileDownloaded(item: UnifiedModelItem) -> Bool {
         if let filename = item.effectiveFilename {
             return modelDownload.isModelDownloaded(filename: filename)
         }
         return false
     }
 
-    private func getDownloadedInfo(item: UnifiedModelItem) -> DownloadedModelInfo? {
+    func getDownloadedInfo(item: UnifiedModelItem) -> DownloadedModelInfo? {
         if let filename = item.effectiveFilename {
             return modelDownload.downloadedModel(for: filename)
         }
         return nil
     }
 
-    private func isModelDownloading(item: UnifiedModelItem) -> Bool {
+    func isModelDownloading(item: UnifiedModelItem) -> Bool {
         if isModelFileDownloaded(item: item) {
             return false
         }
@@ -1422,7 +1168,7 @@ struct ModelsView: View {
         return false
     }
 
-    private func getActiveDownloadTask(item: UnifiedModelItem) -> DownloadTaskInfo? {
+    func getActiveDownloadTask(item: UnifiedModelItem) -> DownloadTaskInfo? {
         if isModelFileDownloaded(item: item) {
             return nil
         }
@@ -1436,7 +1182,7 @@ struct ModelsView: View {
         }
     }
 
-    private func isModelActiveInLlama(item: UnifiedModelItem) -> Bool {
+    func isModelActiveInLlama(item: UnifiedModelItem) -> Bool {
         guard let activeId = llama.activeModelId, llama.health?.status != "no_model_loaded" else {
             return false
         }
@@ -1445,7 +1191,7 @@ struct ModelsView: View {
             llama.models.contains(where: { $0.id == item.slug || $0.id == item.effectiveFilename })
     }
 
-    private func downloadModelToLlamaXPC(item: UnifiedModelItem) {
+    func downloadModelToLlamaXPC(item: UnifiedModelItem) {
         guard let url = item.effectiveDownloadURL else { return }
         Task {
             await modelDownload.startDownload(
@@ -1457,7 +1203,7 @@ struct ModelsView: View {
         }
     }
 
-    private func verifyAllDownloadedModels() {
+    func verifyAllDownloadedModels() {
         Task {
             for dl in modelDownload.downloadedModels {
                 let dlLast = URL(fileURLWithPath: dl.filename).lastPathComponent
@@ -1481,7 +1227,7 @@ struct ModelsView: View {
         }
     }
 
-    private func loadDownloadedModel(item: UnifiedModelItem, dlInfo: DownloadedModelInfo?) {
+    func loadDownloadedModel(item: UnifiedModelItem, dlInfo: DownloadedModelInfo?) {
         guard let dl = dlInfo ?? getDownloadedInfo(item: item) else { return }
         Task {
             await llama.loadModel(
@@ -1496,14 +1242,14 @@ struct ModelsView: View {
         }
     }
 
-    private func selectForTesting(item: UnifiedModelItem) {
+    func selectForTesting(item: UnifiedModelItem) {
         selectedTestModelSlug = item.slug
         if let dimsVal = item.dims {
             testEmbeddingDimensions = "\(dimsVal)"
         }
     }
 
-    private func applyPreset(_ preset: ModelPresetEntry) {
+    func applyPreset(_ preset: ModelPresetEntry) {
         selectedPresetSlug = preset.slug
         slug = preset.slug
         modelName = preset.name
@@ -1512,7 +1258,7 @@ struct ModelsView: View {
         provider = ModelProvider.from(string: preset.provider)
     }
 
-    private func populateForm(from item: UnifiedModelItem) {
+    func populateForm(from item: UnifiedModelItem) {
         slug = item.slug
         modelName = item.name
         dims = item.dims.map(String.init) ?? ""
@@ -1526,7 +1272,7 @@ struct ModelsView: View {
         }
     }
 
-    private func run(_ args: [String]) {
+    func run(_ args: [String]) {
         busy = true
         Task {
             await appState.runGarage(args)
@@ -1535,7 +1281,7 @@ struct ModelsView: View {
         }
     }
 
-    private func backfillModel(slug: String) {
+    func backfillModel(slug: String) {
         busy = true
         Task {
             await appState.runBackfill(["backfill", "--model", slug])
@@ -1545,7 +1291,7 @@ struct ModelsView: View {
         }
     }
 
-    private func backfillAllModels() {
+    func backfillAllModels() {
         busy = true
         Task {
             await appState.runBackfill(["backfill", "--model", "*"])
@@ -1555,77 +1301,22 @@ struct ModelsView: View {
         }
     }
 
-    private func enrichAllFacts() {
+    func enrichAllFacts() {
         Task {
             await appState.runEnrichFacts(["enrich-facts", "--source", "*"])
         }
     }
 
-    private func copyVectorToClipboard(vector: [Float]) {
+    func copyVectorToClipboard(vector: [Float]) {
         if let data = try? JSONSerialization.data(withJSONObject: vector, options: []),
            let jsonStr = String(data: data, encoding: .utf8) {
             NSPasteboard.general.copy(jsonStr)
         }
     }
 
-    private func copyCSVToClipboard(vector: [Float]) {
+    func copyCSVToClipboard(vector: [Float]) {
         let formatted = vector.map { String(format: "%.8f", $0) }.joined(separator: ", ")
         NSPasteboard.general.copy(formatted)
     }
 
-}
-
-// MARK: - UnifiedModelItem from a preset
-extension ModelsView.UnifiedModelItem {
-    /// Wraps a `models.json` preset that has no database registration (e.g. a
-    /// `fact_distil` entry) so the download / load helpers can treat it like a row.
-    /// Declared in an extension to keep the struct's memberwise initializer.
-    init(preset: ModelPresetEntry) {
-        self.init(
-            name: preset.name,
-            slug: preset.slug,
-            provider: ModelsView.ModelProvider.from(string: preset.provider),
-            modelRef: preset.modelRef ?? preset.slug,
-            dims: preset.effectiveDims > 0 ? preset.effectiveDims : nil,
-            storedDims: nil,
-            contextSize: preset.contextSize ?? 8192,
-            isDefault: false,
-            downloadModelId: preset.downloadModelId,
-            downloadFile: preset.downloadFile,
-            sha256: preset.sha256,
-            catalogItem: ModelPresetCatalog.item(forModelIdOrSlug: preset.slug),
-            registeredModel: nil,
-            presetEntry: preset
-        )
-    }
-}
-
-// MARK: - Embedding Vector Statistics Model
-struct EmbeddingVectorStats {
-    let count: Int
-    let min: Float
-    let max: Float
-    let mean: Float
-    let l2Norm: Float
-
-    init?(vector: [Float]) {
-        guard !vector.isEmpty else { return nil }
-        self.count = vector.count
-        var minVal = vector[0]
-        var maxVal = vector[0]
-        var sumVal: Double = 0
-        var sumSquares: Double = 0
-
-        for val in vector {
-            if val < minVal { minVal = val }
-            if val > maxVal { maxVal = val }
-            sumVal += Double(val)
-            sumSquares += Double(val * val)
-        }
-
-        self.min = minVal
-        self.max = maxVal
-        self.mean = Float(sumVal / Double(vector.count))
-        self.l2Norm = Float(sqrt(sumSquares))
-    }
 }
