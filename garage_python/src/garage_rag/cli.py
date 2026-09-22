@@ -1165,14 +1165,9 @@ def mcp_test(
 
 @app.command("mcp-serve")
 def mcp_serve(
-    stdio: Annotated[
-        bool,
-        # Kept for registrations written before `garage-mcp` became the stdio entry point.
-        typer.Option("--stdio", hidden=True, help="Deprecated: MCP clients spawn `garage-mcp`."),
-    ] = False,
     http: Annotated[
         bool,
-        typer.Option("--http", help="Serve over HTTP (streamable-http transport)."),
+        typer.Option("--http", help="Serve over HTTP (streamable-http transport). The default."),
     ] = False,
     sse: Annotated[
         bool,
@@ -1215,18 +1210,8 @@ def mcp_serve(
     """
     from garage_rag.mcp_server.server import is_loopback, serve
 
-    if sum(map(bool, (stdio, http, sse))) > 1:
+    if http and sse:
         raise typer.BadParameter("choose one of --http or --sse")
-
-    if stdio:
-        # stdio speaks JSON-RPC on stdout; the notice goes to stderr only.
-        print(
-            "garage: `garage mcp-serve --stdio` is deprecated; MCP clients should spawn `garage-mcp`. "
-            "Re-run `garage mcp-install --stdio` to update this registration.",
-            file=sys.stderr,
-        )
-        serve("stdio")
-        return
 
     settings = get_settings()
     bind_host = host or settings.mcp_host
