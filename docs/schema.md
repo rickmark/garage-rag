@@ -106,6 +106,12 @@ tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
 
 Postgres maintains the keyword index itself; no application bookkeeping.
 
+`char_start` / `char_end` are the chunk's span of `documents.content`: its
+exact text, or for markdown (whose header splitter drops blank lines) the span
+from its first line to its last. They are NULL when the chunk cannot be found
+in the content, and on chunks built before offsets were recorded; those gain
+them the next time the document is re-chunked.
+
 `chunks.fact_id` (`007_chunk_fact_link.sql`) is a nullable
 `REFERENCES facts(id) ON DELETE CASCADE` column with a partial unique index
 (`WHERE fact_id IS NOT NULL`), so a fact has at most one chunk. It marks a

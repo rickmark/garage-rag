@@ -85,6 +85,9 @@ class TextChunk:
     text: str
     chunker: str
     heading_path: str | None = None
+    # Span of the chunked text (documents.content), [char_start, char_end). Usually
+    # the chunk's exact text; for markdown, whose header splitter drops blank lines,
+    # the span from its first to its last line. None if those cannot be found.
     char_start: int | None = None
     char_end: int | None = None
 
@@ -218,6 +221,44 @@ def chunk_tabular(text: str, *, size: int) -> list[TextChunk]:
     return chunks
 
 
+def _span(source: str, text: str, cursor: int) -> tuple[int, int] | None:
+    """Where ``text`` sits in ``source`` at or after ``cursor``.
+
+    The exact text first; failing that, from its first line to its last, which
+    covers a chunk whose splitter dropped the blank lines in between.
+    """
+    start = source.find(text, cursor)
+    if start >= 0:
+        return start, start + len(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    start = source.find(lines[0], cursor)
+    if start < 0:
+        return None
+    last = source.find(lines[-1], start)
+    if last < 0:
+        return None
+    return start, last + len(lines[-1])
+
+
+def _locate(source: str, chunks: list[TextChunk]) -> list[TextChunk]:
+    """Set each chunk's offsets to where it sits in ``source``.
+
+    Chunks come out in document order and may overlap, so each search starts one
+    character past the previous chunk's start. A chunk that cannot be found keeps
+    ``None`` rather than a guessed offset.
+    """
+    cursor = 0
+    for chunk in chunks:
+        span = _span(source, chunk.text, cursor)
+        if span is None:
+            continue
+        chunk.char_start, chunk.char_end = span
+        cursor = span[0] + 1
+    return chunks
+
+
 def chunk_text(
     text: str,
     kind: ContentKind,
@@ -232,14 +273,16 @@ def chunk_text(
     if kind is ContentKind.CODE:
         size = size or settings.code_chunk_size
         overlap = overlap if overlap is not None else settings.code_chunk_overlap
-        return chunk_code(text, extension=extension, size=size, overlap=overlap)
+        return _locate(text, chunk_code(text, extension=extension, size=size, overlap=overlap))
 
     size = size or settings.chunk_size
     overlap = overlap if overlap is not None else settings.chunk_overlap
 
     if kind is ContentKind.MARKDOWN:
-        return chunk_markdown(text, size=size, overlap=overlap)
-    if kind is ContentKind.TABULAR:
-        return chunk_tabular(text, size=size)
-    # CONVERSATION text arrives pre-windowed; treat the windows as prose.
-    return chunk_prose(text, size=size, overlap=overlap)
+        chunks = chunk_markdown(text, size=size, overlap=overlap)
+    elif kind is ContentKind.TABULAR:
+        chunks = chunk_tabular(text, size=size)
+    else:
+        # CONVERSATION text arrives pre-windowed; treat the windows as prose.
+        chunks = chunk_prose(text, size=size, overlap=overlap)
+    return _locate(text, chunks)

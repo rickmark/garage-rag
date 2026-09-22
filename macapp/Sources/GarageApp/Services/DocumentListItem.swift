@@ -54,8 +54,9 @@ public struct DocumentChunkItem: Identifiable, Hashable, Sendable {
     public let ord: Int
     public let text: String
     public let tokenCount: Int
-    public let charStart: Int
-    public let charEnd: Int
+    /// Span of the document's content; nil when the chunk is not a verbatim slice of it.
+    public let charStart: Int?
+    public let charEnd: Int?
     public let headingPath: String
 
     public init(chunk: Garage_DocumentChunkInfo) {
@@ -63,8 +64,8 @@ public struct DocumentChunkItem: Identifiable, Hashable, Sendable {
         self.ord = Int(chunk.ord)
         self.text = chunk.text
         self.tokenCount = Int(chunk.tokenCount)
-        self.charStart = Int(chunk.charStart)
-        self.charEnd = Int(chunk.charEnd)
+        self.charStart = chunk.hasCharStart ? Int(chunk.charStart) : nil
+        self.charEnd = chunk.hasCharEnd ? Int(chunk.charEnd) : nil
         self.headingPath = chunk.headingPath
     }
 }
@@ -76,8 +77,8 @@ public struct DocumentFactItem: Identifiable, Hashable, Sendable {
     public let fact: String
     public let factClass: String
     public let attributesJSON: String
-    public let charStart: Int
-    public let charEnd: Int
+    public let charStart: Int?
+    public let charEnd: Int?
     public let extractor: String
 
     public init(fact: Garage_DocumentFactInfo) {
@@ -86,8 +87,8 @@ public struct DocumentFactItem: Identifiable, Hashable, Sendable {
         self.fact = fact.fact
         self.factClass = fact.factClass
         self.attributesJSON = fact.attributesJson
-        self.charStart = Int(fact.charStart)
-        self.charEnd = Int(fact.charEnd)
+        self.charStart = fact.hasCharStart ? Int(fact.charStart) : nil
+        self.charEnd = fact.hasCharEnd ? Int(fact.charEnd) : nil
         self.extractor = fact.extractor
     }
 }

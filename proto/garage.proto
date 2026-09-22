@@ -170,8 +170,9 @@ message DocumentChunkInfo {
     int32 ord = 2;
     string text = 3;
     int32 token_count = 4;
-    int32 char_start = 5;
-    int32 char_end = 6;
+    // Span of documents.content; unset when the chunk is not a verbatim slice of it.
+    optional int32 char_start = 5;
+    optional int32 char_end = 6;
     string heading_path = 7;
 }
 
@@ -187,8 +188,9 @@ message DocumentFactInfo {
     string fact = 3;
     string fact_class = 4;
     string attributes_json = 5;
-    int32 char_start = 6;
-    int32 char_end = 7;
+    // Span of documents.content the fact was grounded to.
+    optional int32 char_start = 6;
+    optional int32 char_end = 7;
     string extractor = 8;
 }
 
@@ -625,8 +627,9 @@ message DocumentChunkPayload {
     int32 ord = 1;
     string text = 2;
     int32 token_count = 3;
-    int32 char_start = 4;
-    int32 char_end = 5;
+    // Unset when unknown: 0 is a real offset, so it cannot mean "none".
+    optional int32 char_start = 4;
+    optional int32 char_end = 5;
     string heading_path = 6;
     string chunk_sha256 = 7;
     string chunker = 8;

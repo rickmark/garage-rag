@@ -479,8 +479,8 @@ class GarageRpcServicer(GarageServiceServicer):
                     ord=c.ord,
                     text=c.text,
                     token_count=c.token_count or 0,
-                    char_start=c.char_start or 0,
-                    char_end=c.char_end or 0,
+                    char_start=c.char_start,
+                    char_end=c.char_end,
                     heading_path=c.heading_path or "",
                 )
                 for c in chunks
@@ -493,8 +493,8 @@ class GarageRpcServicer(GarageServiceServicer):
                     fact=f.fact,
                     fact_class=f.fact_class or "",
                     attributes_json=json.dumps(f.attributes) if f.attributes else "",
-                    char_start=f.char_start or 0,
-                    char_end=f.char_end or 0,
+                    char_start=f.char_start,
+                    char_end=f.char_end,
                     extractor=f.extractor or "",
                 )
                 for f in facts
@@ -1111,8 +1111,8 @@ class GarageRpcServicer(GarageServiceServicer):
                             ord=c.ord,
                             text=c.text,
                             token_count=c.token_count or None,
-                            char_start=c.char_start or None,
-                            char_end=c.char_end or None,
+                            char_start=c.char_start if c.HasField("char_start") else None,
+                            char_end=c.char_end if c.HasField("char_end") else None,
                             heading_path=c.heading_path or None,
                             chunk_sha256=c.chunk_sha256,
                             chunker=c.chunker or None,

@@ -687,3 +687,58 @@ def test_materialize_still_placeholder_does_not_consume_budget(tmp_path: Path):
     assert budget.files_done == 0
     assert budget.bytes_done == 0
     assert not budget.exhausted
+
+
+def test_chunk_offset_zero_survives_the_grpc_facade():
+    """0 is a real offset (the first chunk); only an unknown offset may be unset."""
+    from garage_rag.proto.garage_pb2 import DocumentChunkPayload, PersistDocumentRequest
+    from garage_rag.service.server import GarageRpcServicer
+
+    client = GarageClient(in_process=True)
+    gateway = GrpcIngestStorageGateway(client)
+    with patch.object(client, "persist_document") as mock_doc:
+        mock_doc.return_value = PersistDocumentResponse(success=True, chunks_written=2)
+        gateway.replace_document(
+            run_id=1,
+            source_slug="s",
+            uri="a.md",
+            title="A",
+            lang="en",
+            byte_size=10,
+            mtime=0.0,
+            source_sha256="aa",
+            content_sha256="bb",
+            extractor="text",
+            extractor_version="1",
+            chunker="recursive",
+            content="first second",
+            meta={},
+            corpus_class="document",
+            trust_tier="authored",
+            authors=[],
+            chunks=[
+                ChunkPayload(ord=0, text="first", char_start=0, char_end=5, chunk_sha256="01"),
+                ChunkPayload(ord=1, text="reflowed", chunk_sha256="02"),
+            ],
+        )
+    sent = mock_doc.call_args.args[0].chunks
+    assert sent[0].HasField("char_start") and sent[0].char_start == 0
+    assert not sent[1].HasField("char_start")
+
+    server_side = MagicMock()
+    server_side.replace_document.return_value = 2
+    request = PersistDocumentRequest(
+        run_id=1,
+        source_slug="s",
+        uri="a.md",
+        action="replace",
+        chunks=[
+            DocumentChunkPayload(ord=0, text="first", char_start=0, char_end=5, chunk_sha256="01"),
+            DocumentChunkPayload(ord=1, text="reflowed", chunk_sha256="02"),
+        ],
+    )
+    with patch.object(GarageRpcServicer, "_ingest_gateway", return_value=server_side):
+        GarageRpcServicer().PersistDocument(request, MagicMock())
+    received = server_side.replace_document.call_args.kwargs["chunks"]
+    assert (received[0].char_start, received[0].char_end) == (0, 5)
+    assert (received[1].char_start, received[1].char_end) == (None, None)

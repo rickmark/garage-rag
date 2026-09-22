@@ -517,8 +517,8 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                         ord=c.ord,
                         text=c.text,
                         token_count=c.token_count or None,
-                        char_start=c.char_start or None,
-                        char_end=c.char_end or None,
+                        char_start=c.char_start,
+                        char_end=c.char_end,
                         heading_path=c.heading_path or None,
                         chunk_sha256=chunk_hash,
                         chunker=c.chunker or doc.chunker or "default",
@@ -752,8 +752,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
                 ord=c.ord,
                 text=c.text,
                 token_count=c.token_count or 0,
-                char_start=c.char_start or 0,
-                char_end=c.char_end or 0,
+                char_start=c.char_start,
+                char_end=c.char_end,
                 heading_path=c.heading_path or "",
                 chunk_sha256=(
                     c.chunk_sha256.hex()
