@@ -6,40 +6,75 @@ serialization, so a test exercises the same encoding a real channel would.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import TracebackType
 from typing import Any
 
 import grpc
 
 from garage_rag.proto.garage_pb2 import (
+    AddSourceRequest,
+    AddSourceResponse,
+    BackfillRequest,
+    BackfillStatus,
     BeginIngestSessionRequest,
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
     CheckDocumentStatResponse,
+    DropModelRequest,
+    DropModelResponse,
+    EnrichFactsRequest,
+    EnrichFactsStatus,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
     GetDocumentRequest,
     GetDocumentResponse,
     GetEmbeddingBatchesRequest,
     GetEmbeddingBatchesResponse,
+    GetSettingRequest,
+    GetSettingResponse,
+    ImportSourcesToConfigRequest,
+    ImportSourcesToConfigResponse,
+    InitDbRequest,
+    InitDbResponse,
     ListDocumentsRequest,
     ListDocumentsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
     ListSourcesResponse,
+    McpInstallRequest,
+    McpInstallResponse,
+    McpStatusRequest,
+    McpStatusResponse,
+    McpUninstallRequest,
+    McpUninstallResponse,
     PersistDocumentRequest,
     PersistDocumentResponse,
     PersistScanRequest,
     PersistScanResponse,
     PingRequest,
     PingResponse,
+    ReconcileRequest,
+    ReconcileResponse,
+    RegisterModelRequest,
+    RegisterModelResponse,
+    RemoveSourceRequest,
+    RemoveSourceResponse,
+    ScanRequest,
+    ScanResponse,
     SearchRequest,
     SearchResponse,
+    SetDefaultModelRequest,
+    SetDefaultModelResponse,
+    SetSettingRequest,
+    SetSettingResponse,
     StatsRequest,
     StatsResponse,
     StatusRequest,
     StatusResponse,
+    SyncSourcesRequest,
+    SyncSourcesResponse,
     UpdateEmbeddingsRequest,
     UpdateEmbeddingsResponse,
     VersionRequest,
@@ -128,6 +163,15 @@ class GarageClient:
         stub_method = getattr(self._get_stub(), rpc_name)
         return stub_method(request)
 
+    def _invoke_stream(self, rpc_name: str, request: Any, response_cls: Any) -> Iterator[Any]:
+        if self.in_process:
+            req_copy = self._roundtrip_proto(request, type(request))
+            ctx = _InProcessServicerContext()
+            for item in getattr(self.servicer, rpc_name)(req_copy, ctx):
+                yield self._roundtrip_proto(item, response_cls)
+            return
+        yield from getattr(self._get_stub(), rpc_name)(request)
+
     # -----------------------------------------------------------------------
     # System
     # -----------------------------------------------------------------------
@@ -162,6 +206,65 @@ class GarageClient:
 
     def get_stats(self) -> StatsResponse:
         return self._invoke_unary("GetStats", StatsRequest(), StatsResponse)
+
+    # -----------------------------------------------------------------------
+    # Operations (what the app used to shell out to `garage` for)
+    # -----------------------------------------------------------------------
+
+    def add_source(self, request: AddSourceRequest) -> AddSourceResponse:
+        return self._invoke_unary("AddSource", request, AddSourceResponse)
+
+    def remove_source(self, slug: str) -> RemoveSourceResponse:
+        return self._invoke_unary("RemoveSource", RemoveSourceRequest(slug=slug), RemoveSourceResponse)
+
+    def scan(self, source: str = "*", include_code: bool = False) -> ScanResponse:
+        return self._invoke_unary("Scan", ScanRequest(source=source, include_code=include_code), ScanResponse)
+
+    def sync_sources(self, dry_run: bool = False) -> SyncSourcesResponse:
+        return self._invoke_unary("SyncSources", SyncSourcesRequest(dry_run=dry_run), SyncSourcesResponse)
+
+    def import_sources_to_config(self, path: str = "") -> ImportSourcesToConfigResponse:
+        return self._invoke_unary(
+            "ImportSourcesToConfig", ImportSourcesToConfigRequest(path=path), ImportSourcesToConfigResponse
+        )
+
+    def reconcile(self, request: ReconcileRequest) -> ReconcileResponse:
+        return self._invoke_unary("Reconcile", request, ReconcileResponse)
+
+    def register_model(self, request: RegisterModelRequest) -> RegisterModelResponse:
+        return self._invoke_unary("RegisterModel", request, RegisterModelResponse)
+
+    def set_default_model(self, slug: str) -> SetDefaultModelResponse:
+        return self._invoke_unary("SetDefaultModel", SetDefaultModelRequest(slug=slug), SetDefaultModelResponse)
+
+    def drop_model(self, slug: str) -> DropModelResponse:
+        return self._invoke_unary("DropModel", DropModelRequest(slug=slug), DropModelResponse)
+
+    def backfill(self, request: BackfillRequest) -> Iterator[BackfillStatus]:
+        return self._invoke_stream("Backfill", request, BackfillStatus)
+
+    def enrich_facts(self, request: EnrichFactsRequest) -> Iterator[EnrichFactsStatus]:
+        return self._invoke_stream("EnrichFacts", request, EnrichFactsStatus)
+
+    def init_db(self, schema_dir: str = "") -> InitDbResponse:
+        return self._invoke_unary("InitDb", InitDbRequest(schema_dir=schema_dir), InitDbResponse)
+
+    def get_setting(self, name: str) -> GetSettingResponse:
+        return self._invoke_unary("GetSetting", GetSettingRequest(name=name), GetSettingResponse)
+
+    def set_setting(self, name: str, value: str, path: str = "") -> SetSettingResponse:
+        return self._invoke_unary(
+            "SetSetting", SetSettingRequest(name=name, value=value, path=path), SetSettingResponse
+        )
+
+    def mcp_install(self, request: McpInstallRequest) -> McpInstallResponse:
+        return self._invoke_unary("McpInstall", request, McpInstallResponse)
+
+    def mcp_uninstall(self, request: McpUninstallRequest) -> McpUninstallResponse:
+        return self._invoke_unary("McpUninstall", request, McpUninstallResponse)
+
+    def mcp_status(self) -> McpStatusResponse:
+        return self._invoke_unary("McpStatus", McpStatusRequest(), McpStatusResponse)
 
     # -----------------------------------------------------------------------
     # Database facade for the ingest and embed workers

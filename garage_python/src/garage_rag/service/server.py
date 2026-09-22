@@ -1,22 +1,25 @@
-"""gRPC server for ``GarageService``: the bridge between the macOS app and the Python pipeline.
+"""gRPC server for ``GarageService``: how the macOS app drives the Python pipeline.
 
-The app's Search and Documents views read the corpus through it, and the ingest and
-embed XPC workers persist through its database facade. Everything that mutates
-configuration or runs a pipeline stage is a ``garage`` CLI command the app invokes
-directly, so the servicer carries no copies of CLI command bodies: each handler
-translates protobuf messages to and from the plain functions the CLI also calls.
+The app reads the corpus through it, runs every operation it would otherwise shell
+out to ``garage`` for (sources, models, backfill, fact distillation, schema,
+settings, MCP client registration), and the ingest and embed XPC workers persist
+through its database facade. The servicer carries no copies of CLI command bodies:
+each handler translates protobuf to and from the garage_rag.ops function the CLI
+command also calls.
 """
 
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import logging
 import os
+import queue
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent import futures
 from pathlib import Path
 from typing import Any, cast
@@ -24,6 +27,10 @@ from typing import Any, cast
 import grpc
 
 from garage_rag.proto.garage_pb2 import (
+    AddSourceRequest,
+    AddSourceResponse,
+    BackfillRequest,
+    BackfillStatus,
     BeginIngestSessionRequest,
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
@@ -33,19 +40,37 @@ from garage_rag.proto.garage_pb2 import (
     DocumentDetail,
     DocumentFactInfo,
     DocumentSummary,
+    DropModelRequest,
+    DropModelResponse,
     EmbeddingChunkItem,
+    EnrichFactsRequest,
+    EnrichFactsStatus,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
     GetDocumentRequest,
     GetDocumentResponse,
     GetEmbeddingBatchesRequest,
     GetEmbeddingBatchesResponse,
+    GetSettingRequest,
+    GetSettingResponse,
+    ImportSourcesToConfigRequest,
+    ImportSourcesToConfigResponse,
+    InitDbRequest,
+    InitDbResponse,
     ListDocumentsRequest,
     ListDocumentsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
     ListSourcesResponse,
+    McpClientInfo,
+    McpInstallRequest,
+    McpInstallResponse,
+    McpStatusRequest,
+    McpStatusResponse,
+    McpTargetOutcome,
+    McpUninstallRequest,
+    McpUninstallResponse,
     ModelInfo,
     PersistDocumentRequest,
     PersistDocumentResponse,
@@ -53,14 +78,30 @@ from garage_rag.proto.garage_pb2 import (
     PersistScanResponse,
     PingRequest,
     PingResponse,
+    ReconcileRequest,
+    ReconcileResponse,
+    RegisterModelRequest,
+    RegisterModelResponse,
+    RemoveSourceRequest,
+    RemoveSourceResponse,
+    ScanRequest,
+    ScanResponse,
     SearchHit,
     SearchRequest,
     SearchResponse,
+    SetDefaultModelRequest,
+    SetDefaultModelResponse,
+    SetSettingRequest,
+    SetSettingResponse,
     SourceInfo,
+    SourceScanStatus,
     StatsRequest,
     StatsResponse,
     StatusRequest,
     StatusResponse,
+    SyncSourcesRequest,
+    SyncSourcesResponse,
+    UndeclaredSource,
     UpdateEmbeddingsRequest,
     UpdateEmbeddingsResponse,
     VersionRequest,
@@ -99,8 +140,34 @@ _STATUS_FOR_EXCEPTION: tuple[tuple[type[Exception], grpc.StatusCode], ...] = (
 )
 
 
+def _abort_for(context: grpc.ServicerContext, exc: Exception) -> None:
+    from garage_rag.config import ConfigError
+
+    if isinstance(exc, ConfigError):
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+    for exc_type, code in _STATUS_FOR_EXCEPTION:
+        if isinstance(exc, exc_type):
+            context.abort(code, str(exc))
+
+
 def _grpc_errors[**P, R](handler: Callable[P, R]) -> Callable[P, R]:
-    """Abort the RPC with the status code an exception from the handler implies."""
+    """Abort the RPC with the status code an exception from the handler implies.
+
+    Streaming handlers are generators whose exceptions surface while the response
+    is iterated, not when the handler is called, so those are wrapped as generators.
+    """
+    if inspect.isgeneratorfunction(handler):
+
+        @functools.wraps(handler)
+        def stream_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            context = cast(grpc.ServicerContext, args[2] if len(args) > 2 else kwargs["context"])
+            try:
+                yield from cast(Iterator[Any], handler(*args, **kwargs))
+            except Exception as exc:
+                _abort_for(context, exc)
+                raise
+
+        return cast(Callable[P, R], stream_wrapper)
 
     @functools.wraps(handler)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -108,12 +175,39 @@ def _grpc_errors[**P, R](handler: Callable[P, R]) -> Callable[P, R]:
         try:
             return handler(*args, **kwargs)
         except Exception as exc:
-            for exc_type, code in _STATUS_FOR_EXCEPTION:
-                if isinstance(exc, exc_type):
-                    context.abort(code, str(exc))
+            _abort_for(context, exc)
             raise
 
     return wrapper
+
+
+_DONE = object()
+
+
+def _stream_events[E](run: Callable[[Callable[[E], None]], object]) -> Iterator[E]:
+    """Yield the events ``run`` reports to its callback, as it reports them.
+
+    The ops functions report progress through a callback; a gRPC streaming
+    handler has to yield. ``run`` executes on a worker thread and the events cross
+    a queue; an exception in ``run`` is re-raised here, in the handler, after the
+    events that preceded it.
+    """
+    events: queue.Queue[Any] = queue.Queue()
+    failure: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            run(events.put)
+        except BaseException as exc:  # re-raised on the handler thread below
+            failure.append(exc)
+        finally:
+            events.put(_DONE)
+
+    threading.Thread(target=worker, name="garage-grpc-stream", daemon=True).start()
+    while (item := events.get()) is not _DONE:
+        yield item
+    if failure:
+        raise failure[0]
 
 
 def _enum_value(value: Any) -> str:
@@ -489,6 +583,365 @@ class GarageRpcServicer(GarageServiceServicer):
                 f"Corpus: {doc_count:,} documents, {chunk_count:,} chunks across "
                 f"{source_count} sources, {len(models)} embedding models"
             ),
+        )
+
+    # -----------------------------------------------------------------------
+    # Source operations (the app's `garage add-source` / `remove-source` / `scan` /
+    # `sync` / `config import-sources` / `reconcile`)
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def AddSource(self, request: AddSourceRequest, context: grpc.ServicerContext) -> AddSourceResponse:
+        """Register a source root, or update the one registered under the slug."""
+        from garage_rag.ops.sources import add_source
+
+        result = add_source(
+            request.slug,
+            request.root,
+            kind=request.kind or "filesystem",
+            corpus_class=request.corpus_class or "document",
+            trust=request.trust or "authored",
+            allow_cloud_enrichment=request.allow_cloud_enrichment,
+        )
+        return AddSourceResponse(
+            slug=result.slug, root=str(result.root), created=result.created, message=result.message
+        )
+
+    @_grpc_errors
+    def RemoveSource(self, request: RemoveSourceRequest, context: grpc.ServicerContext) -> RemoveSourceResponse:
+        """Deregister a source and delete its documents, chunks and vectors."""
+        from garage_rag.ops.sources import remove_source
+
+        result = remove_source(request.slug)
+        return RemoveSourceResponse(
+            slug=result.slug, deleted_documents=result.deleted_documents, message=result.message
+        )
+
+    @_grpc_errors
+    def Scan(self, request: ScanRequest, context: grpc.ServicerContext) -> ScanResponse:
+        """Count items per source and record the expected totals."""
+        from garage_rag.ops.sources import scan_sources
+
+        results = scan_sources(request.source or "*", include_code=request.include_code)
+        total = sum(r.item_count for r in results)
+        return ScanResponse(
+            sources=[
+                SourceScanStatus(
+                    source=r.source_slug,
+                    kind=r.kind,
+                    root=str(r.root),
+                    item_count=r.item_count,
+                    item_type=r.item_type,
+                    duration_seconds=r.duration_seconds,
+                    error=r.error or "",
+                )
+                for r in results
+            ],
+            total_items=total,
+            message=(
+                f"Scanned {len(results)} source(s): {total:,} items" if results else "no sources registered to scan"
+            ),
+        )
+
+    @_grpc_errors
+    def SyncSources(self, request: SyncSourcesRequest, context: grpc.ServicerContext) -> SyncSourcesResponse:
+        """Apply the sources declared in the config file to the database."""
+        from garage_rag.ops.sources import sync_sources
+
+        result = sync_sources(apply=not request.dry_run)
+        return SyncSourcesResponse(
+            config_path=str(result.config_path or ""),
+            declared=result.declared,
+            applied=result.applied,
+            created=result.created,
+            updated=result.updated,
+            undeclared=[UndeclaredSource(slug=slug, document_count=count) for slug, count in result.undeclared],
+            message="\n".join(result.lines),
+        )
+
+    @_grpc_errors
+    def ImportSourcesToConfig(
+        self, request: ImportSourcesToConfigRequest, context: grpc.ServicerContext
+    ) -> ImportSourcesToConfigResponse:
+        """Copy the database's sources into the config file."""
+        from garage_rag.ops.sources import import_sources_into_config
+
+        result = import_sources_into_config(Path(request.path) if request.path else None)
+        return ImportSourcesToConfigResponse(path=str(result.path), added=result.added, message=result.message)
+
+    @_grpc_errors
+    def Reconcile(self, request: ReconcileRequest, context: grpc.ServicerContext) -> ReconcileResponse:
+        """Delete (or, without apply, count) documents whose files no longer exist."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.ingest.reconcile import reconcile_source
+
+        with session_scope() as session:
+            result = reconcile_source(session, request.source, dry_run=not request.apply, force=request.force)
+        if result.refused:
+            message = f"refused: {result.reason}"
+        elif not result.candidates:
+            message = f"nothing to reconcile for {result.source}"
+        elif request.apply:
+            message = f"deleted {result.deleted:,} of {result.total_documents:,} documents from {result.source}"
+        else:
+            message = (
+                f"dry run: {result.candidates:,} of {result.total_documents:,} documents in {result.source} "
+                f"are missing ({result.fraction:.1%})"
+            )
+        return ReconcileResponse(
+            source=result.source,
+            total_documents=result.total_documents,
+            candidates=result.candidates,
+            deleted=result.deleted,
+            fraction=result.fraction,
+            refused=result.refused,
+            reason=result.reason,
+            message=message,
+        )
+
+    # -----------------------------------------------------------------------
+    # Model operations
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def RegisterModel(self, request: RegisterModelRequest, context: grpc.ServicerContext) -> RegisterModelResponse:
+        """Register an embedding model and create its table and index."""
+        from garage_rag.ops.models import register_model
+
+        row = register_model(
+            request.slug,
+            dims=request.dims or None,
+            model_ref=request.model_ref or None,
+            provider=request.provider or None,
+            model_id=request.model_id or None,
+            make_default=request.make_default,
+        )
+        return RegisterModelResponse(
+            model=ModelInfo(
+                slug=row.slug,
+                provider=row.provider,
+                model_ref=row.model_ref,
+                dims=row.dims,
+                stored_dims=row.stored_dims,
+                storage_kind=row.storage_kind,
+                index_kind=row.index_kind,
+                table_name=row.table_name,
+                is_default=row.is_default,
+                model_id=row.model_id or "",
+            ),
+            notes=row.notes,
+            message="\n".join([row.message, *row.notes]),
+        )
+
+    @_grpc_errors
+    def SetDefaultModel(
+        self, request: SetDefaultModelRequest, context: grpc.ServicerContext
+    ) -> SetDefaultModelResponse:
+        """Point the default embedding model at a registered slug."""
+        from garage_rag.ops.models import set_default_model
+
+        set_default_model(request.slug)
+        return SetDefaultModelResponse(message=f"default model = {request.slug}")
+
+    @_grpc_errors
+    def DropModel(self, request: DropModelRequest, context: grpc.ServicerContext) -> DropModelResponse:
+        """Deregister a model and drop its vectors."""
+        from garage_rag.ops.models import drop_model
+
+        drop_model(request.slug)
+        return DropModelResponse(message=f"dropped {request.slug}")
+
+    @_grpc_errors
+    def Backfill(self, request: BackfillRequest, context: grpc.ServicerContext) -> Iterator[BackfillStatus]:
+        """Embed pending chunks, streaming each model's progress."""
+        from garage_rag.ops.backfill import BackfillEvent, backfill
+
+        def run(emit: Callable[[BackfillEvent], None]) -> object:
+            return backfill(
+                request.model or None,
+                batch_size=request.batch_size or None,
+                limit=request.limit or None,
+                verify=not request.skip_verify,
+                on_event=emit,
+            )
+
+        for event in _stream_events(run):
+            yield BackfillStatus(
+                model_slug=event.model,
+                phase=event.phase,
+                total=event.total,
+                embedded=event.embedded,
+                failed=event.failed,
+                remaining=event.remaining,
+                batches=event.batches,
+                message=event.message,
+            )
+
+    # -----------------------------------------------------------------------
+    # Fact distillation
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def EnrichFacts(self, request: EnrichFactsRequest, context: grpc.ServicerContext) -> Iterator[EnrichFactsStatus]:
+        """Distill documents into facts, streaming a status per document."""
+        from garage_rag.ops.facts import enrich_facts
+
+        def run(emit: Callable[[EnrichFactsStatus], None]) -> object:
+            def on_start(total: int, model: str, provider: str) -> None:
+                emit(
+                    EnrichFactsStatus(
+                        phase="started",
+                        total=total,
+                        model=model,
+                        provider=provider,
+                        message=f"enriching {total:,} document(s) via {provider}/{model}",
+                    )
+                )
+
+            def on_event(event) -> None:
+                emit(
+                    EnrichFactsStatus(
+                        phase="document",
+                        total=event.total,
+                        index=event.index,
+                        document_id=event.document_id,
+                        document_uri=event.uri,
+                        facts=event.facts,
+                        error=event.error or "",
+                        message=(
+                            f"{event.index}/{event.total}: {event.uri or event.document_id}"
+                            + (f": {event.error}" if event.error else f": {event.facts} facts")
+                        ),
+                    )
+                )
+
+            summary = enrich_facts(
+                source=request.source or "*",
+                document_id=request.document_id or None,
+                model=request.model or None,
+                provider=request.provider or None,
+                on_start=on_start,
+                on_event=on_event,
+            )
+            emit(
+                EnrichFactsStatus(
+                    phase="finished",
+                    total=summary.total,
+                    facts=summary.facts,
+                    model=summary.model_id,
+                    provider=summary.provider,
+                    enriched=summary.enriched,
+                    failed=summary.failed,
+                    message=summary.message,
+                )
+            )
+            return summary
+
+        yield from _stream_events(run)
+
+    # -----------------------------------------------------------------------
+    # Schema & settings
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def InitDb(self, request: InitDbRequest, context: grpc.ServicerContext) -> InitDbResponse:
+        """Apply the schema migrations (idempotent)."""
+        from garage_rag.config import get_settings
+        from garage_rag.db.migrate import apply_migrations, redact_url
+
+        applied = apply_migrations(schema_dir=Path(request.schema_dir) if request.schema_dir else None)
+        lines = [f"applied {name}" for name in applied]
+        lines.append(f"schema ready ({redact_url(get_settings().database_url)})")
+        return InitDbResponse(applied=list(applied), message="\n".join(lines))
+
+    @_grpc_errors
+    def GetSetting(self, request: GetSettingRequest, context: grpc.ServicerContext) -> GetSettingResponse:
+        """One effective setting, JSON-encoded."""
+        from garage_rag.ops.settings import get_setting
+
+        return GetSettingResponse(name=request.name, value_json=json.dumps(get_setting(request.name)))
+
+    @_grpc_errors
+    def SetSetting(self, request: SetSettingRequest, context: grpc.ServicerContext) -> SetSettingResponse:
+        """Change one setting in the config file, validated before writing."""
+        from garage_rag.ops.settings import set_setting
+
+        written, stored = set_setting(request.name, request.value, path=Path(request.path) if request.path else None)
+        return SetSettingResponse(name=request.name, value_json=json.dumps(stored), path=str(written))
+
+    # -----------------------------------------------------------------------
+    # MCP client registration
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def McpInstall(self, request: McpInstallRequest, context: grpc.ServicerContext) -> McpInstallResponse:
+        """Register this MCP server with a client (no prompts: the app asked)."""
+        from garage_rag.ops.mcp import install_mcp_server
+
+        report = install_mcp_server(
+            target=request.target or "project",
+            path=Path(request.path) if request.path else None,
+            all_configs=request.all,
+            name=request.name or "garage-rag",
+            stdio=request.stdio,
+            host=request.host or None,
+            port=request.port or None,
+            route=request.route or None,
+            force=request.force,
+            dry_run=request.dry_run,
+        )
+        return McpInstallResponse(
+            url=report.url or "",
+            command=report.command or "",
+            args=report.args,
+            fell_back=report.fell_back,
+            outcomes=[
+                McpTargetOutcome(
+                    key=o.key,
+                    label=o.label,
+                    path=str(o.path),
+                    written=o.written,
+                    created_file=o.created_file,
+                    replaced_entry=o.replaced_entry,
+                    backup_path=str(o.backup or ""),
+                    skipped=o.skipped or "",
+                    preview_json=json.dumps(o.preview) if o.preview is not None else "",
+                )
+                for o in report.outcomes
+            ],
+            message="\n".join(report.lines),
+        )
+
+    @_grpc_errors
+    def McpUninstall(self, request: McpUninstallRequest, context: grpc.ServicerContext) -> McpUninstallResponse:
+        """Remove this server from one client's config."""
+        from garage_rag.ops.mcp import uninstall_mcp_server
+
+        name = request.name or "garage-rag"
+        config, removed = uninstall_mcp_server(
+            target=request.target or "project", path=Path(request.path) if request.path else None, name=name
+        )
+        message = f"removed {name} from {config}" if removed else f"{name} was not configured in {config}"
+        return McpUninstallResponse(path=str(config), removed=removed, message=message)
+
+    @_grpc_errors
+    def McpStatus(self, request: McpStatusRequest, context: grpc.ServicerContext) -> McpStatusResponse:
+        """Which known clients have this server registered."""
+        from garage_rag.ops.mcp import mcp_status
+
+        report = mcp_status()
+        return McpStatusResponse(
+            server_command=report.server_command,
+            clients=[
+                McpClientInfo(
+                    key=c.key,
+                    label=c.label,
+                    path=str(c.path),
+                    registered=c.registered,
+                    config_exists=c.config_exists,
+                )
+                for c in report.clients
+            ],
         )
 
     # -----------------------------------------------------------------------

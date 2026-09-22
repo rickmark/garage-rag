@@ -141,6 +141,19 @@ py_test(
 )
 
 py_test(
+    name = "test_grpc_operations",
+    srcs = ["test_grpc_operations.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/ops",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//grpcio",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_grpc_serialization",
     srcs = ["test_grpc_serialization.py"],
     deps = [
@@ -255,6 +268,7 @@ test_suite(
         ":test_facts",
         ":test_generation",
         ":test_grpc_documents",
+        ":test_grpc_operations",
         ":test_grpc_serialization",
         ":test_grpc_server",
         ":test_ingest_gateway",
