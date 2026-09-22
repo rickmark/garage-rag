@@ -23,7 +23,6 @@ dependencies = [
     "python-pptx>=1.0.2",
     "openpyxl>=3.1.5",
     # OCR
-    "pytesseract>=0.3.13",
     "pillow>=11.0",
     # fact extraction: the vendored LangExtract subset (garage_rag/enrich/langextract)
     # needs regex for its tokenizer.

@@ -405,3 +405,33 @@ test_suite(
         ":test_scanner",
     ],
 )
+
+py_test(
+    name = "test_image_extract",
+    srcs = ["test_image_extract.py"],
+    deps = [
+        "//garage_python/src/garage_rag/extract",
+        "@pypi//pillow",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_tesseract",
+    srcs = ["test_tesseract.py"],
+    # The libtesseract and language data the app bundles, so the recognition tests run
+    # against the real thing. Like the app, macOS only; elsewhere those tests skip.
+    data = [
+        "//ext/tesseract",
+        "//ext/tesseract:tessdata",
+    ],  # keep
+    env = {
+        "GARAGE_LIBTESSERACT_PATH": "$(rootpath //ext/tesseract)",
+        "GARAGE_TEST_TESSDATA_FILE": "$(rootpath //ext/tesseract:tessdata)",
+    },  # keep
+    deps = [
+        "//garage_python/src/garage_rag/extract",
+        "@pypi//pillow",
+        "@pypi//pytest",
+    ],
+)
