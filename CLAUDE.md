@@ -86,6 +86,18 @@ open macapp/Garage.xcodeproj
 See `macapp/README.md` for why Postgres can't just use the Homebrew build (it bakes absolute
 `/opt/homebrew` paths).
 
+Without a Swift toolchain (Linux, Claude Code on the web) there is still a syntax gate:
+
+```bash
+python tools/swiftcheck/swift_syntax_check.py            # parses every macapp/**/*.swift with tree-sitter
+```
+
+It reports unbalanced braces, malformed closures/attributes and stray tokens with line numbers,
+but knows nothing about types or modules. Valid constructs the grammar cannot parse live in
+`tools/swiftcheck/baseline.txt` and are ignored; a new problem fails the check. Needs the `dev`
+extras (`tree-sitter`, `tree-sitter-swift`). Run it after every Swift edit made without `swiftc`;
+the real compile is still `aspect build //:macapp` on a Mac.
+
 ## Architecture
 
 ### Ingestion pipeline (`garage_python/src/garage_rag/`)

@@ -53,7 +53,14 @@ dependencies = [
 
 [project.optional-dependencies]
 # Local tooling for the uv venv only; the Bazel @pypi hub does not expose this group.
-dev = ["pytest-asyncio>=0.24", "ruff>=0.8", "grpcio-tools>=1.68.0"]
+dev = [
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "grpcio-tools>=1.68.0",
+    # tools/swiftcheck: Swift syntax checking where no Swift toolchain exists (Linux, web sessions)
+    "tree-sitter>=0.25",
+    "tree-sitter-swift>=0.7",
+]
 
 [project.scripts]
 garage = "garage_rag.cli:main_cli"
