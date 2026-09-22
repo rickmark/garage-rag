@@ -153,12 +153,4 @@ public final class GarageMCPServerClient: @unchecked Sendable {
             }
         }
     }
-
-    public func executeCommand(_ command: String, arguments: [String] = []) async throws -> (exitCode: Int32, stdout: String?, stderr: String?) {
-        try await performRemoteCall { proxy, relay in
-            proxy.executeCommand(command, arguments: arguments) { exitCode, stdout, stderr in
-                relay.resume(returning: (exitCode, stdout, stderr))
-            }
-        }
-    }
 }

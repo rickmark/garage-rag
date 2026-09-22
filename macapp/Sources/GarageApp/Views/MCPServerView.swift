@@ -536,7 +536,7 @@ struct MCPServerView: View {
                     .disabled(busy || appState.mcp.isRegistering)
 
                     Button("Check MCP Status") {
-                        runMCPCommand(["mcp-status"])
+                        checkMCPStatus()
                     }
                     .disabled(busy || appState.mcp.isRegistering)
 
@@ -766,10 +766,10 @@ struct MCPServerView: View {
         }
     }
 
-    private func runMCPCommand(_ arguments: [String]) {
+    private func checkMCPStatus() {
         busy = true
         Task {
-            await appState.runGarage(arguments)
+            await appState.runOperation { try await $0.mcpStatus().summary }
             appState.mcp.refreshDetectedClients()
             busy = false
         }

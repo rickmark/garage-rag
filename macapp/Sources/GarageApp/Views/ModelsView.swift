@@ -106,7 +106,7 @@ struct ModelsView: View {
                 // ===== Distillation Model =====
                 sectionHeading(
                     "Distillation Model",
-                    subtitle: "Generative model that distills documents into facts (garage enrich-facts) and answers rag_ask over MCP."
+                    subtitle: "Generative model that distills documents into facts (Glean Facts) and answers rag_ask over MCP."
                 )
 
                 // Section 5: Fact Distillation Model
@@ -458,12 +458,12 @@ struct ModelsView: View {
                         .disabled(notReady || appState.backfill.isRunning)
 
                         Button("Set as Default Model") {
-                            run(["set-default-model", item.slug])
+                            run { try await $0.setDefaultModel(slug: item.slug).message }
                         }
                         .disabled(notReady)
 
                         Button("Drop from Database", role: .destructive) {
-                            run(["drop-model", item.slug, "--yes"])
+                            run { try await $0.dropModel(slug: item.slug).message }
                         }
                         .disabled(notReady)
 
@@ -721,33 +721,43 @@ struct ModelsView: View {
 
                 HStack {
                     Button("Register \(provider.displayName) Model") {
-                        var args = ["register-model", slug, "--provider", provider.cliValue]
-                        if !dims.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            args += ["--dims", dims.trimmingCharacters(in: .whitespacesAndNewlines)]
+                        let slug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let dimsText = dims.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let modelRef = modelRef.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let provider = provider.cliValue
+                        let makeDefault = makeDefault
+                        run(triggersMaintenance: true) { grpc in
+                            var dimsValue: Int?
+                            if !dimsText.isEmpty {
+                                guard let parsed = Int(dimsText), parsed > 0 else {
+                                    throw GarageGRPCError.rpcFailed("Dimensions must be a positive whole number, not '\(dimsText)'.")
+                                }
+                                dimsValue = parsed
+                            }
+                            return try await grpc.registerModel(
+                                slug: slug,
+                                dims: dimsValue,
+                                modelRef: modelRef.isEmpty ? nil : modelRef,
+                                provider: provider,
+                                makeDefault: makeDefault
+                            ).message
                         }
-                        if !modelRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            args += ["--model-ref", modelRef.trimmingCharacters(in: .whitespacesAndNewlines)]
-                        }
-                        if makeDefault {
-                            args.append("--default")
-                        }
-                        run(args)
                     }
                     .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
                     .buttonStyle(.borderedProminent)
 
-                    Button("List Registered Models (CLI)") {
-                        run(["list-models"])
+                    Button("List Registered Models") {
+                        run { try await $0.listModels().summary }
                     }
                     .disabled(notReady)
 
                     Button("Set Default") {
-                        run(["set-default-model", slug])
+                        run { try await $0.setDefaultModel(slug: slug).message }
                     }
                     .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
 
                     Button("Drop", role: .destructive) {
-                        run(["drop-model", slug, "--yes"])
+                        run { try await $0.dropModel(slug: slug).message }
                     }
                     .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
 
@@ -948,7 +958,7 @@ struct ModelsView: View {
                     }
                     .controlSize(.small)
                     .disabled(isFactsModel || settingFactsModelSlug != nil || notReady)
-                    .help("Runs `garage config set facts.model \(item.slug)` and `garage config set facts.provider \(item.provider.cliValue)`")
+                    .help("Sets facts.model to \(item.slug) and facts.provider to \(item.provider.cliValue) in garage.json")
 
                     if isDownloaded, let dl = downloadedInfo {
                         Menu {
@@ -1274,10 +1284,13 @@ struct ModelsView: View {
         }
     }
 
-    func run(_ args: [String]) {
+    func run(
+        triggersMaintenance: Bool = false,
+        _ operation: @escaping @MainActor (GarageGRPCService) async throws -> String
+    ) {
         busy = true
         Task {
-            await appState.runGarage(args)
+            await appState.runOperation(triggersMaintenance: triggersMaintenance, operation)
             await appState.fetchRegisteredModels()
             busy = false
         }
@@ -1286,7 +1299,7 @@ struct ModelsView: View {
     func backfillModel(slug: String) {
         busy = true
         Task {
-            await appState.runBackfill(["backfill", "--model", slug])
+            await appState.runBackfill(model: slug)
             await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
             busy = false
@@ -1296,7 +1309,7 @@ struct ModelsView: View {
     func backfillAllModels() {
         busy = true
         Task {
-            await appState.runBackfill(["backfill", "--model", "*"])
+            await appState.runBackfill()
             await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
             busy = false
@@ -1305,7 +1318,7 @@ struct ModelsView: View {
 
     func enrichAllFacts() {
         Task {
-            await appState.runEnrichFacts(["enrich-facts", "--source", "*"])
+            await appState.runEnrichFacts()
         }
     }
 

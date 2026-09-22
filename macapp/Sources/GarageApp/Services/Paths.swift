@@ -194,11 +194,12 @@ enum Paths {
         return bundled
     }
 
-    /// Working directory for `garage` CLI invocations, and where its `.env`
-    /// lives. In dev mode this is the repo checkout, matching what a
-    /// developer running `garage` by hand would get. Packaged builds have no
-    /// checkout, so they get a private .env under Application Support instead
-    /// (garage reads it via GARAGE_ENV_FILE, not cwd-relative discovery).
+    /// Working directory of the gRPC server, where it finds `./garage.json`,
+    /// and where its `.env` lives. In dev mode this is the repo checkout,
+    /// matching what a developer running `garage` by hand would get. Packaged
+    /// builds have no checkout, so they get a private .env under Application
+    /// Support instead (garage reads it via GARAGE_ENV_FILE, not cwd-relative
+    /// discovery).
     static var garageWorkingDirectory: URL {
         isPackaged ? appSupportDir : devRepoRoot
     }

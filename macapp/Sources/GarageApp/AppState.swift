@@ -11,12 +11,14 @@ final class AppState: ObservableObject {
     static weak var shared: AppState?
     private static let scheduledMaintenanceEnabledKey = "scheduledMaintenanceEnabled"
     private static let scheduledMaintenanceIntervalKey = "scheduledMaintenanceInterval"
-    private static let maintenanceTriggeringCommands: Set<String> = ["add-source", "register-model"]
 
     let postgres = PostgresService()
-    let garage: GarageCLIService
-    let backfill: GarageCLIService
-    let enrichFacts: GarageCLIService
+    /// General operations (sources, models, schema, settings), one at a time.
+    let garage: OperationRunner
+    /// Embedding backfill and fact distillation run on their own runners so a long
+    /// job never blocks an ordinary operation.
+    let backfill: OperationRunner
+    let enrichFacts: OperationRunner
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -27,7 +29,7 @@ final class AppState: ObservableObject {
     @Published var osLogStreamService: OSLogStreamService
     private var cancellables = Set<AnyCancellable>()
 
-    /// Output of the most recent manual or scheduled `garage` command,
+    /// Output of the most recent manual or scheduled operation,
     /// separate from the rolling activity log.
     @Published var lastCommandOutput: String = ""
     @Published var lastCommandSucceeded: Bool?
@@ -87,11 +89,12 @@ final class AppState: ObservableObject {
         xpcMgr.osLogStreamService = osLogSvc
         self.xpcServices = xpcMgr
         self.osLogStreamService = osLogSvc
-        garage = GarageCLIService(postgres: postgres)
-        backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
-        enrichFacts = GarageCLIService(postgres: postgres, commandLabel: "garage enrich-facts")
+        garage = OperationRunner(label: "garage")
+        backfill = OperationRunner(label: "garage backfill")
+        enrichFacts = OperationRunner(label: "garage enrich-facts")
         mcp = GarageMCPService(postgres: postgres)
         grpc = GarageGRPCService(postgres: postgres)
+        mcp.grpc = grpc
 
         if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
             scheduledMaintenanceEnabled = storedEnabled
@@ -174,15 +177,14 @@ final class AppState: ObservableObject {
         self.factsProvider = facts.provider
     }
 
-    /// Points `garage enrich-facts` / `rag_ask` at a model:
-    /// `garage config set facts.model <slug>` then `garage config set facts.provider <provider>`.
+    /// Points `enrich-facts` / `rag_ask` at a model: sets `facts.model`, then `facts.provider`.
     @discardableResult
     func setFactsModel(_ slug: String, provider: String = GarageConfigLoader.defaultFactsProvider) async -> Bool {
-        guard await runGarage(["config", "set", "facts.model", slug]) else {
-            fetchFactsSettings()
-            return false
+        let succeeded = await runOperation { grpc in
+            let model = try await grpc.setSetting("facts.model", to: slug)
+            let chosen = try await grpc.setSetting("facts.provider", to: provider)
+            return [model.summary, chosen.summary].joined(separator: "\n")
         }
-        let succeeded = await runGarage(["config", "set", "facts.provider", provider])
         fetchFactsSettings()
         return succeeded
     }
@@ -307,10 +309,12 @@ final class AppState: ObservableObject {
             try await postgres.resetDatabase()
             if postgres.status == .running || postgres.status == .needsMigration {
                 try await postgres.applyMigrations()
-                await runGarage(["sync"])
                 if postgres.status == .running {
-                    try? await mcp.start()
+                    // Re-register the sources garage.json declares; this runs over gRPC, so the
+                    // service comes up first.
                     try? await grpc.start()
+                    await runOperation { try await $0.syncSources().message }
+                    try? await mcp.start()
                 }
                 await fetchRegisteredModels()
                 await fetchRegisteredSources()
@@ -510,31 +514,27 @@ final class AppState: ObservableObject {
     /// Performs a scan on configured sources to calculate item counts and update expected element totals.
     @discardableResult
     func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
-        guard postgres.status == .running else { return false }
         guard !isIngesting else {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Cannot scan while ingestion is in progress."
             logger.info("Scan skipped because ingestion is in progress.")
             return false
         }
-        var args = ["scan", "--source", source]
-        if includeCode {
-            args.append("--include-code")
-        }
-        let succeeded = await runGarage(args)
+        guard postgres.status == .running else { return false }
+        let succeeded = await runOperation { try await $0.scan(source: source, includeCode: includeCode).message }
         await fetchRegisteredSources()
         await fetchCorpusStats()
         return succeeded
     }
 
-    /// Runs a garage subcommand and captures its combined output for display.
+    /// Runs one operation over gRPC on the general runner and shows what it reports.
+    /// `triggersMaintenance` schedules ingest + backfill afterwards (a new source or
+    /// model has nothing indexed yet) when automatic maintenance is enabled.
     @discardableResult
-    func runGarage(_ arguments: [String]) async -> Bool {
-        if arguments.first == "scan" && isIngesting {
-            lastCommandSucceeded = false
-            lastCommandOutput = "Cannot scan while ingestion is in progress."
-            logger.warning("Attempted to run garage scan while ingestion is in progress.")
-            return false
-        }
-
+    func runOperation(
+        triggersMaintenance: Bool = false,
+        _ operation: @escaping @MainActor (GarageGRPCService) async throws -> String
+    ) async -> Bool {
         guard !commandInProgress else {
             lastCommandSucceeded = false
             lastCommandOutput = "A garage command is already running."
@@ -543,11 +543,12 @@ final class AppState: ObservableObject {
 
         commandInProgress = true
         defer { commandInProgress = false }
-        let result = await garage.run(arguments)
-        lastCommandOutput = result.lines.map(\.text).joined(separator: "\n")
+        let grpc = self.grpc
+        let result = await garage.run { _ in try await operation(grpc) }
+        lastCommandOutput = result.output
         lastCommandSucceeded = result.succeeded
 
-        if result.succeeded, let command = arguments.first, Self.maintenanceTriggeringCommands.contains(command) {
+        if result.succeeded, triggersMaintenance {
             scheduleDebouncedMaintenanceTrigger()
         }
 
@@ -608,19 +609,38 @@ final class AppState: ObservableObject {
         return allSucceeded
     }
 
-    /// Runs embedding backfill in an independent process and log stream.
+    /// Embeds pending chunks for `model` (nil = every registered model) on the backfill
+    /// runner, logging each progress step the server streams back.
     @discardableResult
-    func runBackfill(_ arguments: [String]) async -> Bool {
-        let result = await backfill.run(arguments)
+    func runBackfill(model: String? = nil) async -> Bool {
+        let grpc = self.grpc
+        let result = await backfill.run { runner in
+            _ = try await grpc.backfill(model: model) { status in
+                if !status.message.isEmpty {
+                    runner.appendLog(status.message)
+                }
+            }
+            return ""
+        }
         await fetchCorpusStats()
         await fetchRegisteredModels()
         return result.succeeded
     }
 
-    /// Distills documents into facts ("glean facts") in an independent process and log stream.
+    /// Distills documents into facts ("glean facts") on the enrich-facts runner: every
+    /// document of `source`, or just `documentID` when given.
     @discardableResult
-    func runEnrichFacts(_ arguments: [String]) async -> Bool {
-        let result = await enrichFacts.run(arguments)
+    func runEnrichFacts(source: String = "*", documentID: Int64? = nil) async -> Bool {
+        let grpc = self.grpc
+        let result = await enrichFacts.run { runner in
+            let finished = try await grpc.enrichFacts(source: source, documentID: documentID) { status in
+                // The summary is logged once, as the operation's result.
+                if status.phase != "finished", !status.message.isEmpty {
+                    runner.appendLog(status.message, stream: status.error.isEmpty ? .stdout : .stderr)
+                }
+            }
+            return finished?.message ?? ""
+        }
         return result.succeeded
     }
 
@@ -761,7 +781,7 @@ final class AppState: ObservableObject {
 
         _ = await scanSources()
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
-        let backfillSucceeded = await runBackfill(["backfill"])
+        let backfillSucceeded = await runBackfill()
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded
     }
@@ -775,7 +795,7 @@ final class AppState: ObservableObject {
 
     /// Debounces `triggerMaintenanceIfEnabled()` so a rapid burst of add-source/
     /// register-model calls (e.g. "Add All") coalesces into a single run that
-    /// starts once the burst settles, rather than each add racing `runGarage`'s
+    /// starts once the burst settles, rather than each add racing `runOperation`'s
     /// `commandInProgress` guard against the scan/ingest the previous add kicked off.
     private func scheduleDebouncedMaintenanceTrigger() {
         pendingMaintenanceTask?.cancel()

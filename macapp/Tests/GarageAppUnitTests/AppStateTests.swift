@@ -54,12 +54,38 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testRunGarageWhenCliUnavailable() async {
+    func testRunOperationReportsItsOutput() async {
         let state = AppState()
 
-        let result = await state.runGarage(["status"])
-        // If CLI is not found or fails
-        XCTAssertEqual(result, state.lastCommandSucceeded ?? false)
+        let result = await state.runOperation { _ in "default model = bge-m3" }
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertEqual(state.lastCommandOutput, "default model = bge-m3")
+        XCTAssertEqual(state.garage.logs.last?.text, "default model = bge-m3")
+    }
+
+    @MainActor
+    func testRunOperationReportsTheServerError() async {
+        let state = AppState()
+
+        let result = await state.runOperation { _ in
+            throw GarageGRPCError.rpcFailed("communication sources may never enable cloud enrichment")
+        }
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandSucceeded, false)
+        XCTAssertEqual(state.lastCommandOutput, "communication sources may never enable cloud enrichment")
+    }
+
+    @MainActor
+    func testOperationNeedingTheServiceFailsWhileTheDatabaseIsOffline() async {
+        let state = AppState()
+
+        let result = await state.runOperation { try await $0.syncSources().message }
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandOutput, GarageGRPCError.databaseNotOnline.localizedDescription)
     }
 
     @MainActor
@@ -189,9 +215,11 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.backfill.isRunning)
         XCTAssertTrue(state.backfill.logs.isEmpty)
 
-        // Running backfill when CLI is not running
-        _ = await state.runBackfill(["backfill", "--model", "test-model"])
+        // With the database offline the gRPC service cannot start, so the run fails and says why.
+        let succeeded = await state.runBackfill(model: "test-model")
+        XCTAssertFalse(succeeded)
         XCTAssertFalse(state.backfill.isRunning)
+        XCTAssertFalse(state.backfill.logs.isEmpty)
 
         // Clear logs for backfill
         state.clearLogs(for: "Backfill")
@@ -519,11 +547,11 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testRunGarageScanSkippedWhenIngesting() async {
+    func testScanSkippedWhenIngestingSaysWhy() async {
         let state = AppState()
         state.setIngestingForTesting(true)
 
-        let result = await state.runGarage(["scan", "--source", "*"])
+        let result = await state.scanSources(source: "*")
         XCTAssertFalse(result)
         XCTAssertEqual(state.lastCommandSucceeded, false)
         XCTAssertEqual(state.lastCommandOutput, "Cannot scan while ingestion is in progress.")

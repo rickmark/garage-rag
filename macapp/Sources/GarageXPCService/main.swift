@@ -52,9 +52,17 @@ final class GarageGRPCManagedServer: GarageManagedService {
             for (key, value) in opts {
                 if key == GarageXPCConfigurationKey.databaseURL || key == "database_url" {
                     os.environ[GarageXPCConfigurationKey.databaseURL] = PythonObject(XPCSitePathSetup.ensurePsycopgDatabaseURL(value))
+                } else if key == GarageXPCConfigurationKey.workingDirectory {
+                    try FileManager.default.createDirectory(atPath: value, withIntermediateDirectories: true)
+                    os.chdir(PythonObject(value))
                 } else {
                     os.environ[key] = PythonObject(value)
                 }
+            }
+            if opts[GarageXPCConfigurationKey.workingDirectory] != nil {
+                // Settings cached under the previous directory would miss its garage.json.
+                let config = try Python.attemptImport("garage_rag.config")
+                _ = config.reset_settings()
             }
 
             lock.lock()

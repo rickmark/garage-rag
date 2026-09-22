@@ -15,9 +15,9 @@ Fusion), and serves the corpus over MCP 2.0. Three deployable pieces:
 - **`macapp/`** — `GarageApp`, a native Swift/SwiftUI macOS menu-bar app that bundles a relocatable
   Postgres 18 + pgvector instance and drives the Python pipeline through XPC services and gRPC.
 - **`proto/garage.proto`** — the gRPC contract between the Swift app and the Python `GarageService`:
-  read-only corpus access for the app (search, documents, sources, models, stats) plus the database
-  facade the ingest and embed XPC workers persist through. Pipeline stages and configuration
-  changes are `garage` CLI commands the app invokes directly, not RPCs.
+  corpus access (search, documents, sources, models, stats), every operation the app runs (sources,
+  models, scan, sync, backfill, enrich-facts, settings, MCP client registration), and the database
+  facade the ingest and embed XPC workers persist through. The app never shells out to `garage`.
 
 ## Build system
 
@@ -161,9 +161,11 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   app's Search and Documents views read through, and the database facade `GrpcIngestStorageGateway`
   and the embed worker persist through; the server side of that facade is the same
   `SqlAlchemyIngestStorageGateway` the in-process pipeline uses. Handlers translate proto messages
-  to and from the plain functions the CLI also calls, with a `_grpc_errors` decorator mapping
-  `LookupError`/`ValueError`/`FileExistsError`/`PermissionError` onto gRPC status codes. There are
-  no RPCs for pipeline stages or configuration; those are CLI commands.
+  to and from the plain functions the CLI also calls (`ops/` for operations: the CLI command and the
+  RPC are both thin presenters over one function), with a `_grpc_errors` decorator mapping
+  `LookupError`/`ValueError`/`FileExistsError`/`PermissionError` onto gRPC status codes. Long jobs
+  (`Backfill`, `EnrichFacts`) are server-streaming; cancelling the call stops the work at its next
+  progress step.
 
 Two independent hashes drive idempotency: `source_sha256` (raw bytes — skip unopened) and
 `content_sha256` (extracted text — rebuild chunks when an extractor improves). One DB transaction
@@ -229,9 +231,11 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
 - `PostgresService` owns a private, relocatable Postgres cluster (built from source — see
   `macapp/README.md` for why Homebrew's build won't work) in
   `~/Library/Application Support/GarageApp/pgdata`.
-- `GarageCLIService` shells out to `garage <subcommand>` one-shot invocations; dedicated instances
-  for `backfill`/`enrich-facts` so long-running jobs don't block ordinary commands. Ingest no
-  longer goes through it: `IngestService` drives `GarageIngestXPCService` via `IngestClient`.
+- `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
+  busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
+  long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which
+  drives `GarageIngestXPCService` via `IngestClient`. The bundled `garage` launcher is only for
+  stdio MCP clients and people at a terminal.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.

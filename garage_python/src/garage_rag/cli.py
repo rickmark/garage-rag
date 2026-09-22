@@ -53,7 +53,7 @@ app = typer.Typer(
 class _StdoutConsole(Console):
     """A console that keeps following ``sys.stdout``.
 
-    In-process runners (Click's ``CliRunner``, the gRPC command executor) swap
+    In-process runners (Click's ``CliRunner``) swap
     ``sys.stdout`` for a capture buffer around a command. rich resolves the file
     lazily only while none is set, so a caller that reads ``console.file``,
     redirects it, and later assigns the old value back would pin the console to

@@ -1,6 +1,6 @@
 import Foundation
 
-/// One source registration: exactly what `garage add-source` takes.
+/// One source registration: exactly what the AddSource RPC (and `garage add-source`) takes.
 struct SourceSpec: Hashable, Sendable {
     var slug: String
     var root: String
@@ -8,15 +8,6 @@ struct SourceSpec: Hashable, Sendable {
     var corpusClass: String
     var trust: String
     var allowCloudEnrichment = false
-
-    /// `garage add-source SLUG ROOT --kind ... --class ... --trust ...`.
-    var addSourceArguments: [String] {
-        var args = ["add-source", slug, root, "--kind", kind, "--class", corpusClass, "--trust", trust]
-        if allowCloudEnrichment {
-            args.append("--allow-cloud-enrichment")
-        }
-        return args
-    }
 }
 
 /// The common local sources both the Status page's quick add and the Sources
@@ -66,28 +57,25 @@ struct SourcePreset: Identifiable, Hashable, Sendable {
     }()
 }
 
-extension ModelPresetEntry {
-    /// `garage register-model SLUG --provider ... [--dims N] [--model-ref REF]`.
-    var registerModelArguments: [String] {
-        var args = ["register-model", slug, "--provider", provider ?? "llama_xpc"]
-        if effectiveDims > 0 {
-            args += ["--dims", "\(effectiveDims)"]
-        }
-        if let ref = modelRef, !ref.isEmpty, ref != slug {
-            args += ["--model-ref", ref]
-        }
-        return args
-    }
-}
-
 extension AppState {
+    /// Registers a source; a new source schedules maintenance so it gets indexed.
     @discardableResult
     func addSource(_ spec: SourceSpec) async -> Bool {
-        await runGarage(spec.addSourceArguments)
+        await runOperation(triggersMaintenance: true) { try await $0.addSource(spec).message }
     }
 
+    /// Registers a preset model (dims from the preset, else the known-model table).
     @discardableResult
     func registerModel(preset: ModelPresetEntry) async -> Bool {
-        await runGarage(preset.registerModelArguments)
+        let dims = preset.effectiveDims
+        let ref = preset.modelRef
+        await runOperation(triggersMaintenance: true) {
+            try await $0.registerModel(
+                slug: preset.slug,
+                dims: dims > 0 ? dims : nil,
+                modelRef: ref.flatMap { $0.isEmpty || $0 == preset.slug ? nil : $0 },
+                provider: preset.provider ?? "llama_xpc"
+            ).message
+        }
     }
 }

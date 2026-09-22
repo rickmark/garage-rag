@@ -177,31 +177,6 @@ final class GarageMCPServerServiceDelegate: GarageXPCServiceBase, GarageMCPServe
     func isServerRunning(with reply: @escaping (Bool) -> Void) {
         reply(mcpServer.isRunning)
     }
-
-    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
-        logger.info("executeCommand '\(command, privacy: .public)' \(arguments, privacy: .public)")
-        let result = withPython { () -> (Int32, String, String) in
-            let cliRunnerModule = try Python.attemptImport("typer.testing")
-            let appModule = try Python.attemptImport("garage_rag.cli")
-            let runner = cliRunnerModule.CliRunner()
-            var fullArgs: [String] = []
-            if !command.isEmpty {
-                fullArgs.append(command)
-            }
-            fullArgs.append(contentsOf: arguments)
-            let invocation = try runner.invoke.throwing.dynamicallyCall(withArguments: [appModule.app, PythonObject(fullArgs)])
-            let exitCode = Int32(invocation.exit_code) ?? 0
-            let stdout = String(invocation.stdout) ?? ""
-            let stderr = String(invocation.checking.stderr ?? Python.None) ?? ""
-            return (exitCode, stdout, stderr)
-        }
-        switch result {
-        case .success(let (exitCode, stdout, stderr)):
-            reply(exitCode, stdout, stderr)
-        case .failure(let error):
-            reply(1, nil, "Failed to execute command: \(error.localizedDescription)")
-        }
-    }
 }
 
 // MARK: - Process Entry Point

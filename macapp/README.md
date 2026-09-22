@@ -143,7 +143,7 @@ postgres's fork-safety check runs.
 ## App architecture
 
 - `PostgresService` — owns a private cluster in `~/Library/Application Support/GarageApp/pgdata`, port 14824, database `garage-rag`. On first initialization it generates a random Postgres superuser password, stores it in the macOS Keychain, and creates the cluster with SCRAM authentication.
-- `GarageCLIService` — runs one-shot `garage <subcommand>` invocations (scan, add-source, register-model, sync, …) against that cluster, streaming output. Dedicated instances and log streams exist for the long-running `backfill` and `enrich-facts` runs so they never block ordinary commands.
+- `OperationRunner` — runs the app's operations (scan, add-source, register-model, sync, …) as calls on the Python `GarageService` over gRPC, logging what each reports. Dedicated runners and log streams exist for the long-running `backfill` and `enrich-facts` streams so they never block ordinary operations; cancelling one stops the work server-side.
 - `IngestService` — runs ingestion through `GarageIngestXPCService` (an XPC helper that embeds Python and calls `garage_rag.ingest` directly), receiving live progress and log callbacks over the connection. Ingest does not go through the CLI.
 - `GarageMCPService` — owns the loopback HTTP `garage-mcp` server at `http://127.0.0.1:8787/mcp`, hosted inside the `GarageMCPServerService` XPC helper; started after Postgres and stopped before it.
 - `GarageGRPCService` — owns the `GarageService` gRPC backend (port 50051) hosted inside the `GarageXPCService` helper; the Search and Documents views talk to it over gRPC-Swift.

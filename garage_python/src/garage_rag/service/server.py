@@ -184,28 +184,56 @@ def _grpc_errors[**P, R](handler: Callable[P, R]) -> Callable[P, R]:
 _DONE = object()
 
 
-def _stream_events[E](run: Callable[[Callable[[E], None]], object]) -> Iterator[E]:
+class _StreamCancelled(BaseException):
+    """Raised inside a streaming op's callback once its RPC has ended.
+
+    A BaseException so an op's per-item ``except Exception`` (enrich_facts records
+    a failed document and moves on) cannot swallow it: cancelling the call has to
+    stop the work, as killing the `garage` process used to.
+    """
+
+
+def _stream_events[E](
+    run: Callable[[Callable[[E], None]], object], context: grpc.ServicerContext | None = None
+) -> Iterator[E]:
     """Yield the events ``run`` reports to its callback, as it reports them.
 
     The ops functions report progress through a callback; a gRPC streaming
     handler has to yield. ``run`` executes on a worker thread and the events cross
     a queue; an exception in ``run`` is re-raised here, in the handler, after the
-    events that preceded it.
+    events that preceded it. When the call ends early (the client cancelled, the
+    deadline passed) the next event ``run`` reports raises instead, so the work
+    stops at its next progress step rather than running on unobserved.
     """
     events: queue.Queue[Any] = queue.Queue()
     failure: list[BaseException] = []
+    ended = threading.Event()
+    add_callback = getattr(context, "add_callback", None)
+    if add_callback is not None:
+        add_callback(ended.set)
+
+    def emit(event: E) -> None:
+        if ended.is_set():
+            raise _StreamCancelled
+        events.put(event)
 
     def worker() -> None:
         try:
-            run(events.put)
+            run(emit)
+        except _StreamCancelled:
+            pass
         except BaseException as exc:  # re-raised on the handler thread below
             failure.append(exc)
         finally:
             events.put(_DONE)
 
     threading.Thread(target=worker, name="garage-grpc-stream", daemon=True).start()
-    while (item := events.get()) is not _DONE:
-        yield item
+    try:
+        while (item := events.get()) is not _DONE:
+            yield item
+    finally:
+        # Reached on completion and when gRPC closes the generator of a call that ended early.
+        ended.set()
     if failure:
         raise failure[0]
 
@@ -765,7 +793,7 @@ class GarageRpcServicer(GarageServiceServicer):
                 on_event=emit,
             )
 
-        for event in _stream_events(run):
+        for event in _stream_events(run, context):
             yield BackfillStatus(
                 model_slug=event.model,
                 phase=event.phase,
@@ -837,7 +865,7 @@ class GarageRpcServicer(GarageServiceServicer):
             )
             return summary
 
-        yield from _stream_events(run)
+        yield from _stream_events(run, context)
 
     # -----------------------------------------------------------------------
     # Schema & settings

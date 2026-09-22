@@ -139,21 +139,21 @@ struct DatabaseView: View {
                         Divider()
 
                         HStack {
-                            Button("Initialize schema (garage init-db)") {
+                            Button("Initialize schema") {
                                 Task {
                                     initRunning = true
-                                    await appState.runGarage(
-                                        ["init-db", "--schema-dir", Paths.schemaDir.path]
-                                    )
+                                    await appState.runOperation {
+                                        try await $0.initDatabase(schemaDir: Paths.schemaDir.path).message
+                                    }
                                     initRunning = false
                                 }
                             }
                             .disabled(appState.postgres.status != .running || initRunning)
 
-                            Button("Show stats (garage stats)") {
+                            Button("Show stats") {
                                 Task {
                                     statsRunning = true
-                                    await appState.runGarage(["stats"])
+                                    await appState.runOperation { try await $0.stats().summary }
                                     statsRunning = false
                                 }
                             }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -188,6 +189,41 @@ class TestStreaming:
             ):
                 statuses = list(GarageServiceStub(channel).Backfill(BackfillRequest(model="m")))
             assert [s.phase for s in statuses] == ["started", "progress", "finished"]
+        finally:
+            server.stop(grace=None)
+
+    def test_cancelling_the_call_stops_the_operation(self) -> None:
+        """Cancel in the app has to stop the work, as killing `garage backfill` did."""
+        reported: list[int] = []
+        stopped = threading.Event()
+        first_seen = threading.Event()
+
+        def endless(model=None, *, on_event, **_kwargs):
+            try:
+                for batch in range(1, 10_000):
+                    on_event(BackfillEvent("m", "progress", total=10_000, embedded=batch, batches=batch))
+                    reported.append(batch)
+                    first_seen.wait(timeout=5)
+                    time.sleep(0.01)
+            finally:
+                stopped.set()
+            return []
+
+        stop = threading.Event()
+        server, _ = create_grpc_server(host="127.0.0.1", port=0, stop_event=stop)
+        port = server.add_insecure_port("127.0.0.1:0")
+        server.start()
+        try:
+            with (
+                patch("garage_rag.ops.backfill.backfill", side_effect=endless),
+                grpc.insecure_channel(f"127.0.0.1:{port}") as channel,
+            ):
+                call = GarageServiceStub(channel).Backfill(BackfillRequest(model="m"))
+                assert next(call).phase == "progress"
+                first_seen.set()
+                call.cancel()
+                assert stopped.wait(timeout=5), "the operation kept running after the call was cancelled"
+            assert len(reported) < 10_000
         finally:
             server.stop(grace=None)
 

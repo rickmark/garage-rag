@@ -280,12 +280,12 @@ struct SourcesView: View {
                     }
 
                     Button("Sync Config → DB") {
-                        run(["sync"])
+                        run { try await $0.syncSources().message }
                     }
                     .disabled(notReady)
 
                     Button("Import DB → Config") {
-                        run(["config", "import-sources"])
+                        run { try await $0.importSourcesToConfig().message }
                     }
                     .disabled(notReady)
 
@@ -418,7 +418,7 @@ struct SourcesView: View {
                         .disabled(notReady)
 
                         Button("Reconcile (Dry Run)") {
-                            run(["reconcile", "--source", source.slug])
+                            run { try await $0.reconcile(source: source.slug, apply: false).message }
                         }
                         .disabled(notReady)
 
@@ -428,7 +428,7 @@ struct SourcesView: View {
                         .disabled(notReady || appState.enrichFacts.isRunning)
 
                         Button("Reconcile (Apply Deletions)", role: .destructive) {
-                            run(["reconcile", "--source", source.slug, "--apply"])
+                            run { try await $0.reconcile(source: source.slug, apply: true).message }
                         }
                         .disabled(notReady)
 
@@ -948,17 +948,17 @@ struct SourcesView: View {
         busy = true
         let trimmed = toRemove.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            await appState.runGarage(["remove-source", trimmed, "--yes"])
+            await appState.runOperation { try await $0.removeSource(slug: trimmed).message }
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
         }
     }
 
-    private func run(_ args: [String]) {
+    private func run(_ operation: @escaping @MainActor (GarageGRPCService) async throws -> String) {
         busy = true
         Task {
-            await appState.runGarage(args)
+            await appState.runOperation(operation)
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
@@ -967,7 +967,7 @@ struct SourcesView: View {
 
     private func enrichFacts(source: String) {
         Task {
-            await appState.runEnrichFacts(["enrich-facts", "--source", source])
+            await appState.runEnrichFacts(source: source)
         }
     }
 

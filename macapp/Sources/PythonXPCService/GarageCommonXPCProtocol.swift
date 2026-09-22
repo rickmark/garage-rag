@@ -69,7 +69,6 @@ public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol {
     func startServer(host: String, port: Int, path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
     func stopServer(with reply: @escaping (Bool, String?) -> Void)
     func isServerRunning(with reply: @escaping (Bool) -> Void)
-    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void)
 }
 
 /// Objective-C protocol for Garage Core Backend XPC Service communication.
@@ -256,6 +255,9 @@ public enum GarageXPCConfigurationKey {
     public static let grpcHost = "GARAGE_GRPC_HOST"
     public static let grpcPort = "GARAGE_GRPC_PORT"
     public static let logLevel = "GARAGE_LOG_LEVEL"
+    /// Directory the Python server works in, and so where it finds `./garage.json`: the
+    /// app's working directory, as when the app ran the `garage` CLI there.
+    public static let workingDirectory = "GARAGE_WORKING_DIRECTORY"
 }
 
 public enum GarageMCPConstants {

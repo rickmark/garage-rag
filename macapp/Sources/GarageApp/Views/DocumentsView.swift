@@ -502,7 +502,7 @@ public struct DocumentsView: View {
     private func glean(_ detail: DocumentDetailItem) {
         isGleaningFacts = true
         Task {
-            await appState.runEnrichFacts(["enrich-facts", "--document-id", "\(detail.id)"])
+            await appState.runEnrichFacts(documentID: detail.id)
             if selectedDocumentID == detail.id {
                 let refreshed = try? await appState.getDocument(documentID: detail.id)
                 await MainActor.run {
