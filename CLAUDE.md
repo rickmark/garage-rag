@@ -89,14 +89,25 @@ See `macapp/README.md` for why Postgres can't just use the Homebrew build (it ba
 Without a Swift toolchain (Linux, Claude Code on the web) there is still a syntax gate:
 
 ```bash
-python tools/swiftcheck/swift_syntax_check.py            # parses every macapp/**/*.swift with tree-sitter
+tools/swiftcheck/check.sh                                # swiftc -parse when swiftc is on PATH, else tree-sitter
+python tools/swiftcheck/swift_syntax_check.py            # the tree-sitter checker directly
 ```
 
-It reports unbalanced braces, malformed closures/attributes and stray tokens with line numbers,
-but knows nothing about types or modules. Valid constructs the grammar cannot parse live in
-`tools/swiftcheck/baseline.txt` and are ignored; a new problem fails the check. Needs the `dev`
-extras (`tree-sitter`, `tree-sitter-swift`). Run it after every Swift edit made without `swiftc`;
-the real compile is still `aspect build //:macapp` on a Mac.
+`check.sh` prefers a real `swiftc -parse` over every `macapp/**/*.swift` (plus `swift-format lint`
+when installed) and otherwise falls back to the tree-sitter parser, which reports unbalanced
+braces, malformed closures/attributes and stray tokens with line numbers but knows nothing about
+types or modules. Valid constructs the grammar cannot parse live in `tools/swiftcheck/baseline.txt`
+and are ignored; a new problem fails the check. Needs the `dev` extras (`tree-sitter`,
+`tree-sitter-swift`). Run it after every Swift edit made without a full build; the real compile is
+still `aspect build //:macapp` on a Mac.
+
+Web sessions get both from `.claude/hooks/session-start.sh` (registered in `.claude/settings.json`,
+runs only when `CLAUDE_CODE_REMOTE=true`): it creates `garage_python/.venv` with the `dev` extras
+via `uv` (the lockfile only lists darwin environments, so `uv sync` cannot be used on Linux) and
+downloads a Linux Swift toolchain into `/opt/swift` (override with `GARAGE_SWIFT_VERSION`,
+`GARAGE_SWIFT_HOME`, `GARAGE_SWIFT_SHA256`). The download needs `download.swift.org` allowed in
+the environment's network policy; when it is not, the hook says so and the tree-sitter fallback
+still runs.
 
 ## Architecture
 
