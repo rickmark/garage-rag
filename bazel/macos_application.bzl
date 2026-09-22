@@ -135,11 +135,14 @@ developer_id_macos_application_transition = rule(
 def appstore_macos_application(name, app = None, application = None, bundle = None, **kwargs):
     """Creates a macOS application target configured for App Store distribution via transition."""
     target_app = app or application or bundle
+
+    # Manual whether or not the app is passed in: these sign with a distribution
+    # identity, so `//...` (and CI, which has none) must not build them.
+    tags = kwargs.pop("tags", [])
+    if "manual" not in tags:
+        tags = tags + ["manual"]
     if not target_app:
         raw_name = "_" + name.replace(".", "_") + "_raw"
-        tags = kwargs.pop("tags", [])
-        if "manual" not in tags:
-            tags = tags + ["manual"]
         _raw_macos_application(
             name = raw_name,
             tags = tags,
@@ -151,17 +154,21 @@ def appstore_macos_application(name, app = None, application = None, bundle = No
     appstore_macos_application_transition(
         name = name,
         app = target_app,
+        tags = tags,
         **kwargs
     )
 
 def developer_id_macos_application(name, app = None, application = None, bundle = None, **kwargs):
     """Creates a macOS application target configured for Developer ID distribution via transition."""
     target_app = app or application or bundle
+
+    # Manual whether or not the app is passed in: these sign with a distribution
+    # identity, so `//...` (and CI, which has none) must not build them.
+    tags = kwargs.pop("tags", [])
+    if "manual" not in tags:
+        tags = tags + ["manual"]
     if not target_app:
         raw_name = "_" + name.replace(".", "_") + "_raw"
-        tags = kwargs.pop("tags", [])
-        if "manual" not in tags:
-            tags = tags + ["manual"]
         _raw_macos_application(
             name = raw_name,
             tags = tags,
@@ -173,5 +180,6 @@ def developer_id_macos_application(name, app = None, application = None, bundle 
     developer_id_macos_application_transition(
         name = name,
         app = target_app,
+        tags = tags,
         **kwargs
     )
