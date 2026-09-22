@@ -112,16 +112,19 @@ alias(
 alias(
     name = "installer",
     actual = "//macapp:installer",
+    tags = ["manual"],
 )
 
 alias(
     name = "package",
     actual = "//macapp:package",
+    tags = ["manual"],
 )
 
 alias(
     name = "install",
     actual = "//macapp:install",
+    tags = ["manual"],
 )
 
 alias(

@@ -46,6 +46,7 @@ sh_binary(
     srcs = ["open_xcarchive.sh"],
     args = ["$(location :GarageStore.xcarchive)"],
     data = [":GarageStore.xcarchive"],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -91,6 +92,7 @@ xcodeproj(
 alias(
     name = "install",
     actual = "//macapp/package:install",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -111,17 +113,20 @@ alias(
 alias(
     name = "installer",
     actual = "//macapp/package:GarageInstaller",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "package",
     actual = "//macapp/package:package",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "xcarchive",
     actual = ":GarageStore.xcarchive",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )

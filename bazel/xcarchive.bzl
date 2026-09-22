@@ -47,9 +47,15 @@ def appstore_xcarchive(name, bundle, **kwargs):
         bundle = bundle,
         tags = ["manual"],
     )
+    # Like the *_macos_application macros: the archive signs with the App Store
+    # identity, which only a release machine has, so `//...` must not build it.
+    tags = kwargs.pop("tags", [])
+    if "manual" not in tags:
+        tags = tags + ["manual"]
     appstore_xcarchive_transition(
         name = name,
         archive = ":" + raw_name,
+        tags = tags,
         **kwargs
     )
 

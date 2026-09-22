@@ -2,12 +2,17 @@ load("//bazel:lipo.bzl", "macos_lipo_app")
 load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
 
+# Every target here signs with a Developer ID identity or talks to the notary
+# service, so all are `manual`: `bazel build //...` (CI included) skips them and
+# they build only when named, on a machine that holds those identities.
+
 # 1. Stage the app for distribution: prune, thin to arm64, codesign for Developer ID
 macos_lipo_app(
     name = "GarageApp",
     app = "//macapp/Sources/GarageApp:GarageApp",
     arch = "arm64",
     signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -16,12 +21,14 @@ notarytool(
     name = "GarageAppNotary",
     app = ":GarageApp",
     keychain_profile = "Primary",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "GarageNotary",
     actual = ":GarageAppNotary",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -32,6 +39,7 @@ pkgbuild(
     identifier = "me.rickmark.garage-rag.pkg",
     install_location = "/Applications",
     signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -40,6 +48,7 @@ notarytool(
     name = "GarageInstallerNotary",
     keychain_profile = "Primary",
     pkg = ":GarageInstaller",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -48,6 +57,7 @@ notarytool(
     apps = [":GarageAppNotary"],
     keychain_profile = "Primary",
     pkgs = [":GarageInstallerNotary"],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -58,11 +68,13 @@ filegroup(
         ":GarageApp",
         ":GarageInstaller",
     ],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 pkg_install(
     name = "install",
     pkg = ":GarageInstaller",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
