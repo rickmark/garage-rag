@@ -742,3 +742,33 @@ def test_chunk_offset_zero_survives_the_grpc_facade():
     received = server_side.replace_document.call_args.kwargs["chunks"]
     assert (received[0].char_start, received[0].char_end) == (0, 5)
     assert (received[1].char_start, received[1].char_end) == (None, None)
+
+
+def test_session_kind_crosses_the_grpc_facade():
+    """The scanner is chosen by kind; over gRPC it used to arrive as "filesystem"."""
+    from garage_rag.ingest.gateway import SourceContext
+    from garage_rag.proto.garage_pb2 import BeginIngestSessionRequest
+    from garage_rag.service.server import GarageRpcServicer
+
+    server_side = MagicMock()
+    server_side.begin_session.return_value = SourceContext(
+        source_id=7,
+        slug="apple-sms",
+        root=Path("/Users/me/Library/Messages"),
+        default_class=CorpusClass.COMMUNICATION,
+        default_trust=TrustTier.RECEIVED,
+        allow_cloud_enrichment=False,
+        run_id=3,
+        kind="sqlite",
+        source_slugs=["apple-sms"],
+    )
+    with patch.object(GarageRpcServicer, "_ingest_gateway", return_value=server_side):
+        response = GarageRpcServicer().BeginIngestSession(
+            BeginIngestSessionRequest(source_slug="apple-sms"), MagicMock()
+        )
+    assert response.kind == "sqlite"
+
+    client = GarageClient(in_process=True)
+    with patch.object(client, "begin_ingest_session", return_value=response):
+        ctx = GrpcIngestStorageGateway(client).begin_session("apple-sms")
+    assert ctx.kind == "sqlite"

@@ -584,6 +584,7 @@ message BeginIngestSessionResponse {
     bool allow_cloud_enrichment = 6;
     int64 run_id = 7;
     repeated string source_slugs = 8;
+    string kind = 9;  // filesystem | git | sqlite | maildir: picks the scanner
 }
 
 message PersistScanRequest {

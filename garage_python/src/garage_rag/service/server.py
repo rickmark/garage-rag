@@ -1002,6 +1002,7 @@ class GarageRpcServicer(GarageServiceServicer):
             allow_cloud_enrichment=ctx.allow_cloud_enrichment,
             run_id=ctx.run_id,
             source_slugs=ctx.source_slugs,
+            kind=ctx.kind,
         )
 
     @_grpc_errors

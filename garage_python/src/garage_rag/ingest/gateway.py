@@ -585,9 +585,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             default_trust=TrustTier(resp.default_trust),
             allow_cloud_enrichment=resp.allow_cloud_enrichment,
             run_id=resp.run_id,
-            # BeginIngestSessionResponse carries no ``kind`` field, so a gRPC-backed
-            # context always reports "filesystem" until the proto grows one.
-            kind=getattr(resp, "kind", "") or "filesystem",
+            # Picks the scanner: without it sqlite/maildir sources were walked as folders.
+            kind=resp.kind or "filesystem",
             source_slugs=list(resp.source_slugs),
         )
 
