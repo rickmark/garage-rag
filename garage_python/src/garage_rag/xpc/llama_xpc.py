@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import ctypes
 import json
 import logging
 import math
-import sys
 import uuid
 from collections.abc import Sequence
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LLAMA_XPC_SERVICE_NAME = "me.rickmark.garage.llama-xpc"
+# Must match the LlamaXPCService bundle id (macapp/Sources/LlamaClient/LlamaXPCProtocol.swift).
+DEFAULT_LLAMA_XPC_SERVICE_NAME = "me.rickmark.garage-rag.llama-xpc"
 
 
 class LlamaXPCError(RuntimeError):
@@ -357,23 +356,11 @@ class LlamaServiceEngine:
 class LlamaXPCClient:
     """macOS XPC Client interacting with LlamaXPCService, exposing the full llama-server API."""
 
-    def __init__(
-        self,
-        service_name: str = DEFAULT_LLAMA_XPC_SERVICE_NAME,
-        fallback_in_process: bool = True,
-    ) -> None:
+    def __init__(self, service_name: str = DEFAULT_LLAMA_XPC_SERVICE_NAME) -> None:
         self.service_name = service_name
-        self.fallback_in_process = fallback_in_process
+        # NOTE: no XPC connection is made; every call is served by the in-process
+        # LlamaServiceEngine below, which emulates the llama-server protocol.
         self._in_process_engine = LlamaServiceEngine(model_alias="default")
-        self._libxpc = self._try_load_libxpc()
-
-    def _try_load_libxpc(self) -> ctypes.CDLL | None:
-        if sys.platform != "darwin":
-            return None
-        try:
-            return ctypes.CDLL("/usr/lib/system/libxpc.dylib")
-        except Exception:
-            return None
 
     def handle_server_request(
         self,
@@ -383,15 +370,6 @@ class LlamaXPCClient:
     ) -> tuple[int, dict[str, Any]]:
         """Generic endpoint matching any HTTP method and route against the llama-server protocol."""
         return self._in_process_engine.handle_route(endpoint, method=method, json_body=json_body)
-
-    def request(
-        self,
-        endpoint: str,
-        method: str = "POST",
-        json_body: dict | str | None = None,
-    ) -> tuple[int, dict[str, Any]]:
-        """Alias for `handle_server_request`."""
-        return self.handle_server_request(endpoint, method=method, json_body=json_body)
 
     def health(self) -> dict[str, Any]:
         """GET /health"""

@@ -70,7 +70,7 @@ def table_name_for(slug: str) -> str:
     """Derive the per-model table name.
 
     Constrained to ``^emb_[a-z0-9_]+$`` and matched by a CHECK constraint in
-    ``sql/004_registry.sql``, because this identifier is interpolated into DDL
+    ``data/sql/004_registry.sql``, because this identifier is interpolated into DDL
     and search SQL where bind parameters cannot be used.
     """
     normalized = _SLUG_RE.sub("_", slug.strip().lower()).strip("_")

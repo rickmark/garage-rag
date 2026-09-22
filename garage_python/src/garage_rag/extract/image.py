@@ -117,8 +117,12 @@ def _claude_vision(path: Path, *, source_allows_cloud: bool) -> str:
 
     encoded = base64.standard_b64encode(path.read_bytes()).decode("ascii")
 
-    # Images reaching here are never communications; constructing the request
-    # with the true class is what enforces that.
+    # The class is hard-coded: an image extractor has no corpus_class of its
+    # own (classification happens after extraction). What keeps communications
+    # out of this call today is ``source_allows_cloud`` -- the CLI refuses to
+    # set ``allow_cloud_enrichment`` on a communication source, and
+    # ``EgressRequest`` refuses any request without it. Should the true class
+    # ever be threaded through, pass it here so the type-level check applies.
     request = EgressRequest(
         corpus_class=CorpusClass.DOCUMENT,
         purpose="image-ocr",
@@ -168,8 +172,11 @@ def extract_image(
         if cloud_enabled() and source_allows_cloud:
             try:
                 better = _claude_vision(path, source_allows_cloud=source_allows_cloud)
-            except EgressBlocked:
-                raise
+            except EgressBlocked as exc:
+                # A refused egress is this file's failure, not a pipeline
+                # crash: the ingest loop only catches ExtractionError/OSError,
+                # and a bare EgressBlocked would abort the whole run.
+                raise ExtractionError(str(exc)) from exc
             except Exception as exc:  # noqa: BLE001 - a failed fallback is not fatal
                 log.debug("cloud OCR failed for %s: %s", path.name, exc)
                 better = ""

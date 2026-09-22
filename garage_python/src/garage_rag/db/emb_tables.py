@@ -14,6 +14,7 @@ import re
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from garage_rag.config import get_settings
 from garage_rag.db.models import EmbeddingModel
 from garage_rag.db.registry import (
     KNOWN_MODELS,
@@ -27,7 +28,7 @@ from garage_rag.db.registry import (
 
 log = logging.getLogger(__name__)
 
-# Matches the CHECK constraint in sql/004_registry.sql. Validated again here
+# Matches the CHECK constraint in data/sql/004_registry.sql. Validated again here
 # because these identifiers are interpolated into DDL and search SQL, where bind
 # parameters are not usable.
 _TABLE_RE = re.compile(r"^emb_[a-z0-9_]+$")
@@ -198,13 +199,32 @@ def count_vectors(session: Session, model: EmbeddingModel | str) -> int:
 
 
 def get_model(session: Session, slug: str | None = None) -> EmbeddingModel:
-    """Fetch a model by slug, or the default when ``slug`` is None."""
+    """Fetch a model by slug, or the default when ``slug`` is None.
+
+    The default is the row flagged ``is_default``; when no row is flagged, the
+    configured ``embedding.default_model`` is tried, so a config that names a
+    registered model works without a separate ``set-default-model`` step.
+    """
     query = session.query(EmbeddingModel)
-    row = query.filter_by(slug=slug).one_or_none() if slug else query.filter_by(is_default=True).one_or_none()
-    if row is None:
-        which = f"model {slug!r}" if slug else "default model"
-        raise LookupError(f"no {which} registered; run 'garage register-model' first")
-    return row
+    if slug:
+        row = query.filter_by(slug=slug).one_or_none()
+        if row is None:
+            raise LookupError(f"no model {slug!r} registered; run 'garage register-model' first")
+        return row
+
+    row = query.filter_by(is_default=True).one_or_none()
+    if row is not None:
+        return row
+    configured = get_settings().default_embedding_model
+    if configured:
+        row = query.filter_by(slug=configured).one_or_none()
+        if row is not None:
+            return row
+        raise LookupError(
+            f"no default model registered, and the configured embedding.default_model "
+            f"{configured!r} is not registered either; run 'garage register-model' first"
+        )
+    raise LookupError("no default model registered; run 'garage register-model' first")
 
 
 def list_models(session: Session) -> list[EmbeddingModel]:

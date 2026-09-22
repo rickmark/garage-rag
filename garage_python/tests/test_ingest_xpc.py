@@ -7,8 +7,6 @@ from garage_rag.ingest import (
     cancel_ingest,
     ingest_xpc,
     is_ingest_cancelled,
-    run_ingest_xpc,
-    test_read_documents_via_grpc,
 )
 from garage_rag.ingest.pipeline import IngestCounters, MaterializationBudget, WalkStats
 
@@ -23,6 +21,7 @@ def test_ingest_progress_model():
         skipped=1,
         failed=0,
         placeholders=1,
+        rejected=2,
         chunks_written=12,
         item_type="documents",
         progress=0.5,
@@ -32,6 +31,7 @@ def test_ingest_progress_model():
     assert p.source == "test-source"
     assert p.progress == 0.5
     assert p.placeholders == 1
+    assert p.rejected == 2
     assert p.chunks_written == 12
     assert p.item_type == "documents"
     assert p.current_item == "note.md"
@@ -40,6 +40,7 @@ def test_ingest_progress_model():
     assert d["seen"] == 5
     assert d["total_items"] == 10
     assert d["placeholders"] == 1
+    assert d["rejected"] == 2
     assert d["chunks_written"] == 12
     assert d["current_item"] == "note.md"
 
@@ -52,6 +53,7 @@ def test_ingest_xpc_progress():
     mock_counters.skipped = 2
     mock_counters.failed = 0
     mock_counters.placeholders = 1
+    mock_counters.rejected = 3
     mock_counters.chunks_written = 24
 
     mock_walk_stats = WalkStats()
@@ -62,7 +64,7 @@ def test_ingest_xpc_progress():
     def progress_handler(prog: IngestProgress):
         progress_events.append(prog)
 
-    def fake_ingest_source(factory, slug, **kwargs):
+    def fake_ingest_source(*, gateway, source_slug, **kwargs):
         progress_fn = kwargs.get("progress")
         if progress_fn:
             progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
@@ -87,39 +89,30 @@ def test_ingest_xpc_progress():
     assert progress_events[-1].source == "my-source"
     assert progress_events[-1].progress == 1.0
     assert progress_events[-1].chunks_written == 24
+    # Every counter the pipeline tracks is copied through, including rejections.
+    assert progress_events[-1].rejected == 3
+    assert all(e.rejected == 3 for e in progress_events if e.phase == "ingest")
 
 
-def test_run_ingest_xpc_sync():
-    mock_counters = IngestCounters()
-    mock_counters.seen = 2
-    mock_counters.total_items = 2
-    mock_counters.indexed = 2
+def test_ingest_xpc_wildcard_lists_sources_without_opening_a_run():
+    """``*`` must expand via list_enabled_sources, not via a begin_session("*") that
+    leaves an orphaned ingest_runs row behind."""
+    counters = IngestCounters()
+    seen_slugs: list[str] = []
 
-    mock_walk_stats = WalkStats()
-    mock_budget = MaterializationBudget()
+    def fake_ingest_source(*, gateway, source_slug, **kwargs):
+        seen_slugs.append(source_slug)
+        return counters, WalkStats(), MaterializationBudget()
 
-    sync_events: list[IngestProgress] = []
-
-    def sync_progress_handler(prog: IngestProgress):
-        sync_events.append(prog)
-
-    def fake_ingest_source(factory, slug, **kwargs):
-        progress_fn = kwargs.get("progress")
-        if progress_fn:
-            progress_fn(mock_counters, mock_budget, total_items=2, phase="ingest")
-        return mock_counters, mock_walk_stats, mock_budget
+    gw = MagicMock()
+    gw.list_enabled_sources.return_value = ["alpha", "beta"]
 
     with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
-        mock_factory = MagicMock()
-        run_ingest_xpc(
-            source="sync-source",
-            progress_callback=sync_progress_handler,
-            session_factory=mock_factory,
-        )
+        ingest_xpc(source="*", gateway=gw)
 
-    assert len(sync_events) >= 1
-    assert sync_events[-1].phase == "complete"
-    assert sync_events[-1].source == "sync-source"
+    assert seen_slugs == ["alpha", "beta"]
+    gw.list_enabled_sources.assert_called_once_with()
+    gw.begin_session.assert_not_called()
 
 
 def test_ingest_xpc_cancellation():
@@ -138,14 +131,16 @@ def test_ingest_xpc_cancellation():
         if prog.phase == "ingest":
             cancel_ingest()
 
-    def fake_ingest_source(factory, slug, **kwargs):
+    def fake_ingest_source(*, gateway, source_slug, **kwargs):
+        # Mirrors the real pipeline: it notices the cancel flag on the next
+        # candidate and emits exactly one ``cancelled`` event naming that item.
         progress_fn = kwargs.get("progress")
         is_cancelled = kwargs.get("is_cancelled")
         if progress_fn:
             progress_fn(mock_counters, mock_budget, total_items=10, phase="scan")
             progress_fn(mock_counters, mock_budget, total_items=10, phase="ingest", current_item="file1.txt")
-        if is_cancelled and is_cancelled():
-            return mock_counters, mock_walk_stats, mock_budget
+            if is_cancelled and is_cancelled():
+                progress_fn(mock_counters, mock_budget, total_items=10, phase="cancelled", current_item="file2.txt")
         return mock_counters, mock_walk_stats, mock_budget
 
     with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source):
@@ -158,15 +153,20 @@ def test_ingest_xpc_cancellation():
 
     assert is_ingest_cancelled()
     assert len(progress_events) >= 2
-    assert progress_events[-1].phase == "cancelled"
+    cancelled = [e for e in progress_events if e.phase == "cancelled"]
+    assert len(cancelled) == 1, "ingest_xpc must not emit a second cancelled event"
+    assert progress_events[-1] is cancelled[0]
     assert progress_events[-1].source == "cancel-source"
+    assert progress_events[-1].current_item == "file2.txt"
+    assert not any(e.phase == "complete" for e in progress_events)
 
 
 def test_set_c_log_callback():
     import ctypes
     import logging
+    import sys
 
-    from garage_rag.ingest import set_c_log_callback
+    from garage_rag.ingest import OSLogHandler, StreamToLog, set_c_log_callback
 
     logs_received = []
 
@@ -175,9 +175,19 @@ def test_set_c_log_callback():
         msg = ctypes.string_at(msg_ptr).decode("utf-8")
         logs_received.append((level, msg))
 
+    root_logger = logging.getLogger()
+    garage_logger = logging.getLogger("garage_rag")
+    orig_stdout, orig_stderr, orig_excepthook = sys.stdout, sys.stderr, sys.excepthook
+    orig_root_level, orig_garage_level = root_logger.level, garage_logger.level
+
     # Keep a reference to callback
     func_ptr = ctypes.cast(test_log_sink, ctypes.c_void_p).value
     set_c_log_callback(func_ptr)
+
+    assert isinstance(sys.stdout, StreamToLog)
+    assert isinstance(sys.stderr, StreamToLog)
+    assert sys.excepthook is not orig_excepthook
+    assert any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
 
     log = logging.getLogger("test_logger")
     log.info("Test message for OSLog")
@@ -187,6 +197,18 @@ def test_set_c_log_callback():
 
     assert any("Test message for OSLog" in msg for lvl, msg in logs_received)
     assert any("Test error message" in msg for lvl, msg in logs_received)
+
+    # Unregistering must put the interpreter back the way it was found.
+    assert sys.stdout is orig_stdout
+    assert sys.stderr is orig_stderr
+    assert sys.excepthook is orig_excepthook
+    assert root_logger.level == orig_root_level
+    assert garage_logger.level == orig_garage_level
+    assert not any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
+
+    # A second unregister is a harmless no-op.
+    set_c_log_callback(0)
+    assert sys.stdout is orig_stdout
 
 
 def test_ingest_xpc_with_grpc_options():
@@ -199,12 +221,12 @@ def test_ingest_xpc_with_grpc_options():
 
     progress_events: list[IngestProgress] = []
 
-    def fake_ingest_source(gateway, slug, **kwargs):
+    def fake_ingest_source(*, gateway, source_slug, **kwargs):
         return mock_counters, mock_walk_stats, mock_budget
 
     with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source), \
          patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
-         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
+         patch("garage_rag.service.client.GarageClient") as mock_client_cls:
 
         mock_gw = MagicMock()
         mock_gw_cls.return_value = mock_gw
@@ -221,40 +243,3 @@ def test_ingest_xpc_with_grpc_options():
         assert len(progress_events) >= 2
         assert progress_events[-1].phase == "complete"
 
-
-def test_test_read_documents_via_grpc_helper():
-    with patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
-         patch("garage_rag.ingest.gateway.GarageClient") as mock_client_cls:
-
-        mock_gw = MagicMock()
-        mock_gw.test_read_documents.return_value = {
-            "status": "ok",
-            "total_tested": 2,
-            "total_readable": 2,
-            "documents": [
-                {"uri": "doc1.txt", "can_read": True, "bytes_read": 100},
-                {"uri": "doc2.txt", "can_read": True, "bytes_read": 200},
-            ],
-            "message": "Tested 2 document(s): 2 readable",
-        }
-        mock_gw_cls.return_value = mock_gw
-
-        res = test_read_documents_via_grpc(
-            grpc_host="127.0.0.1",
-            grpc_port=50051,
-            source_slug="test-source",
-            limit=5,
-        )
-
-        mock_client_cls.assert_called_once_with(host="127.0.0.1", port=50051, in_process=False)
-        mock_gw.test_read_documents.assert_called_once_with(
-            source_slug="test-source",
-            limit=5,
-            sample_bytes=1024,
-        )
-        assert res["status"] == "ok"
-        assert res["total_tested"] == 2
-        assert res["total_readable"] == 2
-        assert len(res["documents"]) == 2
-        assert res["documents"][0]["uri"] == "doc1.txt"
-        assert res["documents"][0]["can_read"] is True

@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from garage_rag.config import get_settings
@@ -39,8 +39,6 @@ class MaterializationBudget:
     bytes_done: int = 0
     deferred: int = 0
     failed: int = 0
-    # Sample of deferred paths, for the run report.
-    deferred_samples: list[str] = field(default_factory=list)
 
     @classmethod
     def from_settings(cls) -> MaterializationBudget:
@@ -57,11 +55,6 @@ class MaterializationBudget:
         if self.max_files and self.files_done >= self.max_files:
             return True
         return bool(self.max_bytes and self.bytes_done >= self.max_bytes)
-
-    def note_deferred(self, path: Path) -> None:
-        self.deferred += 1
-        if len(self.deferred_samples) < 20:
-            self.deferred_samples.append(str(path))
 
     def summary(self) -> str:
         gib = self.bytes_done / 1024**3
@@ -92,19 +85,19 @@ def materialize(path: Path, budget: MaterializationBudget) -> bool:
     Returns True when the file is now local. Respects the budget and never
     raises; the caller treats False as "still a placeholder".
     """
-    if not budget.enabled:
-        budget.note_deferred(path)
-        return False
-
-    if budget.exhausted:
-        budget.note_deferred(path)
+    if not budget.enabled or budget.exhausted:
+        budget.deferred += 1
         return False
 
     # A blocking read on a stalled provider cannot be cancelled, so it is run on
-    # a worker thread with a timeout. A timed-out thread may keep running (and
-    # may even finish the download, benefiting a later run), but it stops
-    # blocking this one.
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # a worker thread with a timeout. The pool is deliberately not used as a
+    # context manager: ``__exit__`` calls ``shutdown(wait=True)``, which would
+    # join the worker still blocked in ``read()`` and turn the timeout into a
+    # no-op. ``shutdown(wait=False)`` lets the orphaned thread keep running (it
+    # may even finish the download, benefiting a later run) without blocking
+    # this one.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(_force_read, path)
         try:
             size = future.result(timeout=budget.timeout_seconds)
@@ -116,16 +109,18 @@ def materialize(path: Path, budget: MaterializationBudget) -> bool:
             log.warning("materialization failed for %s: %s", path, exc)
             budget.failed += 1
             return False
+    finally:
+        pool.shutdown(wait=False)
 
-    budget.files_done += 1
-    budget.bytes_done += size
-
-    # The provider may hand back an empty file rather than an error.
+    # The provider may hand back an empty file rather than an error; that is
+    # neither a successful materialization nor a charge against the budget.
     if size == 0 or is_placeholder(path):
         log.debug("still a placeholder after read: %s", path)
         budget.failed += 1
         return False
 
+    budget.files_done += 1
+    budget.bytes_done += size
     log.debug("materialized %s (%d bytes)", path.name, size)
     return True
 

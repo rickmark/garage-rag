@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import threading
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from garage_rag.db.models import CorpusClass, IngestState, Source, TrustTier
+from garage_rag.db.models import CorpusClass, Document, IngestState, Source, TrustTier
+from garage_rag.ingest import materialize as materialize_mod
 from garage_rag.ingest.gateway import (
     AuthorPayload,
     ChunkPayload,
     GrpcIngestStorageGateway,
     SqlAlchemyIngestStorageGateway,
 )
+from garage_rag.ingest.materialize import MaterializationBudget, materialize
 from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
 from garage_rag.proto.garage_pb2 import (
@@ -24,9 +28,11 @@ from garage_rag.proto.garage_pb2 import (
     CheckDocumentStatResponse,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
+    ListSourcesResponse,
     PersistDocumentRequest,
     PersistDocumentResponse,
     PersistScanRequest,
+    SourceInfo,
 )
 from garage_rag.service.client import GarageClient
 from garage_rag.service.server import GarageRpcServicer, create_grpc_server
@@ -123,6 +129,15 @@ def test_grpc_database_facade_servicer_methods():
             doc_resp = servicer.PersistDocument(doc_req, mock_context)
             assert doc_resp.success is True
 
+        # 4b. PersistDocument (action=seen): touches no document field, only ingest_seen
+        mock_session.execute.reset_mock()
+        seen_req = PersistDocumentRequest(run_id=1, source_slug="facade-test-slug", uri="doc1.txt", action="seen")
+        seen_resp = servicer.PersistDocument(seen_req, mock_context)
+        assert seen_resp.success is True
+        assert seen_resp.chunks_written == 0
+        assert mock_session.execute.call_count == 1
+        assert mock_doc.state == IngestState.OK
+
         # 5. FinalizeIngestSession
         final_req = FinalizeIngestSessionRequest(
             run_id=1,
@@ -210,6 +225,13 @@ def test_grpc_ingest_storage_gateway():
         )
         assert written == 3
 
+        mock_doc.reset_mock()
+        gateway.record_seen(42, "grpc-src", "unchanged.txt")
+        seen_req = mock_doc.call_args.args[0]
+        assert seen_req.action == "seen"
+        assert seen_req.run_id == 42
+        assert seen_req.uri == "unchanged.txt"
+
         gateway.finalize_session(
             run_id=42,
             completed=True,
@@ -223,6 +245,16 @@ def test_grpc_ingest_storage_gateway():
             errors=[],
         )
         mock_final.assert_called_once()
+
+    with patch.object(client, "list_sources") as mock_list:
+        mock_list.return_value = ListSourcesResponse(
+            sources=[
+                SourceInfo(slug="on", enabled=True),
+                SourceInfo(slug="off", enabled=False),
+                SourceInfo(slug="also-on", enabled=True),
+            ]
+        )
+        assert gateway.list_enabled_sources() == ["on", "also-on"]
 
 
 def test_ingest_source_with_grpc_gateway(tmp_path: Path):
@@ -288,10 +320,23 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
          patch("garage_rag.ingest.scanner.persist_scan_result"), \
          patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author:
 
+        # Every facade RPC looks up the Source first and then the Document with the
+        # same ``session.query(...).filter_by(...).one_or_none()`` chain, so the
+        # query mock has to answer per model rather than with one shared return value.
+        existing_doc: dict[str, object | None] = {"doc": None}
+
+        def fake_query(model, *cols):
+            q = MagicMock()
+            if model is Source:
+                q.filter_by.return_value.one_or_none.return_value = mock_source
+                q.filter_by.return_value.all.return_value = [mock_source]
+                q.order_by.return_value.all.return_value = [mock_source]
+            elif model is Document:
+                q.filter_by.return_value.one_or_none.return_value = existing_doc["doc"]
+            return q
+
         mock_session = MagicMock()
-        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source
-        mock_session.query.return_value.filter_by.return_value.all.return_value = [mock_source]
-        mock_session.query.return_value.order_by.return_value.all.return_value = [mock_source]
+        mock_session.query.side_effect = fake_query
         mock_scope.return_value.__enter__.return_value = mock_session
 
         mock_auth_obj = MagicMock()
@@ -313,8 +358,7 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
         )
         gateway.persist_scan("live-grpc-src", scan_result)
 
-        # 3. check_stat over live gRPC
-        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = None
+        # 3. check_stat over live gRPC (no Document row yet)
         stat = gateway.check_stat("live-grpc-src", "doc.txt")
         assert stat.exists is False
 
@@ -355,16 +399,6 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
             errors=[],
         )
 
-        # 6. test_read_documents over live gRPC
-        read_test_res = gateway.test_read_documents("live-grpc-src", limit=5)
-        assert read_test_res["status"] == "ok"
-        assert read_test_res["total_tested"] == 1
-        assert read_test_res["total_readable"] == 1
-        doc_entry = read_test_res["documents"][0]
-        assert doc_entry["uri"] == "doc.txt"
-        assert doc_entry["can_read"] is True
-        assert doc_entry["bytes_read"] == len("Hello live gRPC ingest")
-
 
 def test_sqlalchemy_storage_gateway_hash_types():
     """Verify SqlAlchemyIngestStorageGateway handles bytes and hex str hashes without error."""
@@ -382,6 +416,9 @@ def test_sqlalchemy_storage_gateway_hash_types():
         mock_source, mock_doc,  # refresh_metadata call 1
         mock_source, mock_doc,  # refresh_metadata call 2
     ]
+    # The gateway uses the factory as a context manager (``with self.factory() as session``),
+    # so the mock must hand back itself from ``__enter__`` for the query chain above to apply.
+    mock_session.__enter__.return_value = mock_session
 
     gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: mock_session)
 
@@ -465,3 +502,173 @@ def test_sqlalchemy_storage_gateway_hash_types():
             trust_tier="authored",
         )
         assert mock_doc.source_sha256 == b"\x11\x22"
+
+
+def _mock_source(tmp_path: Path, slug: str = "seen-src") -> MagicMock:
+    mock_source = MagicMock(spec=Source)
+    mock_source.id = 1
+    mock_source.slug = slug
+    mock_source.root = str(tmp_path)
+    mock_source.kind = "filesystem"
+    mock_source.default_class = CorpusClass.DOCUMENT
+    mock_source.default_trust = TrustTier.AUTHORED
+    mock_source.allow_cloud_enrichment = False
+    return mock_source
+
+
+def test_stat_skipped_file_is_recorded_as_seen(tmp_path: Path):
+    """A second run that skips an unchanged file on stat alone must still write its
+    ingest_seen row, or reconcile would treat the whole unchanged corpus as deleted."""
+    note = tmp_path / "note.txt"
+    note.write_text("Unchanged between runs", encoding="utf-8")
+    st = note.stat()
+
+    mock_source = _mock_source(tmp_path)
+    existing: dict[str, object | None] = {"doc": None}
+
+    def fake_query(model, *cols):
+        q = MagicMock()
+        if model is Source:
+            q.filter_by.return_value.one_or_none.return_value = mock_source
+        elif model is Document:
+            q.filter_by.return_value.one_or_none.return_value = existing["doc"]
+        return q
+
+    session = MagicMock()
+    session.query.side_effect = fake_query
+    session.__enter__.return_value = session
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: session)
+
+    fake_run = MagicMock()
+    fake_run.id = 7
+
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
+         patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author, \
+         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
+         patch.object(gateway, "record_seen", wraps=gateway.record_seen) as record_seen:
+        mock_author.return_value = MagicMock(id=10)
+
+        # Run 1: nothing in the DB, the file is indexed (replace_document records seen itself).
+        run1, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
+        assert run1.indexed == 1
+        record_seen.assert_not_called()
+
+        # Run 2: the row now exists with the same size/mtime and state OK -> stat skip.
+        doc = MagicMock()
+        doc.byte_size = st.st_size
+        doc.mtime = datetime.fromtimestamp(st.st_mtime, tz=UTC)
+        doc.state = IngestState.OK
+        doc.source_sha256 = b""
+        doc.content_sha256 = b""
+        doc.chunker = ""
+        existing["doc"] = doc
+        session.execute.reset_mock()
+
+        run2, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
+        assert run2.skipped == 1
+        assert run2.indexed == 0
+        record_seen.assert_called_once_with(7, "seen-src", str(note))
+        # ...and the SQL implementation actually issued the ingest_seen insert.
+        assert session.execute.call_count == 1
+        statement = str(session.execute.call_args.args[0])
+        assert "ingest_seen" in statement
+
+
+def test_no_chunks_file_is_recorded_as_seen(tmp_path: Path):
+    """Extraction succeeds but the chunker yields nothing: still observed, still seen."""
+    (tmp_path / "empty.txt").write_text("Text that the (patched) chunker drops", encoding="utf-8")
+    mock_source = _mock_source(tmp_path)
+
+    def fake_query(model, *cols):
+        q = MagicMock()
+        q.filter_by.return_value.one_or_none.return_value = mock_source if model is Source else None
+        return q
+
+    session = MagicMock()
+    session.query.side_effect = fake_query
+    session.__enter__.return_value = session
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: session)
+    fake_run = MagicMock()
+    fake_run.id = 3
+
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
+         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
+         patch("garage_rag.ingest.pipeline.chunk_text", return_value=[]), \
+         patch.object(gateway, "record_seen") as record_seen:
+        counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
+
+    assert counters.failed == 1
+    assert counters.indexed == 0
+    record_seen.assert_called_once_with(3, "seen-src", str(tmp_path / "empty.txt"))
+
+
+def test_unexpected_ingest_error_is_recorded_as_seen(tmp_path: Path):
+    (tmp_path / "boom.txt").write_text("this one explodes", encoding="utf-8")
+    mock_source = _mock_source(tmp_path)
+
+    def fake_query(model, *cols):
+        q = MagicMock()
+        q.filter_by.return_value.one_or_none.return_value = mock_source if model is Source else None
+        return q
+
+    session = MagicMock()
+    session.query.side_effect = fake_query
+    session.__enter__.return_value = session
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: session)
+    fake_run = MagicMock()
+    fake_run.id = 4
+
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
+         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
+         patch("garage_rag.ingest.pipeline.ingest_one", side_effect=RuntimeError("kaboom")), \
+         patch.object(gateway, "record_seen") as record_seen:
+        counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
+
+    assert counters.failed == 1
+    assert counters.errors == ["boom.txt: kaboom"]
+    record_seen.assert_called_once_with(4, "seen-src", str(tmp_path / "boom.txt"))
+
+
+def test_materialize_timeout_returns_within_budget(tmp_path: Path):
+    """A read stalled on the sync client must not hold the run past ``timeout_seconds``.
+
+    The old ``with ThreadPoolExecutor(...)`` joined the stuck worker on exit, so a
+    0.2s timeout still waited for the whole read."""
+    stub = tmp_path / "stub.pdf"
+    stub.write_bytes(b"")
+    release = threading.Event()
+
+    def stalled_read(path: Path) -> int:
+        release.wait(10.0)
+        return 0
+
+    budget = MaterializationBudget(enabled=True, timeout_seconds=0.2)
+    with patch.object(materialize_mod, "_force_read", stalled_read):
+        started = time.monotonic()
+        try:
+            ok = materialize(stub, budget)
+            elapsed = time.monotonic() - started
+        finally:
+            release.set()  # let the orphaned worker finish so the interpreter exits cleanly
+
+    assert ok is False
+    assert elapsed < 2.0, f"materialize blocked for {elapsed:.2f}s despite a 0.2s timeout"
+    assert budget.failed == 1
+    assert budget.files_done == 0
+    assert budget.bytes_done == 0
+
+
+def test_materialize_still_placeholder_does_not_consume_budget(tmp_path: Path):
+    """An empty read-back is a failure, not a download, so it must not count against
+    ``max_files``/``max_bytes``."""
+    stub = tmp_path / "stub.pdf"
+    stub.write_bytes(b"")
+    budget = MaterializationBudget(enabled=True, max_files=1)
+
+    with patch.object(materialize_mod, "_force_read", return_value=0):
+        assert materialize(stub, budget) is False
+
+    assert budget.failed == 1
+    assert budget.files_done == 0
+    assert budget.bytes_done == 0
+    assert not budget.exhausted

@@ -29,7 +29,7 @@ from garage_rag.config import (
     DEFAULT_EXCLUDE_DIRS,
     get_settings,
 )
-from garage_rag.db.models import CorpusClass, Source
+from garage_rag.db.models import Source
 from garage_rag.extract.dispatch import is_indexable
 from garage_rag.ingest.classify import is_code_path
 from garage_rag.ingest.walker import (
@@ -55,10 +55,6 @@ class SourceScanResult:
     details: dict[str, Any] = field(default_factory=dict)
     duration_seconds: float = 0.0
     error: str | None = None
-
-    @property
-    def source(self) -> str:
-        return self.source_slug
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,9 +82,12 @@ def scan_filesystem(
     source_slug: str = "",
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
-    max_bytes: int | None = None,
 ) -> SourceScanResult:
-    """Count indexable files in a filesystem tree."""
+    """Count indexable files in a filesystem tree.
+
+    ``exclude_prefixes`` are root-relative directory prefixes (``"Library/"``);
+    matching subtrees are pruned before descent, mirroring ``walker.walk``.
+    """
     start_time = time.perf_counter()
     if not root.exists():
         return SourceScanResult(
@@ -113,8 +112,7 @@ def scan_filesystem(
             duration_seconds=time.perf_counter() - start_time,
         )
 
-    settings = get_settings()
-    limit_bytes = max_bytes if max_bytes is not None else settings.max_file_bytes
+    limit_bytes = get_settings().max_file_bytes
     file_count = 0
     dir_count = 0
     skipped_ext = 0
@@ -134,12 +132,16 @@ def scan_filesystem(
                 and not is_dependency_path(str(parent / d))
             ]
 
+            if exclude_prefixes and parent != root:
+                relative = parent.relative_to(root).as_posix() + "/"
+                if relative.startswith(exclude_prefixes):
+                    dirnames[:] = []
+                    continue
+
             for filename in filenames:
                 if _is_hidden(filename) or is_diagnostic_file(filename):
                     continue
                 file_path = parent / filename
-                if exclude_prefixes and str(file_path).startswith(exclude_prefixes):
-                    continue
                 if not is_indexable(file_path):
                     skipped_ext += 1
                     continue
@@ -216,9 +218,9 @@ def scan_git(
                     continue
                 tracked_count += 1
                 rel_path_str = entry.decode("utf-8", errors="replace")
-                file_path = root / rel_path_str
-                if exclude_prefixes and str(file_path).startswith(exclude_prefixes):
+                if exclude_prefixes and rel_path_str.startswith(exclude_prefixes):
                     continue
+                file_path = root / rel_path_str
                 if is_diagnostic_file(file_path.name) or is_dependency_path(str(file_path)):
                     continue
                 if not is_indexable(file_path):
@@ -518,11 +520,10 @@ def scan_source(
     kind = getattr(source, "kind", "filesystem")
     root_val = getattr(source, "root", source)
     root = Path(root_val).expanduser() if not isinstance(root_val, Path) else root_val
-    default_class = getattr(source, "default_class", CorpusClass.DOCUMENT)
 
     log.info("Scanning source %r (kind=%s, root=%s, include_code=%s)", slug, kind, root, include_code)
 
-    prefixes = default_exclude_prefixes(default_class, root) if root.exists() else ()
+    prefixes = default_exclude_prefixes(root) if root.exists() else ()
 
     match kind:
         case "git":

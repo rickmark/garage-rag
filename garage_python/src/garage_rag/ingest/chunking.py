@@ -187,7 +187,7 @@ def chunk_code(text: str, *, extension: str, size: int, overlap: int) -> list[Te
     ]
 
 
-def chunk_tabular(text: str, *, size: int, overlap: int) -> list[TextChunk]:
+def chunk_tabular(text: str, *, size: int) -> list[TextChunk]:
     """Split spreadsheet text on sheet headings and row boundaries.
 
     Zero overlap and a newline-first separator list: repeating rows across chunks
@@ -240,13 +240,7 @@ def chunk_text(
     if kind is ContentKind.MARKDOWN:
         return chunk_markdown(text, size=size, overlap=overlap)
     if kind is ContentKind.TABULAR:
-        return chunk_tabular(text, size=size, overlap=overlap)
+        return chunk_tabular(text, size=size)
     # CONVERSATION text arrives pre-windowed; treat the windows as prose.
     return chunk_prose(text, size=size, overlap=overlap)
 
-
-def renumber(chunks: list[TextChunk]) -> list[TextChunk]:
-    """Reassign sequential ``ord`` values, satisfying the (document_id, ord) key."""
-    for index, chunk in enumerate(chunks):
-        chunk.ord = index
-    return chunks

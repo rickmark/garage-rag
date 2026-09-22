@@ -42,8 +42,9 @@ class LlamaXPCLanguageModel(base_model.BaseLanguageModel):
         super().__init__(constraint=schema.Constraint())
         self.model_id = model_id
         self.format_type = core_types.FormatType.JSON
+        # ``kwargs`` absorbs the provider-generic options LangExtract may pass
+        # (temperature, max_workers, ...); none of them apply to this transport.
         self._client = client or LlamaXPCClient()
-        self._extra_kwargs = kwargs or {}
 
     def infer(
         self, batch_prompts: Sequence[str], **kwargs: Any

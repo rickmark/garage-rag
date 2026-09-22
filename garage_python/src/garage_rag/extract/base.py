@@ -81,10 +81,6 @@ def normalize_text(raw: str) -> str:
     return "\n".join(out).strip()
 
 
-def sha256_bytes(data: bytes) -> bytes:
-    return hashlib.sha256(data).digest()
-
-
 def sha256_text(text: str) -> bytes:
     return hashlib.sha256(text.encode("utf-8")).digest()
 

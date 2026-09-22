@@ -110,7 +110,7 @@ def test_embed_via_grpc_workflow():
         [0.4, 0.5, 0.6],
     ]
 
-    with patch("garage_rag.embed.xpc.GarageClient", return_value=mock_client), \
+    with patch("garage_rag.service.client.GarageClient", return_value=mock_client), \
          patch("garage_rag.embed.xpc.get_embedder", return_value=mock_embedder) as mock_get_embedder:
 
         result = embed_via_grpc(

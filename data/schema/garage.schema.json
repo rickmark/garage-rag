@@ -73,11 +73,6 @@
           "type": "integer",
           "description": "Chunks per embedding request.",
           "default": 64
-        },
-        "max_inflight": {
-          "type": "integer",
-          "description": "Concurrent embedding requests. Ollama serializes model execution, so more than one adds contention rather than throughput.",
-          "default": 1
         }
       }
     },
@@ -104,16 +99,6 @@
           "type": "integer",
           "description": "Characters repeated between adjacent code chunks.",
           "default": 100
-        },
-        "comms_window_minutes": {
-          "type": "integer",
-          "description": "Group consecutive messages within this many minutes into one chunk. Individual messages are too short to embed usefully.",
-          "default": 30
-        },
-        "comms_window_messages": {
-          "type": "integer",
-          "description": "Also close a conversation window after this many messages.",
-          "default": 20
         }
       }
     },
@@ -182,11 +167,6 @@
           "type": "integer",
           "description": "Below this many characters an image is treated as having no text. Most images in a source tree are icons.",
           "default": 16
-        },
-        "workers": {
-          "type": "integer",
-          "description": "Extraction worker processes. Leave headroom for Postgres and Ollama.",
-          "default": 10
         }
       }
     },
@@ -224,11 +204,6 @@
           "type": "string",
           "description": "Model used for the vision OCR fallback.",
           "default": "claude-opus-4-8"
-        },
-        "max_images": {
-          "type": "integer",
-          "description": "Cap on images escalated to the cloud per run.",
-          "default": 500
         },
         "api_key_file": {
           "type": [

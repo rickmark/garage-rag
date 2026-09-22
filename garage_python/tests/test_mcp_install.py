@@ -16,14 +16,16 @@ from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
+    MULTI_TARGETS,
     ClientTarget,
     client_targets,
     find_existing_configs,
     install,
-    install_all,
     installed_in,
+    plan_targets,
     server_command,
     server_entry,
+    target_keys,
     uninstall,
 )
 
@@ -361,7 +363,7 @@ class TestArgumentOrder:
         assert args.index("--config") < args.index("mcp-serve")
 
 
-class TestFindExistingConfigsAndInstallAll:
+class TestPlanTargets:
     def test_find_existing_configs_filters_existing_files_only(self, tmp_path: Path) -> None:
         proj_mcp = tmp_path / ".mcp.json"
         proj_mcp.write_text("{}")
@@ -369,15 +371,54 @@ class TestFindExistingConfigsAndInstallAll:
         assert "project" in found
         assert found["project"].path == proj_mcp
 
-    def test_install_all_populates_multiple_targets(self, tmp_path: Path) -> None:
-        t1 = ClientTarget(key="t1", label="Target 1", path=tmp_path / "t1" / "mcp.json")
-        t2 = ClientTarget(key="t2", label="Target 2", path=tmp_path / "t2" / "mcp.json")
-        results = install_all(targets=[t1, t2])
-        assert len(results) == 2
-        assert t1.path.is_file()
-        assert t2.path.is_file()
-        assert _read(t1.path)["mcpServers"]["garage-rag"]
-        assert _read(t2.path)["mcpServers"]["garage-rag"]
+    def test_single_target_from_the_table(self, tmp_path: Path) -> None:
+        plan = plan_targets("vscode", project_dir=tmp_path)
+        assert [t.key for t in plan.targets] == ["vscode"]
+        assert plan.targets[0].path == tmp_path / ".vscode" / "mcp.json"
+        assert not plan.multi and not plan.fell_back
+
+    def test_unknown_target_is_a_value_error_naming_the_choices(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="unknown target 'nope'") as info:
+            plan_targets("nope", project_dir=tmp_path)
+        for key in (*target_keys(), *MULTI_TARGETS):
+            assert key in str(info.value)
+
+    def test_explicit_path_wins_over_target(self, tmp_path: Path) -> None:
+        plan = plan_targets("vscode", path=tmp_path / "custom.json", project_dir=tmp_path)
+        assert [t.key for t in plan.targets] == ["custom"]
+        assert plan.targets[0].path == (tmp_path / "custom.json").resolve()
+
+    @pytest.mark.parametrize("alias", MULTI_TARGETS)
+    def test_multi_target_uses_what_exists_on_disk(self, tmp_path: Path, alias: str) -> None:
+        (tmp_path / ".mcp.json").write_text("{}")
+        (tmp_path / ".vscode").mkdir()
+        (tmp_path / ".vscode" / "mcp.json").write_text("{}")
+        plan = plan_targets(alias, project_dir=tmp_path)
+        assert plan.multi and not plan.fell_back
+        assert {t.key for t in plan.targets} >= {"project", "vscode"}
+        assert all(t.path.is_file() for t in plan.targets)
+
+    def test_multi_target_falls_back_when_nothing_exists(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr("garage_rag.mcp_server.install.find_existing_configs", lambda project_dir=None: {})
+        plan = plan_targets("project", all_configs=True, project_dir=tmp_path)
+        assert plan.multi and plan.fell_back
+        assert [t.key for t in plan.targets] == ["project", "claude-desktop"]
+
+    def test_target_keys_match_the_table(self, tmp_path: Path) -> None:
+        assert target_keys() == tuple(client_targets(project_dir=tmp_path))
+
+    def test_cli_help_lists_every_target(self) -> None:
+        """The --target help is derived from the table, so a new client cannot be left out."""
+        result = CliRunner().invoke(app, ["mcp-install", "--help"])
+        assert result.exit_code == 0
+        flat = " ".join(result.output.split())
+        for key in (*target_keys(), *MULTI_TARGETS):
+            assert key in flat, key
+
+    def test_cli_rejects_unknown_target(self) -> None:
+        result = CliRunner().invoke(app, ["mcp-install", "--target", "nope", "--yes"])
+        assert result.exit_code != 0
+        assert "unknown target 'nope'" in result.output
 
     def test_cli_mcp_install_all_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         mcp1 = tmp_path / ".mcp.json"

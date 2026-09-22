@@ -1,4 +1,4 @@
-"""SQLAlchemy models mirroring ``sql/*.sql``.
+"""SQLAlchemy models mirroring ``data/sql/*.sql``.
 
 The SQL files remain the source of truth for DDL (they hold the CHECK
 constraints and the generated tsvector column). These mappings exist for typed

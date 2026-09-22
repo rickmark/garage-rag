@@ -154,6 +154,3 @@ def assess(text: str, *, sample_bytes: int = SAMPLE_BYTES) -> QualityVerdict:
 
     return QualityVerdict(machine, reasons, metrics)
 
-
-def is_machine_generated(text: str) -> bool:
-    return assess(text).machine_generated

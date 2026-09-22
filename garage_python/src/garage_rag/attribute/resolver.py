@@ -69,13 +69,6 @@ class Attribution:
     evidence: str = ""
     meta: dict = field(default_factory=dict)
 
-    @property
-    def primary(self) -> AttributedAuthor | None:
-        for author in self.authors:
-            if author.role in (AuthorRole.AUTHOR, AuthorRole.SENDER):
-                return author
-        return self.authors[0] if self.authors else None
-
 
 class SelfIdentity:
     """The corpus owner's identities, used to tell authored from reference."""

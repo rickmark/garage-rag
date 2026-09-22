@@ -23,7 +23,6 @@ from garage_rag.config import (
     DIAGNOSTIC_FILE_PATTERNS,
     get_settings,
 )
-from garage_rag.db.models import CorpusClass
 from garage_rag.extract.dispatch import is_indexable
 from garage_rag.extract.placeholder import is_placeholder
 from garage_rag.ingest.classify import is_code_path
@@ -59,14 +58,6 @@ class WalkStats:
     skipped_diagnostic: int = 0
     placeholders: int = 0
     unreadable: int = 0
-
-    @property
-    def scanned(self) -> int:
-        return self.files_seen
-
-    @property
-    def candidates(self) -> int:
-        return self.yielded
 
 
 def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
@@ -104,9 +95,7 @@ def walk(
     root: Path,
     *,
     include_code: bool = False,
-    exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS,
     exclude_prefixes: tuple[str, ...] = (),
-    max_bytes: int | None = None,
     stats: WalkStats | None = None,
 ) -> Iterator[Candidate]:
     """Yield indexable files under ``root``.
@@ -115,8 +104,7 @@ def walk(
     for documentation only -- which is the difference between ~18k documents and
     ~192k files in a tree full of checked-out repositories.
     """
-    settings = get_settings()
-    limit = max_bytes if max_bytes is not None else settings.max_file_bytes
+    limit = get_settings().max_file_bytes
     tally = stats if stats is not None else WalkStats()
     root = root.expanduser()
 
@@ -141,7 +129,7 @@ def walk(
         # subtrees are never descended into at all.
         kept: list[str] = []
         for name in dirnames:
-            if name in exclude_dirs or _is_hidden(name):
+            if name in DEFAULT_EXCLUDE_DIRS or _is_hidden(name):
                 tally.skipped_excluded_dir += 1
                 continue
             if is_diagnostic_dir(name):
@@ -208,7 +196,7 @@ def walk(
             )
 
 
-def default_exclude_prefixes(source_class: CorpusClass, root: Path) -> tuple[str, ...]:
+def default_exclude_prefixes(root: Path) -> tuple[str, ...]:
     """Source-specific subtree exclusions.
 
     Dropbox keeps application bundles and binary objects in known top-level

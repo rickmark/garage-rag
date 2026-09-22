@@ -30,14 +30,17 @@ VERSION = "1"
 
 
 def _clean_metadata_value(value: object) -> str | None:
+    """Normalize one raw metadata value, or None when it carries nothing.
+
+    Deliberately does *not* filter tool names: ``/Producer`` and ``/Creator``
+    are supposed to name software, and a title mentioning "LaTeX" is still the
+    title. Raw values stay in ``meta`` for provenance; only the author
+    candidates are filtered, by :func:`clean_author_hints` at the end.
+    """
     if value is None:
         return None
     text = str(value).strip()
     if not text or text.startswith("\x00"):
-        return None
-    # Producers often stuff tool names into /Author; those are not people.
-    lowered = text.lower()
-    if any(token in lowered for token in ("acrobat", "microsoft word", "latex", "pdftex")):
         return None
     return text[:500]
 

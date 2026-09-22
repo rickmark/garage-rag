@@ -23,7 +23,22 @@ log = logging.getLogger(__name__)
 
 
 def sql_dir() -> Path:
-    return repo_root() / "sql"
+    """The committed DDL: ``data/sql/`` at the repository root."""
+    return repo_root() / "data" / "sql"
+
+
+def redact_url(url: str) -> str:
+    """``url`` with its password hidden, for logs and terminal output.
+
+    The app injects the Keychain password through ``GARAGE_DATABASE_URL``, so
+    the raw URL must never be printed.
+    """
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:
+        # Not a URL SQLAlchemy understands (a libpq conninfo string, say); the
+        # only safe thing to show is nothing.
+        return "<database url>"
 
 
 def to_psycopg_conninfo(url: str) -> str:
@@ -60,11 +75,11 @@ def init_extensions(database_url: str | None = None, schema_dir: Path | None = N
     raw_url = database_url or get_settings().database_url
     url = to_psycopg_conninfo(raw_url)
     applied: list[str] = []
-    try:
-        files = migration_files(schema_dir)
-        extension_files = [f for f in files if is_extension_migration(f)]
-    except FileNotFoundError:
-        extension_files = []
+    # A missing SQL directory is an installation problem and must surface as
+    # one: silently creating the extensions and reporting success would leave
+    # an empty database that later reports itself as ready.
+    files = migration_files(schema_dir)
+    extension_files = [f for f in files if is_extension_migration(f)]
 
     with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
         # Ensure schema_migrations table exists
@@ -158,10 +173,9 @@ def pending_migrations(
     """Return list of migration files that have not yet been applied to the database."""
     raw_url = database_url or get_settings().database_url
     url = to_psycopg_conninfo(raw_url)
-    try:
-        files = migration_files(schema_dir)
-    except FileNotFoundError:
-        return []
+    # Propagates FileNotFoundError: with no DDL to compare against, "nothing
+    # pending" would be a lie.
+    files = migration_files(schema_dir)
 
     try:
         with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:

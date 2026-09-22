@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from garage_rag.embed.base import EmbeddingError
 from garage_rag.embed.factory import get_embedder
 from garage_rag.proto.garage_pb2 import (
     ChunkEmbeddingItem,
@@ -28,7 +29,24 @@ def embed_via_grpc(
     """
     from garage_rag.service.client import GarageClient
 
+    # GarageClient opens a gRPC channel on first use; close it on the way out,
+    # including on error. (try/finally rather than ``with`` so a spec'd mock
+    # client in tests is the object the loop actually talks to.)
     client = GarageClient(host=grpc_host, port=grpc_port, in_process=False)
+    try:
+        total_embedded = _embed_loop(client, model_slug=model_slug, limit=limit, batch_size=batch_size)
+    finally:
+        client.close()
+
+    return {
+        "status": "ok",
+        "count": total_embedded,
+        "message": f"Successfully embedded {total_embedded} chunk(s) via gRPC proxy",
+    }
+
+
+def _embed_loop(client: Any, *, model_slug: str | None, limit: int | None, batch_size: int | None) -> int:
+    """Fetch, embed and write back batches until the service reports none left."""
     b_size = batch_size if batch_size and batch_size > 0 else 64
     remaining_limit = limit if limit and limit > 0 else None
 
@@ -61,10 +79,14 @@ def embed_via_grpc(
 
         texts = [chunk.text for chunk in resp.chunks]
         vectors = embedder.embed(texts)
+        if len(vectors) != len(resp.chunks):
+            raise EmbeddingError(
+                f"{model_ref} returned {len(vectors)} vectors for {len(resp.chunks)} chunks; refusing to write"
+            )
 
         items = [
             ChunkEmbeddingItem(chunk_id=chunk.chunk_id, vector=[float(x) for x in vec])
-            for chunk, vec in zip(resp.chunks, vectors, strict=False)
+            for chunk, vec in zip(resp.chunks, vectors, strict=True)
         ]
 
         update_req = UpdateEmbeddingsRequest(
@@ -82,8 +104,4 @@ def embed_via_grpc(
         if not resp.has_more or len(resp.chunks) < current_batch_size:
             break
 
-    return {
-        "status": "ok",
-        "count": total_embedded,
-        "message": f"Successfully embedded {total_embedded} chunk(s) via gRPC proxy",
-    }
+    return total_embedded

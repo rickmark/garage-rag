@@ -79,6 +79,24 @@ def test_scan_filesystem_directory(tmp_path: Path) -> None:
     assert res_with_code.item_count == 3
 
 
+def test_scan_filesystem_exclude_prefixes_prune_subtrees(tmp_path: Path) -> None:
+    """Prefixes are root-relative directory names, so they must be compared against
+    the root-relative path, never the absolute one (which never starts with "Library/")."""
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "Library" / "deeper").mkdir()
+    (tmp_path / "Library" / "deeper" / "c.txt").write_text("c", encoding="utf-8")
+    (tmp_path / "Notes").mkdir()
+    (tmp_path / "Notes" / "b.txt").write_text("b", encoding="utf-8")
+
+    res = scan_filesystem(tmp_path, source_slug="prefixed", exclude_prefixes=("Library/",))
+    assert res.item_count == 1
+    assert res.error is None
+
+    # Without prefixes every file counts, so the exclusion is what made the difference.
+    assert scan_filesystem(tmp_path, source_slug="prefixed").item_count == 3
+
+
 # ---------------------------------------------------------------------------
 # 2. Git Scanner Tests
 # ---------------------------------------------------------------------------
@@ -106,6 +124,14 @@ def test_scan_git_repository(tmp_path: Path) -> None:
 
     res_code = scan_git(tmp_path, source_slug="git-test", include_code=True)
     assert res_code.item_count == 2  # README.md and main.py
+
+    # Prefixes match the repo-relative path git reports, not the absolute one.
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "x.md").write_text("# x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "Library/x.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "lib"], check=True, capture_output=True)
+    assert scan_git(tmp_path, source_slug="git-test").item_count == 2
+    assert scan_git(tmp_path, source_slug="git-test", exclude_prefixes=("Library/",)).item_count == 1
 
 
 def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
@@ -316,10 +342,11 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 
     progress_events = []
 
-    def on_progress(counters, budget, total_items=0, phase="ingest", scan_result=None):
+    def on_progress(counters, budget, total_items=0, phase="ingest", scan_result=None, current_item=None):
         progress_events.append((phase, total_items, counters.seen))
 
-    with patch("garage_rag.ingest.pipeline.ensure_self_author"), \
+    # begin_session imports ensure_self_author function-locally from the resolver module.
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
          patch("garage_rag.ingest.pipeline.ingest_one"):
         counters, walk_stats, budget = ingest_source(
             mock_session_factory,

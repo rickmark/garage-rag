@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 import psycopg
 import typer
@@ -42,15 +43,37 @@ from garage_rag.db.emb_tables import (
     set_default_model,
 )
 from garage_rag.db.engine import session_scope
-from garage_rag.db.migrate import apply_migrations, schema_summary
+from garage_rag.db.migrate import apply_migrations, redact_url, schema_summary
 from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
+from garage_rag.mcp_server.install import MULTI_TARGETS, target_keys
+from garage_rag.search import SearchMode
 
 app = typer.Typer(
     add_completion=False,
     help="Local-first personal RAG pipeline over Postgres + pgvector.",
     no_args_is_help=True,
 )
-console = Console()
+
+
+class _StdoutConsole(Console):
+    """A console that keeps following ``sys.stdout``.
+
+    In-process runners (Click's ``CliRunner``, the gRPC command executor) swap
+    ``sys.stdout`` for a capture buffer around a command. rich resolves the file
+    lazily only while none is set, so a caller that reads ``console.file``,
+    redirects it, and later assigns the old value back would pin the console to
+    whatever stream ``sys.stdout`` happened to be at that moment -- typically a
+    pytest capture -- and every later ``console.print`` would miss the runner's
+    buffer. Assigning the live ``sys.stdout`` therefore means "back to default".
+    """
+
+    def _set_file(self, new_file) -> None:
+        self._file = None if new_file is sys.stdout else new_file
+
+    file = property(Console.file.fget, _set_file)
+
+
+console = _StdoutConsole()
 log = logging.getLogger(__name__)
 
 
@@ -85,8 +108,8 @@ def main(
     legacy = Path.cwd() / ".env"
     if legacy.is_file():
         console.print(
-            f"[yellow]note[/yellow]: {legacy.name} is no longer read. Migrate it "
-            f"with 'garage config init --from-env {legacy.name}', then delete it."
+            f"[yellow]note[/yellow]: {legacy.name} is no longer read. Move its values "
+            f"into {CONFIG_FILENAME} (see 'garage config init'), then delete it."
         )
 
 
@@ -204,7 +227,7 @@ def config_schema(
         bool,
         typer.Option(
             "--publish",
-            help="Write to the repository root, where it is committed and served from.",
+            help="Write to data/schema/ in the repository, where it is committed and served from.",
         ),
     ] = False,
 ) -> None:
@@ -275,6 +298,7 @@ def sync(
                 or row.default_trust != tier
                 or row.allow_cloud_enrichment != spec.allow_cloud_enrichment
                 or row.enabled != spec.enabled
+                or bool((row.config or {}).get("include_code", False)) != spec.include_code
             )
             if changes:
                 if apply:
@@ -329,7 +353,7 @@ def init_db(
     applied = apply_migrations(schema_dir=schema_dir)
     for name in applied:
         console.print(f"  applied [cyan]{name}[/cyan]")
-    console.print(f"[green]schema ready[/green] ({get_settings().database_url})")
+    console.print(f"[green]schema ready[/green] ({redact_url(get_settings().database_url)})")
 
 
 @app.command()
@@ -402,19 +426,7 @@ def list_models_cmd(
 ) -> None:
     """List registered embedding models."""
     with session_scope() as session:
-        models = list_models(session)
-    if not models:
-        if json_output:
-            import json
-
-            console.print(json.dumps([]))
-        else:
-            console.print("[yellow]no models registered[/yellow]")
-        return
-    if json_output:
-        import json
-
-        out = [
+        rows = [
             {
                 "slug": m.slug,
                 "provider": m.provider,
@@ -425,38 +437,31 @@ def list_models_cmd(
                 "storage_kind": m.storage_kind,
                 "index_kind": m.index_kind,
                 "table_name": m.table_name,
-                "is_default": m.is_default,
+                "is_default": bool(m.is_default),
             }
-            for m in models
+            for m in list_models(session)
         ]
-        console.print(json.dumps(out, indent=2))
+    if json_output:
+        console.print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        console.print("[yellow]no models registered[/yellow]")
         return
     table = Table()
-    for col in (
-        "slug",
-        "provider",
-        "ref",
-        "model_id",
-        "dims",
-        "stored",
-        "storage",
-        "index",
-        "table",
-        "default",
-    ):
+    for col in ("slug", "provider", "ref", "model_id", "dims", "stored", "storage", "index", "table", "default"):
         table.add_column(col)
-    for m in models:
+    for row in rows:
         table.add_row(
-            m.slug,
-            m.provider,
-            m.model_ref,
-            m.model_id or "",
-            str(m.dims),
-            str(m.stored_dims),
-            m.storage_kind,
-            m.index_kind,
-            m.table_name,
-            "*" if m.is_default else "",
+            row["slug"],
+            row["provider"],
+            row["model_ref"],
+            row["model_id"] or "",
+            str(row["dims"]),
+            str(row["stored_dims"]),
+            row["storage_kind"],
+            row["index_kind"],
+            row["table_name"],
+            "*" if row["is_default"] else "",
         )
     console.print(table)
 
@@ -612,15 +617,14 @@ def scan(
     json_output: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
 ) -> None:
     """Scan sources and count items by source type before ingesting."""
-    import json
-
     from garage_rag.db.engine import get_session_factory
     from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
     factory = get_session_factory()
     with factory() as session:
         if source == "*":
-            sources = list(session.query(Source).order_by(Source.id).all())
+            # '*' means every *enabled* source; a disabled one must be named to be scanned.
+            sources = list(session.query(Source).filter_by(enabled=True).order_by(Source.id).all())
         else:
             s = session.query(Source).filter_by(slug=source).one_or_none()
             if s is None:
@@ -688,7 +692,8 @@ def ingest(
     factory = get_session_factory()
     with factory() as session:
         if source == "*":
-            sources = [s.slug for s in session.query(Source).order_by(Source.id).all()]
+            # '*' means every *enabled* source; a disabled one must be named to be ingested.
+            sources = [s.slug for s in session.query(Source).filter_by(enabled=True).order_by(Source.id).all()]
         else:
             s = session.query(Source).filter_by(slug=source).one_or_none()
             if s is None:
@@ -951,10 +956,7 @@ def mcp_install(
         typer.Option(
             "--target",
             "-t",
-            help=(
-                "project | claude-desktop | claude-code-user | lmstudio | cursor | vscode | windsurf | zed "
-                "| all | any"
-            ),
+            help=" | ".join([*target_keys(), *MULTI_TARGETS]),
         ),
     ] = "project",
     path: Annotated[
@@ -992,42 +994,21 @@ def mcp_install(
     Merges into any existing config: other servers and unrelated keys are kept,
     the previous file is backed up, and the writing is atomic.
     """
-    from garage_rag.mcp_server.install import (
-        ClientTarget,
-        client_targets,
-        find_existing_configs,
-        http_url,
-        install,
-        server_command,
-    )
+    from garage_rag.mcp_server.install import http_url, install, plan_targets, server_command
 
     if http is True and stdio is True:
         raise typer.BadParameter("choose either --http or --stdio")
 
     use_http = bool(http is not False and not stdio)
 
-    targets = client_targets()
-    is_multi_install = all_configs or target in ("all", "any", "found", "all-found")
-
-    chosen_list: list[ClientTarget] = []
-    if is_multi_install:
-        found = find_existing_configs()
-        if found:
-            chosen_list = list(found.values())
-        else:
-            console.print(
-                "[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]"
-            )
-            chosen_list = [targets["project"], targets["claude-desktop"]]
-    elif path is not None:
-        chosen_list = [ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())]
-    else:
-        if target not in targets:
-            raise typer.BadParameter(
-                f"unknown target {target!r}; choose from {', '.join(targets)} or 'all'",
-                param_hint="--target",
-            )
-        chosen_list = [targets[target]]
+    try:
+        plan = plan_targets(target, path=path, all_configs=all_configs)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--target") from None
+    if plan.fell_back:
+        console.print("[dim]No existing client config files found; targeting project and Claude Desktop defaults[/dim]")
+    is_multi_install = plan.multi
+    chosen_list = plan.targets
 
     url: str | None = None
     config_file: Path | None = None
@@ -1177,7 +1158,6 @@ def mcp_test(
     """Test the MCP server and tool execution."""
     import time
 
-    from garage_rag.config import get_settings
     from garage_rag.mcp_server.server import (
         rag_list_authors,
         rag_list_sources,
@@ -1246,7 +1226,6 @@ def mcp_test(
     console.print(table)
 
     # 2. HTTP Endpoint test if available
-    import json
     import urllib.request
 
     console.print(f"\n[cyan]Testing HTTP endpoint:[/cyan] {target_url}")
@@ -1298,6 +1277,16 @@ def mcp_serve(
     allow_origin: Annotated[
         list[str] | None,
         typer.Option("--allow-origin", help="Permit this Origin (repeatable, for browsers)."),
+    ] = None,
+    allow_host: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow-host",
+            help=(
+                "Permit this Host header, e.g. rag.example.com:8787 or rag.example.com:* "
+                "(repeatable). With --allow-remote and no --allow-host, Host checking is off."
+            ),
+        ),
     ] = None,
     json_response: Annotated[
         bool, typer.Option("--json-response", help="Reply with JSON instead of an SSE stream.")
@@ -1353,6 +1342,11 @@ def mcp_serve(
     console.print(f"[green]serving[/green] {transport}{scheme_note} on http://{bind_host}:{bind_port}{route}")
     if not is_loopback(bind_host):
         console.print("[yellow]warning[/yellow]: reachable from other machines, unauthenticated")
+        if not allow_host:
+            console.print(
+                "[yellow]warning[/yellow]: no --allow-host given, so the Host header is not "
+                "checked (DNS-rebinding protection off); pass the names clients will use to turn it on"
+            )
     console.print("[dim]Ctrl-C to stop[/dim]")
 
     try:
@@ -1362,6 +1356,7 @@ def mcp_serve(
             port=bind_port,
             path=route,
             allowed_origins=allow_origin or None,
+            allowed_hosts=allow_host or None,
             json_response=json_response,
             stateless=stateless,
         )
@@ -1376,7 +1371,7 @@ def mcp_serve(
 def search(
     query: Annotated[str, typer.Argument(help="What to look for.")],
     limit: Annotated[int, typer.Option("--limit", "-n")] = 10,
-    mode: Annotated[str, typer.Option(help="hybrid | vector | fts")] = "hybrid",
+    mode: Annotated[SearchMode, typer.Option(help="hybrid fuses both engines; fts needs no model.")] = "hybrid",
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
     corpus_class: Annotated[
         list[str] | None,
@@ -1391,7 +1386,6 @@ def search(
     full: Annotated[bool, typer.Option("--full", help="Print whole snippets.")] = False,
 ) -> None:
     """Search the corpus with hybrid vector and keyword retrieval."""
-    from garage_rag.search.hybrid import SearchMode
     from garage_rag.search.hybrid import search as run_search
 
     with session_scope() as session:
@@ -1399,7 +1393,7 @@ def search(
             session,
             query,
             limit=limit,
-            mode=cast(SearchMode, mode),
+            mode=mode,
             model_slug=model,
             corpus_classes=corpus_class or None,
             trust_tiers=trust or None,
@@ -1563,8 +1557,6 @@ def _pgvector_library_hint(exc: BaseException) -> str | None:
 
 def main_cli() -> int:
     """Main CLI entrypoint."""
-    import sys
-
     # Ensure stdin, stdout, and stderr are attached and valid for CLI execution
     if sys.stdin is None or not hasattr(sys.stdin, "read"):
         try:
@@ -1602,6 +1594,4 @@ def main_cli() -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(main_cli())

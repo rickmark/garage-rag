@@ -26,13 +26,21 @@ from garage_rag.config import get_settings
 from garage_rag.db.emb_tables import assert_safe_table
 from garage_rag.db.models import EmbeddingModel
 from garage_rag.db.registry import StoragePlan, truncate_vector
+from garage_rag.embed.base import Embedder, EmbeddingError
 
 log = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-
-class EmbeddingError(RuntimeError):
-    """The embedding backend could not produce vectors."""
+# ``EmbeddingError`` is defined once in ``embed.base``; it stays importable from
+# here because the CLI and the gRPC service catch it under this name.
+__all__ = [
+    "BackfillProgress",
+    "EmbeddingError",
+    "OllamaEmbedder",
+    "backfill_model",
+    "count_pending",
+    "verify_model_dims",
+]
 
 
 @dataclass
@@ -47,33 +55,19 @@ class BackfillProgress:
         return max(0, self.total - self.embedded - self.failed)
 
 
-class OllamaEmbedder:
+class OllamaEmbedder(Embedder):
     """Batched embedding client for one registered model."""
+
+    provider_name = "ollama"
 
     def __init__(self, model_ref: str, *, host: str | None = None) -> None:
         settings = get_settings()
         self.model_ref = model_ref
         self._client = ollama.Client(host=host or settings.ollama_host)
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed a batch, preserving order."""
-        if not texts:
-            return []
-        try:
-            response = self._client.embed(model=self.model_ref, input=list(texts))
-        except Exception as exc:  # noqa: BLE001 - surface backend detail to caller
-            raise EmbeddingError(f"ollama embed failed for {self.model_ref}: {exc}") from exc
-
-        vectors = response.get("embeddings") if isinstance(response, dict) else response.embeddings
-        if not vectors or len(vectors) != len(texts):
-            raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors or [])} vectors for {len(texts)} inputs"
-            )
-        return [list(v) for v in vectors]
-
-    def probe_dims(self) -> int:
-        """Actual output width, for verifying a registration."""
-        return len(self.embed(["dimension probe"])[0])
+    def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
+        response = self._client.embed(model=self.model_ref, input=texts)
+        return response.get("embeddings") if isinstance(response, dict) else response.embeddings
 
 
 def _plan_from_row(row: EmbeddingModel) -> StoragePlan:
@@ -165,10 +159,19 @@ def backfill_model(
         texts = [txt for _, txt in batch]
         try:
             vectors = embedder.embed(texts)
-        except (EmbeddingError, Exception) as exc:
+            # Check the width before touching the column: a vector of the wrong
+            # size would be rejected by pgvector anyway, and a model that emits
+            # the wrong width does so for every batch.
+            for vec in vectors:
+                if len(vec) != model.dims:
+                    raise EmbeddingError(
+                        f"{model.model_ref} returned a {len(vec)}-dim vector; registered as {model.dims}"
+                    )
+        except Exception as exc:  # noqa: BLE001 - logged and counted, never re-raised
             log.error("batch failed (%d chunks): %s", len(batch), exc)
             state.failed += len(batch)
-            # A backend that is down will fail every subsequent batch too.
+            # A backend that is down (or mis-registered) will fail every
+            # subsequent batch too.
             break
 
         session.execute(

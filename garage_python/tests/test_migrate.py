@@ -2,7 +2,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import psycopg
+import pytest
 
+from garage_rag.config import repo_root
 from garage_rag.db.migrate import (
     apply_migrations,
     database_exists,
@@ -10,8 +12,38 @@ from garage_rag.db.migrate import (
     init_extensions,
     migration_files,
     pending_migrations,
+    redact_url,
+    sql_dir,
     to_psycopg_conninfo,
 )
+
+
+def test_redact_url_hides_the_password() -> None:
+    assert redact_url("postgresql+psycopg://garage:s3cret@localhost:5432/rag") == (
+        "postgresql+psycopg://garage:***@localhost:5432/rag"
+    )
+    assert redact_url("postgresql+psycopg:///rag") == "postgresql+psycopg:///rag"
+    # A libpq conninfo string is not something make_url understands; show nothing.
+    assert "s3cret" not in redact_url("host=localhost password=s3cret dbname=rag")
+
+
+def test_sql_dir_is_the_committed_ddl() -> None:
+    """`garage init-db` without --schema-dir must find the real files."""
+    assert sql_dir() == repo_root() / "data" / "sql"
+    names = [p.name for p in migration_files()]
+    assert names[0] == "001_extensions.sql"
+    assert "004_registry.sql" in names
+
+
+def test_missing_sql_dir_is_an_error_everywhere(tmp_path: Path) -> None:
+    """Swallowing it would create extensions and then report an empty database as ready."""
+    missing = tmp_path / "nowhere"
+    with patch("psycopg.connect") as mock_connect:
+        with pytest.raises(FileNotFoundError):
+            init_extensions(database_url="postgresql://u:p@localhost/db", schema_dir=missing)
+        with pytest.raises(FileNotFoundError):
+            pending_migrations(database_url="postgresql://u:p@localhost/db", schema_dir=missing)
+        mock_connect.assert_not_called()
 
 
 def test_to_psycopg_conninfo() -> None:
@@ -55,7 +87,13 @@ def test_init_extensions_executes_outside_sqlalchemy(tmp_path: Path) -> None:
         )
 
         mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
-        assert mock_cursor.execute.call_count == 1
+        # Bootstraps the schema_migrations ledger, runs the extension file, then records it.
+        assert mock_cursor.execute.call_count == 3
+        executed = [c.args[0] for c in mock_cursor.execute.call_args_list]
+        assert "CREATE TABLE IF NOT EXISTS schema_migrations" in executed[0]
+        assert executed[1] == "CREATE EXTENSION IF NOT EXISTS vector;\nCREATE EXTENSION IF NOT EXISTS pg_trgm;"
+        assert executed[2].startswith("INSERT INTO schema_migrations")
+        assert mock_cursor.execute.call_args_list[2].args[1] == ("001_extensions",)
         assert "001_extensions.sql" in applied
 
 
@@ -104,8 +142,15 @@ def test_apply_migrations_with_session(tmp_path: Path) -> None:
         )
 
         mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
-        assert mock_cursor.execute.call_count == 1
-        mock_driver.exec_driver_sql.assert_called_once_with("CREATE TABLE test_table (id int);")
+        # Extensions go through raw psycopg: ledger bootstrap, extension SQL, ledger insert.
+        assert mock_cursor.execute.call_count == 3
+        assert mock_cursor.execute.call_args_list[1].args[0] == "CREATE EXTENSION IF NOT EXISTS vector;"
+        # The remaining migration runs on the SQLAlchemy session, followed by its ledger insert.
+        driver_sql = [c.args[0] for c in mock_driver.exec_driver_sql.call_args_list]
+        assert driver_sql == [
+            "CREATE TABLE test_table (id int);",
+            "INSERT INTO schema_migrations (version) VALUES ('003_core') ON CONFLICT (version) DO NOTHING;",
+        ]
         assert applied == ["001_extensions.sql", "003_core.sql"]
 
 

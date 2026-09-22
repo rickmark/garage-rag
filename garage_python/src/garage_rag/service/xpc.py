@@ -27,6 +27,30 @@ DEFAULT_BUNDLE_ID = "me.rickmark.garage"
 # XPC & Security Framework C bindings (macOS only)
 IS_MACOS = platform.system() == "Darwin"
 
+
+def _configure_native_signatures(sec: ctypes.CDLL, cf: ctypes.CDLL) -> None:
+    """Declare return/argument types for the CoreFoundation and Security calls used below.
+
+    Without an explicit ``restype`` ctypes truncates every return value to a C ``int``,
+    which silently mangles 64-bit CF object pointers.
+    """
+    void_p = ctypes.c_void_p
+    cf.CFNumberCreate.restype = void_p
+    cf.CFNumberCreate.argtypes = [void_p, ctypes.c_long, void_p]  # CFIndex theType
+    cf.CFDictionaryCreate.restype = void_p
+    cf.CFDictionaryCreate.argtypes = [void_p, void_p, void_p, ctypes.c_long, void_p, void_p]
+    cf.CFStringCreateWithBytes.restype = void_p
+    cf.CFStringCreateWithBytes.argtypes = [void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32, ctypes.c_bool]
+    cf.CFRelease.restype = None
+    cf.CFRelease.argtypes = [void_p]
+    sec.SecCodeCopyGuestWithAttributes.restype = ctypes.c_int32  # OSStatus
+    sec.SecCodeCopyGuestWithAttributes.argtypes = [void_p, void_p, ctypes.c_uint32, ctypes.POINTER(void_p)]
+    sec.SecRequirementCreateWithString.restype = ctypes.c_int32
+    sec.SecRequirementCreateWithString.argtypes = [void_p, ctypes.c_uint32, ctypes.POINTER(void_p)]
+    sec.SecCodeCheckValidity.restype = ctypes.c_int32
+    sec.SecCodeCheckValidity.argtypes = [void_p, ctypes.c_uint32, void_p]
+
+
 if IS_MACOS:
     try:
         libxpc = ctypes.CDLL(ctypes.util.find_library("System") or "/usr/lib/libSystem.B.dylib")
@@ -37,6 +61,7 @@ if IS_MACOS:
             ctypes.util.find_library("CoreFoundation")
             or "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
         )
+        _configure_native_signatures(libsec, libcf)
     except Exception as exc:
         logger.warning("Could not load native macOS libraries: %s", exc)
         libxpc = None
@@ -63,17 +88,18 @@ class PeerAuthenticator:
 
     def verify_peer(self, pid: int) -> tuple[bool, str]:
         """Verify peer process code signature against expected Team ID and Bundle ID.
-        
+
         Returns:
             (is_valid, reason)
         """
+        # A bogus PID is never a valid peer, on any platform.
+        if pid <= 0:
+            return False, "Invalid peer PID"
+
         if not IS_MACOS or libsec is None or libcf is None:
             if self.allow_unsigned_in_dev or not IS_MACOS:
                 return True, "Allowed (non-macOS or dev mode)"
             return False, "Security framework unavailable on non-macOS platform"
-
-        if pid <= 0:
-            return False, "Invalid peer PID"
 
         # If PID is self and in dev mode, allow
         if pid == os.getpid() and self.allow_unsigned_in_dev:
@@ -83,24 +109,25 @@ class PeerAuthenticator:
             # 1. Obtain SecCodeRef for the guest process PID
             # kSecGuestAttributePid = CFSTR("pid")
             kSecGuestAttributePid = ctypes.c_void_p.in_dll(libsec, "kSecGuestAttributePid").value
-            
+
             # Create CFDictionary with {kSecGuestAttributePid: CFNumber(pid)}
             cf_pid = libcf.CFNumberCreate(
                 None,
                 9,  # kCFNumberSInt32Type = 9
                 ctypes.byref(ctypes.c_int32(pid)),
             )
-            
+
             keys = (ctypes.c_void_p * 1)(kSecGuestAttributePid)
             values = (ctypes.c_void_p * 1)(cf_pid)
-            
+
+            # The callback constants are structs; pass their addresses, not their first word.
             attr_dict = libcf.CFDictionaryCreate(
                 None,
                 keys,
                 values,
                 1,
-                ctypes.c_void_p.in_dll(libcf, "kCFTypeDictionaryKeyCallBacks"),
-                ctypes.c_void_p.in_dll(libcf, "kCFTypeDictionaryValueCallBacks"),
+                ctypes.byref(ctypes.c_void_p.in_dll(libcf, "kCFTypeDictionaryKeyCallBacks")),
+                ctypes.byref(ctypes.c_void_p.in_dll(libcf, "kCFTypeDictionaryValueCallBacks")),
             )
             libcf.CFRelease(cf_pid)
 
@@ -189,7 +216,14 @@ class PeerAuthenticator:
 
 
 class XpcServiceServer:
-    """macOS Mach XPC Service hosting Garage command execution with peer authentication."""
+    """Request handler for a macOS Mach XPC service hosting Garage command execution.
+
+    ``handle_request_bytes`` is the complete request path (peer authentication,
+    CommandRequest decoding, execution, CommandStatus encoding). A Mach listener
+    that feeds it is *not* implemented in Python: ``run`` only blocks until
+    stopped. The shipping app instead hosts the Python runtime inside Swift XPC
+    services (``macapp/Sources/*XPCService``) that call into this package directly.
+    """
 
     def __init__(
         self,
@@ -206,15 +240,9 @@ class XpcServiceServer:
             allow_unsigned_in_dev=allow_unsigned_in_dev,
         )
         self.executor = executor or default_executor
-        self._running = False
         self._stop_event = threading.Event()
 
-    def handle_request_bytes(
-        self,
-        peer_pid: int,
-        request_bytes: bytes,
-        rpc_name: str = "ExecuteCommand",
-    ) -> tuple[int, list[bytes]]:
+    def handle_request_bytes(self, peer_pid: int, request_bytes: bytes) -> tuple[int, list[bytes]]:
         """Process serialized request bytes and return (exit_code, list of serialized response bytes)."""
         # Authenticate peer
         is_authenticated, reason = self.authenticator.verify_peer(peer_pid)
@@ -247,21 +275,26 @@ class XpcServiceServer:
         return exit_code, statuses
 
     def run(self, stop_event: threading.Event | None = None) -> None:
-        """Run the XPC service loop."""
+        """Block until ``stop_event`` is set.
+
+        No Mach service is registered and no XPC connections are accepted: this
+        loop only keeps the process alive. See the class docstring.
+        """
         self._stop_event = stop_event or threading.Event()
-        self._running = True
-        print(f"Garage XPC Mach Service listening on '{self.service_name}' (PID: {os.getpid()})")
-        print(
-            f"XPC Peer Authentication: Team ID='{self.authenticator.expected_team_id}', "
-            f"Bundle ID='{self.authenticator.expected_bundle_id}'"
+        logger.warning(
+            "XpcServiceServer.run: no Mach listener is implemented; '%s' will not accept XPC connections "
+            "(PID %d, Team ID=%r, Bundle ID=%r)",
+            self.service_name,
+            os.getpid(),
+            self.authenticator.expected_team_id,
+            self.authenticator.expected_bundle_id,
         )
 
         try:
             while not self._stop_event.is_set():
                 time.sleep(0.5)
         finally:
-            self._running = False
-            print(f"Garage XPC Mach Service '{self.service_name}' stopped.")
+            logger.info("Garage XPC service '%s' stopped.", self.service_name)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -274,7 +307,7 @@ def serve_xpc(
     allow_unsigned_in_dev: bool = False,
     stop_event: threading.Event | None = None,
 ) -> None:
-    """Start the macOS XPC Mach service and block until stopped."""
+    """Block until stopped. See ``XpcServiceServer``: no Mach listener is implemented."""
     server = XpcServiceServer(
         service_name=service_name,
         team_id=team_id,

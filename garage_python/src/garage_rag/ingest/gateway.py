@@ -72,6 +72,10 @@ class IngestStorageGateway(ABC):
     """Abstract interface for ingestion persistence operations."""
 
     @abstractmethod
+    def list_enabled_sources(self) -> list[str]:
+        """Slugs of every enabled source, in registration order. Opens no ingest run."""
+
+    @abstractmethod
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         """Initialize ingest run session for a source."""
 
@@ -113,6 +117,14 @@ class IngestStorageGateway(ABC):
         uri: str,
     ) -> None:
         """Record document rejection (deleting existing)."""
+
+    @abstractmethod
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        """Record that ``uri`` was observed by this run without touching its document row.
+
+        Used for files the pipeline never opened (stat-skipped) or could not turn into
+        chunks; reconciliation would otherwise treat them as deleted.
+        """
 
     @abstractmethod
     def refresh_metadata(
@@ -175,6 +187,12 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
     def __init__(self, session_factory: Callable[[], Any]) -> None:
         self.factory = session_factory
 
+    def list_enabled_sources(self) -> list[str]:
+        from garage_rag.db.models import Source
+
+        with self.factory() as session:
+            return [s.slug for s in session.query(Source).filter_by(enabled=True).order_by(Source.id).all()]
+
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         from garage_rag.attribute.resolver import ensure_self_author
         from garage_rag.db.models import IngestRun, Source
@@ -205,7 +223,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 default_trust=src.default_trust,
                 allow_cloud_enrichment=bool(src.allow_cloud_enrichment),
                 run_id=run.id,
-                kind=src.kind if hasattr(src, "kind") and src.kind else "filesystem",
+                kind=src.kind,
                 source_slugs=source_slugs,
             )
 
@@ -334,6 +352,17 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 session.execute(
                     pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
                 )
+            session.commit()
+
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from garage_rag.db.models import IngestSeen
+
+        if not run_id:
+            return
+        with self.factory() as session:
+            session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def refresh_metadata(
@@ -551,6 +580,10 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
     def __init__(self, client: Any) -> None:
         self.client = client
 
+    def list_enabled_sources(self) -> list[str]:
+        resp = self.client.list_sources()
+        return [s.slug for s in resp.sources if s.enabled]
+
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         from garage_rag.proto.garage_pb2 import BeginIngestSessionRequest
 
@@ -564,6 +597,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             default_trust=TrustTier(resp.default_trust),
             allow_cloud_enrichment=resp.allow_cloud_enrichment,
             run_id=resp.run_id,
+            # BeginIngestSessionResponse carries no ``kind`` field, so a gRPC-backed
+            # context always reports "filesystem" until the proto grows one.
             kind=getattr(resp, "kind", "") or "filesystem",
             source_slugs=list(resp.source_slugs),
         )
@@ -650,6 +685,12 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             uri=uri,
             action="rejected",
         )
+        self.client.persist_document(req)
+
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        from garage_rag.proto.garage_pb2 import PersistDocumentRequest
+
+        req = PersistDocumentRequest(run_id=run_id, source_slug=source_slug, uri=uri, action="seen")
         self.client.persist_document(req)
 
     def refresh_metadata(
@@ -795,80 +836,6 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             errors=errors,
         )
         self.client.finalize_ingest_session(req)
-
-    def test_read_documents(
-        self,
-        source_slug: str | None = None,
-        limit: int = 5,
-        sample_bytes: int = 1024,
-    ) -> dict[str, Any]:
-        """Query gRPC server for registered source(s) and test reading sample document files from disk."""
-        sources = []
-        if source_slug and source_slug != "*":
-            sources = [source_slug]
-        else:
-            list_resp = self.client.list_sources()
-            sources = [s.slug for s in list_resp.sources if s.enabled]
-            if not sources and list_resp.sources:
-                sources = [s.slug for s in list_resp.sources]
-
-        results: list[dict[str, Any]] = []
-        total_tested = 0
-        total_readable = 0
-
-        for slug in sources:
-            ctx = self.begin_session(slug)
-            root_path = Path(ctx.root)
-            sample_uris: list[str] = []
-            if root_path.exists() and root_path.is_dir():
-                for p in root_path.rglob("*"):
-                    if p.is_file() and not p.name.startswith("."):
-                        sample_uris.append(str(p.relative_to(root_path)))
-                        if len(sample_uris) >= limit:
-                            break
-            elif root_path.is_file():
-                sample_uris.append(root_path.name)
-
-            for uri in sample_uris:
-                total_tested += 1
-                stat = self.check_stat(slug, uri)
-                full_path = root_path / uri if root_path.is_dir() else root_path
-                can_read = False
-                bytes_read = 0
-                error_msg = None
-                try:
-                    with open(full_path, "rb") as f:
-                        data = f.read(sample_bytes)
-                        bytes_read = len(data)
-                        can_read = True
-                        total_readable += 1
-                except Exception as e:
-                    error_msg = str(e)
-
-                results.append({
-                    "source_slug": slug,
-                    "uri": uri,
-                    "full_path": str(full_path),
-                    "exists": stat.exists,
-                    "byte_size": (
-                        stat.byte_size if stat.exists else (full_path.stat().st_size if full_path.exists() else 0)
-                    ),
-                    "can_read": can_read,
-                    "bytes_read": bytes_read,
-                    "error": error_msg,
-                })
-
-        return {
-            "status": "ok" if (total_tested == total_readable and total_tested > 0) or total_tested == 0 else "partial",
-            "total_tested": total_tested,
-            "total_readable": total_readable,
-            "documents": results,
-            "message": (
-                f"Tested {total_tested} document(s): {total_readable} readable"
-                if total_tested > 0
-                else "No documents found to test"
-            ),
-        }
 
 
 def get_storage_gateway(

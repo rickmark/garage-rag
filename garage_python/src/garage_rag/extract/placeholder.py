@@ -183,29 +183,3 @@ def is_placeholder(
         return True
     return False
 
-
-def summarize_tree(root: Path, *, limit: int | None = None) -> dict[str, int]:
-    """Count materialized vs placeholder files under ``root``.
-
-    Used by ``garage check-source`` so the scale of an online-only folder is
-    visible *before* an ingest starts materializing it.
-    """
-    counts = {"files": 0, "local": 0, "placeholder": 0, "empty": 0, "unreadable": 0}
-    for dirpath, _dirnames, filenames in os.walk(root, onerror=lambda _e: None):
-        for name in filenames:
-            if limit is not None and counts["files"] >= limit:
-                return counts
-            path = Path(dirpath) / name
-            counts["files"] += 1
-            try:
-                st = path.stat()
-            except OSError:
-                counts["unreadable"] += 1
-                continue
-            if is_placeholder(path, st=st):
-                counts["placeholder"] += 1
-            elif st.st_size > 0:
-                counts["local"] += 1
-            else:
-                counts["empty"] += 1
-    return counts

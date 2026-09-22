@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Iterator
+from types import TracebackType
 from typing import Any
 
 import grpc
@@ -76,7 +75,6 @@ from garage_rag.proto.garage_pb2 import (
     StatsResponse,
     StatusRequest,
     StatusResponse,
-    StatusType,
     StopRequest,
     StopResponse,
     SyncRequest,
@@ -109,6 +107,9 @@ class _InProcessServicerContext:
     def set_details(self, details: str):
         self.details_msg = details
 
+    def is_active(self) -> bool:
+        return True
+
 
 class GarageClient:
     """Client for interacting with Garage over dedicated gRPC RPC methods or in-process serialization."""
@@ -133,6 +134,23 @@ class GarageClient:
             self._channel = grpc.insecure_channel(server_address)
             self._stub = GarageServiceStub(self._channel)
         return self._stub
+
+    def close(self) -> None:
+        """Close the underlying gRPC channel, if one was opened. Safe to call repeatedly."""
+        channel, self._channel, self._stub = self._channel, None, None
+        if channel is not None:
+            channel.close()
+
+    def __enter__(self) -> GarageClient:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def _roundtrip_proto(self, msg: Any, msg_cls: Any) -> Any:
         serialized = msg.SerializeToString()
@@ -294,16 +312,10 @@ class GarageClient:
         return self._invoke_unary("UpdateEmbeddings", request, UpdateEmbeddingsResponse)
 
     def execute_command(self, argv: list[str]) -> Iterator[CommandStatus]:
-        req = CommandRequest(
-            argv=argv,
-            cwd=os.getcwd(),
-            env={k: v for k, v in os.environ.items() if isinstance(v, str)},
-        )
+        # Only argv is sent: the executor never reads ``cwd``/``env``/``options``, and
+        # shipping the whole process environment would leak database URLs and tokens.
+        req = CommandRequest(argv=argv)
         return self._invoke_stream("ExecuteCommand", req, CommandStatus)
-
-
-# Global default client
-default_client = GarageClient()
 
 
 def run_command_in_process(
@@ -313,43 +325,3 @@ def run_command_in_process(
     """Execute command in process, streaming CommandStatus."""
     client = GarageClient(in_process=True, servicer=GarageRpcServicer(executor=executor))
     return client.execute_command(argv)
-
-
-def run_command_grpc(
-    argv: list[str],
-    host: str = "127.0.0.1",
-    port: int = 50051,
-) -> Iterator[CommandStatus]:
-    """Execute command on a remote gRPC Garage server and stream CommandStatus responses."""
-    client = GarageClient(host=host, port=port, in_process=False)
-    return client.execute_command(argv)
-
-
-def execute_and_render_cli(
-    argv: list[str],
-    host: str | None = None,
-    port: int | None = None,
-    use_remote_grpc: bool = False,
-) -> int:
-    """Execute command serialized through gRPC pipeline and render streaming status/output to console."""
-    if use_remote_grpc or (host and port):
-        h = host or "127.0.0.1"
-        p = port or 50051
-        status_stream = run_command_grpc(argv, host=h, port=p)
-    else:
-        status_stream = run_command_in_process(argv)
-
-    exit_code = 0
-    for status in status_stream:
-        if status.stdout:
-            sys.stdout.write(status.stdout)
-            sys.stdout.flush()
-        if status.stderr:
-            sys.stderr.write(status.stderr)
-            sys.stderr.flush()
-        if status.type == StatusType.STATUS_ERROR:
-            exit_code = status.exit_code or 1
-        elif status.type == StatusType.STATUS_COMPLETED and exit_code == 0:
-            exit_code = status.exit_code
-
-    return exit_code

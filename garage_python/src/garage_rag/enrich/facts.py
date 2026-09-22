@@ -3,9 +3,23 @@
 Uses LangExtract (https://github.com/google/langextract) against the local
 Ollama server -- the same server ``garage_rag.embed.ollama`` already talks
 to -- so, like the rest of local inference in this project, document content
-never leaves the machine. ``lx.extract`` defaults to a cloud Gemini model
-when ``model_id``/``model_url`` are left unset, so this module always passes
-both explicitly rather than relying on that default.
+never leaves the machine.
+
+That only holds because the provider is pinned. When ``lx.extract`` is given a
+bare ``model_id`` it picks the backend by *regex on the model name*: anything
+matching ``gemini*`` goes to Google's API, ``gpt-*``/``o1*`` to OpenAI, each
+reading an API key from the environment. So ``--model gemini-2.5-flash`` would
+have posted document text -- communications included -- to a cloud API with
+no egress check in between. This module therefore never passes ``model_id``
+to ``lx.extract``; it builds an explicit ``ModelConfig`` naming
+``OllamaLanguageModel`` (see :func:`ollama_model_config`), so the model name
+is only ever interpreted by the local Ollama server. ``test_egress_block``
+asserts this structurally.
+
+The Ollama host itself is configurable (``ollama_host``). It is assumed to be
+loopback; when it is not, :func:`extract_and_store_facts` runs the document's
+class through ``enrich.egress.assert_egress_allowed`` so communications are
+never posted to a remote host even by configuration.
 
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
@@ -24,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import textwrap
+from urllib.parse import urlsplit
 
 import langextract as lx
 from sqlalchemy import func
@@ -31,6 +46,7 @@ from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
 from garage_rag.db.models import Chunk, Document, Fact
+from garage_rag.enrich.egress import assert_egress_allowed
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
 
 log = logging.getLogger(__name__)
@@ -45,6 +61,12 @@ DEFAULT_MODEL_ID = "gemma2:2b"
 # caveat that LlamaXPCService has no real model backend yet.
 FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
 DEFAULT_PROVIDER = "ollama"
+
+# LangExtract's registered class name for its Ollama backend. Passing it as an
+# explicit ``provider`` bypasses model-id pattern matching entirely.
+OLLAMA_PROVIDER = "OllamaLanguageModel"
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 PROMPT = textwrap.dedent("""\
     Extract every standalone fact stated in this document.
@@ -80,6 +102,31 @@ EXAMPLES = [
 ]
 
 
+def resolve_model_url(model_url: str | None = None) -> str:
+    """The Ollama endpoint fact extraction will post to."""
+    return model_url or get_settings().ollama_host
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether ``url`` points at this machine."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+
+
+def ollama_model_config(model_id: str, model_url: str) -> lx.factory.ModelConfig:
+    """Build the LangExtract config that pins inference to the local Ollama server.
+
+    ``provider`` is the load-bearing field: with it set, LangExtract resolves
+    the backend by name and never consults its model-id regexes, so a
+    cloud-looking ``model_id`` is just a string Ollama will fail to find.
+    """
+    return lx.factory.ModelConfig(
+        model_id=model_id,
+        provider=OLLAMA_PROVIDER,
+        provider_kwargs={"model_url": model_url, "format_type": lx.data.FormatType.JSON},
+    )
+
+
 def extract_facts(
     text: str,
     *,
@@ -95,8 +142,15 @@ def extract_facts(
     the source text.
 
     ``provider`` selects the inference backend: "ollama" (default) talks to a
-    local Ollama server via LangExtract's built-in provider; "llama_xpc" runs
-    the prompt through ``LlamaXPCLanguageModel`` in-process instead.
+    local Ollama server via LangExtract's built-in provider, pinned explicitly
+    (see the module docstring); "llama_xpc" runs the prompt through
+    ``LlamaXPCLanguageModel`` in-process instead. Neither path ever hands
+    ``lx.extract`` a bare ``model_id``.
+
+    ``use_schema_constraints`` is off because both backends already emit JSON
+    (that is all the example-derived constraint would set for them), and
+    leaving it on makes LangExtract warn on every call that the constraint is
+    ignored/redundant when ``model``/``config`` is given.
     """
     if provider not in FACT_DISTIL_PROVIDERS:
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
@@ -107,16 +161,16 @@ def extract_facts(
             prompt_description=PROMPT,
             examples=EXAMPLES,
             model=LlamaXPCLanguageModel(model_id=model_id),
+            use_schema_constraints=False,
             show_progress=False,
         )
     else:
-        settings = get_settings()
         result = lx.extract(
             text_or_documents=text,
             prompt_description=PROMPT,
             examples=EXAMPLES,
-            model_id=model_id,
-            model_url=model_url or settings.ollama_host,
+            config=ollama_model_config(model_id, resolve_model_url(model_url)),
+            use_schema_constraints=False,
             show_progress=False,
         )
     return [e for e in result.extractions if e.char_interval is not None]
@@ -182,19 +236,30 @@ def extract_and_store_facts(
     ``ingest`` uses when a document's chunks are rebuilt. Deleting a fact
     cascades (``chunks.fact_id`` is ``ON DELETE CASCADE``) into its chunk and,
     from there, into every per-model embedding table, so a re-extraction never
-    leaves a stale fact vector behind.
+    leaves a stale fact vector behind -- including when the document has since
+    become empty, which clears its facts rather than keeping the old ones.
 
     When ``queue_for_embedding`` is true (the default), each new fact also
     gets a ``chunks`` row appended after the document's existing chunks, ready
     for ``embed.ollama.backfill_model`` to pick up.
+
+    If the Ollama endpoint is not on this machine, the document's corpus class
+    is checked through the egress chokepoint first: a communication is never
+    posted to a remote host, whatever the configuration says.
     """
+    if provider == "ollama":
+        url = resolve_model_url(model_url)
+        if not is_loopback_url(url):
+            log.warning("ollama_host %s is not loopback; applying egress policy to document %s", url, document.id)
+            assert_egress_allowed(document.corpus_class)
+
+    session.query(Fact).filter(Fact.document_id == document.id).delete()
     if not document.content:
         return []
 
     log.info("extracting facts for document %s via %s", document.id, provider)
     extractions = extract_facts(document.content, model_id=model_id, model_url=model_url, provider=provider)
 
-    session.query(Fact).filter(Fact.document_id == document.id).delete()
     facts = facts_from_extractions(document.id, extractions, model_id=model_id)
     session.add_all(facts)
 

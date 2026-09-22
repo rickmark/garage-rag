@@ -19,19 +19,20 @@ from collections.abc import Sequence
 from openai import OpenAI
 
 from garage_rag.config import get_settings
+from garage_rag.embed.base import Embedder, EmbeddingError
 
 log = logging.getLogger(__name__)
 
 # The OpenAI SDK requires a non-empty key even when the server ignores it.
 _PLACEHOLDER_KEY = "lm-studio"
 
-
-class EmbeddingError(RuntimeError):
-    """The embedding backend could not produce vectors."""
+__all__ = ["EmbeddingError", "LMStudioEmbedder"]
 
 
-class LMStudioEmbedder:
+class LMStudioEmbedder(Embedder):
     """Batched embedding client targeting LM Studio's OpenAI-compatible API."""
+
+    provider_name = "lmstudio"
 
     def __init__(
         self,
@@ -47,25 +48,6 @@ class LMStudioEmbedder:
             api_key=api_token or settings.read_lmstudio_api_token() or _PLACEHOLDER_KEY,
         )
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed a batch, preserving order."""
-        if not texts:
-            return []
-        try:
-            response = self._client.embeddings.create(
-                model=self.model_ref,
-                input=list(texts),
-            )
-        except Exception as exc:  # noqa: BLE001 - surface backend detail to caller
-            raise EmbeddingError(f"lmstudio embed failed for {self.model_ref}: {exc}") from exc
-
-        vectors = [item.embedding for item in response.data]
-        if len(vectors) != len(texts):
-            raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors)} vectors for {len(texts)} inputs"
-            )
-        return vectors
-
-    def probe_dims(self) -> int:
-        """Actual output width, for verifying a registration."""
-        return len(self.embed(["dimension probe"])[0])
+    def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
+        response = self._client.embeddings.create(model=self.model_ref, input=texts)
+        return [item.embedding for item in response.data]

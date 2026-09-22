@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,8 +24,10 @@ from garage_rag.mcp_server.server import (
     SourceInfo,
     SourceList,
     _as_list,
+    _http_security,
     _log_startup,
     _tidy,
+    _untidy,
     is_loopback,
     main,
     rag_get_document,
@@ -50,6 +53,35 @@ class TestServerHelpers:
         assert _as_list(["reference", "authored"]) == ["reference", "authored"]
         assert _as_list(None) is None
         assert _as_list(123) == 123
+
+    def test_untidy_expands_only_a_leading_tilde(self) -> None:
+        assert _untidy("~/docs/a~b.md") == f"{_HOME}/docs/a~b.md"
+        assert _untidy("~") == _HOME
+        assert _untidy("/srv/~backup/x.md") == "/srv/~backup/x.md"
+        assert _untidy("~other/x.md") == "~other/x.md"
+
+    def test_http_security_loopback_checks_the_host_header(self) -> None:
+        settings = _http_security("127.0.0.1", 8787, None)
+        assert settings.enable_dns_rebinding_protection is True
+        assert set(settings.allowed_hosts) == {"127.0.0.1:8787", "localhost:8787"}
+        assert settings.allowed_origins == []
+
+    def test_http_security_brackets_ipv6_binds(self) -> None:
+        settings = _http_security("::1", 8787, None)
+        assert "[::1]:8787" in settings.allowed_hosts
+
+    def test_http_security_remote_without_hosts_turns_the_check_off(self, caplog) -> None:
+        """An exact-match allowlist nobody can satisfy is worse than no check."""
+        with caplog.at_level(logging.WARNING, logger="garage_rag.mcp"):
+            settings = _http_security("0.0.0.0", 8787, ["https://app.example"])
+        assert settings.enable_dns_rebinding_protection is False
+        assert settings.allowed_origins == ["https://app.example"]
+        assert "Host header is not checked" in caplog.text
+
+    def test_http_security_remote_with_hosts_keeps_the_check(self) -> None:
+        settings = _http_security("0.0.0.0", 8787, None, ["rag.example.com:*", "10.0.0.5:8787"])
+        assert settings.enable_dns_rebinding_protection is True
+        assert {"rag.example.com:*", "10.0.0.5:8787", "localhost:8787"} <= set(settings.allowed_hosts)
 
     @pytest.mark.parametrize(
         ("host", "expected"),
@@ -113,12 +145,15 @@ class TestMcpTools:
                 patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]) as mock_run_search,
                 patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]),
             ):
+                # A direct call bypasses the pydantic BeforeValidator at the MCP
+                # boundary; the body must still turn a bare string into a
+                # one-item list rather than iterating its characters.
                 result = rag_search(
                     query="test query",
                     limit=5,
                     mode="hybrid",
                     corpus_class="document",
-                    trust="authored",
+                    trust=["authored"],
                     source="notes",
                     author="Rick",
                 )
@@ -241,8 +276,10 @@ class TestMcpTools:
                 rag_get_document(document_id=999)
 
     def test_rag_list_sources(self) -> None:
+        # SimpleNamespace rather than MagicMock: the query labels a column ``cls``,
+        # and ``cls`` is not a valid MagicMock constructor keyword.
         rows = [
-            MagicMock(
+            SimpleNamespace(
                 slug="vault",
                 kind="obsidian",
                 cls="document",
@@ -251,7 +288,7 @@ class TestMcpTools:
                 documents=120,
                 chunks=450,
             ),
-            MagicMock(
+            SimpleNamespace(
                 slug="repo",
                 kind="git",
                 cls="code",
@@ -456,7 +493,7 @@ class TestMcpCliCommands:
     def test_mcp_serve_remote_without_allow_remote_fails(self) -> None:
         result = runner.invoke(app, ["mcp-serve", "--http", "--host", "0.0.0.0"])
         assert result.exit_code != 0
-        assert "is not a loopback address" in result.output
+        assert "refusing to bind 0.0.0.0" in result.output
         assert "--allow-remote" in result.output
 
     def test_mcp_serve_remote_with_allow_remote_succeeds(self) -> None:
@@ -478,15 +515,37 @@ class TestMcpCliCommands:
                 ],
             )
             assert result.exit_code == 0
+            assert "Host header is not checked" in result.output
             mock_serve.assert_called_once_with(
                 "streamable-http",
                 host="0.0.0.0",
                 port=8765,
                 path="/custom-mcp",
-                allowed_origins=[],
+                allowed_origins=None,
+                allowed_hosts=None,
                 json_response=True,
                 stateless=True,
             )
+
+    def test_mcp_serve_remote_passes_allowed_hosts(self) -> None:
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+            result = runner.invoke(
+                app,
+                [
+                    "mcp-serve",
+                    "--http",
+                    "--host",
+                    "0.0.0.0",
+                    "--allow-remote",
+                    "--allow-host",
+                    "rag.example.com:*",
+                    "--allow-host",
+                    "10.0.0.5:8787",
+                ],
+            )
+            assert result.exit_code == 0
+            assert "Host header is not checked" not in result.output
+            assert mock_serve.call_args.kwargs["allowed_hosts"] == ["rag.example.com:*", "10.0.0.5:8787"]
 
     def test_mcp_serve_sse_mode(self) -> None:
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
@@ -500,7 +559,8 @@ class TestMcpCliCommands:
                 host="127.0.0.1",
                 port=8888,
                 path="/mcp",
-                allowed_origins=[],
+                allowed_origins=None,
+                allowed_hosts=None,
                 json_response=False,
                 stateless=False,
             )

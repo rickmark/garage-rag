@@ -22,6 +22,8 @@ from garage_rag.enrich.egress import (
 SRC = Path(__file__).resolve().parent.parent / "src" / "garage_rag"
 # The only module permitted to touch the Anthropic SDK.
 EGRESS_MODULE = SRC / "enrich" / "egress.py"
+# The one module that hands document text to LangExtract.
+FACTS_MODULE = SRC / "enrich" / "facts.py"
 
 
 class TestTypeLevelBlock:
@@ -108,6 +110,69 @@ class TestChokepoint:
             if "Anthropic(" in body or "AsyncAnthropic(" in body:
                 offenders.append(path.relative_to(SRC).as_posix())
         assert not offenders, f"Anthropic client constructed outside egress: {offenders}"
+
+
+class TestFactExtractionStaysLocal:
+    """LangExtract picks a *cloud* backend by regex on ``model_id`` when no
+    provider is given (``gemini*`` -> Google, ``gpt-*`` -> OpenAI). The facts
+    module must therefore never call ``lx.extract`` with a bare ``model_id``;
+    every call names the backend explicitly, and the Ollama config is built
+    with the Ollama provider class.
+    """
+
+    @staticmethod
+    def _calls_to(tree: ast.AST, attr: str) -> list[ast.Call]:
+        return [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == attr
+        ]
+
+    @staticmethod
+    def _keywords(call: ast.Call) -> dict[str, ast.expr]:
+        return {kw.arg: kw.value for kw in call.keywords if kw.arg is not None}
+
+    def test_every_lx_extract_call_names_its_backend(self) -> None:
+        tree = ast.parse(FACTS_MODULE.read_text(encoding="utf-8"), filename=str(FACTS_MODULE))
+        calls = self._calls_to(tree, "extract")
+        assert calls, "expected at least one lx.extract(...) call in enrich/facts.py"
+        for call in calls:
+            keywords = self._keywords(call)
+            assert "model_id" not in keywords and "model_url" not in keywords, (
+                f"line {call.lineno}: lx.extract must not be given a bare model_id -- "
+                "LangExtract would route cloud-looking model names to a cloud API"
+            )
+            assert "model" in keywords or "config" in keywords, (
+                f"line {call.lineno}: lx.extract must be given an explicit model= or config="
+            )
+            assert not any(kw.arg is None for kw in call.keywords), (
+                f"line {call.lineno}: **kwargs could smuggle a model_id past this check"
+            )
+
+    def test_model_config_pins_the_ollama_provider(self) -> None:
+        tree = ast.parse(FACTS_MODULE.read_text(encoding="utf-8"), filename=str(FACTS_MODULE))
+        configs = self._calls_to(tree, "ModelConfig")
+        assert configs, "expected lx.factory.ModelConfig(...) in enrich/facts.py"
+        for call in configs:
+            provider = self._keywords(call).get("provider")
+            assert provider is not None, f"line {call.lineno}: ModelConfig without an explicit provider"
+            # Either the literal, or the module constant that holds it.
+            if isinstance(provider, ast.Constant):
+                assert provider.value == "OllamaLanguageModel"
+            else:
+                assert isinstance(provider, ast.Name) and provider.id == "OLLAMA_PROVIDER"
+
+        constants = {
+            node.targets[0].id: node.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+        }
+        assert constants.get("OLLAMA_PROVIDER") == "OllamaLanguageModel"
 
 
 class TestCommunicationSourcesStayLocal:

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from garage_rag.service.llama_xpc import (
+from garage_rag.xpc.llama_xpc import (
     DEFAULT_LLAMA_XPC_SERVICE_NAME,
     LlamaXPCClient,
 )

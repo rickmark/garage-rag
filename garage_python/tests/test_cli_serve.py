@@ -42,7 +42,9 @@ def test_cli_ingest_no_sources(monkeypatch):
     from unittest.mock import MagicMock, patch
 
     mock_session = MagicMock()
-    mock_session.query.return_value.order_by.return_value.all.return_value = []
+    # '*' walks only enabled sources, so the CLI filters before ordering.
+    enabled_query = mock_session.query.return_value.filter_by.return_value
+    enabled_query.order_by.return_value.all.return_value = []
     mock_factory = MagicMock()
     mock_factory.return_value.__enter__.return_value = mock_session
 
@@ -50,6 +52,7 @@ def test_cli_ingest_no_sources(monkeypatch):
         result = runner.invoke(app, ["ingest"])
         assert result.exit_code == 0
         assert "no sources registered to ingest" in result.output
+        mock_session.query.return_value.filter_by.assert_called_once_with(enabled=True)
 
 
 def test_cli_ingest_missing_source(monkeypatch):

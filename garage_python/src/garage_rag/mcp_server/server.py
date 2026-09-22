@@ -30,6 +30,7 @@ from sqlalchemy import func
 from garage_rag.config import get_settings
 from garage_rag.db.emb_tables import count_vectors, list_models
 from garage_rag.db.engine import session_scope
+from garage_rag.db.migrate import redact_url
 from garage_rag.db.models import (
     Author,
     AuthorIdentity,
@@ -59,6 +60,13 @@ _HOME = str(Path.home())
 
 def _tidy(uri: str) -> str:
     return uri.replace(_HOME, "~") if uri.startswith(_HOME) else uri
+
+
+def _untidy(location: str) -> str:
+    """Inverse of :func:`_tidy`: expand only a leading ``~``."""
+    if location == "~" or location.startswith("~/"):
+        return _HOME + location[1:]
+    return location
 
 
 def _as_list(value: object) -> object:
@@ -242,15 +250,21 @@ def rag_search(
     Filter by trust to separate the owner's own writing from reference material,
     and by corpus_class to keep source code out of prose answers.
     """
+    # The BeforeValidator only runs when the call comes through the MCP layer; a
+    # direct Python call still needs a bare string turned into a one-item list,
+    # or list("document") would filter on the letters d, o, c, ...
+    classes = _as_list(corpus_class)
+    tiers = _as_list(trust)
+    slugs = _as_list(source)
     with session_scope() as session:
         hits = run_search(
             session,
             query,
             limit=limit,
             mode=mode,
-            corpus_classes=list(corpus_class) if corpus_class else None,
-            trust_tiers=list(trust) if trust else None,
-            sources=list(source) if source else None,
+            corpus_classes=list(classes) if classes else None,
+            trust_tiers=list(tiers) if tiers else None,
+            sources=list(slugs) if slugs else None,
             author=author,
         )
         models = list_models(session)
@@ -301,7 +315,7 @@ def rag_get_document(
         if document_id is not None:
             doc = session.query(Document).filter(Document.id == document_id).one_or_none()
         else:
-            expanded = (location or "").replace("~", _HOME)
+            expanded = _untidy(location or "")
             doc = session.query(Document).filter(Document.uri == expanded).one_or_none()
 
         if doc is None:
@@ -476,7 +490,9 @@ def rag_stats() -> CorpusStats:
     )
 
 
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "127.0.0.0/8"})
+# Names that ``ipaddress`` cannot classify; every 127.x.x.x literal is handled
+# by the ``is_loopback`` check below.
+LOOPBACK_HOSTS = frozenset({"localhost", "::1", "127.0.0.1"})
 
 
 def is_loopback(host: str) -> bool:
@@ -495,25 +511,52 @@ def is_loopback(host: str) -> bool:
 
 def _log_startup() -> None:
     settings = get_settings()
-    log.info("database connection: %s", settings.database_url)
+    log.info("database connection: %s", redact_url(settings.database_url))
     with session_scope() as session:
         count = session.query(Source).count()
     log.info("%d sources registered", count)
 
 
-def _http_security(bind_host: str, bind_port: int, allowed_origins: list[str] | None):
-    """DNS-rebinding protection shared by every HTTP transport."""
+def _host_header(host: str, port: int) -> str:
+    """The ``Host`` header value a client uses to reach ``host:port``."""
+    authority = f"[{host}]" if ":" in host else host
+    return f"{authority}:{port}"
+
+
+def _http_security(
+    bind_host: str,
+    bind_port: int,
+    allowed_origins: list[str] | None,
+    allowed_hosts: list[str] | None = None,
+):
+    """DNS-rebinding protection shared by every HTTP transport.
+
+    The SDK matches the ``Host`` header exactly (or against a ``name:*``
+    pattern), so the allowlist must hold the names clients actually use. On a
+    loopback bind those are known. On a remote bind (``0.0.0.0``, a LAN
+    address) they are not: the caller either names them through
+    ``allowed_hosts`` or, when none are given, the check is switched off with a
+    warning -- refusing every request with "Invalid Host header" protects
+    nothing and is what an operator who opted into remote access would hit.
+    """
     from mcp.server.transport_security import TransportSecuritySettings
 
-    # Host header allowlist: the addresses a client may legitimately use.
-    allowed_hosts = [
-        f"{bind_host}:{bind_port}",
+    hosts = {
+        _host_header(bind_host, bind_port),
         f"localhost:{bind_port}",
         f"127.0.0.1:{bind_port}",
-    ]
+        *(allowed_hosts or []),
+    }
+    protect = is_loopback(bind_host) or bool(allowed_hosts)
+    if not protect:
+        log.warning(
+            "bound to %s with no allowed hosts: the Host header is not checked, so "
+            "DNS-rebinding protection is off; pass --allow-host to restore it",
+            bind_host,
+        )
     return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=sorted(set(allowed_hosts)),
+        enable_dns_rebinding_protection=protect,
+        allowed_hosts=sorted(hosts),
         allowed_origins=sorted(set(allowed_origins or [])),
     )
 
@@ -536,6 +579,7 @@ def serve(
     port: int | None = None,
     path: str | None = None,
     allowed_origins: list[str] | None = None,
+    allowed_hosts: list[str] | None = None,
     json_response: bool = False,
     stateless: bool = False,
 ) -> None:
@@ -545,7 +589,8 @@ def serve(
     it a page in your browser could reach a loopback-bound server via a
     rebound hostname, and this server answers questions about your private
     corpus — so the ``Host`` and ``Origin`` allowlists are the only thing
-    standing between "local only" and "any website you visit".
+    standing between "local only" and "any website you visit". ``allowed_hosts``
+    names the extra ``Host`` values a remote bind should accept.
     """
     settings = get_settings()
     log.info("garage-rag MCP server starting (transport=%s)", transport)
@@ -562,7 +607,7 @@ def serve(
     bind_host = host or settings.mcp_host
     bind_port = port or settings.mcp_port
     http_path = path or settings.mcp_http_path
-    security = _http_security(bind_host, bind_port, allowed_origins)
+    security = _http_security(bind_host, bind_port, allowed_origins, allowed_hosts)
     _warn_if_not_loopback(bind_host)
 
     log.info("listening on http://%s:%d%s", bind_host, bind_port, http_path)
@@ -619,6 +664,7 @@ def start_background_server(
     allowed_origins: list[str] | None = None,
     json_response: bool = False,
     stateless: bool = False,
+    allowed_hosts: list[str] | None = None,
 ) -> bool:
     """Start the MCP streamable-HTTP server in a daemon background thread.
 
@@ -641,7 +687,7 @@ def start_background_server(
         except Exception as exc:  # the database may not be reachable yet; not fatal
             log.warning("could not query the database during start-up: %s", exc)
 
-        security = _http_security(host, port, allowed_origins)
+        security = _http_security(host, port, allowed_origins, allowed_hosts)
         _warn_if_not_loopback(host)
 
         app = mcp.streamable_http_app(

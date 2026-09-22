@@ -118,6 +118,13 @@ from garage_rag.service.executor import CommandExecutor, default_executor
 logger = logging.getLogger(__name__)
 
 
+def _version() -> str:
+    """Package version as reported by the CLI (``garage version``)."""
+    import garage_rag
+
+    return garage_rag.__version__
+
+
 class GarageRpcServicer(GarageServiceServicer):
     """gRPC Servicer implementing GarageService with dedicated RPC methods."""
 
@@ -142,14 +149,6 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetStatus(self, request: StatusRequest, context: grpc.ServicerContext) -> StatusResponse:
         """Retrieve server and database status."""
-        version = "0.1.0"
-        try:
-            import importlib.metadata
-
-            version = importlib.metadata.version("garage_rag")
-        except Exception:
-            pass
-
         db_status = "unknown"
         is_ready = True
         try:
@@ -172,7 +171,7 @@ class GarageRpcServicer(GarageServiceServicer):
             is_ready = False
 
         return StatusResponse(
-            version=version,
+            version=_version(),
             is_ready=is_ready,
             pid=os.getpid(),
             db_status=db_status,
@@ -181,18 +180,14 @@ class GarageRpcServicer(GarageServiceServicer):
 
     def GetVersion(self, request: VersionRequest, context: grpc.ServicerContext) -> VersionResponse:
         """Get the garage version."""
-        version = "0.1.0"
-        try:
-            import importlib.metadata
-
-            version = importlib.metadata.version("garage_rag")
-        except Exception:
-            pass
-
-        return VersionResponse(version=version)
+        return VersionResponse(version=_version())
 
     def Stop(self, request: StopRequest, context: grpc.ServicerContext) -> StopResponse:
-        """Trigger graceful shutdown of the server."""
+        """Trigger graceful shutdown of the server.
+
+        Sets ``stop_event``; ``create_grpc_server`` watches it and stops the gRPC
+        server, so this works both under the CLI loop and the Swift host.
+        """
         self.stop_event.set()
         return StopResponse(success=True)
 
@@ -336,9 +331,7 @@ class GarageRpcServicer(GarageServiceServicer):
         with session_scope() as session:
             document = session.get(Document, request.document_id)
             if document is None:
-                context.set_code(grpc.StatusCode.NOT_FOUND)
-                context.set_details(f"document {request.document_id} not found")
-                return GetDocumentResponse()
+                context.abort(grpc.StatusCode.NOT_FOUND, f"document {request.document_id} not found")
 
             source = session.get(Source, document.source_id)
 
@@ -591,7 +584,6 @@ class GarageRpcServicer(GarageServiceServicer):
         from garage_rag.db.engine import get_session_factory
         from garage_rag.db.models import Source
         from garage_rag.ingest.pipeline import ingest_source
-        from garage_rag.ingest.scanner import persist_scan_result, scan_source
 
         factory = get_session_factory()
         if request.source == "*":
@@ -601,28 +593,15 @@ class GarageRpcServicer(GarageServiceServicer):
             sources = [request.source]
 
         for source_slug in sources:
-            with factory() as session:
-                src_obj = session.query(Source).filter_by(slug=source_slug).one_or_none()
-                if src_obj:
-                    scan_res = scan_source(src_obj, include_code=request.include_code)
-                    persist_scan_result(session, scan_res)
-                    session.commit()
-                    yield IngestStatus(
-                        source=source_slug,
-                        is_complete=False,
-                        progress=0.0,
-                        progress_message=f"Scanned {source_slug}: found {scan_res.item_count:,} {scan_res.item_type}",
-                        total_items=scan_res.item_count,
-                        phase="scan",
-                    )
-                else:
-                    yield IngestStatus(
-                        source=source_slug,
-                        is_complete=False,
-                        progress=0.0,
-                        progress_message=f"Scanning source {source_slug}...",
-                        phase="scan",
-                    )
+            # ingest_source runs (and persists) its own scan phase; scanning here
+            # too would walk the tree twice.
+            yield IngestStatus(
+                source=source_slug,
+                is_complete=False,
+                progress=0.0,
+                progress_message=f"Scanning source {source_slug}...",
+                phase="scan",
+            )
 
             counters, walk_stats, budget = ingest_source(
                 factory,
@@ -630,6 +609,8 @@ class GarageRpcServicer(GarageServiceServicer):
                 include_code=request.include_code,
                 limit=request.limit or None,
                 force=request.force,
+                # A client that disconnected mid-stream should not keep the walk going.
+                is_cancelled=lambda: not context.is_active(),
             )
 
             summary = (
@@ -1011,8 +992,10 @@ class GarageRpcServicer(GarageServiceServicer):
         route = request.path or settings.mcp_http_path
 
         transport = request.transport or "stdio"
+        if transport == "http":  # the MCP server only knows the canonical transport names
+            transport = "streamable-http"
 
-        if not is_loopback(bind_host) and not request.allow_remote and transport in ("http", "sse"):
+        if not is_loopback(bind_host) and not request.allow_remote and transport != "stdio":
             context.abort(
                 grpc.StatusCode.PERMISSION_DENIED,
                 f"refusing to bind non-loopback {bind_host} without allow_remote",
@@ -1026,22 +1009,38 @@ class GarageRpcServicer(GarageServiceServicer):
             message=f"Serving MCP over {transport} on {url}",
         )
 
-        try:
-            serve(
-                transport,
-                host=bind_host,
-                port=bind_port,
-                path=route,
-                allowed_origins=list(request.allow_origin) or None,
-                json_response=request.json_response,
-                stateless=request.stateless,
-            )
-        except Exception as exc:
+        # serve() blocks for the life of the MCP server, so it must not occupy this
+        # gRPC worker: run it on a daemon thread and end the stream if the caller goes
+        # away. (The MCP server itself has no cancellation hook, so it keeps running.)
+        failure: list[BaseException] = []
+
+        def _run() -> None:
+            try:
+                serve(
+                    transport,
+                    host=bind_host,
+                    port=bind_port,
+                    path=route,
+                    allowed_origins=list(request.allow_origin) or None,
+                    json_response=request.json_response,
+                    stateless=request.stateless,
+                )
+            except BaseException as exc:  # reported to the caller below
+                failure.append(exc)
+
+        worker = threading.Thread(target=_run, name="garage-mcp-serve", daemon=True)
+        worker.start()
+        while worker.is_alive():
+            if not context.is_active():
+                return
+            worker.join(0.5)
+
+        if failure:
             yield McpServeStatus(
                 is_running=False,
                 transport=transport,
                 exit_code=1,
-                error_message=str(exc),
+                error_message=str(failure[0]),
             )
             return
 
@@ -1055,36 +1054,14 @@ class GarageRpcServicer(GarageServiceServicer):
     def McpInstall(self, request: McpInstallRequest, context: grpc.ServicerContext) -> McpInstallResponse:
         """Register MCP server in a client config."""
         from garage_rag.config import ensure_psycopg_database_url, get_settings
-        from garage_rag.mcp_server.install import (
-            ClientTarget,
-            client_targets,
-            find_existing_configs,
-            http_url,
-            install,
-        )
+        from garage_rag.mcp_server.install import http_url, install, plan_targets
 
-        targets = client_targets()
-        is_multi = request.target in ("all", "any", "found", "all-found")
-        chosen_list: list[ClientTarget] = []
-
-        if is_multi:
-            found = find_existing_configs()
-            chosen_list = list(found.values()) if found else [targets["project"], targets["claude-desktop"]]
-        elif request.path:
-            chosen_list = [
-                ClientTarget(
-                    key="custom",
-                    label="custom path",
-                    path=Path(request.path).expanduser().resolve(),
-                )
-            ]
-        else:
-            if request.target not in targets:
-                context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT,
-                    f"unknown target {request.target!r}; choose from {', '.join(targets)} or 'all'",
-                )
-            chosen_list = [targets[request.target]]
+        try:
+            plan = plan_targets(request.target or "project", path=Path(request.path) if request.path else None)
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise
+        chosen_list = plan.targets
 
         url: str | None = None
         config_file: Path | None = None
@@ -1438,6 +1415,11 @@ class GarageRpcServicer(GarageServiceServicer):
                 if doc is not None:
                     session.delete(doc)
 
+            elif action == "seen":
+                # Observed by this run but nothing to change on the document row
+                # (stat-skipped, or produced no chunks); only the seen row below.
+                pass
+
             elif action == "refresh_metadata":
                 if doc is not None:
                     doc.byte_size = request.byte_size
@@ -1594,17 +1576,11 @@ class GarageRpcServicer(GarageServiceServicer):
             slug = request.model_slug if request.model_slug else None
             try:
                 model = get_model(session, slug)
-            except Exception:
-                return GetEmbeddingBatchesResponse(
-                    model_slug=request.model_slug,
-                    has_more=False,
-                )
-
-            if model is None:
-                return GetEmbeddingBatchesResponse(
-                    model_slug=request.model_slug,
-                    has_more=False,
-                )
+            except LookupError as exc:
+                # Only "no such model" is NOT_FOUND; a DB outage must surface as an error,
+                # not as an empty "nothing to embed" response.
+                context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
+                raise  # abort() never returns; this keeps type checkers aware of that
 
             table = assert_safe_table(model.table_name)
             pending_total = count_pending(session, model)
@@ -1657,19 +1633,9 @@ class GarageRpcServicer(GarageServiceServicer):
             slug = request.model_slug if request.model_slug else None
             try:
                 model = get_model(session, slug)
-            except Exception as e:
-                return UpdateEmbeddingsResponse(
-                    success=False,
-                    count=0,
-                    error=f"Embedding model not found ({slug}): {e}",
-                )
-
-            if model is None:
-                return UpdateEmbeddingsResponse(
-                    success=False,
-                    count=0,
-                    error=f"Embedding model not found: {request.model_slug}",
-                )
+            except LookupError as exc:
+                context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
+                raise
 
             if not request.embeddings:
                 return UpdateEmbeddingsResponse(success=True, count=0)
@@ -1704,14 +1670,28 @@ def create_grpc_server(
     max_workers: int = 10,
     executor: CommandExecutor | None = None,
     stop_event: threading.Event | None = None,
+    stop_grace: float = 2.0,
 ) -> tuple[grpc.Server, GarageRpcServicer]:
-    """Create and configure a gRPC server for Garage."""
+    """Create and configure a gRPC server for Garage.
+
+    When ``stop_event`` is given, setting it (e.g. via the ``Stop`` RPC) stops the
+    server with ``stop_grace`` seconds of grace.
+    """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     servicer = GarageRpcServicer(executor=executor, stop_event=stop_event)
     add_GarageServiceServicer_to_server(servicer, server)
 
     server_address = f"{host}:{port}"
     server.add_insecure_port(server_address)
+
+    if stop_event is not None:
+        # Make the Stop RPC effective for every host: the CLI loop polls the event, but
+        # the Swift app only calls server.stop() itself, so watch the event here too.
+        def _stop_on_event() -> None:
+            stop_event.wait()
+            server.stop(grace=stop_grace)
+
+        threading.Thread(target=_stop_on_event, name="garage-grpc-stop-watcher", daemon=True).start()
     return server, servicer
 
 

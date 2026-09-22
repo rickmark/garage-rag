@@ -13,7 +13,6 @@ from garage_rag.ingest.chunking import (
     chunk_prose,
     chunk_tabular,
     chunk_text,
-    renumber,
 )
 
 MARKDOWN = """# Boot Security
@@ -118,14 +117,14 @@ class Gamma:
 class TestTabular:
     def test_splits_on_sheet_headings(self) -> None:
         text = "## Sheet1\na | b | c\n1 | 2 | 3\n\n## Sheet2\nx | y\n9 | 8\n"
-        chunks = chunk_tabular(text, size=200, overlap=0)
+        chunks = chunk_tabular(text, size=200)
         headings = [c.heading_path for c in chunks]
         assert any(h == "Sheet1" for h in headings)
 
     def test_no_overlap_between_chunks(self) -> None:
         """Repeating rows across chunks adds retrieval noise."""
         text = "## S\n" + "\n".join(f"row {i} | value {i}" for i in range(400))
-        chunks = chunk_tabular(text, size=200, overlap=0)
+        chunks = chunk_tabular(text, size=200)
         assert len(chunks) > 1
         first_lines = set(chunks[0].text.split("\n"))
         second_lines = set(chunks[1].text.split("\n"))
@@ -167,10 +166,6 @@ class TestChunkMetadata:
 
     def test_token_estimate_is_positive(self) -> None:
         assert TextChunk(ord=0, text="a", chunker="x").token_estimate >= 1
-
-    def test_renumber_fixes_ordinals(self) -> None:
-        chunks = [TextChunk(ord=9, text="a", chunker="x"), TextChunk(ord=3, text="b", chunker="x")]
-        assert [c.ord for c in renumber(chunks)] == [0, 1]
 
 
 class TestNormalizeText:

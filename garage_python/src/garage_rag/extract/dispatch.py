@@ -2,7 +2,7 @@
 
 Extractors are imported lazily. A corpus walk touches tens of thousands of files
 but usually only a handful of types, and importing pdfplumber/openpyxl/pytesseract
-eagerly in every one of ten worker processes is pure startup cost.
+up front for a run that never meets a PDF or a spreadsheet is pure startup cost.
 """
 
 from __future__ import annotations
@@ -33,9 +33,12 @@ PLAINTEXT_EXTENSIONS = frozenset(
         ".srt",
         ".vtt",
         ".eml",
-        ".msg",
     }
 )
+
+# Binary containers that look like text formats by name. Outlook ``.msg`` is an
+# OLE compound file, not RFC 822 text; reading it as plaintext yields mojibake.
+UNSUPPORTED_BINARY_EXTENSIONS = frozenset({".msg"})
 
 CODE_EXTENSIONS = frozenset(
     {
@@ -244,6 +247,8 @@ def extractor_for(path: Path) -> Extractor:
         raise UnsupportedFile(
             f"legacy binary format {suffix} needs LibreOffice conversion: {path.name}"
         )
+    if suffix in UNSUPPORTED_BINARY_EXTENSIONS:
+        raise UnsupportedFile(f"binary container {suffix} has no extractor: {path.name}")
 
     raise UnsupportedFile(f"no extractor for {suffix or name!r}")
 

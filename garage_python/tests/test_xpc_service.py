@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import MagicMock
 
+import pytest
+
+import garage_rag.service.xpc as xpc_module
 from garage_rag.proto.garage_pb2 import (
     CommandRequest,
     CommandStatus,
@@ -28,7 +32,20 @@ def test_peer_authenticator_dev_mode():
     assert "Allowed" in reason or "Self" in reason or "dev mode" in reason
 
 
-def test_peer_authenticator_invalid_pid():
+@pytest.fixture
+def macos_security_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the macOS Security/CoreFoundation frameworks loaded.
+
+    The PID sanity check runs before the platform gate, so a bad PID is rejected
+    everywhere; this fixture additionally proves the mocked frameworks are never
+    touched for one (the native path would otherwise be reached on macOS).
+    """
+    monkeypatch.setattr(xpc_module, "IS_MACOS", True)
+    monkeypatch.setattr(xpc_module, "libsec", MagicMock())
+    monkeypatch.setattr(xpc_module, "libcf", MagicMock())
+
+
+def test_peer_authenticator_invalid_pid(macos_security_available: None):
     """Negative or zero PID is rejected."""
     auth = PeerAuthenticator(
         expected_team_id=DEFAULT_TEAM_ID,
@@ -37,6 +54,17 @@ def test_peer_authenticator_invalid_pid():
     is_valid, reason = auth.verify_peer(-1)
     assert is_valid is False
     assert "Invalid peer PID" in reason
+    xpc_module.libsec.SecCodeCopyGuestWithAttributes.assert_not_called()
+
+
+def test_peer_authenticator_invalid_pid_rejected_on_any_platform(monkeypatch: pytest.MonkeyPatch):
+    """The PID check precedes the non-macOS allow-all shortcut."""
+    monkeypatch.setattr(xpc_module, "IS_MACOS", False)
+    auth = PeerAuthenticator(expected_team_id=DEFAULT_TEAM_ID, allow_unsigned_in_dev=True)
+    for bad_pid in (0, -1):
+        is_valid, reason = auth.verify_peer(bad_pid)
+        assert is_valid is False
+        assert "Invalid peer PID" in reason
 
 
 def test_xpc_service_handle_request_bytes():
@@ -66,7 +94,7 @@ def test_xpc_service_handle_request_bytes():
     assert StatusType.STATUS_COMPLETED in types
 
 
-def test_xpc_service_rejects_unauthorized():
+def test_xpc_service_rejects_unauthorized(macos_security_available: None):
     """Unauthenticated caller receives exit code 403 and error CommandStatus."""
     server = XpcServiceServer(
         service_name=DEFAULT_XPC_SERVICE_NAME,

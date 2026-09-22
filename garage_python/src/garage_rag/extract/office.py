@@ -27,22 +27,35 @@ MAX_SHEET_ROWS = 5000
 MAX_CELL_CHARS = 500
 
 
+def _prop(props, *names: str) -> str:  # noqa: ANN001
+    """First non-empty string attribute among ``names``, stripped.
+
+    python-docx/python-pptx expose ``author``/``last_modified_by``; openpyxl
+    spells the same OOXML core properties ``creator``/``lastModifiedBy``.
+    """
+    for name in names:
+        value = getattr(props, name, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _core_properties(props) -> tuple[dict, list[str], str | None]:  # noqa: ANN001
-    """Shared docx/pptx core-properties handling."""
+    """Shared docx/pptx/xlsx core-properties handling."""
     meta: dict = {}
     hints: list[str] = []
     title: str | None = None
 
     try:
-        author = (props.author or "").strip()
+        author = _prop(props, "author", "creator")
         if author:
             meta["office_author"] = author[:500]
             hints.append(author)
-        last_by = (props.last_modified_by or "").strip()
+        last_by = _prop(props, "last_modified_by", "lastModifiedBy")
         if last_by and last_by != author:
             meta["office_last_modified_by"] = last_by[:500]
             hints.append(last_by)
-        title = (props.title or "").strip() or None
+        title = _prop(props, "title") or None
         if title:
             meta["office_title"] = title[:500]
     except Exception as exc:  # noqa: BLE001
@@ -160,15 +173,7 @@ def extract_xlsx(path: Path) -> ExtractResult:
     except Exception as exc:  # noqa: BLE001
         raise ExtractionError(f"unreadable .xlsx {path}: {exc}") from exc
 
-    meta: dict = {}
-    hints: list[str] = []
-    try:
-        creator = (workbook.properties.creator or "").strip()
-        if creator:
-            meta["office_author"] = creator[:500]
-            hints.append(creator)
-    except Exception:  # noqa: BLE001
-        pass
+    meta, hints, title = _core_properties(workbook.properties)
 
     parts: list[str] = []
     truncated: list[str] = []
@@ -200,7 +205,7 @@ def extract_xlsx(path: Path) -> ExtractResult:
         kind=ContentKind.TABULAR,
         extractor="openpyxl",
         extractor_version=VERSION,
-        title=path.stem,
+        title=title or path.stem,
         meta=meta,
         author_hints=clean_author_hints(hints),
     )

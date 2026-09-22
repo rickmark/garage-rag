@@ -9,9 +9,15 @@ documents into an ingest, so it is tested directly and without a database.
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from pgvector import HalfVector
+from pgvector.sqlalchemy import HALFVEC, VECTOR
 
+from garage_rag.config import Settings
+from garage_rag.db.emb_tables import get_model
 from garage_rag.db.registry import (
     HNSW_MAX_HALFVEC_DIMS,
     HNSW_MAX_VECTOR_DIMS,
@@ -108,7 +114,7 @@ class TestTableNaming:
         assert table_name_for(slug) == expected
 
     def test_result_matches_schema_check_constraint(self) -> None:
-        """sql/004_registry.sql enforces ^emb_[a-z0-9_]+$."""
+        """data/sql/004_registry.sql enforces ^emb_[a-z0-9_]+$."""
         import re
 
         pattern = re.compile(r"^emb_[a-z0-9_]+$")
@@ -175,3 +181,111 @@ class TestKnownModels:
         for _slug, spec in KNOWN_MODELS.items():
             assert spec.model_id is not None
             assert "/" in spec.model_id
+
+
+# ---------------------------------------------------------------------------
+# The storage plan at query time: the bind parameter must match the column
+# ---------------------------------------------------------------------------
+def _model_row(*, dims: int, stored_dims: int, storage_kind: str, slug: str = "m") -> SimpleNamespace:
+    return SimpleNamespace(
+        slug=slug,
+        dims=dims,
+        stored_dims=stored_dims,
+        storage_kind=storage_kind,
+        index_kind="hnsw",
+        provider="ollama",
+        model_ref=slug,
+        table_name=f"emb_{slug}",
+        is_default=True,
+    )
+
+
+class TestSearchBindType:
+    def _run(self, row: SimpleNamespace | None, *, mode: str) -> tuple[MagicMock, MagicMock]:
+        from garage_rag.search import hybrid
+
+        session = MagicMock()
+        session.execute.return_value.mappings.return_value.all.return_value = []
+        embedder = MagicMock()
+        embedder.embed.return_value = [[0.5] * (row.dims if row else 1)]
+        get_model = MagicMock(return_value=row) if row is not None else MagicMock(side_effect=LookupError("none"))
+        with (
+            patch.object(hybrid, "apply_search_tuning"),
+            patch.object(hybrid, "get_model", get_model),
+            patch.object(hybrid, "get_embedder", return_value=embedder),
+        ):
+            hybrid.search(session, "secure boot", mode=mode)
+        return session, get_model
+
+    def test_halfvec_model_binds_a_halfvec_parameter(self) -> None:
+        """A HalfVector bound as VECTOR is rejected by pgvector, so every
+        search on a 2001-4000 dim (or MRL-truncated) model would fail."""
+        session, _ = self._run(_model_row(dims=2560, stored_dims=2560, storage_kind="halfvec"), mode="vector")
+        statement, params = session.execute.call_args.args
+        assert isinstance(statement._bindparams["qv"].type, HALFVEC)
+        assert isinstance(params["qv"], HalfVector)
+
+    def test_truncated_mrl_model_binds_a_halfvec_of_the_stored_width(self) -> None:
+        session, _ = self._run(_model_row(dims=4096, stored_dims=4000, storage_kind="halfvec"), mode="hybrid")
+        statement, params = session.execute.call_args.args
+        assert isinstance(statement._bindparams["qv"].type, HALFVEC)
+        assert len(params["qv"].to_list()) == 4000
+
+    def test_vector_model_binds_a_vector_parameter(self) -> None:
+        session, _ = self._run(_model_row(dims=1024, stored_dims=1024, storage_kind="vector"), mode="hybrid")
+        statement, params = session.execute.call_args.args
+        assert isinstance(statement._bindparams["qv"].type, VECTOR)
+        assert not isinstance(params["qv"], HalfVector)
+
+    def test_fts_mode_needs_no_model(self) -> None:
+        """Keyword search must work on a corpus with no embedding model registered."""
+        session, get_model = self._run(None, mode="fts")
+        get_model.assert_not_called()
+        statement, params = session.execute.call_args.args
+        assert "qv" not in params
+        assert "fts AS" in statement.text and "vec AS" not in statement.text
+        # The keyword CTE keeps its best-ranked rows when it is truncated.
+        assert "ORDER BY rnk" in statement.text
+
+
+class TestDefaultModelFallback:
+    """``embedding.default_model`` is honoured when no row is flagged as default."""
+
+    def _session(self, rows: dict[str, SimpleNamespace], default: str | None) -> MagicMock:
+        def filter_by(**kw):
+            found = MagicMock()
+            if "slug" in kw:
+                found.one_or_none.return_value = rows.get(kw["slug"])
+            else:  # is_default=True
+                found.one_or_none.return_value = rows.get(default) if default else None
+            return found
+
+        session = MagicMock()
+        session.query.return_value.filter_by.side_effect = filter_by
+        return session
+
+    def test_flagged_default_wins(self) -> None:
+        rows = {"a": _model_row(dims=8, stored_dims=8, storage_kind="vector", slug="a")}
+        session = self._session(rows, default="a")
+        with patch("garage_rag.db.emb_tables.get_settings", return_value=Settings(default_embedding_model="zzz")):
+            assert get_model(session) is rows["a"]
+
+    def test_configured_slug_is_used_when_nothing_is_flagged(self) -> None:
+        rows = {"bge-m3": _model_row(dims=1024, stored_dims=1024, storage_kind="vector", slug="bge-m3")}
+        session = self._session(rows, default=None)
+        with patch("garage_rag.db.emb_tables.get_settings", return_value=Settings(default_embedding_model="bge-m3")):
+            assert get_model(session) is rows["bge-m3"]
+
+    def test_configured_slug_not_registered_is_named_in_the_error(self) -> None:
+        session = self._session({}, default=None)
+        with (
+            patch("garage_rag.db.emb_tables.get_settings", return_value=Settings(default_embedding_model="bge-m3")),
+            pytest.raises(LookupError, match="'bge-m3' is not registered"),
+        ):
+            get_model(session)
+
+    def test_explicit_slug_never_falls_back(self) -> None:
+        rows = {"bge-m3": _model_row(dims=1024, stored_dims=1024, storage_kind="vector", slug="bge-m3")}
+        session = self._session(rows, default=None)
+        with pytest.raises(LookupError, match="no model 'other'"):
+            get_model(session, "other")

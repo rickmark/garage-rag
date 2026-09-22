@@ -249,9 +249,38 @@ class TestSources:
         )
         settings = load_config(cfg)
         assert [s.slug for s in settings.sources] == ["notes", "code"]
-        source_code = settings.source("code")
-        assert source_code is not None and source_code.include_code is True
-        assert settings.source("missing") is None
+        by_slug = {s.slug: s for s in settings.sources}
+        assert by_slug["code"].include_code is True
+        assert "missing" not in by_slug
+
+    def test_retired_keys_are_skipped_with_a_warning(self, tmp_path: Path, caplog) -> None:
+        """Settings that were removed must not break a config written before."""
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(
+            json.dumps(
+                {
+                    "embedding": {"max_inflight": 4, "batch_size": 8},
+                    "chunking": {"comms_window_minutes": 5, "comms_window_messages": 9},
+                    "extraction": {"workers": 3},
+                    "cloud": {"max_images": 12},
+                }
+            )
+        )
+        with caplog.at_level("WARNING", logger="garage_rag.config"):
+            settings = load_config(cfg)
+        assert settings.embed_batch_size == 8
+        for key in ("max_inflight", "comms_window_minutes", "comms_window_messages", "workers", "max_images"):
+            assert key in caplog.text, key
+        # Retired keys are not resurrected as attributes, and are not in the schema.
+        for name in ("embed_max_inflight", "comms_window_minutes", "extract_workers", "cloud_ocr_max_images"):
+            assert name not in Settings.model_fields
+        assert "max_inflight" not in json_schema()["properties"]["embedding"]["properties"]
+
+    def test_retired_key_in_the_wrong_section_is_still_an_error(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"database": {"workers": 3}}))
+        with pytest.raises(ConfigError, match="unknown key 'workers'"):
+            load_config(cfg)
 
     def test_sources_must_be_a_list(self, tmp_path: Path) -> None:
         cfg = tmp_path / CONFIG_FILENAME
@@ -422,8 +451,12 @@ class TestSchemaCompleteness:
 
 class TestSchemaReference:
     def test_url_points_at_the_committed_schema(self) -> None:
-        assert SCHEMA_URL.startswith("https://raw.githubusercontent.com/rickmark/garage-rag/")
-        assert SCHEMA_URL.endswith("/garage.schema.json")
+        """The URL's path inside the repo must be exactly where the file is generated."""
+        from garage_rag.config import repo_root, repo_schema_path
+
+        prefix = "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/"
+        assert SCHEMA_URL.startswith(prefix)
+        assert SCHEMA_URL.removeprefix(prefix) == repo_schema_path().relative_to(repo_root()).as_posix()
 
     def test_nest_uses_the_url_by_default(self) -> None:
         assert nest(Settings())["$schema"] == SCHEMA_URL
