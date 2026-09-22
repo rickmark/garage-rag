@@ -25,7 +25,7 @@ is** are independent.
 |---|---|
 | `document` | prose: notes, papers, reports, presentations |
 | `code` | source and structured config |
-| `communication` | messages and mail; never leaves the machine |
+| `communication` | messages and mail; Garage never sends it to a cloud API |
 
 `trust_tier` — provenance:
 

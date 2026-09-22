@@ -8,9 +8,10 @@ description: One egress choke point, a destination allowlist, communications kep
 
 ## The guarantee
 
-Garage sends content only to approved destinations: this machine, and the Ollama
-or LM Studio server you configure. Communications never leave this machine.
-There is no cloud AI client in the codebase.
+Garage itself never sends content classified `corpus_class = 'communication'` to
+a cloud API. That guarantee covers what Garage does; what an agent you connect
+over MCP does with the excerpts it retrieves is covered
+[below](#what-connected-agents-receive).
 
 This is enforced structurally, in layers that are each tested on their own
 (`garage_python/tests/test_egress_block.py`). Removing any one of them fails the
@@ -174,12 +175,28 @@ Browser clients additionally need their origin allowed explicitly, with
 it, terminate TLS and authenticate at a reverse proxy. Do not put this on a
 network you do not control.
 
+## What connected agents receive
+
+The MCP server answers whichever client you connect: Claude Desktop, Claude
+Code, Cursor, or anything else you register. An agent receives the excerpts its
+searches return (`rag_search`, `get_document`, and the answers from `rag_ask` /
+`rag_generate`), only those, not the whole index. Most agents run their model in
+the cloud, so they send those excerpts, with your conversation, to their model
+provider. That includes excerpts from Messages and Mail if you have indexed
+them: the MCP tools serve communications like any other content, and the egress
+guard above governs Garage's own cloud calls, not a client's.
+
+What happens to an excerpt after an agent receives it is governed by that
+agent's terms and privacy policy, not Garage's. If an indexed source should not
+reach a cloud model, do not connect a cloud-hosted agent, or leave that source
+out of the index.
+
 ## What is stored, and where
 
 Everything stays in your local Postgres `rag` database: extracted text in
-`documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. No content
-leaves the machine except to the model servers you configure (communications
-never do), or through an MCP client or `--allow-remote`, described above.
+`documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. Garage sends
+no content off the machine except as described above; agents you connect
+receive the excerpts they retrieve.
 
 The database is unencrypted at rest, as Postgres normally is. If you index
 private communications, the database file is as sensitive as the messages

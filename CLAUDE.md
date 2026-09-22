@@ -210,7 +210,10 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   (`MaterializationBudget`). Idempotent ingest means hitting the budget cap is fine, not a failure.
 - **Extract** (`extract/`) — dispatch by extension with lazy imports (Markdown/`text.py`,
   PDF/`pdf.py` with `pypdf`→`pdfplumber` per-page escalation, Office/`office.py`,
-  images/`image.py` via Tesseract only, code verbatim via `text.py`).
+  images/`image.py` via Tesseract with optional Claude escalation (in-process through libtesseract's C API,
+  `extract/tesseract.py` over ctypes, fed pixels Pillow decoded; the app bundles `//ext/tesseract` as
+  `Frameworks/libtesseract.dylib` over a codec-less `//ext/leptonica` and exports
+  `GARAGE_LIBTESSERACT_PATH`/`TESSDATA_PREFIX`; elsewhere a Homebrew libtesseract is found), code verbatim via `text.py`).
 - **Quality gate** (`extract/quality.py`) — content-based backstop against non-prose text (repeated
   line shapes, timestamp prefixes, hex/base64 density) that path rules alone miss.
 - **Attribute** (`attribute/`) — precedence-ordered signals, each recording its `evidence`: git
@@ -265,7 +268,8 @@ linear history.
 Two independent axes on every document:
 
 - `corpus_class` — **what it is**: `document` | `code` | `communication` (communications never
-  leave the machine — this is what the egress guard's content rule keys on, not trust).
+  reach a cloud API from Garage — this is what the egress guard keys on, not trust. MCP clients still
+  receive whatever excerpts they retrieve, communications included; see `docs/privacy.md`).
 - `trust_tier` — **how much it's trusted**: `authored` | `reference` | `received`.
 
 Embeddings live one table per model (`emb_<slug>`, e.g. `emb_bge_m3`) rather than one shared table,
@@ -371,8 +375,7 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
 - `FirstRunCoordinator` (+ `Views/FirstRunView.swift`) is the first-run setup assistant that replaces
   the sidebar UI until the user finishes or skips it (`garage.firstRun.completed` default): wait for
   services → pick template sources → pick embedding/distillation models → connect MCP clients. It
-  goes through the same `AppState.addSource` / `registerModel` / `setFactsModel` operations and
-  `GarageMCPService` registration as the Sources, Models and MCP pages.
+  makes the same `AddSource` / `RegisterModel` / `McpInstall` RPCs as the pages.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this
