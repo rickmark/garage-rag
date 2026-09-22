@@ -186,13 +186,15 @@ class TestKnownModels:
 # ---------------------------------------------------------------------------
 # The storage plan at query time: the bind parameter must match the column
 # ---------------------------------------------------------------------------
-def _model_row(*, dims: int, stored_dims: int, storage_kind: str, slug: str = "m") -> SimpleNamespace:
+def _model_row(
+    *, dims: int, stored_dims: int, storage_kind: str, slug: str = "m", index_kind: str = "hnsw"
+) -> SimpleNamespace:
     return SimpleNamespace(
         slug=slug,
         dims=dims,
         stored_dims=stored_dims,
         storage_kind=storage_kind,
-        index_kind="hnsw",
+        index_kind=index_kind,
         provider="ollama",
         model_ref=slug,
         table_name=f"emb_{slug}",
@@ -236,6 +238,30 @@ class TestSearchBindType:
         statement, params = session.execute.call_args.args
         assert isinstance(statement._bindparams["qv"].type, VECTOR)
         assert not isinstance(params["qv"], HalfVector)
+
+    def test_binary_quantized_model_reranks_a_hamming_prefetch(self) -> None:
+        """hnsw_bq: the index is on binary_quantize(embedding)::bit(d), so the query
+        must order by that exact expression, then re-rank on exact cosine."""
+        from garage_rag.search.hybrid import BQ_OVERFETCH, CANDIDATE_DEPTH
+
+        row = _model_row(dims=4096, stored_dims=4096, storage_kind="vector", index_kind="hnsw_bq")
+        session, _ = self._run(row, mode="hybrid")
+        statement, params = session.execute.call_args.args
+        sql = statement.text
+        assert "binary_quantize(e.embedding)::bit(4096) <~> binary_quantize(:qv)::bit(4096)" in sql
+        assert "LIMIT :bq_depth" in sql
+        assert params["bq_depth"] == CANDIDATE_DEPTH * BQ_OVERFETCH
+        # Stage two orders the prefetched rows on exact cosine.
+        assert "ORDER BY b.embedding <=> :qv" in sql
+        # Filters apply during the index scan, not after the prefetch.
+        prefetch = sql[sql.index("vec_bq AS") : sql.index("vec AS")]
+        assert "WHERE" in prefetch
+
+    def test_hnsw_model_orders_on_cosine_directly(self) -> None:
+        session, _ = self._run(_model_row(dims=1024, stored_dims=1024, storage_kind="vector"), mode="vector")
+        statement, params = session.execute.call_args.args
+        assert "binary_quantize" not in statement.text
+        assert "bq_depth" not in params
 
     def test_fts_mode_needs_no_model(self) -> None:
         """Keyword search must work on a corpus with no embedding model registered."""

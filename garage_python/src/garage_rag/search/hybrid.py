@@ -42,6 +42,11 @@ RRF_K = 60
 # a result ranked mid-pack by one engine can still win on consensus.
 CANDIDATE_DEPTH = 200
 
+# Binary-quantized models (index_kind hnsw_bq): how many Hamming-nearest rows the
+# first stage fetches for the exact-cosine re-rank to choose CANDIDATE_DEPTH from.
+# A 1-bit-per-dimension sketch ranks coarsely, hence the generous over-fetch.
+BQ_OVERFETCH = 4
+
 
 SNIPPET_CHARS = 300
 
@@ -192,7 +197,35 @@ def search(
 
     # Each CTE is included only when its engine is in play, so `--mode fts`
     # never loads an embedding model and `--mode vector` never parses a tsquery.
-    vector_cte = f"""
+    if model is not None and model.index_kind == "hnsw_bq":
+        # The full-width column is unindexed; its HNSW index is on the binary
+        # quantization (registry.py). Stage one walks that index on Hamming
+        # distance, with the filters in the same scan; stage two re-ranks the
+        # over-fetched rows on exact cosine. The ORDER BY expression must match the
+        # index expression, width included, for the planner to use it.
+        bits = int(model.stored_dims)
+        params["bq_depth"] = CANDIDATE_DEPTH * BQ_OVERFETCH
+        vector_cte = f"""
+        vec_bq AS (
+            SELECT e.chunk_id, e.embedding
+            FROM {table} e
+            JOIN chunks c    ON c.id = e.chunk_id
+            JOIN documents d ON d.id = c.document_id
+            JOIN sources s   ON s.id = d.source_id
+            WHERE {where}
+            ORDER BY binary_quantize(e.embedding)::bit({bits}) <~> binary_quantize(:qv)::bit({bits})
+            LIMIT :bq_depth
+        ),
+        vec AS (
+            SELECT b.chunk_id,
+                   row_number() OVER (ORDER BY b.embedding <=> :qv) AS rnk
+            FROM vec_bq b
+            ORDER BY b.embedding <=> :qv
+            LIMIT :depth
+        )
+    """
+    else:
+        vector_cte = f"""
         vec AS (
             SELECT c.id AS chunk_id,
                    row_number() OVER (ORDER BY e.embedding <=> :qv) AS rnk
