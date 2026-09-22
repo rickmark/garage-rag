@@ -92,9 +92,11 @@ These hosts are not egress-guarded the way the cloud path is, because they are
 loopback by default and the guard would otherwise block local inference on your
 own messages. If you point `ollama_host` at another machine, fact extraction
 runs each document's class through `assert_egress_allowed` first, so
-communications are still never posted off-box; embeddings do not currently make
-that check, so keep `ollama_host`/`lmstudio_host` on loopback if you index
-communications. `llama_host` is different: it exists only for on-device
+communications are still never posted off-box. Embeddings are held to the same
+rule: when the model's provider is not on this machine (`ollama_host` or
+`lmstudio_host` pointed elsewhere), backfill, in-process or through the embed
+worker, leaves chunks of communication documents out. They stay unembedded for
+that model, and the backfill summary counts them as withheld. `llama_host` is different: it exists only for on-device
 inference, so `LlamaXPCClient` refuses to construct at all unless the host is
 loopback (`127.0.0.1`, `localhost` or `::1`) and never routes through an HTTP
 proxy, whatever `http_proxy` says.

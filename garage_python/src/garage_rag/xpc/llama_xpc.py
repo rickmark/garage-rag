@@ -43,7 +43,9 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def is_loopback_url(url: str) -> bool:
-    """Whether ``url`` points at this machine."""
+    """Whether ``url`` points at this machine. A bare ``host:port`` counts as a URL."""
+    if "://" not in url:
+        url = f"http://{url}"
     host = (urlsplit(url).hostname or "").lower()
     return host in _LOOPBACK_HOSTS or host.startswith("127.")
 

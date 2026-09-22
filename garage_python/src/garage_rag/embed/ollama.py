@@ -49,6 +49,8 @@ class BackfillProgress:
     embedded: int = 0
     failed: int = 0
     batches: int = 0
+    # Communication chunks left unembedded because the provider is off-box.
+    withheld: int = 0
 
     @property
     def remaining(self) -> int:
@@ -86,7 +88,27 @@ def _adapt(values: list[float], plan: StoragePlan):
     return HalfVector(reduced) if plan.storage_kind == "halfvec" else reduced
 
 
-def _pending_chunk_batches(session: Session, table: str, batch_size: int) -> Iterator[list[tuple[int, str]]]:
+def pending_chunks_sql(table: str, *, select: str, include_communications: bool) -> str:
+    """``SELECT <select>`` over the chunks ``table`` has no vector for.
+
+    ``include_communications=False`` leaves out chunks of communication
+    documents: the query for a provider that is not on this machine, since
+    embedding a chunk means posting its text to the provider.
+    """
+    withheld = (
+        ""
+        if include_communications
+        else (
+            " AND NOT EXISTS (SELECT 1 FROM documents d"
+            " WHERE d.id = c.document_id AND d.corpus_class = 'communication')"
+        )
+    )
+    return f"SELECT {select} FROM chunks c LEFT JOIN {table} e ON e.chunk_id = c.id WHERE e.chunk_id IS NULL{withheld}"
+
+
+def _pending_chunk_batches(
+    session: Session, table: str, batch_size: int, *, include_communications: bool = True
+) -> Iterator[list[tuple[int, str]]]:
     """Yield batches of (chunk_id, text) that ``table`` has no vector for.
 
     Re-queried each iteration rather than held open: the anti-join shrinks as
@@ -94,14 +116,8 @@ def _pending_chunk_batches(session: Session, table: str, batch_size: int) -> Ite
     across the write transactions.
     """
     sql = text(
-        f"""
-        SELECT c.id, c.text
-        FROM chunks c
-        LEFT JOIN {table} e ON e.chunk_id = c.id
-        WHERE e.chunk_id IS NULL
-        ORDER BY c.id
-        LIMIT :limit
-        """
+        pending_chunks_sql(table, select="c.id, c.text", include_communications=include_communications)
+        + " ORDER BY c.id LIMIT :limit"
     )
     while True:
         rows = session.execute(sql, {"limit": batch_size}).all()
@@ -110,13 +126,10 @@ def _pending_chunk_batches(session: Session, table: str, batch_size: int) -> Ite
         yield [(int(cid), txt) for cid, txt in rows]
 
 
-def count_pending(session: Session, model: EmbeddingModel) -> int:
+def count_pending(session: Session, model: EmbeddingModel, *, include_communications: bool = True) -> int:
     table = assert_safe_table(model.table_name)
-    return int(
-        session.execute(
-            text(f"SELECT count(*) FROM chunks c LEFT JOIN {table} e ON e.chunk_id = c.id WHERE e.chunk_id IS NULL")
-        ).scalar_one()
-    )
+    sql = pending_chunks_sql(table, select="count(*)", include_communications=include_communications)
+    return int(session.execute(text(sql)).scalar_one())
 
 
 def backfill_model(
@@ -131,16 +144,26 @@ def backfill_model(
 
     Pure insert: existing vectors are never touched, so this is safe to run
     repeatedly and safe to interrupt.
+
+    When the provider is not on this machine (``ollama_host`` / ``lmstudio_host``
+    pointed off-box), chunks of communication documents are withheld: embedding
+    posts the chunk's text, and communications never leave the machine. They
+    stay pending for this model and are counted in ``withheld``.
     """
-    from garage_rag.embed.factory import get_embedder
+    from garage_rag.embed.factory import get_embedder, provider_is_local
 
     settings = get_settings()
     size = batch_size or settings.embed_batch_size
     table = assert_safe_table(model.table_name)
     plan = _plan_from_row(model)
+    local = provider_is_local(model.provider)
     embedder = get_embedder(model.provider, model.model_ref)
 
-    state = BackfillProgress(total=count_pending(session, model))
+    state = BackfillProgress(total=count_pending(session, model, include_communications=local))
+    if not local:
+        state.withheld = count_pending(session, model) - state.total
+        if state.withheld:
+            log.warning("%s embeds off this machine; withholding %d communication chunk(s)", model.slug, state.withheld)
     if state.total == 0:
         return state
 
@@ -148,7 +171,7 @@ def backfill_model(
         f"INSERT INTO {table} (chunk_id, embedding) VALUES (:chunk_id, :embedding) ON CONFLICT (chunk_id) DO NOTHING"
     )
 
-    for batch in _pending_chunk_batches(session, table, size):
+    for batch in _pending_chunk_batches(session, table, size, include_communications=local):
         ids = [cid for cid, _ in batch]
         texts = [txt for _, txt in batch]
         try:

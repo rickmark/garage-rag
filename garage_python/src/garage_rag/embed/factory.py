@@ -16,6 +16,24 @@ from garage_rag.embed.base import Embedder
 PROVIDERS: set[str] = {"ollama", "lmstudio", "llama_xpc"}
 
 
+def provider_is_local(provider: str) -> bool:
+    """Whether *provider* embeds on this machine, so communications may be sent to it.
+
+    ``llama_xpc`` is loopback by construction (its client refuses anything else).
+    ``ollama`` and ``lmstudio`` are local only while ``ollama_host`` /
+    ``lmstudio_host`` point at loopback; an unknown provider counts as remote.
+    """
+    from garage_rag.config import get_settings
+    from garage_rag.xpc.llama_xpc import is_loopback_url
+
+    if provider == "llama_xpc":
+        return True
+    settings = get_settings()
+    hosts = {"ollama": settings.ollama_host, "lmstudio": settings.lmstudio_host}
+    host = hosts.get(provider)
+    return host is not None and is_loopback_url(host)
+
+
 def get_embedder(provider: str, model_ref: str) -> Embedder:
     """Construct the embedder for *provider* and *model_ref*.
 

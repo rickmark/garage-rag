@@ -1156,28 +1156,26 @@ class GarageRpcServicer(GarageServiceServicer):
 
         from garage_rag.db.emb_tables import get_model
         from garage_rag.db.engine import session_scope
-        from garage_rag.embed.ollama import assert_safe_table, count_pending
+        from garage_rag.embed.factory import provider_is_local
+        from garage_rag.embed.ollama import assert_safe_table, count_pending, pending_chunks_sql
 
         with session_scope() as session:
             # get_model raises LookupError (NOT_FOUND) for an unknown slug only; a DB
             # outage propagates as an error rather than an empty "nothing to embed".
             model = get_model(session, request.model_slug or None)
             table = assert_safe_table(model.table_name)
-            pending_total = count_pending(session, model)
+            # The worker posts these texts to the model's provider: an off-box one
+            # never gets communication chunks (see embed.ollama.backfill_model).
+            local = provider_is_local(model.provider or "")
+            pending_total = count_pending(session, model, include_communications=local)
 
             fetch_limit = request.batch_size if request.batch_size > 0 else 64
             if request.limit > 0 and request.limit < fetch_limit:
                 fetch_limit = request.limit
 
             sql = text(
-                f"""
-                SELECT c.id, c.text
-                FROM chunks c
-                LEFT JOIN {table} e ON e.chunk_id = c.id
-                WHERE e.chunk_id IS NULL
-                ORDER BY c.id
-                LIMIT :limit
-                """
+                pending_chunks_sql(table, select="c.id, c.text", include_communications=local)
+                + " ORDER BY c.id LIMIT :limit"
             )
             rows = session.execute(sql, {"limit": fetch_limit}).all()
             chunk_items = [EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1]) for r in rows]

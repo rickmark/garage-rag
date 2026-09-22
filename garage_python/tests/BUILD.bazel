@@ -234,6 +234,18 @@ py_test(
 )
 
 py_test(
+    name = "test_embed_egress",
+    srcs = ["test_embed_egress.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_embed_xpc",
     srcs = ["test_embed_xpc.py"],
     deps = [
@@ -264,6 +276,7 @@ test_suite(
         ":test_config",
         ":test_dedicated_rpcs",
         ":test_egress_block",
+        ":test_embed_egress",
         ":test_embed_xpc",
         ":test_facts",
         ":test_generation",

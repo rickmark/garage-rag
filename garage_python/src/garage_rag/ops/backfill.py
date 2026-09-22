@@ -48,6 +48,7 @@ def backfill(
     ``on_event``; the ``finished``/``complete``/``skipped`` event of each model is
     also returned. Raises LookupError for an unknown model or when none exist.
     """
+    from garage_rag.embed.factory import provider_is_local
     from garage_rag.embed.ollama import EmbeddingError, backfill_model, count_pending, verify_model_dims
 
     outcomes: list[BackfillEvent] = []
@@ -63,9 +64,18 @@ def backfill(
             raise LookupError("no models registered")
 
         for row in targets:
-            pending = count_pending(session, row)
+            # Off-box providers never see communication chunks (see backfill_model).
+            local = provider_is_local(row.provider)
+            pending = count_pending(session, row, include_communications=local)
             if pending == 0:
-                emit(BackfillEvent(row.slug, "complete", message=f"{row.slug}: already complete"))
+                withheld = 0 if local else count_pending(session, row)
+                message = f"{row.slug}: already complete"
+                if withheld:
+                    message = (
+                        f"{row.slug}: nothing to embed; {withheld:,} communication chunk(s) withheld: "
+                        "the provider is not on this machine"
+                    )
+                emit(BackfillEvent(row.slug, "complete", message=message))
                 continue
 
             if verify:
@@ -111,6 +121,8 @@ def backfill(
                 summary += f", failed {state.failed:,}"
             if state.remaining:
                 summary += f", remaining {state.remaining:,}"
+            if state.withheld:
+                summary += f"; {state.withheld:,} communication chunk(s) withheld: the provider is not on this machine"
             emit(
                 BackfillEvent(
                     row.slug,
