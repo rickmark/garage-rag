@@ -51,6 +51,30 @@ public final class MockLlamaServerEngine: LlamaInferenceEngine, @unchecked Senda
         return true
     }
 
+    public func handleModelLoad(jsonString: String) throws -> [String: Any] {
+        let dict = try LlamaJSON.parseObject(jsonString, what: "model load")
+        guard let path = (dict["path"] as? String) ?? (dict["model"] as? String), !path.isEmpty else {
+            throw LlamaEngineError.badRequest("\"path\" (or \"model\") is required")
+        }
+        let result = loadModel(path: path, alias: dict["alias"] as? String, configJson: nil)
+        return ["success": result.success, "message": result.message, "models": [modelAlias]]
+    }
+
+    public func handleModelUnload(jsonString: String) throws -> [String: Any] {
+        let dict = try LlamaJSON.parseObject(jsonString, what: "model unload")
+        guard let name = dict["model"] as? String, !name.isEmpty else {
+            throw LlamaEngineError.badRequest("\"model\" is required")
+        }
+        lock.lock()
+        let matches = isModelLoaded && (name == modelAlias || name == loadedModelPath)
+        lock.unlock()
+        guard matches else {
+            throw LlamaEngineError(404, "model \(name) is not loaded")
+        }
+        _ = unloadModel()
+        return ["success": true, "message": "unloaded \(name)", "models": []]
+    }
+
     // MARK: - Routes
 
     public func handleHealth() -> [String: Any] {

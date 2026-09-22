@@ -75,6 +75,44 @@ final class LlamaServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testUnloadModelByAlias() async {
+        let engine = MockLlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "gemma2-2b", totalSlots: 1)
+        let client = LlamaClient(inProcessEngine: engine)
+        let service = LlamaService(client: client)
+
+        await service.refreshStatus()
+        XCTAssertEqual(service.loadedModelIds, ["gemma2-2b"])
+        XCTAssertTrue(service.isModelLoaded(alias: "gemma2-2b"))
+        XCTAssertFalse(service.isModelLoaded(alias: "bge-m3"))
+
+        // Empty alias is rejected before any request is made.
+        let emptyResult = await service.unloadModel(alias: "  ")
+        XCTAssertFalse(emptyResult)
+        XCTAssertEqual(service.lastError, "Model alias cannot be empty.")
+
+        // An alias that isn't loaded: the mock's `POST /models/unload` answers 404, which
+        // must surface as lastError without touching the loaded model.
+        let unknownResult = await service.unloadModel(alias: "not-loaded")
+        XCTAssertFalse(unknownResult)
+        XCTAssertNil(service.lastSuccess)
+        let err = service.lastError ?? ""
+        XCTAssertTrue(err.contains("Failed to unload model 'not-loaded'"), "unexpected lastError: \(err)")
+        XCTAssertTrue(err.contains("HTTP 404"), "unexpected lastError: \(err)")
+        XCTAssertTrue(service.isModelLoaded(alias: "gemma2-2b"))
+
+        // The loaded alias: 200, status refreshed, nothing left loaded.
+        let result = await service.unloadModel(alias: "gemma2-2b")
+        XCTAssertTrue(result)
+        XCTAssertNil(service.lastError)
+        XCTAssertEqual(service.lastSuccess, "Model 'gemma2-2b' unloaded.")
+        // (The mock keeps listing its alias under /v1/models after unload; health is what flips.)
+        XCTAssertEqual(service.health?.status, "no_model_loaded")
+        XCTAssertEqual(service.statusMessage, "No model loaded")
+        XCTAssertTrue(service.isConnected)
+        XCTAssertFalse(service.isBusy)
+    }
+
+    @MainActor
     func testSlotActions() async {
         let engine = MockLlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "slot-test", totalSlots: 1)
         let client = LlamaClient(inProcessEngine: engine)

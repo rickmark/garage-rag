@@ -97,7 +97,9 @@ owns a table keyed on `chunk_id` with `ON DELETE CASCADE`.
 An optional pass over stored documents, run as `garage enrich-facts` or the
 `EnrichFacts` streaming RPC (the app's Enrich Facts action), not part of ingest
 itself. [LangExtract](https://github.com/google/langextract) is pointed at the
-local Ollama server (default `gemma2:2b`) with a deliberately generic prompt —
+local model named by `facts.model` on `facts.provider` (default: the app's
+`gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` is the other
+option, and `--model`/`--provider` override both) with a deliberately generic prompt —
 the module has no notion of what kind of document it is given — and asks for
 every standalone claim in the document's own wording. `model_id`/`model_url`
 are always passed explicitly because `lx.extract` otherwise defaults to a cloud
@@ -130,7 +132,21 @@ recall.
 
 MCP 2.0 over stdio. Every tool returns a dataclass, because under MCP 2.0
 dataclass returns map field-for-field while scalars and lists get wrapped in
-`{"result": ...}`.
+`{"result": ...}`. `rag_search`, `rag_get_document`, `rag_list_sources`,
+`rag_list_authors` and `rag_stats` read the corpus; `rag_ask` and
+`rag_generate` also generate text, entirely on a local model.
+
+`rag_ask` runs the same retrieval as `rag_search`, numbers the excerpts (each
+trimmed to ~1,200 characters), and asks the model to answer from them citing
+`[n]`; the result carries the answer plus one `Citation` per excerpt so a client
+can resolve `[n]` back to a document. `rag_generate` is the same model with a raw
+prompt and no retrieval. The model is `LocalChatModel` (`enrich/generation.py`),
+built from `facts.provider` / `facts.model`: `llama_xpc` posts to the app's
+`LlamaXPCService` on `llama_host` (the `model` field of each request selects
+among the models the engine holds), `ollama` to a local Ollama server on
+`ollama_host`. Neither is a cloud API; retrieved communications may appear in the
+prompt but never leave the machine (see `docs/privacy.md`). `garage ask` is the
+CLI front door to both tools, with `--json` for the app.
 
 ## Idempotency
 

@@ -189,7 +189,10 @@ source that knows both shapes and drives loading/saving/schema generation togeth
 drift. Unknown keys are a hard error, not a silent ignore (retired keys listed in `RETIRED_KEYS`
 are warned about and skipped). The JSON Schema is generated from this module (`garage config
 schema --publish`) and committed at `data/schema/garage.schema.json` — **regenerate it whenever a
-setting is added, renamed, or documented**; a test enforces every field is documented.
+setting is added, renamed, or documented**; a test enforces every field is documented. The `facts`
+section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) names the model behind
+`enrich-facts` and the `rag_ask`/`rag_generate` MCP tools; `garage config set SECTION.KEY VALUE` /
+`garage config get SECTION.KEY` edit and read single settings without touching the JSON by hand.
 
 ### macOS app (`macapp/`)
 

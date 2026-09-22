@@ -35,12 +35,15 @@ from garage_rag.db.models import (
     Author,
     AuthorIdentity,
     Chunk,
+    CorpusClass,
     Document,
     DocumentAuthor,
     IngestState,
     Source,
 )
-from garage_rag.search.hybrid import corpus_overview
+from garage_rag.enrich.egress import assert_egress_allowed
+from garage_rag.enrich.generation import LocalChatModel
+from garage_rag.search.hybrid import SearchHit, corpus_overview
 from garage_rag.search.hybrid import search as run_search
 
 # stderr only: anything on stdout corrupts the JSON-RPC stream.
@@ -197,6 +200,74 @@ class CorpusStats:
     models: list[ModelInfo] = field(default_factory=list)
 
 
+@dataclass
+class Citation:
+    """One excerpt the answer may cite as ``[n]``."""
+
+    n: int
+    document_id: int
+    title: str | None
+    location: str
+    snippet: str
+    score: float
+
+
+@dataclass
+class AskResult:
+    answer: str
+    model: str
+    provider: str
+    question: str
+    citations: list[Citation] = field(default_factory=list)
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass
+class GenerateResult:
+    text: str
+    model: str
+    provider: str
+
+
+# ---------------------------------------------------------------------------
+# retrieval shared by rag_search and rag_ask
+# ---------------------------------------------------------------------------
+def _retrieve(
+    query: str,
+    *,
+    limit: int,
+    mode: str,
+    corpus_class: object = None,
+    trust: object = None,
+    source: object = None,
+    author: str | None = None,
+) -> tuple[list[SearchHit], str]:
+    """Run the hybrid search; returns the hits and the embedding model's slug."""
+    # The BeforeValidator only runs when the call comes through the MCP layer; a
+    # direct Python call still needs a bare string turned into a one-item list,
+    # or list("document") would filter on the letters d, o, c, ...
+    # `_as_list` is typed object -> object because pydantic hands it whatever the
+    # caller sent; what comes back out is always a list or None.
+    classes = cast("list[str] | None", _as_list(corpus_class))
+    tiers = cast("list[str] | None", _as_list(trust))
+    slugs = cast("list[str] | None", _as_list(source))
+    with session_scope() as session:
+        hits = run_search(
+            session,
+            query,
+            limit=limit,
+            mode=mode,
+            corpus_classes=list(classes) if classes else None,
+            trust_tiers=list(tiers) if tiers else None,
+            sources=list(slugs) if slugs else None,
+            author=author,
+        )
+        models = list_models(session)
+        default = next((m.slug for m in models if m.is_default), "none")
+    return hits, default if mode != "fts" else "n/a"
+
+
 # ---------------------------------------------------------------------------
 # tools
 # ---------------------------------------------------------------------------
@@ -250,32 +321,14 @@ def rag_search(
     Filter by trust to separate the owner's own writing from reference material,
     and by corpus_class to keep source code out of prose answers.
     """
-    # The BeforeValidator only runs when the call comes through the MCP layer; a
-    # direct Python call still needs a bare string turned into a one-item list,
-    # or list("document") would filter on the letters d, o, c, ...
-    # `_as_list` is typed object -> object because pydantic hands it whatever the
-    # caller sent; what comes back out is always a list or None.
-    classes = cast("list[str] | None", _as_list(corpus_class))
-    tiers = cast("list[str] | None", _as_list(trust))
-    slugs = cast("list[str] | None", _as_list(source))
-    with session_scope() as session:
-        hits = run_search(
-            session,
-            query,
-            limit=limit,
-            mode=mode,
-            corpus_classes=list(classes) if classes else None,
-            trust_tiers=list(tiers) if tiers else None,
-            sources=list(slugs) if slugs else None,
-            author=author,
-        )
-        models = list_models(session)
-        default = next((m.slug for m in models if m.is_default), "none")
+    hits, embedding_model = _retrieve(
+        query, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source, author=author
+    )
 
     return SearchResult(
         query=query,
         mode=mode,
-        model=default if mode != "fts" else "n/a",
+        model=embedding_model,
         count=len(hits),
         hits=[
             Hit(
@@ -490,6 +543,134 @@ def rag_stats() -> CorpusStats:
         by_class_and_trust=overview,
         models=models,
     )
+
+
+# ---------------------------------------------------------------------------
+# local generation: rag_ask / rag_generate
+# ---------------------------------------------------------------------------
+# Both tools run on the local model named by facts.provider / facts.model (the
+# app's LlamaXPCService, or a local Ollama server). Retrieved chunks are
+# placed in the prompt verbatim; that is local inference, so communications
+# may appear there just as they are embedded locally -- the egress check below
+# only fires if ollama_host has been pointed at another machine.
+
+ASK_SYSTEM_PROMPT = (
+    "You answer questions about the user's personal corpus using only the numbered "
+    "excerpts provided. Cite the excerpts you rely on inline as [n]. If the excerpts "
+    "do not contain the answer, say so plainly instead of guessing."
+)
+# Each excerpt is trimmed to this many characters before it goes in the prompt.
+EXCERPT_CHARS = 1200
+# Citations carry a shorter snippet so the result stays readable.
+SNIPPET_CHARS = 240
+
+
+def _trim(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
+def build_ask_messages(question: str, hits: list[SearchHit], *, excerpt_chars: int = EXCERPT_CHARS) -> list[dict]:
+    """The chat messages ``rag_ask`` sends: system instruction, numbered excerpts, question."""
+    if not hits:
+        excerpts = "(no excerpts were retrieved)"
+    else:
+        blocks = []
+        for n, hit in enumerate(hits, start=1):
+            header = f"[{n}] {hit.title or '(untitled)'} \u2014 {_tidy(hit.uri)}"
+            if hit.heading_path:
+                header += f" \u00a7 {hit.heading_path}"
+            blocks.append(f"{header}\n{_trim(hit.text, excerpt_chars)}")
+        excerpts = "\n\n".join(blocks)
+    user = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
+    return [
+        {"role": "system", "content": ASK_SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
+
+
+def _citations(hits: list[SearchHit]) -> list[Citation]:
+    return [
+        Citation(
+            n=n,
+            document_id=hit.document_id,
+            title=hit.title,
+            location=_tidy(hit.uri),
+            snippet=_trim(hit.text, SNIPPET_CHARS),
+            score=round(hit.score, 6),
+        )
+        for n, hit in enumerate(hits, start=1)
+    ]
+
+
+@mcp.tool()
+def rag_ask(
+    question: Annotated[str, Field(description="Natural-language question to answer from the corpus.")],
+    limit: Annotated[int, Field(ge=1, le=20, description="Excerpts to retrieve and offer the model.")] = 6,
+    mode: Annotated[
+        Literal["hybrid", "vector", "fts"],
+        Field(description="Retrieval mode, as for rag_search."),
+    ] = "hybrid",
+    corpus_class: Annotated[
+        ClassFilter,
+        Field(description="Restrict by what the resource is; see rag_search. Accepts one value or a list."),
+    ] = None,
+    trust: Annotated[
+        TrustFilter,
+        Field(description="Restrict by provenance; see rag_search. Accepts one value or a list."),
+    ] = None,
+    source: Annotated[
+        SourceFilter,
+        Field(description="Restrict to these source slugs. Accepts one value or a list."),
+    ] = None,
+    max_tokens: Annotated[int, Field(ge=16, le=4096, description="Cap on the generated answer.")] = 512,
+    temperature: Annotated[float, Field(ge=0.0, le=2.0, description="Sampling temperature.")] = 0.2,
+) -> AskResult:
+    """Answer a question from the corpus with the local model, citing excerpts as [n].
+
+    Retrieval is exactly rag_search; the excerpts then go to the model named by
+    facts.model on facts.provider (the app's LlamaXPCService or a local Ollama
+    server), so nothing leaves the machine. Use rag_search instead when you want
+    to read the excerpts yourself.
+    """
+    hits, _ = _retrieve(question, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source)
+    model = LocalChatModel()
+    if not model.is_local:
+        # Only reachable by pointing ollama_host off-box: then communications
+        # must not be put in a prompt that leaves the machine.
+        for hit in hits:
+            assert_egress_allowed(CorpusClass(hit.corpus_class))
+    reply = model.complete(build_ask_messages(question, hits), max_tokens=max_tokens, temperature=temperature)
+    return AskResult(
+        answer=reply.text,
+        model=model.model_ref,
+        provider=model.provider,
+        question=question,
+        citations=_citations(hits),
+        prompt_tokens=reply.prompt_tokens,
+        completion_tokens=reply.completion_tokens,
+    )
+
+
+@mcp.tool()
+def rag_generate(
+    prompt: Annotated[str, Field(description="Text to send to the local model as the user turn.")],
+    system: Annotated[str | None, Field(description="Optional system instruction.")] = None,
+    max_tokens: Annotated[int, Field(ge=1, le=4096, description="Cap on the generated text.")] = 256,
+    temperature: Annotated[float, Field(ge=0.0, le=2.0, description="Sampling temperature.")] = 0.7,
+) -> GenerateResult:
+    """Run a raw prompt through the local model, with no retrieval.
+
+    The same facts.model / facts.provider as rag_ask; useful to check the model
+    is loaded and responding, or for demos that do not need the corpus.
+    """
+    model = LocalChatModel()
+    messages: list[dict] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    text = model.chat(messages, max_tokens=max_tokens, temperature=temperature)
+    return GenerateResult(text=text, model=model.model_ref, provider=model.provider)
 
 
 # Names that ``ipaddress`` cannot classify; every 127.x.x.x literal is handled

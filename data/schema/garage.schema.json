@@ -219,6 +219,26 @@
         }
       }
     },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Slug or alias of the local model used for fact distillation ('garage enrich-facts') and for the rag_ask / rag_generate MCP tools. For llama_xpc this is the alias the app loaded the model under (the 'fact_distil' preset slug); for ollama it is the Ollama model name.",
+          "default": "gemma2-2b"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "llama_xpc",
+            "ollama"
+          ],
+          "description": "Which local inference server runs fact distillation and rag_ask. Both stay on this machine: 'llama_xpc' is the app's LlamaXPCService (llama.cpp on embedding.llama_host, loopback only); 'ollama' is a local Ollama server on embedding.ollama_host.",
+          "default": "llama_xpc"
+        }
+      }
+    },
     "sources": {
       "type": "array",
       "description": "Sources to index. Declared sources are re-applied on every run; sources present only in the database are left untouched.",

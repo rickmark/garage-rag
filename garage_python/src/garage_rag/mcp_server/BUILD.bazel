@@ -12,6 +12,7 @@ py_binary(
         "//garage_python/src/garage_rag",  # keep
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/search",
         "@pypi//mcp",
         "@pypi//mcp_types",
@@ -33,6 +34,7 @@ py_library(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/search",
         "@pypi//mcp",
         "@pypi//mcp_types",

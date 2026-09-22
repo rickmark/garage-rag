@@ -7,10 +7,13 @@ private let engineLogger = Logger(subsystem: "me.rickmark.garage-rag.llama-xpc",
 
 /// `LlamaInferenceEngine` backed by llama.cpp, statically linked from //ext/llama_cpp.
 ///
-/// One model and one context at a time, every request serialized under `lock`: the service is a
-/// per-user helper, and llama.cpp contexts are not thread-safe. The request/response dictionaries
-/// follow llama-server so the XPC front end, the loopback HTTP listener and the Python client all
-/// see the same protocol.
+/// Several models can be resident at once (an embedding model for backfill next to the fact
+/// distillation model), each with its own context and keyed by alias; a request picks one with its
+/// `model` field and otherwise gets the most recently loaded. All inference and loading is
+/// serialized under `lock` (llama.cpp contexts are not thread-safe, and this is a per-user helper);
+/// status routes only take `stateLock` so `/health` answers while a model loads. The
+/// request/response dictionaries follow llama-server so the XPC front end, the loopback HTTP
+/// listener and the Python client all see the same protocol.
 ///
 /// Embeddings use the pooling the GGUF declares (BERT-style encoders carry CLS/mean, decoder
 /// embedders such as Qwen3-Embedding use last-token); when a model declares none, tokens are
@@ -108,17 +111,20 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
         var supportsRerank: Bool { nClsOut > 0 || poolingOption == LLAMA_POOLING_TYPE_RANK }
     }
 
-    private enum Phase {
-        case idle
-        case loading
-        case ready
-    }
-
+    /// Serializes inference and model loading.
     private let lock = NSLock()
-    private var loaded: Loaded?
-    private var phase: Phase = .idle
+    /// Guards the model table and status flags; never held across llama.cpp calls.
+    private let stateLock = NSLock()
+    private var models: [String: Loaded] = [:]
+    private var order: [String] = []
+    private var loadingAlias: String?
     private var busy = false
     private var lastError: String?
+
+    private var defaultLoaded: Loaded? {
+        guard let alias = order.last else { return nil }
+        return models[alias]
+    }
 
     /// URL of the loopback HTTP listener, reported in `/props` so clients can discover it.
     public var httpURL: String?
@@ -146,50 +152,71 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
 
     deinit {
         lock.lock()
-        loaded = nil
+        stateLock.lock()
+        models.removeAll()
+        order.removeAll()
+        stateLock.unlock()
         lock.unlock()
     }
 
     // MARK: - LlamaInferenceEngine: model management
 
+    /// Path of the default (most recently loaded) model.
     public var currentModelPath: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return loaded?.path
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return defaultLoaded?.path
+    }
+
+    /// Aliases of every resident model, oldest first.
+    public var loadedAliases: [String] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return order
     }
 
     public var lastLoadError: String? {
-        lock.lock()
-        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return lastError
     }
 
+    private func fail(_ message: String) -> (success: Bool, message: String) {
+        stateLock.lock()
+        lastError = message
+        loadingAlias = nil
+        stateLock.unlock()
+        return (false, message)
+    }
+
+    /// Loads a model and makes it the default. An alias already resident is replaced; other models
+    /// stay loaded.
     public func loadModel(path: String, alias: String?, configJson: String?) -> (success: Bool, message: String) {
         lock.lock()
         defer { lock.unlock() }
 
         guard FileManager.default.fileExists(atPath: path) else {
-            lastError = "model file not found: \(path)"
-            return (false, lastError!)
+            return fail("model file not found: \(path)")
         }
         let options = LoadOptions(json: configJson)
         let resolvedAlias = (alias?.isEmpty == false ? alias! : URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
 
-        loaded = nil
-        phase = .loading
+        stateLock.lock()
+        loadingAlias = resolvedAlias
+        // Replacing an alias frees the old model first so two copies never coexist in memory.
+        if models.removeValue(forKey: resolvedAlias) != nil {
+            order.removeAll { $0 == resolvedAlias }
+        }
+        stateLock.unlock()
 
         var mparams = llama_model_default_params()
         mparams.n_gpu_layers = options.nGpuLayers
         guard let model = llama_model_load_from_file(path, mparams) else {
-            phase = .idle
-            lastError = "llama.cpp could not load \(path) (see the llama.cpp log for the reason)"
-            return (false, lastError!)
+            return fail("llama.cpp could not load \(path) (see the llama.cpp log for the reason)")
         }
         guard let vocab = llama_model_get_vocab(model) else {
             llama_model_free(model)
-            phase = .idle
-            lastError = "model has no vocabulary: \(path)"
-            return (false, lastError!)
+            return fail("model has no vocabulary: \(path)")
         }
 
         let hasDecoder = llama_model_has_decoder(model)
@@ -215,54 +242,87 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
         cparams.pooling_type = options.pooling
         guard let context = llama_init_from_model(model, cparams) else {
             llama_model_free(model)
-            phase = .idle
-            lastError = "llama.cpp could not create a context for \(path) (n_ctx=\(nCtx))"
-            return (false, lastError!)
+            return fail("llama.cpp could not create a context for \(path) (n_ctx=\(nCtx))")
         }
 
         let architecture = LlamaCppEngine.metaValue(model, key: "general.architecture") ?? "unknown"
         let description = LlamaCppEngine.modelDescription(model)
-        loaded = Loaded(path: path, alias: resolvedAlias, model: model, vocab: vocab, context: context,
-                        options: options, nUbatch: Int(nUbatch), architecture: architecture, description: description)
-        phase = .ready
+        let l = Loaded(path: path, alias: resolvedAlias, model: model, vocab: vocab, context: context,
+                       options: options, nUbatch: Int(nUbatch), architecture: architecture, description: description)
+        stateLock.lock()
+        models[resolvedAlias] = l
+        order.append(resolvedAlias)
+        loadingAlias = nil
         lastError = nil
+        stateLock.unlock()
 
-        let l = loaded!
         let summary = "\(resolvedAlias): \(description) [\(architecture)] n_ctx=\(l.nCtx) n_embd=\(l.nEmbd) "
             + "pooling=\(LlamaCppEngine.poolingName(l.poolingOption)) gpu_layers=\(options.nGpuLayers) threads=\(options.nThreads)"
         engineLogger.info("loaded \(summary, privacy: .public)")
         return (true, "Model loaded successfully from \(path) (\(summary))")
     }
 
+    /// Unloads every resident model.
     public func unloadModel() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        loaded = nil
-        phase = .idle
+        stateLock.lock()
+        models.removeAll()
+        order.removeAll()
+        stateLock.unlock()
         return true
+    }
+
+    /// Unloads one model by alias (or path); false when nothing matched.
+    public func unloadModel(alias: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let key = resolveAliasLocked(alias) else { return false }
+        models.removeValue(forKey: key)
+        order.removeAll { $0 == key }
+        return true
+    }
+
+    /// Matches a request's `model` against resident aliases, then file names. Caller holds `stateLock`.
+    private func resolveAliasLocked(_ name: String) -> String? {
+        if models[name] != nil { return name }
+        for (alias, l) in models {
+            if l.path == name || URL(fileURLWithPath: l.path).lastPathComponent == name
+                || URL(fileURLWithPath: l.path).deletingPathExtension().lastPathComponent == name {
+                return alias
+            }
+        }
+        return nil
     }
 
     // MARK: - LlamaInferenceEngine: status routes
 
     public func handleHealth() -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         let status: String
-        switch phase {
-        case .idle: status = "no_model_loaded"
-        case .loading: status = "loading model"
-        case .ready: status = "ok"
+        if loadingAlias != nil {
+            status = "loading model"
+        } else if models.isEmpty {
+            status = "no_model_loaded"
+        } else {
+            status = "ok"
         }
         return [
             "status": status,
             "slots_idle": busy ? 0 : 1,
             "slots_processing": busy ? 1 : 0,
+            "models_loaded": models.count,
+            "loading": loadingAlias as Any,
         ]
     }
 
     public func handleProps() -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let loaded = defaultLoaded
         var props: [String: Any] = [
             "default_generation_settings": [
                 "temperature": 0.8,
@@ -274,7 +334,8 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
             "total_slots": 1,
             "model_alias": loaded?.alias ?? "none",
             "model_path": loaded?.path as Any,
-            "modal_capabilities": capabilities(),
+            "modal_capabilities": capabilitiesLocked(),
+            "models": order,
             "engine": "llama.cpp",
         ]
         if let l = loaded {
@@ -294,31 +355,61 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
     }
 
     public func handleModels() -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let l = loaded else {
-            return ["object": "list", "data": []]
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let created = Int64(Date().timeIntervalSince1970)
+        let data: [[String: Any]] = order.compactMap { alias in
+            guard let l = models[alias] else { return nil }
+            return [
+                "id": l.alias,
+                "object": "model",
+                "created": created,
+                "owned_by": "garage",
+                "meta": [
+                    "path": l.path,
+                    "n_ctx": l.nCtx,
+                    "n_embd": l.nEmbd,
+                    "size": l.sizeBytes,
+                    "n_params": l.paramCount,
+                    "architecture": l.architecture,
+                    "capabilities": LlamaCppEngine.capabilities(of: l),
+                    "default": alias == order.last,
+                ],
+            ]
         }
-        let model: [String: Any] = [
-            "id": l.alias,
-            "object": "model",
-            "created": Int64(Date().timeIntervalSince1970),
-            "owned_by": "garage",
-            "meta": [
-                "path": l.path,
-                "n_ctx": l.nCtx,
-                "n_embd": l.nEmbd,
-                "size": l.sizeBytes,
-                "n_params": l.paramCount,
-                "architecture": l.architecture,
-            ],
-        ]
-        return ["object": "list", "data": [model]]
+        return ["object": "list", "data": data]
+    }
+
+    public func handleModelLoad(jsonString: String) throws -> [String: Any] {
+        let dict = try LlamaJSON.parseObject(jsonString, what: "model load")
+        guard let path = (dict["path"] as? String) ?? (dict["model"] as? String), !path.isEmpty else {
+            throw LlamaEngineError.badRequest("\"path\" (or \"model\") is required")
+        }
+        var configJson: String? = nil
+        if let config = dict["config"] as? [String: Any] {
+            configJson = LlamaJSON.serialize(config)
+        }
+        let result = loadModel(path: path, alias: dict["alias"] as? String, configJson: configJson)
+        guard result.success else {
+            throw LlamaEngineError(500, result.message)
+        }
+        return ["success": true, "message": result.message, "models": loadedAliases]
+    }
+
+    public func handleModelUnload(jsonString: String) throws -> [String: Any] {
+        let dict = try LlamaJSON.parseObject(jsonString, what: "model unload")
+        guard let name = dict["model"] as? String, !name.isEmpty else {
+            throw LlamaEngineError.badRequest("\"model\" is required")
+        }
+        guard unloadModel(alias: name) else {
+            throw LlamaEngineError(404, "model \(name) is not loaded (loaded: \(loadedAliases.joined(separator: ", ")))")
+        }
+        return ["success": true, "message": "unloaded \(name)", "models": loadedAliases]
     }
 
     public func handleSlots() -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return ["slots": [["id": 0, "state": busy ? 1 : 0, "prompt": NSNull(), "task_id": NSNull()]]]
     }
 
@@ -328,8 +419,17 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
         }
         switch action.lowercased() {
         case "erase", "clear", "reset":
+            let dict = try LlamaJSON.parseObject(jsonString, what: "slot action")
             lock.lock()
-            if let l = loaded {
+            stateLock.lock()
+            let targets: [Loaded]
+            if let name = dict["model"] as? String, let key = resolveAliasLocked(name), let l = models[key] {
+                targets = [l]
+            } else {
+                targets = Array(models.values)
+            }
+            stateLock.unlock()
+            for l in targets {
                 llama_memory_clear(llama_get_memory(l.context), true)
             }
             lock.unlock()
@@ -346,7 +446,7 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
         let content = (dict["content"] as? String) ?? ""
         let addSpecial = (dict["add_special"] as? Bool) ?? false
         let withPieces = (dict["with_pieces"] as? Bool) ?? false
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             let tokens = try tokenize(l, content, addSpecial: addSpecial, parseSpecial: true)
             var result: [String: Any] = ["tokens": tokens.map { Int($0) }]
             if withPieces {
@@ -359,7 +459,7 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
     public func handleDetokenize(jsonString: String) throws -> [String: Any] {
         let dict = try LlamaJSON.parseObject(jsonString, what: "detokenize")
         let tokens = ((dict["tokens"] as? [Int]) ?? []).map { llama_token($0) }
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             ["content": detokenize(l, tokens)]
         }
     }
@@ -373,13 +473,13 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
             inputs = arr
         } else if let arrOfTokens = dict["input"] as? [[Int]] {
             // Token-id inputs are decoded back to text so one code path tokenizes.
-            inputs = try withLoaded { l in arrOfTokens.map { detokenize(l, $0.map { llama_token($0) }) } }
+            inputs = try withLoaded(dict["model"]) { l in arrOfTokens.map { detokenize(l, $0.map { llama_token($0) }) } }
         } else {
             throw LlamaEngineError.badRequest("\"input\" must be a string or an array of strings")
         }
         let dimensions = dict["dimensions"] as? Int
 
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             if let d = dimensions, d <= 0 || d > l.nEmbd {
                 throw LlamaEngineError.badRequest("dimensions must be between 1 and \(l.nEmbd) for this model")
             }
@@ -407,7 +507,7 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
         let dict = try LlamaJSON.parseObject(jsonString, what: "completion")
         let prompt = (dict["prompt"] as? String) ?? ""
         let params = GenerationParams(dict: dict, defaultMaxTokens: 128)
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             let started = Date()
             let result = try generate(l, prompt: prompt, addSpecial: true, params: params)
             let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -441,7 +541,7 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
             (($0["role"] as? String) ?? "user", ($0["content"] as? String) ?? "")
         }
         let params = GenerationParams(dict: dict, defaultMaxTokens: 256)
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             let started = Date()
             let prompt = try applyChatTemplate(l, messages: messages)
             // The template already carries BOS where the model wants it.
@@ -483,7 +583,7 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
             throw LlamaEngineError.badRequest("\"documents\" must be an array of strings")
         }
         let topN = (dict["top_n"] as? Int) ?? documents.count
-        return try withLoaded { l in
+        return try withLoaded(dict["model"]) { l in
             guard l.supportsRerank else {
                 throw LlamaEngineError.unsupported("the loaded model is not a reranker (no classifier output; pass pooling=rank to force)")
             }
@@ -510,29 +610,57 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
 
     // MARK: - Locking helpers
 
-    /// Runs `body` with the loaded model under the engine lock, marking the single slot busy.
-    private func withLoaded<T>(_ body: (Loaded) throws -> T) throws -> T {
+    /// Runs `body` with the model a request named (its `model` field) or the default one, under
+    /// the engine lock, marking the single slot busy.
+    private func withLoaded<T>(_ requested: Any?, _ body: (Loaded) throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
-        guard let l = loaded, phase == .ready else {
-            throw LlamaEngineError.noModel()
+        stateLock.lock()
+        let name = (requested as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let picked: Loaded?
+        if name.isEmpty {
+            picked = defaultLoaded
+        } else if let key = resolveAliasLocked(name) {
+            picked = models[key]
+        } else {
+            picked = nil
         }
+        let empty = models.isEmpty
+        let resident = order
+        stateLock.unlock()
+
+        guard let l = picked else {
+            if empty {
+                throw LlamaEngineError.noModel()
+            }
+            throw LlamaEngineError(404, "model \(name) is not loaded (loaded: \(resident.joined(separator: ", ")))")
+        }
+        stateLock.lock()
         busy = true
-        defer { busy = false }
+        stateLock.unlock()
+        defer {
+            stateLock.lock()
+            busy = false
+            stateLock.unlock()
+        }
         return try body(l)
     }
 
-    private func capabilities() -> [String] {
+    private static func capabilities(of l: Loaded) -> [String] {
         var caps = ["embeddings", "tokenize", "detokenize"]
-        if let l = loaded {
-            if l.supportsGeneration {
-                caps.append(contentsOf: ["completion", "chat"])
-            }
-            if l.supportsRerank {
-                caps.append("rerank")
-            }
+        if l.supportsGeneration {
+            caps.append(contentsOf: ["completion", "chat"])
+        }
+        if l.supportsRerank {
+            caps.append("rerank")
         }
         return caps
+    }
+
+    /// Capabilities of the default model. Caller holds `stateLock`.
+    private func capabilitiesLocked() -> [String] {
+        guard let l = defaultLoaded else { return [] }
+        return LlamaCppEngine.capabilities(of: l)
     }
 
     // MARK: - Tokenization

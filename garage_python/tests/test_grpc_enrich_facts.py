@@ -127,3 +127,27 @@ def test_enrich_facts_records_failure_and_continues():
     assert statuses[1].processed == 1
     assert statuses[1].is_complete is True
     mock_session.rollback.assert_called_once()
+
+
+def test_enrich_facts_defaults_to_the_configured_backend():
+    """Unset request fields fall back to facts.model / facts.provider."""
+    from garage_rag.config import Settings, reset_settings, set_settings
+
+    servicer = GarageRpcServicer()
+    document = _mock_document(5, "/tmp/one.md")
+    set_settings(Settings(fact_model="phi-4-mini", fact_provider="ollama"))
+    try:
+        with patch("garage_rag.db.engine.session_scope") as mock_scope:
+            mock_session = MagicMock()
+            mock_scope.return_value.__enter__.return_value = mock_session
+            mock_session.get.return_value = document
+            with patch("garage_rag.enrich.facts.extract_and_store_facts", return_value=[]) as mock_extract:
+                list(servicer.EnrichFacts(EnrichFactsRequest(document_id=5), MagicMock()))
+                assert mock_extract.call_args.kwargs == {"model_id": "phi-4-mini", "provider": "ollama"}
+
+                mock_extract.reset_mock()
+                request = EnrichFactsRequest(document_id=5, model_id="gemma2-2b", provider="llama_xpc")
+                list(servicer.EnrichFacts(request, MagicMock()))
+                assert mock_extract.call_args.kwargs == {"model_id": "gemma2-2b", "provider": "llama_xpc"}
+    finally:
+        reset_settings()

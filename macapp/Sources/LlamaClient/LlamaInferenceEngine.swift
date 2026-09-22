@@ -14,7 +14,13 @@ public protocol LlamaInferenceEngine: AnyObject, Sendable {
     var currentModelPath: String? { get }
 
     func loadModel(path: String, alias: String?, configJson: String?) -> (success: Bool, message: String)
+    /// Unloads every resident model.
     func unloadModel() -> Bool
+    /// `POST /models/load` body `{"path"|"model": ..., "alias"?: ..., "config"?: {...}}`: loads one more
+    /// model without disturbing the others. Engines that hold a single model replace it.
+    func handleModelLoad(jsonString: String) throws -> [String: Any]
+    /// `POST /models/unload` body `{"model": alias}`: unloads that one model (404 when absent).
+    func handleModelUnload(jsonString: String) throws -> [String: Any]
 
     func handleHealth() -> [String: Any]
     func handleProps() -> [String: Any]
@@ -97,6 +103,12 @@ public extension LlamaInferenceEngine {
 
             case ("GET", "/v1/models"), ("GET", "/models"):
                 return (200, serializeJson(handleModels()))
+
+            case ("POST", "/models/load"):
+                return (200, serializeJson(try handleModelLoad(jsonString: body)))
+
+            case ("POST", "/models/unload"):
+                return (200, serializeJson(try handleModelUnload(jsonString: body)))
 
             case ("POST", "/completion"), ("POST", "/completions"), ("POST", "/v1/completions"):
                 return (200, serializeJson(try handleCompletion(jsonString: body)))

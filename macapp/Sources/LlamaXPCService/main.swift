@@ -7,41 +7,15 @@ import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag.llama-xpc", category: "LlamaXPCService")
 
-/// Wraps the llama.cpp engine as a managed service so the host can (re)load / unload the configured
-/// model. `start()` is a no-op until `loadModel` has configured a model path.
+/// Presents the llama.cpp engine to the host as a managed service. Models are loaded and unloaded
+/// directly through the XPC/HTTP routes (several can be resident at once), so `start()` has nothing
+/// to do and `stop()` simply unloads everything at shutdown.
 final class LlamaEngineManagedService: GarageManagedService {
     let name = "llama-engine"
-
-    private let lock = NSLock()
     private let engine: LlamaCppEngine
-    private var modelPath: String?
-    private var alias: String?
-    private var configJson: String?
-    private var autoStart = false
-    private(set) var lastMessage: String?
 
     init(engine: LlamaCppEngine) {
         self.engine = engine
-    }
-
-    /// Configures the model used by the next `start()`.
-    func configure(modelPath: String, alias: String?, configJson: String?) {
-        lock.lock()
-        self.modelPath = modelPath
-        self.alias = alias
-        self.configJson = configJson
-        self.autoStart = true
-        lock.unlock()
-    }
-
-    /// Forgets the configured model so a later restart does not reload it.
-    func clearConfiguration() {
-        lock.lock()
-        modelPath = nil
-        alias = nil
-        configJson = nil
-        autoStart = false
-        lock.unlock()
     }
 
     var isRunning: Bool {
@@ -49,35 +23,18 @@ final class LlamaEngineManagedService: GarageManagedService {
     }
 
     func start() throws {
-        lock.lock()
-        let shouldStart = autoStart
-        let (path, alias, configJson) = (modelPath, self.alias, self.configJson)
-        lock.unlock()
-        guard shouldStart, let path = path else {
-            logger.info("llama-engine not configured yet; waiting for loadModel")
-            return
-        }
-
-        let res = engine.loadModel(path: path, alias: alias, configJson: configJson)
-        lock.lock()
-        lastMessage = res.message
-        lock.unlock()
-        if res.success {
-            logger.info("Model loaded: \(res.message, privacy: .public)")
-            GarageXPCOutputCapture.shared.log(message: "llama-engine loaded model \(path)")
+        let aliases = engine.loadedAliases
+        if aliases.isEmpty {
+            logger.info("llama-engine ready; no model loaded yet")
         } else {
-            logger.error("Failed to load model: \(res.message, privacy: .public)")
-            throw GarageXPCServiceError.notRunning(res.message)
+            logger.info("llama-engine ready with \(aliases.joined(separator: ", "), privacy: .public)")
         }
     }
 
     func stop(graceful: Bool) throws {
         guard engine.currentModelPath != nil else { return }
-        let ok = engine.unloadModel()
-        if !ok {
-            throw GarageXPCServiceError.notRunning("llama-engine failed to unload the current model")
-        }
-        logger.info("llama-engine unloaded model (graceful: \(graceful, privacy: .public))")
+        _ = engine.unloadModel()
+        logger.info("llama-engine unloaded all models (graceful: \(graceful, privacy: .public))")
     }
 }
 
@@ -245,34 +202,22 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
 
     func loadModel(modelPath: String, alias: String?, configJson: String?, with reply: @escaping (Bool, String?, Error?) -> Void) {
         logger.info("Loading model from path: \(modelPath, privacy: .public), alias: \(alias ?? "none", privacy: .public)")
-        engineService.configure(modelPath: modelPath, alias: alias, configJson: configJson)
-        host.restart(named: engineService.name, graceful: true) { [engineService] state in
-            switch state {
-            case .running:
-                reply(true, engineService.lastMessage ?? "Model loaded successfully from \(modelPath)", nil)
-            case .failed(let message):
-                reply(false, message, nil)
-            default:
-                reply(false, "llama-engine is \(state.name)", nil)
+        // Loading blocks for seconds; keep the XPC thread free and answer when llama.cpp is done.
+        DispatchQueue.global(qos: .userInitiated).async { [engine] in
+            let result = engine.loadModel(path: modelPath, alias: alias, configJson: configJson)
+            if result.success {
+                GarageXPCOutputCapture.shared.log(message: "llama-engine loaded \(modelPath)")
+            } else {
+                logger.error("Failed to load model: \(result.message, privacy: .public)")
             }
+            reply(result.success, result.message, nil)
         }
     }
 
     func unloadModel(with reply: @escaping (Bool, Error?) -> Void) {
-        logger.info("Unloading current model")
-        engineService.clearConfiguration()
-        guard engineService.isRunning else {
-            reply(true, nil)
-            return
-        }
-        host.restart(named: engineService.name, graceful: true) { [engineService] state in
-            // With no configuration, restart stops the engine and start() becomes a no-op.
-            if case .failed(let message) = state {
-                logger.error("Failed to unload model: \(message, privacy: .public)")
-                reply(false, nil)
-            } else {
-                reply(!engineService.isRunning, nil)
-            }
+        logger.info("Unloading all models")
+        DispatchQueue.global(qos: .userInitiated).async { [engine] in
+            reply(engine.unloadModel(), nil)
         }
     }
 }

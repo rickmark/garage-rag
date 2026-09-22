@@ -472,3 +472,111 @@ class TestSchemaReference:
         path = repo_schema_path()
         assert path.is_file(), f"{path} is missing; run 'garage config schema --publish'"
         assert json.loads(path.read_text()) == json_schema()
+
+
+class TestFactsSection:
+    def test_defaults_point_at_the_app_engine(self) -> None:
+        settings = Settings()
+        assert settings.fact_model == "gemma2-2b"
+        assert settings.fact_provider == "llama_xpc"
+
+    def test_file_keys(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"facts": {"model": "gemma2:2b", "provider": "ollama"}}))
+        settings = load_config(cfg)
+        assert settings.fact_model == "gemma2:2b"
+        assert settings.fact_provider == "ollama"
+        assert nest(settings)["facts"] == {"model": "gemma2:2b", "provider": "ollama"}
+
+    def test_provider_is_restricted_to_local_backends(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"facts": {"provider": "openai"}}))
+        with pytest.raises(ConfigError, match="provider"):
+            load_config(cfg)
+
+    def test_schema_lists_the_provider_choices(self) -> None:
+        entry = json_schema()["properties"]["facts"]["properties"]["provider"]
+        assert entry["type"] == "string"
+        assert entry["enum"] == ["llama_xpc", "ollama"]
+        assert entry["default"] == "llama_xpc"
+
+
+class TestSetGetHelpers:
+    def test_resolve_setting(self) -> None:
+        from garage_rag.config import resolve_setting, setting_names
+
+        assert resolve_setting("facts.model") == ("facts", "model", "fact_model")
+        assert resolve_setting("embedding.default_model") == ("embedding", "default_model", "default_embedding_model")
+        assert "facts.provider" in setting_names()
+
+    @pytest.mark.parametrize("name", ["facts", "nope.model", "facts.nope", ""])
+    def test_resolve_setting_rejects_unknown(self, name: str) -> None:
+        from garage_rag.config import resolve_setting
+
+        with pytest.raises(ConfigError, match="unknown|expected SECTION.KEY"):
+            resolve_setting(name)
+
+    @pytest.mark.parametrize(
+        ("field", "raw", "expected"),
+        [
+            ("materialize_placeholders", "true", True),
+            ("materialize_placeholders", "No", False),
+            ("materialize_placeholders", "1", True),
+            ("materialize_placeholders", "off", False),
+            ("chunk_size", "512", 512),
+            ("ocr_min_confidence", "42.5", 42.5),
+            ("self_identities", "git_email:a@b.c, handle:@me", ["git_email:a@b.c", "handle:@me"]),
+            ("self_identities", "", []),
+            ("api_key_file", "none", None),
+            ("api_key_file", "~/.key", "~/.key"),
+            ("fact_model", "gemma2-2b", "gemma2-2b"),
+        ],
+    )
+    def test_coerce_setting(self, field: str, raw: str, expected) -> None:
+        from garage_rag.config import coerce_setting
+
+        assert coerce_setting(field, raw) == expected
+
+    @pytest.mark.parametrize(("field", "raw"), [("materialize_placeholders", "maybe"), ("chunk_size", "big")])
+    def test_coerce_setting_rejects_garbage(self, field: str, raw: str) -> None:
+        from garage_rag.config import coerce_setting
+
+        with pytest.raises(ConfigError, match="expected"):
+            coerce_setting(field, raw)
+
+    def test_update_config_creates_the_file_from_defaults(self, tmp_path: Path) -> None:
+        from garage_rag.config import update_config
+
+        target = tmp_path / USER_CONFIG_FILENAME
+        settings, stored = update_config(target, "facts.provider", "ollama")
+        assert stored == "ollama"
+        assert settings.fact_provider == "ollama"
+        document = json.loads(target.read_text())
+        assert document["$schema"] == SCHEMA_URL
+        assert document["facts"] == {"model": "gemma2-2b", "provider": "ollama"}
+        # Every other section is written at its default, as `config init` does.
+        assert document["chunking"]["size"] == Settings().chunk_size
+
+    def test_update_config_keeps_existing_values_and_ignores_the_environment(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from garage_rag.config import update_config
+
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg:///app-managed")
+        target = tmp_path / CONFIG_FILENAME
+        target.write_text(json.dumps({"chunking": {"size": 321}, "sources": [{"slug": "n", "root": "~/n"}]}))
+        update_config(target, "facts.model", "phi-4-mini")
+        document = json.loads(target.read_text())
+        assert document["chunking"]["size"] == 321
+        assert document["facts"]["model"] == "phi-4-mini"
+        assert [s["slug"] for s in document["sources"]] == ["n"]
+        # The env override is applied at load time, never persisted by `set`.
+        assert document["database"]["url"] == Settings().database_url
+
+    def test_update_config_validates_before_writing(self, tmp_path: Path) -> None:
+        from garage_rag.config import update_config
+
+        target = tmp_path / CONFIG_FILENAME
+        with pytest.raises(ConfigError, match="facts.provider"):
+            update_config(target, "facts.provider", "openai")
+        assert not target.exists()

@@ -70,6 +70,17 @@ py_test(
 )
 
 py_test(
+    name = "test_generation",
+    srcs = ["test_generation.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/xpc",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_lmstudio",
     srcs = ["test_lmstudio.py"],
     deps = [
@@ -94,6 +105,7 @@ py_test(
     srcs = ["test_mcp_server.py"],
     deps = [
         "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/mcp_server",
         "@pypi//pytest",
         "@pypi//typer",
@@ -128,6 +140,7 @@ py_test(
     name = "test_grpc_enrich_facts",
     srcs = ["test_grpc_enrich_facts.py"],
     deps = [
+        "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
@@ -170,6 +183,8 @@ py_test(
     srcs = ["test_cli_serve.py"],
     deps = [
         "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/mcp_server",
         "@pypi//typer",
     ],
 )
@@ -258,6 +273,7 @@ test_suite(
         ":test_egress_block",
         ":test_embed_xpc",
         ":test_facts",
+        ":test_generation",
         ":test_grpc_documents",
         ":test_grpc_enrich_facts",
         ":test_grpc_serialization",

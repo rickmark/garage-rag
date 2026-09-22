@@ -34,6 +34,11 @@ final class AppState: ObservableObject {
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
     @Published private(set) var presetModels: [ModelPresetEntry] = []
+    /// Generative presets (models.json `fact_distil`) offered for fact distillation / `rag_ask`.
+    @Published private(set) var factDistilPresets: [ModelPresetEntry] = []
+    /// The `facts` section of garage.json: which model answers `enrich-facts` and `rag_ask`.
+    @Published private(set) var factsModel: String = GarageConfigLoader.defaultFactsModel
+    @Published private(set) var factsProvider: String = GarageConfigLoader.defaultFactsProvider
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
@@ -158,6 +163,28 @@ final class AppState: ObservableObject {
 
     func fetchPresetModels() {
         self.presetModels = GarageConfigLoader.loadModelPresets()
+        self.factDistilPresets = GarageConfigLoader.loadFactDistilPresets()
+        fetchFactsSettings()
+    }
+
+    /// Re-reads the `facts` section of garage.json.
+    func fetchFactsSettings() {
+        let facts = GarageConfigLoader.loadFactsSettings()
+        self.factsModel = facts.model
+        self.factsProvider = facts.provider
+    }
+
+    /// Points `garage enrich-facts` / `rag_ask` at a model:
+    /// `garage config set facts.model <slug>` then `garage config set facts.provider <provider>`.
+    @discardableResult
+    func setFactsModel(_ slug: String, provider: String = GarageConfigLoader.defaultFactsProvider) async -> Bool {
+        guard await runGarage(["config", "set", "facts.model", slug]) else {
+            fetchFactsSettings()
+            return false
+        }
+        let succeeded = await runGarage(["config", "set", "facts.provider", provider])
+        fetchFactsSettings()
+        return succeeded
     }
 
     func fetchRegisteredModels() async {

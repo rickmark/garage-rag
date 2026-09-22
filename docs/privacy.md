@@ -78,6 +78,16 @@ which is assumed to be this machine:
   model id would have been sent to Google or OpenAI with an API key from the
   environment. `test_egress_block.py` asserts the pin structurally.
 
+- **Answers** (`rag_ask` / `rag_generate` MCP tools, `garage ask`) — retrieved
+  excerpts and the question go to the model named by `facts.model` on
+  `facts.provider`: `llama_host` for `llama_xpc` (the default) or `ollama_host`
+  for `ollama`. Both are local inference servers; there is no cloud generation
+  path. Retrieved **communications can appear in that prompt**, exactly as they
+  are embedded locally, and never leave the machine: `llama_host` is loopback by
+  construction, and if `ollama_host` has been pointed off-box `rag_ask` runs
+  every retrieved chunk's class through `assert_egress_allowed` before building
+  the prompt, so a communication in the results aborts the call.
+
 These hosts are not egress-guarded the way the cloud path is, because they are
 loopback by default and the guard would otherwise block local inference on your
 own messages. If you point `ollama_host` at another machine, fact extraction

@@ -31,6 +31,9 @@ struct ModelsView: View {
     @State private var gpuLayers: Int = 33
     @State private var cpuThreads: Int = 4
     @State private var showUnloadConfirmation: Bool = false
+    /// Alias the pending "Unload" confirmation applies to; `nil` unloads every model.
+    @State private var pendingUnloadAlias: String? = nil
+    @State private var settingFactsModelSlug: String? = nil
 
     // Testing Playground state
     @State private var selectedTestModelSlug: String = ""
@@ -193,6 +196,12 @@ struct ModelsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // ===== Embedding Models =====
+                sectionHeading(
+                    "Embedding Models",
+                    subtitle: "Vector models that index the corpus and power hybrid search. Each registered model gets its own embedding table."
+                )
+
                 // Section 1: Registered Models List & Status
                 modelCatalogSection
 
@@ -207,18 +216,27 @@ struct ModelsView: View {
                 // Section 4: Non-Truncated Embedding Testing & Inspection
                 embeddingInspectionSection
 
-                // Section 5: LM Studio API Token
+                // ===== Distillation Model =====
+                sectionHeading(
+                    "Distillation Model",
+                    subtitle: "Generative model that distills documents into facts (garage enrich-facts) and answers rag_ask over MCP."
+                )
+
+                // Section 5: Fact Distillation Model
+                distillationModelSection
+
+                // Section 6: LM Studio API Token
                 if provider == .lmStudio || appState.lmStudioTokenConfigured {
                     lmStudioTokenSection
                 }
 
-                // Section 6: Llama XPC Service Status
+                // Section 7: Llama XPC Service Status
                 llamaServiceSection
 
-                // Section 7: Backfill Output
+                // Section 8: Backfill / Enrichment Output
                 backfillOutputSection
 
-                // Section 8: Output / Feedback
+                // Section 9: Output / Feedback
                 outputSection
             }
             .padding(20)
@@ -233,14 +251,33 @@ struct ModelsView: View {
                 await llama.refreshStatus()
             }
         }
-        .alert("Unload active model?", isPresented: $showUnloadConfirmation) {
+        .alert(pendingUnloadAlias.map { "Unload '\($0)'?" } ?? "Unload all models?", isPresented: $showUnloadConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Unload", role: .destructive) {
-                Task { await llama.unloadModel() }
+                let alias = pendingUnloadAlias
+                pendingUnloadAlias = nil
+                Task {
+                    if let alias = alias {
+                        await llama.unloadModel(alias: alias)
+                    } else {
+                        await llama.unloadModel()
+                    }
+                }
             }
         } message: {
             Text("This will free model memory in LlamaXPCService.")
         }
+    }
+
+    private func sectionHeading(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.title2.bold())
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Section 1: Model Catalog & Registered Models List
@@ -272,11 +309,6 @@ struct ModelsView: View {
                         backfillAllModels()
                     }
                     .disabled(appState.registeredModels.isEmpty || notReady || appState.backfill.isRunning)
-
-                    Button("Glean Facts (All)") {
-                        enrichAllFacts()
-                    }
-                    .disabled(notReady || appState.enrichFacts.isRunning)
 
                     Button("Refresh") {
                         refreshAll()
@@ -475,6 +507,7 @@ struct ModelsView: View {
                     if isDownloaded, let dl = downloadedInfo {
                         if isActiveInLlama {
                             Button("Unload") {
+                                pendingUnloadAlias = item.slug
                                 showUnloadConfirmation = true
                             }
                             .controlSize(.small)
@@ -987,7 +1020,230 @@ struct ModelsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    // MARK: - Section 5: LM Studio Token Section
+    // MARK: - Section 5: Distillation Model
+
+    /// The `fact_distil` presets, wrapped so the download/load helpers written for
+    /// embedding rows apply unchanged.
+    private var distillationModelItems: [UnifiedModelItem] {
+        appState.factDistilPresets.map { UnifiedModelItem(preset: $0) }
+    }
+
+    private var distillationModelSection: some View {
+        GroupBox("Fact Distillation Model") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Current facts model:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(appState.factsModel)
+                                .font(.caption.monospaced().bold())
+                            Text("via \(appState.factsProvider)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if llama.isModelLoaded(alias: appState.factsModel) {
+                                badgeText("LOADED", bg: Color.purple.opacity(0.2), fg: .purple)
+                            } else {
+                                badgeText("NOT LOADED", bg: Color.orange.opacity(0.18), fg: .orange)
+                            }
+                        }
+                        Text("Stored in garage.json under facts.model / facts.provider. Load the model here before running enrich-facts or rag_ask.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+
+                    Button("Glean Facts (All)") {
+                        enrichAllFacts()
+                    }
+                    .disabled(notReady || appState.enrichFacts.isRunning)
+
+                    if appState.enrichFacts.isRunning {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+
+                if distillationModelItems.isEmpty {
+                    Text("No fact_distil presets found in models.json.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(distillationModelItems) { item in
+                            distillationCard(for: item)
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func distillationCard(for item: UnifiedModelItem) -> some View {
+        let isDownloaded = isModelFileDownloaded(item: item)
+        let downloadedInfo = getDownloadedInfo(item: item)
+        let isDownloading = isModelDownloading(item: item)
+        let activeTask = getActiveDownloadTask(item: item)
+        let isLoaded = llama.isModelLoaded(alias: item.slug)
+        let isFactsModel = appState.factsModel == item.slug
+        let isSettingFacts = settingFactsModelSlug == item.slug
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(item.name)
+                            .font(.headline)
+
+                        providerBadge(for: item.provider)
+
+                        if isFactsModel {
+                            badgeText("ACTIVE FACTS MODEL", bg: Color.green.opacity(0.18), fg: .green)
+                        }
+
+                        if isLoaded {
+                            badgeText("LOADED IN LLAMA XPC", bg: Color.purple.opacity(0.2), fg: .purple)
+                        }
+
+                        if isDownloaded {
+                            badgeText("DOWNLOADED (GGUF)", bg: Color.teal.opacity(0.15), fg: .teal)
+                        } else if isDownloading {
+                            badgeText("DOWNLOADING", bg: Color.yellow.opacity(0.2), fg: .orange)
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("Slug: \(item.slug)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+
+                        if let ctx = item.contextSize {
+                            Text("•  \(ctx) ctx")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let description = item.presetEntry?.description, !description.isEmpty {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let dl = downloadedInfo {
+                        Text("Local file: \(dl.filename) (\(dl.formattedSize))")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    } else if let filename = item.effectiveFilename {
+                        Text("GGUF target: \(filename)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !isDownloaded, let task = activeTask, task.status == .downloading || task.status == .queued {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ProgressView(value: task.fractionCompleted)
+                                .progressViewStyle(.linear)
+                            HStack {
+                                Text(task.formattedProgress)
+                                Text("•  \(task.formattedSpeed)")
+                                if !task.formattedETA.isEmpty {
+                                    Text("•  ETA: \(task.formattedETA)")
+                                }
+                                Spacer()
+                                Button("Cancel") {
+                                    Task { await modelDownload.cancelDownload(taskId: task.id) }
+                                }
+                                .controlSize(.mini)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    if item.provider == .llamaXPC && !isDownloaded && !isDownloading && item.effectiveDownloadURL != nil {
+                        Button("Download to Llama XPC") {
+                            downloadModelToLlamaXPC(item: item)
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .disabled(modelDownload.isBusy)
+                    }
+
+                    if isDownloaded, let dl = downloadedInfo {
+                        if isLoaded {
+                            Button("Unload") {
+                                pendingUnloadAlias = item.slug
+                                showUnloadConfirmation = true
+                            }
+                            .controlSize(.small)
+                            .tint(.red)
+                            .disabled(llama.isBusy)
+                        } else {
+                            Button("Load") {
+                                loadDownloadedModel(item: item, dlInfo: dl)
+                            }
+                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.purple)
+                            .disabled(llama.isBusy)
+                        }
+                    }
+
+                    Button {
+                        useForFacts(item: item)
+                    } label: {
+                        if isSettingFacts {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Text(isFactsModel ? "In use for facts" : "Use for facts")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(isFactsModel || settingFactsModelSlug != nil || notReady)
+                    .help("Runs `garage config set facts.model \(item.slug)` and `garage config set facts.provider \(item.provider.cliValue)`")
+
+                    if isDownloaded, let dl = downloadedInfo {
+                        Menu {
+                            Button("Verify SHA-256 Checksum") {
+                                Task { await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256) }
+                            }
+                            Button("Reveal in Finder") {
+                                modelDownload.revealInFinder(path: dl.path)
+                            }
+                            Button("Delete Downloaded GGUF", role: .destructive) {
+                                Task { await modelDownload.deleteDownloadedModel(dl) }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 20)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func useForFacts(item: UnifiedModelItem) {
+        settingFactsModelSlug = item.slug
+        Task {
+            await appState.setFactsModel(item.slug, provider: item.provider.cliValue)
+            settingFactsModelSlug = nil
+        }
+    }
+
+    // MARK: - Section 6: LM Studio Token Section
 
     private var lmStudioTokenSection: some View {
         GroupBox("LM Studio API Token") {
@@ -1020,7 +1276,7 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 6: Llama Service Status Section
+    // MARK: - Section 7: Llama Service Status Section
 
     private var llamaServiceSection: some View {
         GroupBox("Llama XPC Service Status") {
@@ -1056,7 +1312,7 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 7: Backfill Output Section
+    // MARK: - Section 8: Backfill / Enrichment Output Section
 
     private var backfillOutputSection: some View {
         Group {
@@ -1083,7 +1339,7 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section 8: Output Section
+    // MARK: - Section 9: Output Section
 
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1333,6 +1589,31 @@ struct ModelsView: View {
         NSPasteboard.general.copy(formatted)
     }
 
+}
+
+// MARK: - UnifiedModelItem from a preset
+extension ModelsView.UnifiedModelItem {
+    /// Wraps a `models.json` preset that has no database registration (e.g. a
+    /// `fact_distil` entry) so the download / load helpers can treat it like a row.
+    /// Declared in an extension to keep the struct's memberwise initializer.
+    init(preset: ModelPresetEntry) {
+        self.init(
+            name: preset.name,
+            slug: preset.slug,
+            provider: ModelsView.ModelProvider.from(string: preset.provider),
+            modelRef: preset.modelRef ?? preset.slug,
+            dims: preset.effectiveDims > 0 ? preset.effectiveDims : nil,
+            storedDims: nil,
+            contextSize: preset.contextSize ?? 8192,
+            isDefault: false,
+            downloadModelId: preset.downloadModelId,
+            downloadFile: preset.downloadFile,
+            sha256: preset.sha256,
+            catalogItem: ModelPresetCatalog.item(forModelIdOrSlug: preset.slug),
+            registeredModel: nil,
+            presetEntry: preset
+        )
+    }
 }
 
 // MARK: - Embedding Vector Statistics Model

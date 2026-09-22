@@ -1,8 +1,46 @@
 import SwiftUI
 import AppKit
 
+/// One citation in a `rag_ask` result.
+struct PlaygroundCitation: Decodable, Identifiable {
+    let n: Int
+    let documentId: Int?
+    let title: String?
+    let location: String?
+    let snippet: String?
+    let score: Double?
+
+    var id: Int { n }
+
+    enum CodingKeys: String, CodingKey {
+        case n, title, location, snippet, score
+        case documentId = "document_id"
+    }
+}
+
+/// The JSON a `rag_ask` (`answer` + `citations`) or `rag_generate` (`text`) tool call returns.
+struct PlaygroundAnswer: Decodable {
+    let answer: String?
+    let text: String?
+    let model: String?
+    let provider: String?
+    let citations: [PlaygroundCitation]?
+
+    var displayText: String { answer ?? text ?? "" }
+    var hasText: Bool { answer != nil || text != nil }
+}
+
 @MainActor
 struct MCPServerView: View {
+    enum PlaygroundMode: String, CaseIterable, Identifiable {
+        case rag = "Ask the corpus (RAG)"
+        case raw = "Raw prompt"
+
+        var id: String { rawValue }
+        var defaultMaxTokens: Int { self == .rag ? 512 : 256 }
+        var defaultTemperature: Double { self == .rag ? 0.2 : 0.7 }
+    }
+
     @EnvironmentObject var appState: AppState
     @State private var busy = false
     @State private var selectedToolName = "rag_stats"
@@ -12,11 +50,22 @@ struct MCPServerView: View {
     @State private var isExecutingCustomTool = false
     @State private var customToolError: String?
 
+    // Prompt Playground state
+    @State private var playgroundPrompt = ""
+    @State private var playgroundMode: PlaygroundMode = .rag
+    @State private var playgroundMaxTokens: Int = PlaygroundMode.rag.defaultMaxTokens
+    @State private var playgroundTemperature: Double = PlaygroundMode.rag.defaultTemperature
+    @State private var isRunningPlayground = false
+    @State private var playgroundError: String?
+    @State private var playgroundAnswer: PlaygroundAnswer?
+    @State private var playgroundRawOutput: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 serverStatusSection
                 testingAndDiagnosticsSection
+                promptPlaygroundSection
                 clientIntegrationsSection
                 serverDetailsSection
                 if !appState.lastCommandOutput.isEmpty {
@@ -28,6 +77,222 @@ struct MCPServerView: View {
         .navigationTitle("MCP Server")
         .onAppear {
             appState.mcp.refreshDetectedClients()
+            appState.fetchFactsSettings()
+        }
+    }
+
+    // MARK: - Prompt Playground Section
+
+    private var isPlaygroundPromptEmpty: Bool {
+        playgroundPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var promptPlaygroundSection: some View {
+        GroupBox("Prompt Playground") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Send a prompt to the distillation model through the running MCP server: rag_ask retrieves from the corpus and answers with citations; rag_generate runs the raw prompt.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Mode", selection: $playgroundMode) {
+                    ForEach(PlaygroundMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: playgroundMode) { _, mode in
+                    playgroundMaxTokens = mode.defaultMaxTokens
+                    playgroundTemperature = mode.defaultTemperature
+                }
+
+                TextEditor(text: $playgroundPrompt)
+                    .font(.system(.body, design: .default))
+                    .frame(minHeight: 80, maxHeight: 160)
+                    .border(Color.secondary.opacity(0.3), width: 1)
+
+                HStack(spacing: 16) {
+                    Stepper("Max tokens: \(playgroundMaxTokens)", value: $playgroundMaxTokens, in: 16...4096, step: 16)
+                        .frame(width: 200)
+
+                    HStack(spacing: 8) {
+                        Text(String(format: "Temperature: %.2f", playgroundTemperature))
+                        Slider(value: $playgroundTemperature, in: 0...1.5, step: 0.05)
+                            .frame(width: 160)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        runPlayground()
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appState.mcp.status != .running || isRunningPlayground || isPlaygroundPromptEmpty)
+
+                    if isRunningPlayground {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+
+                if let err = playgroundError {
+                    Text("Error: \(err)")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+
+                if let answer = playgroundAnswer {
+                    playgroundAnswerView(answer)
+                } else if let raw = playgroundRawOutput, !raw.isEmpty {
+                    playgroundOutputBox(title: "Output", text: raw)
+                }
+
+                Text("Runs on the local facts model (\(appState.factsModel) via \(appState.factsProvider)); load it on the Models page.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+        }
+    }
+
+    private func playgroundAnswerView(_ answer: PlaygroundAnswer) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(playgroundMode == .rag ? "Answer" : "Completion")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                if let model = answer.model, !model.isEmpty {
+                    badgeView(text: model, bg: Color.purple.opacity(0.15), fg: .purple)
+                }
+                if let provider = answer.provider, !provider.isEmpty {
+                    badgeView(text: provider, bg: Color.blue.opacity(0.15), fg: .blue)
+                }
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.copy(answer.displayText)
+                }
+                .controlSize(.small)
+            }
+
+            ScrollView {
+                Text(answer.displayText)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
+            .padding(8)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            if let citations = answer.citations, !citations.isEmpty {
+                Text("Citations (\(citations.count))")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(citations) { citation in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text("[\(citation.n)]")
+                                    .font(.system(.caption, design: .monospaced).bold())
+                                Text(citation.title ?? "Untitled")
+                                    .font(.caption.bold())
+                                if let location = citation.location, !location.isEmpty {
+                                    Text(location)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer()
+                                if let score = citation.score {
+                                    Text(String(format: "%.3f", score))
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            if let snippet = citation.snippet, !snippet.isEmpty {
+                                Text(snippet)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(4)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+            }
+        }
+    }
+
+    private func playgroundOutputBox(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.copy(text)
+                }
+                .controlSize(.small)
+            }
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
+            .padding(8)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    /// Sends the prompt as an MCP `tools/call` to the running garage-mcp server — the same
+    /// path `executeSelectedTool` uses — so the playground exercises the distillation model
+    /// exactly as an MCP client would.
+    private func runPlayground() {
+        let prompt = playgroundPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        isRunningPlayground = true
+        playgroundError = nil
+        playgroundAnswer = nil
+        playgroundRawOutput = nil
+        Task {
+            defer { isRunningPlayground = false }
+            do {
+                var args: [String: Any] = [
+                    "max_tokens": playgroundMaxTokens,
+                    "temperature": playgroundTemperature
+                ]
+                let toolName: String
+                if playgroundMode == .rag {
+                    toolName = "rag_ask"
+                    args["question"] = prompt
+                    args["limit"] = 6
+                } else {
+                    toolName = "rag_generate"
+                    args["prompt"] = prompt
+                }
+                let output = try await appState.mcp.executeToolCall(toolName: toolName, arguments: args)
+                if let data = output.data(using: .utf8),
+                   let parsed = try? JSONDecoder().decode(PlaygroundAnswer.self, from: data),
+                   parsed.hasText {
+                    playgroundAnswer = parsed
+                } else {
+                    playgroundRawOutput = output
+                }
+            } catch {
+                playgroundError = error.localizedDescription
+            }
         }
     }
 

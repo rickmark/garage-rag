@@ -30,8 +30,11 @@ from garage_rag.config import (
     load_config,
     nest,
     repo_schema_path,
+    resolve_setting,
     save_config,
     set_settings,
+    setting_names,
+    update_config,
 )
 from garage_rag.db.emb_tables import (
     count_vectors,
@@ -218,6 +221,59 @@ def config_path_cmd() -> None:
     for candidate in candidate_paths():
         mark = "[green]found[/green]" if candidate.is_file() else "[dim]absent[/dim]"
         console.print(f"  {mark}  {candidate}")
+
+
+def _format_setting(value: object) -> str:
+    """Strings print bare; everything else as JSON, so `true`/`42`/`["a","b"]` parse unambiguously."""
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+@config_app.command("get")
+def config_get(
+    name: Annotated[str, typer.Argument(help="Setting as SECTION.KEY, e.g. facts.model.", metavar="SECTION.KEY")],
+) -> None:
+    """Print one effective setting (after --config and environment overrides)."""
+    try:
+        _section, _key, field = resolve_setting(name)
+    except ConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
+    # typer.echo, not the rich console: a long URL must not be wrapped at the terminal width.
+    typer.echo(_format_setting(getattr(get_settings(), field)))
+
+
+@config_app.command("set")
+def config_set(
+    name: Annotated[str, typer.Argument(help="Setting as SECTION.KEY, e.g. facts.model.", metavar="SECTION.KEY")],
+    value: Annotated[
+        str,
+        typer.Argument(
+            help="New value. Booleans take true/false, yes/no, on/off, 1/0; lists are comma-separated.",
+        ),
+    ],
+    path: Annotated[
+        Path | None,
+        typer.Option("--path", help="Config file to update. Default: the one in use, else ~/.garage.json."),
+    ] = None,
+) -> None:
+    """Change one setting in the config file, validating it before writing.
+
+    The file in use (--config, ./garage.json, then ~/.garage.json) is rewritten
+    in its nested layout with the one value changed; when no file exists yet,
+    one is created from the defaults, as `config init --user` would.
+    """
+    target = (path or get_settings().config_path or default_config_path()).expanduser()
+    try:
+        settings, stored = update_config(target, name, value)
+    except ConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        if "unknown" in str(exc) or "expected SECTION.KEY" in str(exc):
+            console.print("[dim]valid keys:[/dim] " + ", ".join(setting_names()))
+        raise typer.Exit(code=2) from None
+    set_settings(load_config(target))
+    # stdout is exactly the assignment, for callers that parse it; the note goes to stderr.
+    typer.echo(f"{name} = {_format_setting(stored)}")
+    typer.echo(f"wrote {settings.config_path}", err=True)
 
 
 @config_app.command("schema")
@@ -864,20 +920,24 @@ def enrich_facts(
         typer.Option("--document-id", help="Extract facts for just this one document, ignoring --source."),
     ] = None,
     model: Annotated[
-        str | None, typer.Option("--model", "-m", help="Fact-distillation model slug/ref. Default: gemma2:2b.")
+        str | None,
+        typer.Option("--model", "-m", help="Fact-distillation model slug/alias. Default: facts.model from the config."),
     ] = None,
     provider: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--provider",
-            help='Inference backend: "ollama" (default) or "llama_xpc" (the app\'s LlamaXPCService on loopback).',
+            help=(
+                'Local inference backend: "llama_xpc" (the app\'s LlamaXPCService on loopback) or "ollama" '
+                "(a local Ollama server). Default: facts.provider from the config."
+            ),
         ),
-    ] = "ollama",
+    ] = None,
 ) -> None:
     """Distill documents into atomic facts. Re-extraction replaces a document's prior facts."""
-    from garage_rag.enrich.facts import DEFAULT_MODEL_ID, extract_and_store_facts
+    from garage_rag.enrich.facts import configured_backend, extract_and_store_facts
 
-    model_id = model or DEFAULT_MODEL_ID
+    model_id, provider = configured_backend(model, provider)
 
     with session_scope() as session:
         if document_id:
@@ -1162,6 +1222,7 @@ def mcp_test(
     import time
 
     from garage_rag.mcp_server.server import (
+        rag_generate,
         rag_list_authors,
         rag_list_sources,
         rag_search,
@@ -1220,12 +1281,35 @@ def mcp_test(
         dt = (time.perf_counter() - t0) * 1000
         tool_results.append(("rag_search", "FAIL", f"{dt:.1f}ms", str(exc)))
 
+    # rag_ask / rag_generate share one local model; probe it once and skip both
+    # rather than fail when nothing is loaded, since that is a state of the
+    # app's Models page, not of the MCP server.
+    from garage_rag.enrich.generation import LocalChatModel
+
+    t0 = time.perf_counter()
+    try:
+        model = LocalChatModel()
+        if model.is_available():
+            generated = rag_generate(prompt="Reply with the single word: ready", max_tokens=8)
+            dt = (time.perf_counter() - t0) * 1000
+            tool_results.append(("rag_generate", "PASS", f"{dt:.1f}ms", f"{generated.provider}/{generated.model}"))
+            tool_results.append(("rag_ask", "PASS", f"{dt:.1f}ms", "same model as rag_generate"))
+        else:
+            dt = (time.perf_counter() - t0) * 1000
+            details = f"{model.describe()} not loaded (see the app's Models page)"
+            tool_results.append(("rag_generate", "SKIP", f"{dt:.1f}ms", details))
+            tool_results.append(("rag_ask", "SKIP", f"{dt:.1f}ms", details))
+    except Exception as exc:
+        dt = (time.perf_counter() - t0) * 1000
+        tool_results.append(("rag_generate", "FAIL", f"{dt:.1f}ms", str(exc)))
+        tool_results.append(("rag_ask", "FAIL", f"{dt:.1f}ms", str(exc)))
+
     table = Table()
     for col in ("tool", "status", "latency", "details"):
         table.add_column(col)
+    styles = {"PASS": "[green]PASS[/green]", "SKIP": "[yellow]SKIP[/yellow]"}
     for row in tool_results:
-        status_style = "[green]PASS[/green]" if row[1] == "PASS" else "[red]FAIL[/red]"
-        table.add_row(row[0], status_style, row[2], row[3])
+        table.add_row(row[0], styles.get(row[1], "[red]FAIL[/red]"), row[2], row[3])
     console.print(table)
 
     # 2. HTTP Endpoint test if available
@@ -1422,6 +1506,91 @@ def search(
             console.print(f"   [dim]authors: {', '.join(hit.authors[:4])}[/dim]")
         body = hit.text if full else hit.text[:300].replace("\n", " ")
         console.print(f"   {body}")
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="Question to answer from the corpus, or a raw prompt with --raw.")],
+    raw: Annotated[
+        bool, typer.Option("--raw", help="Send the text straight to the model, with no retrieval (rag_generate).")
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Excerpts to retrieve.")] = 6,
+    mode: Annotated[SearchMode, typer.Option(help="hybrid fuses both engines; fts needs no model.")] = "hybrid",
+    corpus_class: Annotated[
+        list[str] | None,
+        typer.Option("--class", help="document | code | communication (repeatable)"),
+    ] = None,
+    trust: Annotated[
+        list[str] | None,
+        typer.Option("--trust", help="authored | reference | received (repeatable)"),
+    ] = None,
+    source: Annotated[list[str] | None, typer.Option("--source", "-s")] = None,
+    max_tokens: Annotated[int | None, typer.Option("--max-tokens", help="Cap on generated tokens.")] = None,
+    temperature: Annotated[float | None, typer.Option("--temperature", "-t")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON (what the app parses).")] = False,
+) -> None:
+    """Ask the local model a question, answered from retrieved excerpts with numbered citations.
+
+    Runs on facts.provider / facts.model (the app's LlamaXPCService or a local
+    Ollama server); nothing leaves the machine.
+    """
+    from dataclasses import asdict
+
+    from garage_rag.enrich.generation import LocalModelUnavailable
+    from garage_rag.mcp_server.server import rag_ask, rag_generate
+
+    try:
+        if raw:
+            generate_kwargs: dict = {}
+            if max_tokens is not None:
+                generate_kwargs["max_tokens"] = max_tokens
+            if temperature is not None:
+                generate_kwargs["temperature"] = temperature
+            result = rag_generate(prompt=question, **generate_kwargs)
+        else:
+            ask_kwargs: dict = {
+                "limit": limit,
+                "mode": mode,
+                "corpus_class": corpus_class or None,
+                "trust": trust or None,
+                "source": source or None,
+            }
+            if max_tokens is not None:
+                ask_kwargs["max_tokens"] = max_tokens
+            if temperature is not None:
+                ask_kwargs["temperature"] = temperature
+            result = rag_ask(question=question, **ask_kwargs)
+    except LocalModelUnavailable as exc:
+        if as_json:
+            print(json.dumps({"error": str(exc)}))
+        else:
+            console.print(f"[red]model unavailable[/red]: {exc}")
+        raise typer.Exit(code=1) from None
+
+    if as_json:
+        # Plain print, not the rich console: no wrapping or markup in machine output.
+        print(json.dumps(asdict(result), ensure_ascii=False))
+        return
+
+    if raw:
+        console.print(result.text, markup=False, highlight=False)
+        console.print(f"\n[dim]{result.provider}/{result.model}[/dim]")
+        return
+
+    console.print(result.answer, markup=False, highlight=False)
+    footer = f"{result.provider}/{result.model}"
+    if result.prompt_tokens is not None or result.completion_tokens is not None:
+        footer += f", tokens in/out {result.prompt_tokens or 0}/{result.completion_tokens or 0}"
+    console.print(f"\n[dim]{footer}[/dim]")
+    if not result.citations:
+        console.print("[yellow]no excerpts retrieved[/yellow]")
+        return
+    table = Table(title="citations")
+    for col in ("n", "title", "location", "score", "snippet"):
+        table.add_column(col)
+    for c in result.citations:
+        table.add_row(f"[{c.n}]", c.title or "(untitled)", c.location, f"{c.score:.4f}", c.snippet)
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------

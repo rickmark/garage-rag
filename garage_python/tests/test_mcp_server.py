@@ -12,12 +12,18 @@ import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
+from garage_rag.enrich.egress import EgressBlocked
+from garage_rag.enrich.generation import ChatReply
 from garage_rag.mcp_server.server import (
     _HOME,
+    ASK_SYSTEM_PROMPT,
+    AskResult,
     AuthorInfo,
     AuthorList,
+    Citation,
     CorpusStats,
     DocumentResult,
+    GenerateResult,
     Hit,
     ModelInfo,
     SearchResult,
@@ -28,8 +34,11 @@ from garage_rag.mcp_server.server import (
     _log_startup,
     _tidy,
     _untidy,
+    build_ask_messages,
     is_loopback,
     main,
+    rag_ask,
+    rag_generate,
     rag_get_document,
     rag_list_authors,
     rag_list_sources,
@@ -380,6 +389,128 @@ class TestMcpTools:
                 assert m.slug == "bge-base"
                 assert m.vectors == 450
                 assert m.pending == 50
+
+
+# ---------------------------------------------------------------------------
+# rag_ask / rag_generate: local generation over the retrieval above
+# ---------------------------------------------------------------------------
+def _fake_chat_model(reply: ChatReply, *, is_local: bool = True) -> MagicMock:
+    model = MagicMock()
+    model.provider = "llama_xpc"
+    model.model_ref = "gemma2-2b"
+    model.is_local = is_local
+    model.complete.return_value = reply
+    model.chat.return_value = reply.text
+    return model
+
+
+class TestAsk:
+    def test_prompt_numbers_excerpts_and_ends_with_the_question(self) -> None:
+        hits = [
+            MockSearchHit(chunk_id=1, document_id=10, title="User Guide", text="Install with brew."),
+            MockSearchHit(chunk_id=2, document_id=11, title=None, heading_path=None, text="x" * 5000),
+        ]
+        messages = build_ask_messages("how do I install?", hits)
+        assert [m["role"] for m in messages] == ["system", "user"]
+        assert messages[0]["content"] == ASK_SYSTEM_PROMPT
+        user = messages[1]["content"]
+        assert "[1] User Guide \u2014 ~/docs/guide.md \u00a7 Introduction > Getting Started\nInstall with brew." in user
+        assert "[2] (untitled) \u2014 ~/docs/guide.md\n" in user
+        assert user.endswith("\n\nQuestion: how do I install?")
+        # Long excerpts are trimmed to ~1,200 characters, never sent whole.
+        second = user.split("[2] ")[1].split("\n\nQuestion:")[0]
+        assert len(second) < 1300
+        assert second.endswith("\u2026")
+
+    def test_prompt_without_hits_says_so(self) -> None:
+        user = build_ask_messages("anything?", [])[1]["content"]
+        assert "(no excerpts were retrieved)" in user
+        assert user.endswith("Question: anything?")
+
+    def test_rag_ask_runs_retrieval_then_the_model(self) -> None:
+        hit = MockSearchHit(text="Widgets ship on Tuesdays. " * 20)
+        chat_model = _fake_chat_model(ChatReply(text="Tuesdays [1].", prompt_tokens=90, completion_tokens=5))
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as mock_scope,
+            patch("garage_rag.mcp_server.server.run_search", return_value=[hit]) as mock_run_search,
+            patch("garage_rag.mcp_server.server.list_models", return_value=[MockModelRow(slug="bge-base")]),
+            patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model),
+        ):
+            mock_session = MagicMock()
+            mock_scope.return_value.__enter__.return_value = mock_session
+            result = rag_ask(question="when do widgets ship?", limit=3, trust="authored", max_tokens=100)
+
+        # Same retrieval rag_search does, same filter normalisation.
+        mock_run_search.assert_called_once_with(
+            mock_session,
+            "when do widgets ship?",
+            limit=3,
+            mode="hybrid",
+            corpus_classes=None,
+            trust_tiers=["authored"],
+            sources=None,
+            author=None,
+        )
+        messages = chat_model.complete.call_args.args[0]
+        assert chat_model.complete.call_args.kwargs == {"max_tokens": 100, "temperature": 0.2}
+        assert messages[0]["role"] == "system"
+        assert "[1] User Guide" in messages[1]["content"]
+        assert "Question: when do widgets ship?" in messages[1]["content"]
+
+        assert isinstance(result, AskResult)
+        assert result.answer == "Tuesdays [1]."
+        assert result.model == "gemma2-2b"
+        assert result.provider == "llama_xpc"
+        assert result.question == "when do widgets ship?"
+        assert result.prompt_tokens == 90
+        assert result.completion_tokens == 5
+        assert len(result.citations) == 1
+        citation = result.citations[0]
+        assert isinstance(citation, Citation)
+        assert citation.n == 1
+        assert citation.document_id == 10
+        assert citation.title == "User Guide"
+        assert citation.location == "~/docs/guide.md"
+        assert citation.score == 0.876543
+        assert len(citation.snippet) <= 240
+
+    def test_rag_ask_refuses_to_send_communications_off_box(self) -> None:
+        """Only reachable with ollama_host pointed at another machine."""
+        hit = MockSearchHit(corpus_class="communication")
+        chat_model = _fake_chat_model(ChatReply(text="never"), is_local=False)
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as mock_scope,
+            patch("garage_rag.mcp_server.server.run_search", return_value=[hit]),
+            patch("garage_rag.mcp_server.server.list_models", return_value=[]),
+            patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model),
+        ):
+            mock_scope.return_value.__enter__.return_value = MagicMock()
+            with pytest.raises(EgressBlocked):
+                rag_ask(question="q")
+        chat_model.complete.assert_not_called()
+
+    def test_rag_generate_is_a_raw_prompt(self) -> None:
+        chat_model = _fake_chat_model(ChatReply(text="pong"))
+        with patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model):
+            result = rag_generate(prompt="ping", system="be terse", max_tokens=16, temperature=0.0)
+        chat_model.chat.assert_called_once_with(
+            [{"role": "system", "content": "be terse"}, {"role": "user", "content": "ping"}],
+            max_tokens=16,
+            temperature=0.0,
+        )
+        assert result == GenerateResult(text="pong", model="gemma2-2b", provider="llama_xpc")
+
+    def test_rag_generate_without_system(self) -> None:
+        chat_model = _fake_chat_model(ChatReply(text="pong"))
+        with patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model):
+            rag_generate(prompt="ping")
+        assert chat_model.chat.call_args.args[0] == [{"role": "user", "content": "ping"}]
+
+    def test_tools_are_registered(self) -> None:
+        from garage_rag.mcp_server.server import mcp
+
+        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        assert {"rag_ask", "rag_generate", "rag_search"} <= names
 
 
 # ---------------------------------------------------------------------------

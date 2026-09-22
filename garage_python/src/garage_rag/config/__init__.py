@@ -34,7 +34,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -386,6 +386,26 @@ class Settings(BaseModel):
         ),
     )
 
+    # ---- facts / local generation ---------------------------------------
+    fact_model: str = Field(
+        default="gemma2-2b",
+        description=(
+            "Slug or alias of the local model used for fact distillation "
+            "('garage enrich-facts') and for the rag_ask / rag_generate MCP tools. "
+            "For llama_xpc this is the alias the app loaded the model under (the "
+            "'fact_distil' preset slug); for ollama it is the Ollama model name."
+        ),
+    )
+    fact_provider: Literal["llama_xpc", "ollama"] = Field(
+        default="llama_xpc",
+        description=(
+            "Which local inference server runs fact distillation and rag_ask. "
+            "Both stay on this machine: 'llama_xpc' is the app's LlamaXPCService "
+            "(llama.cpp on embedding.llama_host, loopback only); 'ollama' is a local "
+            "Ollama server on embedding.ollama_host."
+        ),
+    )
+
     # ---- sources --------------------------------------------------------
     sources: list[SourceSpec] = Field(
         default_factory=list,
@@ -493,6 +513,10 @@ SECTIONS: dict[str, dict[str, str]] = {
         "enable_ocr": "enable_cloud_ocr",
         "model": "cloud_ocr_model",
         "api_key_file": "api_key_file",
+    },
+    "facts": {
+        "model": "fact_model",
+        "provider": "fact_provider",
     },
 }
 
@@ -694,6 +718,9 @@ def json_schema() -> dict[str, Any]:
                 entry["type"] = type_map[annotation]
             elif annotation == (str | None):
                 entry["type"] = ["string", "null"]
+            elif get_origin(annotation) is Literal:
+                entry["type"] = "string"
+                entry["enum"] = list(get_args(annotation))
             if info.description:
                 entry["description"] = info.description
             default = Settings.model_fields[name].get_default(call_default_factory=True)
@@ -736,6 +763,111 @@ def json_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "properties": properties,
     }
+
+
+def setting_names() -> list[str]:
+    """Every ``section.key`` the file accepts, in file order."""
+    return [f"{section}.{key}" for section, mapping in SECTIONS.items() for key in mapping]
+
+
+def resolve_setting(name: str) -> tuple[str, str, str]:
+    """``"section.key"`` -> ``(section, key, flat field name)``.
+
+    Raises :class:`ConfigError` naming the valid keys, so a typo on the command
+    line is caught before anything is written.
+    """
+    section, dot, key = name.partition(".")
+    if not dot or not section or not key:
+        raise ConfigError(f"expected SECTION.KEY, got {name!r}; valid keys: {', '.join(setting_names())}")
+    mapping = SECTIONS.get(section)
+    if mapping is None:
+        raise ConfigError(f"unknown section {section!r}; expected one of: {', '.join(SECTIONS)}")
+    field = mapping.get(key)
+    if field is None:
+        raise ConfigError(f"unknown key {key!r} in section {section!r}; expected one of: {', '.join(mapping)}")
+    return section, key, field
+
+
+_TRUE_WORDS = frozenset({"true", "yes", "on", "1"})
+_FALSE_WORDS = frozenset({"false", "no", "off", "0"})
+
+
+def coerce_setting(field: str, raw: str) -> Any:
+    """Turn a command-line string into the value ``Settings.<field>`` expects.
+
+    ``bool`` accepts true/false, yes/no, on/off and 1/0; ``int``/``float`` parse
+    numerically; ``list[str]`` splits on commas (an empty string is an empty
+    list); an optional string becomes ``None`` for ``""``/``none``/``null``.
+    Everything else -- plain strings and the ``Literal`` choices -- is passed
+    through for pydantic to validate.
+    """
+    annotation = Settings.model_fields[field].annotation
+    text = raw.strip()
+    if annotation is bool:
+        lowered = text.lower()
+        if lowered in _TRUE_WORDS:
+            return True
+        if lowered in _FALSE_WORDS:
+            return False
+        raise ConfigError(f"{field}: expected true/false, yes/no, on/off or 1/0, got {raw!r}")
+    if annotation is int:
+        try:
+            return int(text)
+        except ValueError:
+            raise ConfigError(f"{field}: expected an integer, got {raw!r}") from None
+    if annotation is float:
+        try:
+            return float(text)
+        except ValueError:
+            raise ConfigError(f"{field}: expected a number, got {raw!r}") from None
+    if annotation == list[str]:
+        return [item.strip() for item in text.split(",") if item.strip()]
+    if annotation == (str | None) and text.lower() in {"", "none", "null"}:
+        return None
+    return raw
+
+
+def read_config_document(path: Path) -> dict[str, Any]:
+    """The nested JSON document at ``path``, or ``{}`` when the file does not exist.
+
+    Unlike :func:`load_config` this applies no environment override, so what
+    :func:`update_config` writes back is what the file already said plus the
+    one change -- never an app-managed database URL from the environment.
+    """
+    path = path.expanduser()
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{path} is not valid JSON: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path} must contain a JSON object")
+    return raw
+
+
+def update_config(path: Path, name: str, raw_value: str) -> tuple[Settings, Any]:
+    """Set ``section.key`` to ``raw_value`` in the file at ``path`` and save it.
+
+    The file is read (defaults when absent), the one value coerced and
+    substituted, the whole thing validated by round-tripping through
+    :class:`Settings`, and then written with :func:`save_config` -- so the
+    nested layout, ``$schema`` and key order come out exactly as ``config init``
+    would produce them. Returns the saved settings and the coerced value.
+    """
+    _section, _key, field = resolve_setting(name)
+    value = coerce_setting(field, raw_value)
+    flat = flatten(read_config_document(path))
+    flat[field] = value
+    try:
+        settings = Settings(**flat)
+    except ValidationError as exc:
+        raise ConfigError(f"{name}: {exc}") from exc
+    save_config(settings, path)
+    settings.config_path = path.expanduser()
+    return settings, getattr(settings, field)
 
 
 _settings: Settings | None = None

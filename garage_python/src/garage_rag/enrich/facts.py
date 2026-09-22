@@ -51,15 +51,30 @@ from garage_rag.xpc.llama_xpc import is_loopback_url
 
 log = logging.getLogger(__name__)
 
-# A small local instruction model, pulled with `ollama pull gemma2:2b`.
+# Function-level fallbacks for direct callers of :func:`extract_facts`. The
+# CLI and the ``EnrichFacts`` RPC do not use these: they take the model and
+# provider from ``facts.model`` / ``facts.provider`` in the config file (see
+# :func:`configured_backend`), whose defaults are the app's ``gemma2-2b``
+# alias on ``llama_xpc``. ``gemma2:2b`` is the same model under its Ollama
+# name, pulled with `ollama pull gemma2:2b`.
 DEFAULT_MODEL_ID = "gemma2:2b"
 
-# Fact-distillation backends. "ollama" talks to a local Ollama server (the
-# default); "llama_xpc" routes through LlamaXPCLanguageModel, which posts to
-# the llama.cpp HTTP API the app's LlamaXPCService serves on loopback
+# Fact-distillation backends. "ollama" talks to a local Ollama server;
+# "llama_xpc" routes through LlamaXPCLanguageModel, which posts to the
+# llama.cpp HTTP API the app's LlamaXPCService serves on loopback
 # (``llama_host``) -- see that module's docstring.
 FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
 DEFAULT_PROVIDER = "ollama"
+
+
+def configured_backend(model_id: str | None = None, provider: str | None = None) -> tuple[str, str]:
+    """``(model_id, provider)`` for a fact-distillation run.
+
+    Explicit arguments win; anything not given comes from ``facts.model`` and
+    ``facts.provider`` in the configuration.
+    """
+    settings = get_settings()
+    return model_id or settings.fact_model, provider or settings.fact_provider
 
 # LangExtract's registered class name for its Ollama backend. Passing it as an
 # explicit ``provider`` bypasses model-id pattern matching entirely.

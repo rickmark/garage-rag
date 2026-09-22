@@ -729,10 +729,10 @@ class GarageRpcServicer(GarageServiceServicer):
         """Distill documents into facts, streaming EnrichFactsStatus events per document."""
         from garage_rag.db.engine import session_scope
         from garage_rag.db.models import Document, Source
-        from garage_rag.enrich.facts import DEFAULT_MODEL_ID, DEFAULT_PROVIDER, extract_and_store_facts
+        from garage_rag.enrich.facts import configured_backend, extract_and_store_facts
 
-        model_id = request.model_id or DEFAULT_MODEL_ID
-        provider = request.provider or DEFAULT_PROVIDER
+        # An unset field is the proto default ""; the config file decides then.
+        model_id, provider = configured_backend(request.model_id or None, request.provider or None)
 
         with session_scope() as session:
             if request.document_id:
