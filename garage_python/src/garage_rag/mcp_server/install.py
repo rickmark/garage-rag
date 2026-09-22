@@ -191,6 +191,10 @@ def plan_targets(
     return TargetPlan([table[target]])
 
 
+# Set by the macOS app's `garage` launcher (macapp/Sources/GarageCLI) to its own path.
+CLI_EXECUTABLE_ENV = "GARAGE_CLI_EXECUTABLE"
+
+
 def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
     """The command an MCP client should run to start this server.
 
@@ -211,6 +215,13 @@ def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
     head: list[str] = []
     if config_path is not None:
         head = ["--config", str(config_path.expanduser().resolve())]
+
+    # Inside the macOS app, Python is embedded in the Swift `garage` launcher and
+    # sys.executable names an interpreter the bundle does not ship. The launcher
+    # exports its own path so the command points at something that runs.
+    launcher = os.environ.get(CLI_EXECUTABLE_ENV)
+    if launcher and Path(launcher).is_absolute() and os.access(launcher, os.X_OK):
+        return launcher, [*head, "mcp-serve", "--stdio"]
 
     garage = interpreter.parent / "garage"
     if garage.is_file() and os.access(garage, os.X_OK):

@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
+    CLI_EXECUTABLE_ENV,
     MULTI_TARGETS,
     ClientTarget,
     client_targets,
@@ -111,6 +112,27 @@ class TestServerCommand:
         assert supplied == cfg.resolve()
         # The `garage` entry point is required, since garage-mcp takes no flags.
         assert Path(command).name in {"garage", Path(sys.executable).name}
+
+    def test_app_launcher_wins_when_exported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """In the app, sys.executable is an interpreter the bundle does not ship;
+        the Swift launcher exports its own path and that is what clients must run."""
+        launcher = tmp_path / "garage"
+        launcher.write_text("#!/bin/sh\n")
+        launcher.chmod(0o755)
+        monkeypatch.setenv(CLI_EXECUTABLE_ENV, str(launcher))
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
+        command, args = server_command(cfg)
+        assert command == str(launcher)
+        assert args == ["--config", str(cfg.resolve()), "mcp-serve", "--stdio"]
+
+    def test_non_executable_launcher_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        launcher = tmp_path / "garage"
+        launcher.write_text("")
+        launcher.chmod(0o644)
+        monkeypatch.setenv(CLI_EXECUTABLE_ENV, str(launcher))
+        command, _ = server_command()
+        assert command != str(launcher)
 
 
 class TestServerEntry:

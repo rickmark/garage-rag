@@ -139,6 +139,14 @@ private func runCLI() {
             // Set sys.argv
             sys.argv = PythonObject(CommandLine.arguments)
 
+            // sys.executable names an interpreter the app bundle does not ship; tell Python
+            // which binary actually runs it, so `garage mcp-status`/`mcp-install` hand MCP
+            // clients a command that exists (garage_rag.mcp_server.install.server_command).
+            if let launcher = Bundle.main.executableURL?.resolvingSymlinksInPath().path {
+                let os = try Python.attemptImport("os")
+                os.environ["GARAGE_CLI_EXECUTABLE"] = PythonObject(launcher)
+            }
+
             // Ensure stdout, stderr, and stdin streams are handed to Python
             do {
                 let io = try Python.attemptImport("io")
