@@ -1,10 +1,13 @@
+# Matches whole path components rather than searching for a "lib/" substring: the
+# substring form silently mangles any package whose own name ends in "lib", e.g.
+# ext/libzlib/lib/libz.1.dylib, where the first "lib/" hit is the tail of "libzlib/"
+# and the file lands at lib/lib/libz.1.dylib. Nothing then matches it by basename when
+# rewriting dependencies below, so consumers keep an unresolvable @rpath/libz.1.dylib.
 def _relative_path(file):
-    for directory in ["bin", "include", "lib", "share"]:
-        index = file.short_path.find(directory + "/")
-        if index != -1:
-            return file.short_path[index:]
-        if file.short_path.endswith("/" + directory):
-            return directory
+    components = file.short_path.split("/")
+    for index, component in enumerate(components):
+        if component in ["bin", "include", "lib", "share"]:
+            return "/".join(components[index:])
     return None
 
 def _install_name(ctx):

@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+load("//bazel:codesign.bzl", "macho_test")
 
 configure_make(
     name = "openssl",
@@ -20,4 +21,10 @@ configure_make(
         "libcrypto.a",
     ],
     visibility = ["//visibility:public"],
+)
+
+macho_test(
+    name = "openssl_arch_test",
+    src = ":openssl",
+    archs = ["arm64"],
 )

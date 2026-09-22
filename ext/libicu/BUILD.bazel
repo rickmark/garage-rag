@@ -1,5 +1,6 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
+load("//bazel:codesign.bzl", "macho_test")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file", "normalize_install_names")
 
 configure_make(
     name = "libicu",
@@ -52,6 +53,13 @@ configure_make(
         "libicutu.76.dylib",
         "libicuuc.76.dylib",
     ],
+    postfix_script = normalize_install_names([
+        "libicudata.76.dylib",
+        "libicui18n.76.dylib",
+        "libicuio.76.dylib",
+        "libicutu.76.dylib",
+        "libicuuc.76.dylib",
+    ]),
     visibility = ["//visibility:public"],
 )
 
@@ -100,4 +108,22 @@ filegroup(
         ":libicuuc_dylib",
     ],
     visibility = ["//visibility:public"],
+)
+
+macho_test(
+    name = "libicu_arch_test",
+    src = ":libicu",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
+)
+
+macho_test(
+    name = "libicu_shared_arch_test",
+    src = ":libicu_dylibs",
+    archs = [
+        "arm64",
+        "x86_64",
+    ],
 )

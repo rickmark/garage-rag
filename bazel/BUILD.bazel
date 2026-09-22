@@ -19,9 +19,14 @@ bazelrc_preset(
     doc_link_template = "https://registry.build/flag/bazel?filter={flag}",
 )
 
+# Declared by the platforms below to document their signing intent. Note that
+# the `is_*` config_settings below deliberately do NOT key on these: rules_apple
+# rewrites --platforms to @apple_support//platforms:macos_* underneath every
+# apple_* rule, which erases any constraint_value we set here. Ad-hoc is the
+# default so that a plain `bazel build` never demands a signing identity.
 constraint_setting(
     name = "distribution",
-    default_constraint_value = ":distribution_developer_id",
+    default_constraint_value = ":distribution_adhoc",
 )
 
 constraint_value(
@@ -39,18 +44,22 @@ constraint_value(
     constraint_setting = ":distribution",
 )
 
+# Keyed on the signing identity build setting rather than on the :distribution
+# constraint above, because a build setting survives rules_apple's platform
+# transition while a constraint_value does not. Each platform below sets the
+# flag; everything else falls through to //conditions:default, which is ad-hoc.
 config_setting(
     name = "is_adhoc",
-    constraint_values = [
-        ":distribution_adhoc",
-    ],
+    flag_values = {
+        "@rules_apple//apple/build_settings:signing_certificate_name": "-",
+    },
 )
 
 config_setting(
     name = "is_developer_id",
-    constraint_values = [
-        ":distribution_developer_id",
-    ],
+    flag_values = {
+        "@rules_apple//apple/build_settings:signing_certificate_name": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+    },
 )
 
 config_setting(
@@ -70,6 +79,7 @@ platform(
     ],
     flags = [
         "--apple_platform_type=macos",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=-",
     ],
 )
 

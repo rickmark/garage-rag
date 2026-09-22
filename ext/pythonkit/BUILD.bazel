@@ -1,3 +1,5 @@
+load("//bazel:codesign.bzl", "codesign_test", "macho_test")
+
 alias(
     name = "PythonKit",
     actual = "@PythonKit//:PythonKit",
@@ -16,4 +18,24 @@ alias(
     name = "PythonKit_swift",
     actual = ":PythonKit",
     visibility = ["//visibility:public"],
+)
+
+macho_test(
+    name = "pythonkit_arch_test",
+    src = ":PythonKit",
+    archs = ["arm64"],
+)
+
+codesign_test(
+    name = "pythonkit_codesign_test",
+    src = ":PythonKit",
+    is_store = select({
+        "//bazel:is_store": True,
+        "//conditions:default": False,
+    }),
+    signing_identity = select({
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "-",
+    }),
 )

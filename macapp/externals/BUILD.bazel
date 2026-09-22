@@ -41,8 +41,9 @@ codesign(
     options = ["runtime"],
     parent_dir = "postgres",
     signing_identity = select({
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )
@@ -56,8 +57,9 @@ codesign(
     out = "libpq.dylib",
     options = ["runtime"],
     signing_identity = select({
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )
@@ -111,8 +113,9 @@ codesign(
     out = "site-python",
     options = ["runtime"],
     signing_identity = select({
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
         "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )

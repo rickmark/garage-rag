@@ -1,5 +1,3 @@
-load("//bazel:codesign.bzl", "codesign_test", "macho_arch_test", "macho_test")
-
 alias(
     name = "postgres",
     actual = "//ext/postgres:postgres",
@@ -96,141 +94,26 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-macho_test(
-    name = "postgres_arch_test",
-    src = ":postgres",
-    archs = [
-        "arm64",
-        "x86_64",
+# The per-dependency macho_test/codesign_test targets live next to the rules that
+# produce the binaries they check (//ext/postgres, //ext/python, ...); this suite
+# keeps `bazel test //ext:tests` covering all of them.
+test_suite(
+    name = "tests",
+    tests = [
+        "//ext/libicu:libicu_arch_test",
+        "//ext/libicu:libicu_shared_arch_test",
+        "//ext/libreadline:libreadline_arch_test",
+        "//ext/libreadline:libreadline_shared_arch_test",
+        "//ext/libzlib:libzlib_arch_test",
+        "//ext/libzlib:libzlib_shared_arch_test",
+        "//ext/llama_cpp:llama_cpp_arch_test",
+        "//ext/openssl:openssl_arch_test",
+        "//ext/pgvector:pgvector_arch_test",
+        "//ext/postgres:postgres_arch_test",
+        "//ext/python:python_arch_test",
+        "//ext/python:python_framework_arch_test",
+        "//ext/python:python_framework_codesign_test",
+        "//ext/pythonkit:pythonkit_arch_test",
+        "//ext/pythonkit:pythonkit_codesign_test",
     ],
-)
-
-macho_test(
-    name = "pgvector_arch_test",
-    src = ":pgvector",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libicu_arch_test",
-    src = ":libicu",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libreadline_arch_test",
-    src = ":libreadline",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libzlib_arch_test",
-    src = ":libzlib",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libicu_shared_arch_test",
-    src = "//ext/libicu:libicu_dylibs",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libreadline_shared_arch_test",
-    src = "//ext/libreadline:libreadline_dylibs",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "libzlib_shared_arch_test",
-    src = "//ext/libzlib:libzlib_dylibs",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "openssl_arch_test",
-    src = ":openssl",
-    archs = ["arm64"],
-)
-
-macho_test(
-    name = "llama_cpp_arch_test",
-    src = ":llama_cpp",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
-)
-
-macho_test(
-    name = "python_arch_test",
-    src = ":python",
-    archs = ["arm64"],
-)
-
-macho_test(
-    name = "python_static_arch_test",
-    src = ":python_static",
-    archs = ["arm64"],
-)
-
-macho_test(
-    name = "python_framework_arch_test",
-    src = ":python_framework",
-    archs = ["arm64"],
-)
-
-codesign_test(
-    name = "python_framework_codesign_test",
-    src = ":python_framework",
-    is_store = select({
-        "//bazel:is_store": True,
-        "//conditions:default": False,
-    }),
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
-)
-
-macho_test(
-    name = "pythonkit_arch_test",
-    src = "//ext/pythonkit:PythonKit",
-    archs = ["arm64"],
-)
-
-codesign_test(
-    name = "pythonkit_codesign_test",
-    src = "//ext/pythonkit:PythonKit",
-    is_store = select({
-        "//bazel:is_store": True,
-        "//conditions:default": False,
-    }),
-    signing_identity = select({
-        "//bazel:is_adhoc": "-",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    }),
 )

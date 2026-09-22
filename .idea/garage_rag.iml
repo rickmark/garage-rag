@@ -10,7 +10,7 @@
       <excludeFolder url="file://$MODULE_DIR$/python/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/garage_python/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="~/Developer/garage/garage_python/.venv" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="~/Developer/garage-rag/.venv" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
