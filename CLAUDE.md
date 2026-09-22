@@ -74,9 +74,8 @@ of truth for CI.
 
 ### Swift app dev loop
 
-The app is built by Bazel, not SwiftPM: `macapp/Package.swift` only covers the XPC client/service
-modules and has no targets for the gRPC bridge or `PythonXPCService`, so `swift run` does not
-produce a working app.
+The app is built by Bazel only; there is no SwiftPM manifest. Every Swift module depends on
+`PythonXPCService` (PythonKit plus the CPython embedding shim), which SwiftPM cannot provide.
 
 ```bash
 aspect build //:macapp     # the .app, with Postgres + pgvector and Python.framework built from ext/, plus the site-packages from garage_python/

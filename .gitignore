@@ -3,7 +3,6 @@
 .env
 *.db
 .build
-macapp/.build/
 macapp/build/
 # Credentials referenced by cloud.api_key_file
 *.key

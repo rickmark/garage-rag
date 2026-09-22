@@ -81,6 +81,9 @@ xcodeproj(
         top_level_target(
             "//macapp/Tests/GarageAppUITests:GarageAppUITests",
         ),
+        top_level_target(
+            "//macapp/Tests/LlamaClientTests:LlamaClientTests",
+        ),
     ],
     visibility = ["//visibility:public"],
 )

@@ -8,8 +8,6 @@ evidence, file references and proposed fix; this file is the index.
 - [ ] [#16](https://github.com/rickmark/garage-rag/issues/16) Replace or fence off the stub `llama_xpc`
       inference engine. The app's default embedding provider returns canned text and byte-histogram
       vectors on both the Swift and Python side, and backfill persists them as real embeddings.
-- [ ] [#20](https://github.com/rickmark/garage-rag/issues/20) Decide the fate of `macapp/Package.swift`:
-      `swift run` cannot build the app; either update the manifest or delete it.
 - [ ] [#21](https://github.com/rickmark/garage-rag/issues/21) Fill in the `PRIVACY.md` effective date and
       contact placeholders.
 

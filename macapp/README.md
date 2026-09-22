@@ -8,12 +8,12 @@ Fully self-contained: no Homebrew or system Python required at runtime.
 
 The app is built by Bazel (via the Aspect CLI, see the [repo README](../README.md)
 and `CLAUDE.md` for the one-time `direnv allow` / `bazel run //tools:bazel_env`
-setup). There is no `swift build` / `swift run` path for the app itself:
-`Package.swift` in this directory only builds the client library targets
-(`LlamaClient`, `ModelDownloadClient`, `IngestClient`, `MCPServerClient`) for
-quick iteration, because `GarageApp` and the XPC services depend on
-gRPC-Swift, SwiftProtobuf, PythonKit and the vendored Python / Postgres /
-llama.cpp that only the Bazel build provides.
+setup). There is no SwiftPM manifest and no `swift build` / `swift run` path:
+every module, the client libraries included, depends on `PythonXPCService`,
+which in turn needs PythonKit, the CPython embedding shim and the vendored
+Python / Postgres / llama.cpp that only the Bazel build provides. For an IDE
+loop, generate the Xcode project (`aspect run //:xcodeproj`), which carries
+the app, every XPC service and all three test bundles.
 
 ```bash
 # Ad-hoc signed app bundle (alias of //macapp/Sources/GarageApp:GarageApp)
