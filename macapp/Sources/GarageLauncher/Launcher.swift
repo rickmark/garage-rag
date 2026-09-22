@@ -56,7 +56,7 @@ public enum Launcher {
     public static func run(_ entry: LauncherEntryPoint) -> Never {
         let executable = executablePath()
         let appBundle = containingAppBundle(of: executable)
-        exportLauncherPaths(nextTo: executable)
+        exportMCPLauncherPath(nextTo: executable)
 
         if entry.needsDatabase(CommandLine.arguments) {
             do {
@@ -95,16 +95,13 @@ public enum Launcher {
         return bundle.pathExtension == "app" ? bundle : nil
     }
 
-    /// Tells Python where both launchers are, so `mcp-install` / `mcp-status` name a
-    /// command an MCP client can run (sys.executable names an interpreter the bundle
-    /// does not ship).
-    private static func exportLauncherPaths(nextTo executable: URL) {
-        let directory = executable.deletingLastPathComponent()
-        for (name, variable) in [("garage", "GARAGE_CLI_EXECUTABLE"), ("garage-mcp", "GARAGE_MCP_EXECUTABLE")] {
-            let path = directory.appendingPathComponent(name).path
-            if FileManager.default.isExecutableFile(atPath: path) {
-                setenv(variable, path, 1)
-            }
+    /// Tells Python where the bundled `garage-mcp` is, so `mcp-install` / `mcp-status`
+    /// name the stdio entry point an MCP client can run (sys.executable names an
+    /// interpreter the bundle does not ship).
+    private static func exportMCPLauncherPath(nextTo executable: URL) {
+        let path = executable.deletingLastPathComponent().appendingPathComponent("garage-mcp").path
+        if FileManager.default.isExecutableFile(atPath: path) {
+            setenv("GARAGE_MCP_EXECUTABLE", path, 1)
         }
     }
 

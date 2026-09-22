@@ -636,16 +636,29 @@ runner = CliRunner()
 
 
 class TestMcpCliCommands:
-    def test_mcp_serve_defaults_to_stdio(self) -> None:
+    def test_mcp_serve_defaults_to_http(self) -> None:
+        """stdio belongs to `garage-mcp`; the CLI command is the long-running HTTP server."""
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
             result = runner.invoke(app, ["mcp-serve"])
-            assert result.exit_code == 0
-            mock_serve.assert_called_once_with("stdio")
+            assert result.exit_code == 0, result.output
+            assert mock_serve.call_args.args == ("streamable-http",)
+
+    def test_mcp_serve_stdio_still_serves_old_registrations_with_a_notice(self) -> None:
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+            result = runner.invoke(app, ["mcp-serve", "--stdio"])
+        assert result.exit_code == 0
+        mock_serve.assert_called_once_with("stdio")
+        assert "garage-mcp" in result.stderr
+        assert "garage-mcp" not in result.stdout
+
+    def test_mcp_serve_stdio_is_not_advertised(self) -> None:
+        result = runner.invoke(app, ["mcp-serve", "--help"])
+        assert "--stdio" not in result.output
 
     def test_mcp_serve_conflicting_transports(self) -> None:
-        result = runner.invoke(app, ["mcp-serve", "--stdio", "--http"])
+        result = runner.invoke(app, ["mcp-serve", "--sse", "--http"])
         assert result.exit_code != 0
-        assert "choose one of --stdio, --http, or --sse" in result.output
+        assert "choose one of --http or --sse" in result.output
 
     def test_mcp_serve_remote_without_allow_remote_fails(self) -> None:
         result = runner.invoke(app, ["mcp-serve", "--http", "--host", "0.0.0.0"])

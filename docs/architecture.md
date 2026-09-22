@@ -130,7 +130,9 @@ recall.
 
 ### 9. Serve (`mcp_server/server.py`)
 
-MCP 2.0 over stdio. Every tool returns a dataclass, because under MCP 2.0
+MCP 2.0 over stdio (`garage-mcp`, the entry point clients spawn, separate from
+the `garage` CLI) or HTTP (`garage mcp-serve`, or the macOS app's MCP helper).
+Every tool returns a dataclass, because under MCP 2.0
 dataclass returns map field-for-field while scalars and lists get wrapped in
 `{"result": ...}`. `rag_search`, `rag_get_document`, `rag_list_sources`,
 `rag_list_authors` and `rag_stats` read the corpus; `rag_ask` and

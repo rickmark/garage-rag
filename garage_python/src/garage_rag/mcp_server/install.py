@@ -192,73 +192,56 @@ def plan_targets(
 
 
 # Set by the macOS app's launchers (macapp/Sources/GarageLauncher), and by the app for
-# its gRPC server, to the bundled `garage` and `garage-mcp` executables.
-CLI_EXECUTABLE_ENV = "GARAGE_CLI_EXECUTABLE"
+# its gRPC server, to the bundled `garage-mcp` executable.
 MCP_EXECUTABLE_ENV = "GARAGE_MCP_EXECUTABLE"
 
 
-def _exported_executable(variable: str) -> str | None:
-    path = os.environ.get(variable)
+def app_launcher() -> str | None:
+    """The macOS app's bundled `garage-mcp`, when running under the app.
+
+    That launcher starts the app if it is not running and reads the database
+    password from the Keychain, so a registration naming it needs no
+    environment -- in particular no database URL with its password in it.
+    """
+    path = os.environ.get(MCP_EXECUTABLE_ENV)
     if path and Path(path).is_absolute() and os.access(path, os.X_OK):
         return path
     return None
 
 
-def app_launcher() -> str | None:
-    """The macOS app's bundled `garage-mcp` (else `garage`), when running under the app.
-
-    Those launchers start the app if it is not running and read the database
-    password from the Keychain, so a registration naming one needs no
-    environment -- in particular no database URL with its password in it.
-    """
-    return _exported_executable(MCP_EXECUTABLE_ENV) or _exported_executable(CLI_EXECUTABLE_ENV)
-
-
 def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
-    """The command an MCP client should run to start this server.
+    """The command an MCP client should run to start this server: `garage-mcp`.
+
+    `garage-mcp` is the one stdio entry point, separate from the `garage` CLI
+    (whose callback and console output have no business near a JSON-RPC
+    stream). In order of preference: the macOS app's bundled launcher, the
+    `garage-mcp` console script next to this interpreter, and the server module
+    run by this interpreter.
 
     A client launches the server from an arbitrary working directory, where the
-    config search order would find nothing. ``--config`` is therefore passed
-    explicitly with an absolute path -- which is why the ``garage`` entry point
-    is preferred over ``garage-mcp``: it accepts the flag.
+    config search order would find nothing, so ``--config`` is passed with an
+    absolute path.
 
     ``sys.executable`` is used **unresolved** on purpose. Inside a virtualenv it
     is already the right path (``.venv/bin/python``); resolving it follows the
     symlink out to the base interpreter, which has none of this project's
     packages installed and fails with ModuleNotFoundError at launch.
     """
-    interpreter = Path(sys.executable)
-
-    # `--config` is a global option on the Typer callback, so it must precede the
-    # subcommand. Placed after `mcp-serve` it fails with "No such option".
-    head: list[str] = []
+    args: list[str] = []
     if config_path is not None:
-        head = ["--config", str(config_path.expanduser().resolve())]
+        args = ["--config", str(config_path.expanduser().resolve())]
 
     # Inside the macOS app, Python is embedded in the Swift launchers and
-    # sys.executable names an interpreter the bundle does not ship. The launchers
-    # export their paths so the command points at something that runs; the
-    # bundled `garage-mcp` serves stdio and accepts --config.
-    if mcp := _exported_executable(MCP_EXECUTABLE_ENV):
-        return mcp, head
-    if launcher := _exported_executable(CLI_EXECUTABLE_ENV):
-        return launcher, [*head, "mcp-serve", "--stdio"]
+    # sys.executable names an interpreter the bundle does not ship.
+    if launcher := app_launcher():
+        return launcher, args
 
-    garage = interpreter.parent / "garage"
-    if garage.is_file() and os.access(garage, os.X_OK):
-        return str(garage), [*head, "mcp-serve", "--stdio"]
-
+    interpreter = Path(sys.executable)
     console_script = interpreter.parent / "garage-mcp"
-    if console_script.is_file() and os.access(console_script, os.X_OK) and not head:
-        return str(console_script), []
+    if console_script.is_file() and os.access(console_script, os.X_OK):
+        return str(console_script), args
 
-    return str(interpreter), [
-        "-m",
-        "garage_rag.cli",
-        *head,
-        "mcp-serve",
-        "--stdio",
-    ]
+    return str(interpreter), ["-m", "garage_rag.mcp_server.server", *args]
 
 
 def http_url(host: str, port: int, path: str) -> str:

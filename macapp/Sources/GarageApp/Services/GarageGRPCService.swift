@@ -89,11 +89,10 @@ final class GarageGRPCService: ObservableObject {
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
         }
-        // McpInstall / McpStatus name the command MCP clients spawn; without these the
-        // server would name its own embedded interpreter, which clients cannot run.
-        for (variable, launcher) in [("GARAGE_CLI_EXECUTABLE", Paths.garageCLI), ("GARAGE_MCP_EXECUTABLE", Paths.garageMCP)]
-        where FileManager.default.isExecutableFile(atPath: launcher.path) {
-            env[variable] = launcher.resolvingSymlinksInPath().path
+        // McpInstall / McpStatus name the command MCP clients spawn, `garage-mcp`; without
+        // this the server would name its own embedded interpreter, which clients cannot run.
+        if FileManager.default.isExecutableFile(atPath: Paths.garageMCP.path) {
+            env["GARAGE_MCP_EXECUTABLE"] = Paths.garageMCP.resolvingSymlinksInPath().path
         }
         return env
     }

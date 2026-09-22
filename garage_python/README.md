@@ -11,7 +11,7 @@ MCP 2.0 and gRPC. Communications never leave the machine; see [`docs/privacy.md`
 | Command | Module | Role |
 |---|---|---|
 | `garage` | `garage_rag.cli:main_cli` | ingest, backfill, enrich-facts, search, config, model registry, `serve` (gRPC bridge for the macOS app) |
-| `garage-mcp` | `garage_rag.mcp_server.server:main` | MCP 2.0 server over stdio or local HTTP (`garage mcp-install` wires it into Claude Desktop/Code) |
+| `garage-mcp` | `garage_rag.mcp_server.server:main` | MCP 2.0 server over stdio, the command MCP clients spawn (`garage mcp-install --stdio` wires it into Claude Desktop/Code); `garage mcp-serve` runs the HTTP server |
 
 Both are console scripts of the `garage_rag` package. The macOS app does not
 ship them as standalone binaries: it bundles the package as

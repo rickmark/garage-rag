@@ -114,12 +114,15 @@ For detailed architectural and design specifications, see:
 
 6. **Start or Install the MCP Server**:
    ```bash
-   # Run standalone stdio server for LLM agents
-   garage-mcp
+   # The stdio server MCP clients spawn (its own entry point, separate from the CLI)
+   garage-mcp --config ~/.garage.json
 
-   # Or install into Claude Desktop / Claude Code configurations
+   # Or one long-running HTTP server for several clients
+   garage mcp-serve
+
+   # Register either with Claude Desktop / Claude Code (HTTP by default, --stdio for garage-mcp)
    garage mcp-install --target claude-desktop
-   garage mcp-install --target claude-code-user
+   garage mcp-install --target claude-code-user --stdio
    ```
 
 ---

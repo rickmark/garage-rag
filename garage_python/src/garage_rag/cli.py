@@ -1167,7 +1167,8 @@ def mcp_test(
 def mcp_serve(
     stdio: Annotated[
         bool,
-        typer.Option("--stdio", help="Serve on stdin/stdout. The default."),
+        # Kept for registrations written before `garage-mcp` became the stdio entry point.
+        typer.Option("--stdio", hidden=True, help="Deprecated: MCP clients spawn `garage-mcp`."),
     ] = False,
     http: Annotated[
         bool,
@@ -1206,19 +1207,24 @@ def mcp_serve(
         ),
     ] = False,
 ) -> None:
-    """Run the MCP server.
+    """Run the MCP server over HTTP (streamable-http, the default) or legacy SSE.
 
-    Defaults to stdio, which is how MCP clients spawn it. Use --http to serve
-    several clients from one long-running process or to reach it from a
-    container or another host.
+    One long-running process serving several clients, or reachable from a
+    container or another host. MCP clients that spawn the server over stdio run
+    `garage-mcp` instead; `garage mcp-install` registers either.
     """
     from garage_rag.mcp_server.server import is_loopback, serve
 
     if sum(map(bool, (stdio, http, sse))) > 1:
-        raise typer.BadParameter("choose one of --stdio, --http, or --sse")
+        raise typer.BadParameter("choose one of --http or --sse")
 
-    if not (http or sse):
-        # stdio speaks JSON-RPC on stdout; nothing else may write there.
+    if stdio:
+        # stdio speaks JSON-RPC on stdout; the notice goes to stderr only.
+        print(
+            "garage: `garage mcp-serve --stdio` is deprecated; MCP clients should spawn `garage-mcp`. "
+            "Re-run `garage mcp-install --stdio` to update this registration.",
+            file=sys.stderr,
+        )
         serve("stdio")
         return
 

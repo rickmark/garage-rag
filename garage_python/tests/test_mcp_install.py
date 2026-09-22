@@ -16,7 +16,6 @@ from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
-    CLI_EXECUTABLE_ENV,
     MCP_EXECUTABLE_ENV,
     MULTI_TARGETS,
     ClientTarget,
@@ -112,60 +111,42 @@ class TestServerCommand:
         command, _ = server_command()
         assert Path(command).is_absolute()
 
-    def test_command_invokes_mcp_serve(self) -> None:
-        """Whichever entry point is chosen, it must end up serving on stdio."""
+    def test_command_is_the_stdio_entry_point(self) -> None:
+        """`garage-mcp` is the one stdio entry point, never the `garage` CLI."""
         command, args = server_command()
-        if args:
-            assert "mcp-serve" in args
-            assert "--stdio" in args
+        if Path(command).name == "garage-mcp":
+            assert args == []
         else:
-            assert Path(command).name == "garage-mcp"
+            assert args == ["-m", "garage_rag.mcp_server.server"]
+        assert "mcp-serve" not in args
 
     def test_config_path_is_passed_absolutely(self, tmp_path: Path) -> None:
         """A client launches from an arbitrary cwd, where the config search
         order would find nothing -- so the path must be explicit and absolute."""
         cfg = tmp_path / "garage.json"
         cfg.write_text("{}")
-        command, args = server_command(cfg)
-        assert "--config" in args
-        supplied = Path(args[args.index("--config") + 1])
-        assert supplied.is_absolute()
-        assert supplied == cfg.resolve()
-        assert Path(command).name in {"garage", Path(sys.executable).name}
+        _command, args = server_command(cfg)
+        assert args[-2:] == ["--config", str(cfg.resolve())]
+        assert Path(args[-1]).is_absolute()
 
-    def test_app_launcher_wins_when_exported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_bundled_garage_mcp_wins_when_exported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """In the app, sys.executable is an interpreter the bundle does not ship;
-        the Swift launcher exports its own path and that is what clients must run."""
-        launcher = tmp_path / "garage"
+        the Swift launcher exports the bundled `garage-mcp`, which clients must run."""
+        launcher = tmp_path / "garage-mcp"
         launcher.write_text("#!/bin/sh\n")
         launcher.chmod(0o755)
-        monkeypatch.setenv(CLI_EXECUTABLE_ENV, str(launcher))
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
         cfg = tmp_path / "garage.json"
         cfg.write_text("{}")
         command, args = server_command(cfg)
         assert command == str(launcher)
-        assert args == ["--config", str(cfg.resolve()), "mcp-serve", "--stdio"]
-
-    def test_bundled_garage_mcp_wins_over_the_cli_launcher(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The app ships a `garage-mcp` launcher that serves stdio and takes --config."""
-        for name, variable in (("garage", CLI_EXECUTABLE_ENV), ("garage-mcp", MCP_EXECUTABLE_ENV)):
-            launcher = tmp_path / name
-            launcher.write_text("#!/bin/sh\n")
-            launcher.chmod(0o755)
-            monkeypatch.setenv(variable, str(launcher))
-        cfg = tmp_path / "garage.json"
-        cfg.write_text("{}")
-        command, args = server_command(cfg)
-        assert command == str(tmp_path / "garage-mcp")
         assert args == ["--config", str(cfg.resolve())]
 
     def test_non_executable_launcher_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        launcher = tmp_path / "garage"
+        launcher = tmp_path / "garage-mcp"
         launcher.write_text("")
         launcher.chmod(0o644)
-        monkeypatch.setenv(CLI_EXECUTABLE_ENV, str(launcher))
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
         command, _ = server_command()
         assert command != str(launcher)
 
@@ -389,19 +370,6 @@ class TestLoopbackDetection:
         from garage_rag.mcp_server.server import is_loopback
 
         assert not is_loopback("some-host.local")
-
-
-class TestArgumentOrder:
-    def test_config_precedes_the_subcommand(self, tmp_path: Path) -> None:
-        """Regression: `--config` is a global Typer option.
-
-        Placed after `mcp-serve` the CLI rejects it with "No such option:
-        --config", so the client would spawn a server that dies immediately.
-        """
-        cfg = tmp_path / "garage.json"
-        cfg.write_text("{}")
-        _command, args = server_command(cfg)
-        assert args.index("--config") < args.index("mcp-serve")
 
 
 class TestPlanTargets:
