@@ -22,7 +22,7 @@ import logging
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from garage_rag.config import get_settings
@@ -179,8 +179,11 @@ class LlamaXPCClient:
         data = payload.get("data")
         if not isinstance(data, list):
             raise LlamaXPCError("POST /v1/embeddings: reply has no 'data' list")
+        # isinstance narrows to list[object]; the items are JSON objects, and a malformed
+        # one surfaces as the KeyError/TypeError handled below.
+        items = cast(list[dict[str, Any]], data)
         try:
-            ordered = sorted(data, key=lambda item: int(item["index"]))
+            ordered = sorted(items, key=lambda item: int(item["index"]))
             return [[float(x) for x in item["embedding"]] for item in ordered]
         except (KeyError, TypeError, ValueError) as exc:
             raise LlamaXPCError(f"POST /v1/embeddings: malformed embedding item: {exc}") from exc

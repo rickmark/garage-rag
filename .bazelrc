@@ -39,6 +39,9 @@ build:local --platforms=//bazel:local
 # instead, which a rebuild does not change. Put `build --config=local_signed` in
 # user.bazelrc to make it the local default.
 build:local_signed --platforms=//bazel:local_signed
+# CI runners have no local signing identity (and no Keychain to put one in), so
+# `aspect` runs there with --config=ci and sign ad hoc instead.
+build:ci --platforms=//bazel:adhoc
 build:arm_developer_id --platforms=//bazel:arm_developer_id --macos_cpus=arm64
 build:developer_id --platforms=//bazel:universal_developer_id --macos_cpus=arm64
 build:universal --platforms=//bazel:universal_developer_id --macos_cpus=arm64
