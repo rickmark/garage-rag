@@ -116,22 +116,38 @@ def test_scan_git_repository(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(tmp_path), "add", "README.md", "main.py"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "initial commit"], check=True, capture_output=True)
 
+    # Ingest walks the working tree, untracked files included, and the scan
+    # counts the same thing, so expected_elements matches what a run sees.
     res_no_code = scan_git(tmp_path, source_slug="git-test", include_code=False)
     assert res_no_code.kind == "git"
-    assert res_no_code.item_count == 1  # Only README.md (main.py is code)
+    assert res_no_code.item_count == 2  # README.md and untracked.md (main.py is code)
     assert res_no_code.item_type == "files"
     assert res_no_code.details.get("is_git_repo") is True
+    assert res_no_code.details.get("tracked_files") == 2
 
     res_code = scan_git(tmp_path, source_slug="git-test", include_code=True)
-    assert res_code.item_count == 2  # README.md and main.py
+    assert res_code.item_count == 3  # plus main.py
 
-    # Prefixes match the repo-relative path git reports, not the absolute one.
+    # Prefixes are root-relative, as in the walker.
     (tmp_path / "Library").mkdir()
     (tmp_path / "Library" / "x.md").write_text("# x", encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "Library/x.md"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "lib"], check=True, capture_output=True)
-    assert scan_git(tmp_path, source_slug="git-test").item_count == 2
-    assert scan_git(tmp_path, source_slug="git-test", exclude_prefixes=("Library/",)).item_count == 1
+    assert scan_git(tmp_path, source_slug="git-test").item_count == 3
+    assert scan_git(tmp_path, source_slug="git-test", exclude_prefixes=("Library/",)).item_count == 2
+
+
+def test_scan_git_counts_what_ingest_walks(tmp_path: Path) -> None:
+    """The scan's count for a git source equals the walk ingest does over it."""
+    from garage_rag.ingest.walker import walk
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "tracked.md").write_text("# t", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("untracked notes", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text("# g", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.md"], check=True, capture_output=True)
+
+    walked = sum(1 for _ in walk(tmp_path))
+    assert scan_git(tmp_path, source_slug="git-test").item_count == walked == 3
 
 
 def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
@@ -139,6 +155,7 @@ def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
     res = scan_git(tmp_path, source_slug="non-git")
     assert res.item_count == 1
     assert res.item_type == "files"
+    assert res.details.get("is_git_repo") is False
 
 
 # ---------------------------------------------------------------------------

@@ -191,20 +191,30 @@ def scan_git(
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
 ) -> SourceScanResult:
-    """Count tracked indexable files in a git repository."""
-    start_time = time.perf_counter()
-    if not root.exists():
-        return SourceScanResult(
-            source_slug=source_slug,
-            kind="git",
-            root=root,
-            item_count=0,
-            item_type="files",
-            duration_seconds=time.perf_counter() - start_time,
-            error=f"path does not exist: {root}",
-        )
+    """Count the files ingest will walk in a git working tree.
 
-    # Check if git is available and root is in a git repository
+    Ingest walks the working tree, untracked files included, so the count comes
+    from the same filesystem walk; counting ``git ls-files`` instead made
+    ``expected_elements`` disagree with what a run sees. The tracked-file count
+    is kept as a detail.
+    """
+    result = scan_filesystem(
+        root,
+        source_slug=source_slug,
+        include_code=include_code,
+        exclude_prefixes=exclude_prefixes,
+    )
+    result.kind = "git"
+    if result.error is None:
+        tracked = _count_tracked_files(root)
+        result.details = {**result.details, "is_git_repo": tracked is not None}
+        if tracked is not None:
+            result.details["tracked_files"] = tracked
+    return result
+
+
+def _count_tracked_files(root: Path) -> int | None:
+    """``git ls-files`` count, or None when ``root`` is not a git work tree."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z"],
@@ -212,51 +222,12 @@ def scan_git(
             check=False,
             timeout=10,
         )
-        if proc.returncode == 0:
-            raw_entries = proc.stdout.split(b"\x00")
-            tracked_count = 0
-            indexable_count = 0
-            for entry in raw_entries:
-                if not entry:
-                    continue
-                tracked_count += 1
-                rel_path_str = entry.decode("utf-8", errors="replace")
-                if exclude_prefixes and rel_path_str.startswith(exclude_prefixes):
-                    continue
-                file_path = root / rel_path_str
-                if is_diagnostic_file(file_path.name) or is_dependency_path(str(file_path)):
-                    continue
-                if not is_indexable(file_path):
-                    continue
-                if not include_code and is_code_path(file_path):
-                    continue
-                indexable_count += 1
-
-            return SourceScanResult(
-                source_slug=source_slug,
-                kind="git",
-                root=root,
-                item_count=indexable_count,
-                item_type="files",
-                details={
-                    "tracked_files": tracked_count,
-                    "indexable_files": indexable_count,
-                    "is_git_repo": True,
-                },
-                duration_seconds=time.perf_counter() - start_time,
-            )
-    except Exception as exc:
-        log.debug("git ls-files failed on %s (%s); falling back to filesystem walk", root, exc)
-
-    # Fallback to filesystem scanner
-    res = scan_filesystem(
-        root,
-        source_slug=source_slug,
-        include_code=include_code,
-        exclude_prefixes=exclude_prefixes,
-    )
-    res.kind = "git"
-    return res
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("git ls-files failed on %s: %s", root, exc)
+        return None
+    if proc.returncode != 0:
+        return None
+    return sum(1 for entry in proc.stdout.split(b"\x00") if entry)
 
 
 # ---------------------------------------------------------------------------
