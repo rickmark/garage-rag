@@ -110,6 +110,36 @@ final class GarageViewTests: XCTestCase {
         XCTAssertNotNil(hostingController.view)
     }
 
+    @MainActor
+    func testBugReportViewHosting() {
+        let appState = AppState()
+        let bugReportView = BugReportView(version: AppVersionInfo(shortVersion: "0.9", build: "42"))
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: bugReportView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
+    func testBugReportViewHostingFromLogsContext() {
+        let appState = AppState()
+        let bugReportView = BugReportView(context: BugReportContext(logSource: .postgres, attachLogs: true))
+            .environmentObject(appState)
+        let hostingController = NSHostingController(rootView: bugReportView)
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    @MainActor
+    func testBugNubHosting() {
+        let hostingController = NSHostingController(rootView: BugNub())
+        XCTAssertNotNil(hostingController.view)
+    }
+
+    func testContentViewSheetIdentity() {
+        // The two sheets must be distinguishable, otherwise swapping one for
+        // the other is a no-op for SwiftUI.
+        XCTAssertNotEqual(ContentView.ActiveSheet.splash.id, ContentView.ActiveSheet.bugReport(BugReportContext()).id)
+    }
+
     func testLogSourceCases() {
         let cases = LogsView.LogSource.allCases
         XCTAssertEqual(cases.count, 9)

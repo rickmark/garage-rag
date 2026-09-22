@@ -86,6 +86,8 @@ final class AppState: ObservableObject {
     private(set) var hasHandedOffToRelaunch = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
     private var pendingMaintenanceTask: Task<Void, Never>?
+    /// Maintenance came due while the setup assistant was open; run it when it closes.
+    private(set) var isMaintenanceDeferredForFirstRun = false
 
     convenience init() {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
@@ -167,9 +169,11 @@ final class AppState: ObservableObject {
             if let parent = Self.databaseResetParent(in: arguments) {
                 await Self.waitForExit(of: parent, timeout: 30)
             }
-            launchServices(startsPostgres: false)
-            await startPostgres()
-            await finishDatabaseReset()
+            // The setup assistant's first page creates the new database and
+            // registers garage.json's sources again; "Skip setup" finishes the
+            // reset without it and leaves the unconfigured main window.
+            launchServices(startsPostgres: false, presentsFirstRun: false)
+            firstRun.begin(afterDatabaseReset: true)
         }
     }
 
@@ -191,7 +195,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func launchServices(startsPostgres: Bool) {
+    /// `presentsFirstRun` is false after a reset: that launch opens the assistant
+    /// in its reset mode itself, rather than the ordinary first-run check.
+    private func launchServices(startsPostgres: Bool, presentsFirstRun: Bool = true) {
         // Before anything reads the data folder's contents or starts Postgres / an XPC service.
         GarageDataMigration.runAtLaunch()
         fetchPresetModels()
@@ -204,6 +210,12 @@ final class AppState: ObservableObject {
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
+        if presentsFirstRun, firstRun.shouldPresentAtLaunch {
+            // The assistant's first page drives Postgres and service startup
+            // itself so it can show progress and retry on failure.
+            firstRun.begin()
+            return
+        }
         guard startsPostgres else { return }
         if firstRun.shouldPresentAtLaunch {
             // The assistant's first page drives Postgres and service startup
@@ -428,8 +440,7 @@ final class AppState: ObservableObject {
                 logger.error("Relaunch after reset failed: \(failure, privacy: .public)")
                 self.hasHandedOffToRelaunch = false
                 self.isResettingDatabase = false
-                await self.startPostgres()
-                await self.finishDatabaseReset()
+                self.firstRun.begin(afterDatabaseReset: true)
             }
         }
     }
@@ -462,6 +473,8 @@ final class AppState: ObservableObject {
 
     /// Second half of a reset, once Postgres has initialized a new cluster: apply the schema,
     /// start the gRPC and MCP services, and register the sources garage.json declares again.
+    /// The setup assistant runs it from its first page after a reset, or in the background
+    /// when the user skips the assistant before that page gets this far.
     func finishDatabaseReset() async {
         do {
             if postgres.status == .needsMigration {
@@ -946,6 +959,15 @@ final class AppState: ObservableObject {
     }
 
     private func runScheduledMaintenance() async {
+        // The assistant registers sources and then models, one operation at a time. A scan
+        // started by the first source added would hold `runOperation` for as long as it
+        // takes to walk the folder, and every later add would fail with "A garage command is
+        // already running." Indexing also belongs after the models are chosen, so the backfill
+        // runs with them: hold it until the assistant closes.
+        if firstRun.isActive {
+            isMaintenanceDeferredForFirstRun = true
+            return
+        }
         guard postgres.status == .running, !ingestService.isRunning, !backfill.isRunning else { return }
 
         _ = await scanSources()
@@ -960,6 +982,14 @@ final class AppState: ObservableObject {
     func triggerMaintenanceIfEnabled() async {
         guard scheduledMaintenanceEnabled else { return }
         await runScheduledMaintenance()
+    }
+
+    /// Runs the maintenance the setup assistant held back (see `runScheduledMaintenance`), once
+    /// it has closed. A no-op when nothing came due.
+    func resumeMaintenanceAfterFirstRun() {
+        guard isMaintenanceDeferredForFirstRun else { return }
+        isMaintenanceDeferredForFirstRun = false
+        scheduleDebouncedMaintenanceTrigger()
     }
 
     /// Debounces `triggerMaintenanceIfEnabled()` so a rapid burst of add-source/

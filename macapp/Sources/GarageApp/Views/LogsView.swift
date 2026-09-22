@@ -118,6 +118,25 @@ public struct LogsView: View {
             .font(.caption)
             .controlSize(.small)
             .help("Fetch historical entries from OSLogStore")
+
+            Divider()
+                .frame(height: 14)
+
+            // The Logs view is where a user first sees something go wrong, so
+            // the reporter opens here pre-loaded with the stream they are on.
+            Button {
+                NotificationCenter.default.post(
+                    name: .garageShowBugReport,
+                    object: BugReportContext(logSource: source, attachLogs: true)
+                )
+            } label: {
+                Label("Report a Bug", systemImage: "ladybug")
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .controlSize(.small)
+            .help("Open a bug report with these log lines attached")
+            .accessibilityIdentifier("logs.reportBug")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
