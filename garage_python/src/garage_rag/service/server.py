@@ -125,7 +125,10 @@ def _version() -> str:
     # gazelle:ignore garage_rag
     import garage_rag
 
-    return garage_rag.__version__
+    # ty only sees this target's sources, and garage_rag/__init__.py is not one
+    # of them (that dependency is the cycle the local import breaks), so the
+    # package resolves here without its attributes.
+    return garage_rag.__version__  # ty: ignore[unresolved-attribute]
 
 
 class GarageRpcServicer(GarageServiceServicer):

@@ -141,9 +141,9 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testRefreshPendingMigrationsWhenStoppedReturnsEmpty() {
+    func testRefreshPendingMigrationsWhenStoppedReturnsEmpty() async {
         let service = PostgresService()
-        let result = service.refreshPendingMigrations()
+        let result = await service.refreshPendingMigrations()
         XCTAssertTrue(result.isEmpty)
         XCTAssertTrue(service.pendingMigrations.isEmpty)
     }

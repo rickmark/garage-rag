@@ -166,7 +166,7 @@ final class AppState: ObservableObject {
         isFetchingModels = true
         defer { isFetchingModels = false }
         do {
-            let models = try postgres.listRegisteredModels()
+            let models = try await postgres.listRegisteredModels()
             self.registeredModels = models
         } catch {
             // Silently ignore or leave models as-is if table not yet migrated
@@ -181,7 +181,7 @@ final class AppState: ObservableObject {
         var dbSources: [RegisteredSource] = []
         if postgres.status == .running {
             do {
-                dbSources = try postgres.listRegisteredSources()
+                dbSources = try await postgres.listRegisteredSources()
             } catch {
                 // Table might not exist yet or error
             }
@@ -224,12 +224,13 @@ final class AppState: ObservableObject {
         isFetchingStats = true
         defer { isFetchingStats = false }
         do {
-            var stats = try postgres.fetchCorpusStats()
+            var stats = try await postgres.fetchCorpusStats()
             if stats.sourcesCount == 0 && !registeredSources.isEmpty {
                 stats.sourcesCount = registeredSources.count
             }
             self.corpusStats = stats
-            if let docCounts = try? postgres.fetchSourceDocumentCounts() {
+            let docCounts = stats.sourceDocumentCounts
+            if !docCounts.isEmpty {
                 self.registeredSources = self.registeredSources.map { source in
                     var updated = source
                     if let count = docCounts[source.slug] {
@@ -322,15 +323,14 @@ final class AppState: ObservableObject {
     }
 
     func checkPendingMigrations() {
-        postgres.refreshPendingMigrations()
-        if postgres.status == .running {
-            Task {
-                if mcp.status == .stopped {
-                    try? await mcp.start()
-                }
-                if grpc.status == .stopped {
-                    try? await grpc.start()
-                }
+        Task {
+            await postgres.refreshPendingMigrations()
+            guard postgres.status == .running else { return }
+            if mcp.status == .stopped {
+                try? await mcp.start()
+            }
+            if grpc.status == .stopped {
+                try? await grpc.start()
             }
         }
     }
@@ -402,11 +402,15 @@ final class AppState: ObservableObject {
     }
 
     func backupDatabase(to destination: URL) {
-        performDatabaseOperation { try postgres.backupDatabase(to: destination) }
+        Task {
+            await performDatabaseOperation { try await postgres.backupDatabase(to: destination) }
+        }
     }
 
     func restoreDatabase(from source: URL) {
-        performDatabaseOperation { try postgres.restoreDatabase(from: source) }
+        Task {
+            await performDatabaseOperation { try await postgres.restoreDatabase(from: source) }
+        }
     }
 
     @discardableResult
@@ -755,9 +759,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func performDatabaseOperation(_ operation: () throws -> Void) {
+    private func performDatabaseOperation(_ operation: () async throws -> Void) async {
         do {
-            try operation()
+            try await operation()
             lastCommandSucceeded = true
             lastCommandOutput = "Completed successfully."
         } catch {

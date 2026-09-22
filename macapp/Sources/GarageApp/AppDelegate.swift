@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let state = state {
                     await state.stopPostgres()
                 } else {
-                    PostgresService.stopAnyRunningInstance()
+                    await PostgresService.stopAnyRunningInstance()
                 }
             }
 
@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 state.terminateImmediately()
             } else {
                 XPCServiceManager.stopAnyRunningInstances()
-                PostgresService.stopAnyRunningInstance()
+                PostgresService.stopAnyRunningInstanceSync()
             }
 
             sender.reply(toApplicationShouldTerminate: true)
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.terminateImmediately()
         } else {
             XPCServiceManager.stopAnyRunningInstances()
-            PostgresService.stopAnyRunningInstance()
+            PostgresService.stopAnyRunningInstanceSync()
         }
     }
 }

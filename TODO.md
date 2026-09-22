@@ -15,8 +15,6 @@ evidence, file references and proposed fix; this file is the index.
 
 ## Follow-up refactors
 
-- [ ] [#22](https://github.com/rickmark/garage-rag/issues/22) Move `PostgresService` psql calls off the
-      main actor and collapse `fetchCorpusStats` into one query.
 - [ ] [#23](https://github.com/rickmark/garage-rag/issues/23) Collapse the CLI/gRPC duplication in
       `service/server.py` and delete the 24 RPCs nothing calls.
 - [ ] [#25](https://github.com/rickmark/garage-rag/issues/25) Extract shared SwiftUI components (badge,

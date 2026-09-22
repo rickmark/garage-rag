@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from mcp.server import MCPServer
 from pydantic import BeforeValidator, Field
@@ -253,9 +253,11 @@ def rag_search(
     # The BeforeValidator only runs when the call comes through the MCP layer; a
     # direct Python call still needs a bare string turned into a one-item list,
     # or list("document") would filter on the letters d, o, c, ...
-    classes = _as_list(corpus_class)
-    tiers = _as_list(trust)
-    slugs = _as_list(source)
+    # `_as_list` is typed object -> object because pydantic hands it whatever the
+    # caller sent; what comes back out is always a list or None.
+    classes = cast("list[str] | None", _as_list(corpus_class))
+    tiers = cast("list[str] | None", _as_list(trust))
+    slugs = cast("list[str] | None", _as_list(source))
     with session_scope() as session:
         hits = run_search(
             session,

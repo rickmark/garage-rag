@@ -67,9 +67,10 @@ final class AppDelegateTests: XCTestCase {
     }
 
     @MainActor
-    func testStopAnyRunningInstancesAreNoOpsInTests() {
+    func testStopAnyRunningInstancesAreNoOpsInTests() async {
         // Both scan for / signal the developer's live processes; under XCTest they must return without acting.
-        PostgresService.stopAnyRunningInstance()
+        await PostgresService.stopAnyRunningInstance()
+        PostgresService.stopAnyRunningInstanceSync()
         XPCServiceManager.stopAnyRunningInstances()
     }
 }

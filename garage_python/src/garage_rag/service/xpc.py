@@ -204,6 +204,8 @@ class PeerAuthenticator:
             return False, f"Exception during verification: {exc}"
 
     def _to_cf_string(self, py_str: str) -> ctypes.c_void_p:
+        if libcf is None:
+            raise RuntimeError("CoreFoundation is unavailable; peer verification needs macOS")
         kCFStringEncodingUTF8 = 0x08000100
         encoded = py_str.encode("utf-8")
         return libcf.CFStringCreateWithBytes(

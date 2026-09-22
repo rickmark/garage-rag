@@ -262,10 +262,12 @@ def get_or_create_author(
     """
     if identities is None:
         pairs: list[tuple[str, str]] = []
-    elif isinstance(identities, Mapping) or hasattr(identities, "items"):
+    elif isinstance(identities, Mapping):
         pairs = list(identities.items())
     else:
-        pairs = list(identities)
+        # Mapping-likes that aren't registered as Mapping still hand over pairs.
+        items = getattr(identities, "items", None)
+        pairs = list(items()) if callable(items) else list(identities)
 
     valid_pairs: list[tuple[str, str]] = []
     for item in pairs:

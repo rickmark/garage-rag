@@ -84,7 +84,10 @@ known-first-party = ["garage_rag"]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning"]
 
-[tool.ty]
+[tool.ty.src]
+# Generated protobuf stubs are excluded from type checking, as they are from Ruff
+# above. `exclude` lives under `src` for ty; a top-level `[tool.ty] exclude` is a
+# hard config error that makes ty exit non-zero before it checks anything.
 exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
 
 [tool.ty.rules]
