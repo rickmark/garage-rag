@@ -53,12 +53,6 @@ alias(
 )
 
 alias(
-    name = "python_static",
-    actual = "//ext/python:python_3_13_static",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "python_framework",
     actual = "//ext/python:python_framework",
     visibility = ["//visibility:public"],

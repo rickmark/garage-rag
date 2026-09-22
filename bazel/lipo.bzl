@@ -1,4 +1,4 @@
-"""Rules for extracting single-architecture (thinned) macOS applications via lipo and codesigning."""
+"""Rules for staging a macOS application for distribution: prune, thin via lipo, codesign."""
 
 def _macos_lipo_app_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
@@ -233,7 +233,7 @@ app_name="$(basename "$app_bundle")"
 
 macos_lipo_app = rule(
     implementation = _macos_lipo_app_impl,
-    doc = "Extracts a single-architecture macOS application bundle from a universal binary app and re-signs it.",
+    doc = "Stages a macOS application bundle for distribution: prunes it, thins every Mach-O to `arch`, and re-signs it.",
     attrs = {
         "app": attr.label(
             mandatory = True,
@@ -241,8 +241,8 @@ macos_lipo_app = rule(
         ),
         "arch": attr.string(
             mandatory = True,
-            values = ["arm64", "x86_64"],
-            doc = "Target architecture to thin to (arm64 or x86_64).",
+            values = ["arm64"],
+            doc = "Target architecture to thin to. Garage ships Apple Silicon only, so arm64.",
         ),
         "options": attr.string_list(
             default = ["runtime"],

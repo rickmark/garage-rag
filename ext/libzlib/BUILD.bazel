@@ -10,9 +10,9 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -g",
+        "CXXFLAGS": "-arch arm64 -g",
+        "LDFLAGS": "-arch arm64",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_static_libs = [
@@ -30,9 +30,9 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -g",
+        "CXXFLAGS": "-arch arm64 -g",
+        "LDFLAGS": "-arch arm64",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_shared_libs = [
@@ -58,17 +58,11 @@ filegroup(
 macho_test(
     name = "libzlib_arch_test",
     src = ":libzlib",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
+    archs = ["arm64"],
 )
 
 macho_test(
     name = "libzlib_shared_arch_test",
     src = ":libzlib_dylibs",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
+    archs = ["arm64"],
 )

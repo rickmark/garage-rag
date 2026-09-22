@@ -1,5 +1,6 @@
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 load("//bazel:version.bzl", "macapp_version")
 
 swift_library(
@@ -56,9 +57,7 @@ macos_application(
     app_icons = ["//macapp:GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",
     bundle_name = "Garage",
-    codesignopts = [
-        "--options=runtime",  # This enables the Hardened Runtime flag
-    ],
+    codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
     entitlements = select({
         "//bazel:is_store": ":Garage.entitlements",
         "//conditions:default": None,

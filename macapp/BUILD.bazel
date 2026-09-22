@@ -86,12 +86,6 @@ xcodeproj(
 )
 
 alias(
-    name = "GarageApp",
-    actual = "//macapp/Sources/GarageApp:GarageApp",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "install",
     actual = "//macapp/package:install",
     visibility = ["//visibility:public"],
@@ -107,7 +101,7 @@ alias(
 alias(
     name = "macapp",
     # The macOS application binary is produced by the developer_id_macos_application rule above.
-    actual = ":GarageApp",
+    actual = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 

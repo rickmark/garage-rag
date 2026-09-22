@@ -1,8 +1,8 @@
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
-    name = "python_3_13_framework",
-    build_file = "@//ext/python:python_3_13.BUILD.bazel",
+    name = "python_source",
+    build_file = "@//ext/python:python.BUILD.bazel",
     sha256 = "1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76",
     strip_prefix = "Python-3.13.15",
     urls = ["https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz"],

@@ -12,9 +12,9 @@ make(
         "pkglibdir": "$$INSTALLDIR/lib",
         "datadir": "$$INSTALLDIR/share",
         "pkgincludedir": "$$INSTALLDIR/include",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -g",
+        "CXXFLAGS": "-arch arm64 -g",
+        "LDFLAGS": "-arch arm64",
     },
     lib_source = "@pgvector//:pgvector_source",
     out_data_dirs = [
@@ -34,8 +34,5 @@ make(
 macho_test(
     name = "pgvector_arch_test",
     src = ":pgvector",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
+    archs = ["arm64"],
 )

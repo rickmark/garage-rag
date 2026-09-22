@@ -14,7 +14,6 @@ configure_make(
         "--enable-framework=$$INSTALLDIR$$/",
         "--without-ensurepip",
         "--with-static-libpython",
-        "--with-universal-archs",
         "--with-openssl=$$EXT_BUILD_DEPS/openssl",
         "--with-readline=readline",
     ],
@@ -28,7 +27,7 @@ configure_make(
         "LIBREADLINE_LIBS": "-lreadline -lncurses",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
     },
-    lib_source = "@python_3_13_framework//:python_source",
+    lib_source = "@python_source//:python_source",
     out_binaries = [
         "python3",
         "python3-config",

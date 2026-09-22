@@ -26,7 +26,7 @@ def _macho_arch_test_impl(ctx):
 
     test_script = ctx.actions.declare_file(ctx.label.name + "_test.sh")
 
-    archs = ctx.attr.archs if ctx.attr.archs else ["arm64", "x86_64"]
+    archs = ctx.attr.archs if ctx.attr.archs else ["arm64"]
     exclude_patterns = ctx.attr.exclude_patterns
 
     archs_str = "\n".join(['    "{}"'.format(a) for a in archs])
@@ -240,8 +240,8 @@ macho_arch_test = rule(
             doc = "Application target to test (alias for src).",
         ),
         "archs": attr.string_list(
-            default = ["arm64", "x86_64"],
-            doc = "List of target architectures required in each Mach-O binary. Defaults to ['arm64', 'x86_64'].",
+            default = ["arm64"],
+            doc = "List of target architectures required in each Mach-O binary. Defaults to ['arm64'].",
         ),
         "binary": attr.label(
             doc = "Binary target to test (alias for src).",

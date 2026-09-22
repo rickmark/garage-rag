@@ -2,112 +2,52 @@ load("//bazel:lipo.bzl", "macos_lipo_app")
 load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
 
-# 1. Lipo out the app to arm64 and x86_64 apps (thinned & codesigned for Developer ID)
+# 1. Stage the app for distribution: prune, thin to arm64, codesign for Developer ID
 macos_lipo_app(
-    name = "GarageApp_arm64",
+    name = "GarageApp",
     app = "//macapp/Sources/GarageApp:GarageApp",
     arch = "arm64",
     signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
     visibility = ["//visibility:public"],
 )
 
-macos_lipo_app(
-    name = "GarageApp_x86_64",
-    app = "//macapp/Sources/GarageApp:GarageApp",
-    arch = "x86_64",
-    signing_identity = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-    visibility = ["//visibility:public"],
-)
-
-# 2. Notarize the thinned applications
+# 2. Notarize the application
 notarytool(
-    name = "GarageAppNotary_arm64",
-    app = ":GarageApp_arm64",
+    name = "GarageAppNotary",
+    app = ":GarageApp",
     keychain_profile = "Primary",
     visibility = ["//visibility:public"],
 )
 
-notarytool(
-    name = "GarageAppNotary_x86_64",
-    app = ":GarageApp_x86_64",
-    keychain_profile = "Primary",
-    visibility = ["//visibility:public"],
-)
-
-notarytool(
+alias(
     name = "GarageNotary",
-    apps = [
-        ":GarageApp_arm64",
-        ":GarageApp_x86_64",
-    ],
-    keychain_profile = "Primary",
+    actual = ":GarageAppNotary",
     visibility = ["//visibility:public"],
 )
 
-# 3. Package installers for each architecture
+# 3. Package the installer
 pkgbuild(
-    name = "GarageInstaller_arm64",
-    app = ":GarageAppNotary_arm64",
-    identifier = "me.rickmark.garage-rag.pkg",
-    install_location = "/Applications",
-    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
-    visibility = ["//visibility:public"],
-)
-
-pkgbuild(
-    name = "GarageInstaller_x86_64",
-    app = ":GarageAppNotary_x86_64",
-    identifier = "me.rickmark.garage-rag.pkg",
-    install_location = "/Applications",
-    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
     name = "GarageInstaller",
-    srcs = [
-        ":GarageInstaller_arm64",
-        ":GarageInstaller_x86_64",
-    ],
+    app = ":GarageAppNotary",
+    identifier = "me.rickmark.garage-rag.pkg",
+    install_location = "/Applications",
+    signing_identity = "Developer ID Installer: Richard Penwell (DWVXMLB45Y)",
     visibility = ["//visibility:public"],
 )
 
-# 4. Notarize the installers
-notarytool(
-    name = "GarageInstallerNotary_arm64",
-    keychain_profile = "Primary",
-    pkg = ":GarageInstaller_arm64",
-    visibility = ["//visibility:public"],
-)
-
-notarytool(
-    name = "GarageInstallerNotary_x86_64",
-    keychain_profile = "Primary",
-    pkg = ":GarageInstaller_x86_64",
-    visibility = ["//visibility:public"],
-)
-
+# 4. Notarize the installer
 notarytool(
     name = "GarageInstallerNotary",
     keychain_profile = "Primary",
-    pkgs = [
-        ":GarageInstaller_arm64",
-        ":GarageInstaller_x86_64",
-    ],
+    pkg = ":GarageInstaller",
     visibility = ["//visibility:public"],
 )
 
 notarytool(
     name = "notarize_all",
-    apps = [
-        ":GarageAppNotary_arm64",
-        ":GarageAppNotary_x86_64",
-    ],
+    apps = [":GarageAppNotary"],
     keychain_profile = "Primary",
-    pkgs = [
-        ":GarageInstallerNotary_arm64",
-        ":GarageInstallerNotary_x86_64",
-    ],
+    pkgs = [":GarageInstallerNotary"],
     visibility = ["//visibility:public"],
 )
 
@@ -115,16 +55,14 @@ notarytool(
 filegroup(
     name = "package",
     srcs = [
-        ":GarageApp_arm64",
-        ":GarageApp_x86_64",
-        ":GarageInstaller_arm64",
-        ":GarageInstaller_x86_64",
+        ":GarageApp",
+        ":GarageInstaller",
     ],
     visibility = ["//visibility:public"],
 )
 
 pkg_install(
     name = "install",
-    pkg = ":GarageInstaller_arm64",
+    pkg = ":GarageInstaller",
     visibility = ["//visibility:public"],
 )

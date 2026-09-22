@@ -11,9 +11,9 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -g",
+        "CXXFLAGS": "-arch arm64 -g",
+        "LDFLAGS": "-arch arm64",
     },
     lib_source = "@libreadline//:libreadline_source",
     out_static_libs = [
@@ -32,9 +32,9 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-arch arm64 -g",
+        "CXXFLAGS": "-arch arm64 -g",
+        "LDFLAGS": "-arch arm64",
     },
     lib_source = "@libreadline//:libreadline_source",
     out_shared_libs = [
@@ -60,17 +60,11 @@ filegroup(
 macho_test(
     name = "libreadline_arch_test",
     src = ":libreadline",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
+    archs = ["arm64"],
 )
 
 macho_test(
     name = "libreadline_shared_arch_test",
     src = ":libreadline_dylibs",
-    archs = [
-        "arm64",
-        "x86_64",
-    ],
+    archs = ["arm64"],
 )

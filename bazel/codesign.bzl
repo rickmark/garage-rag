@@ -14,6 +14,23 @@ universal_binary_test = _universal_binary_test
 multi_arch_test = _multi_arch_test
 macho_test = _macho_arch_test
 
+# Hardened runtime also turns on *library validation*: every Mach-O the process
+# loads must carry the same Team ID as the main executable. An ad-hoc signature
+# carries no Team ID at all, so an ad-hoc app cannot load its own bundled
+# frameworks — `bazel run //macapp` dies in dyld with "mapping process and
+# mapped file (non-platform) have different Team IDs".
+#
+# Hardened runtime is only *required* for notarization, so enable it for the
+# signed distribution configs and leave it off for ad-hoc local builds. The
+# distribution configs sign everything with one Team ID, so validation passes
+# there; the App Store build additionally ships
+# com.apple.security.cs.disable-library-validation in its entitlements.
+HARDENED_RUNTIME_CODESIGNOPTS = select({
+    "//bazel:is_developer_id": ["--options=runtime"],
+    "//bazel:is_store": ["--options=runtime"],
+    "//conditions:default": [],
+})
+
 def _codesign_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))

@@ -32,8 +32,8 @@ aspect test //macapp/Tests/GarageAppUITests:GarageAppUITests
 # Distribution: thinned + notarized apps and .pkg installers (Developer ID),
 # or an App Store xcarchive
 aspect build //:package                  # //macapp/package:package
-aspect build //:installer                # //macapp/package:GarageInstaller (arm64 + x86_64 .pkg)
-aspect run //:install                    # installs the arm64 .pkg locally
+aspect build //:installer                # //macapp/package:GarageInstaller (arm64 .pkg)
+aspect run //:install                    # installs the .pkg locally
 aspect build //macapp:xcarchive          # //macapp:GarageStore.xcarchive
 aspect run //macapp:xcarchive_open       # copies the archive into Xcode's Archives folder and opens it
 
@@ -72,7 +72,7 @@ relocatable — verified by building it, copying the tree to an unrelated path,
 and running `CREATE EXTENSION vector` there with zero path overrides. The Bazel
 build (`//ext/postgres`, a `rules_foreign_cc` `configure_make`) configures with
 `--with-icu --with-readline --with-zlib --with-template=darwin --disable-rpath`
-as a universal (arm64 + x86_64) binary; ICU, readline and zlib come from the
+as an arm64 binary; ICU, readline and zlib come from the
 static libraries under `//ext`, so the result still depends on nothing but macOS
 system libraries. The one thing left to fix up is `libpq.dylib`'s own hardcoded
 install name for the client tools (`//macapp/externals:libpq`).

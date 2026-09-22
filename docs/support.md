@@ -33,7 +33,7 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 <h2 id="system-requirements">1. System Requirements</h2>
 
 - **Operating System**: macOS 14.0 (Sonoma) or macOS 15.0+ (Sequoia)
-- **Architecture**: Apple Silicon (M1/M2/M3/M4) recommended; Intel x86_64 supported
+- **Architecture**: Apple Silicon (M1/M2/M3/M4) only; Intel Macs are not supported
 - **Memory**: 8 GB RAM minimum (16 GB+ recommended when running local embedding models)
 - **Disk Space**: ~500 MB for Garage application and embedded PostgreSQL; database size depends on ingested document corpus
 - **Embedding Backend**: [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) running locally
