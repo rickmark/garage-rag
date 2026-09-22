@@ -6,9 +6,9 @@ import ModelDownloadClient
 final class StatusViewTests: XCTestCase {
 
     func testPageStatusSeverityOrdering() {
-        XCTAssertLessThan(StatusView.PageStatusSeverity.critical, StatusView.PageStatusSeverity.warning)
-        XCTAssertLessThan(StatusView.PageStatusSeverity.warning, StatusView.PageStatusSeverity.info)
-        XCTAssertLessThan(StatusView.PageStatusSeverity.info, StatusView.PageStatusSeverity.healthy)
+        XCTAssertLessThan(PageStatusSeverity.critical, PageStatusSeverity.warning)
+        XCTAssertLessThan(PageStatusSeverity.warning, PageStatusSeverity.info)
+        XCTAssertLessThan(PageStatusSeverity.info, PageStatusSeverity.healthy)
     }
 
     @MainActor
@@ -52,9 +52,9 @@ final class StatusViewTests: XCTestCase {
         let appState = AppState()
         appState.backfill.isRunning = true
 
-        let item = StatusView.modelsStatusItem(for: appState)
+        let item = PageStatus.modelsStatusItem(for: appState)
         XCTAssertEqual(item.section, AppSection.models)
-        XCTAssertEqual(item.severity, StatusView.PageStatusSeverity.info)
+        XCTAssertEqual(item.severity, PageStatusSeverity.info)
         XCTAssertEqual(item.statusHeadline, "Embedding in Progress")
         XCTAssertEqual(item.statusDetails, "Embedder is processing document chunks.")
         XCTAssertNil(item.quickAction)
@@ -65,7 +65,7 @@ final class StatusViewTests: XCTestCase {
         let appState = AppState()
         appState.backfill.isRunning = false
 
-        let item = StatusView.modelsStatusItem(for: appState)
+        let item = PageStatus.modelsStatusItem(for: appState)
         XCTAssertNotEqual(item.statusHeadline, "Embedding in Progress")
     }
 
@@ -74,7 +74,7 @@ final class StatusViewTests: XCTestCase {
         let appState = AppState()
         appState.backfill.isRunning = true
 
-        let items = StatusView.statusItems(for: appState)
+        let items = PageStatus.statusItems(for: appState)
         let modelItem = items.first { $0.section == .models }
         XCTAssertNotNil(modelItem)
         XCTAssertEqual(modelItem?.statusHeadline, "Embedding in Progress")
@@ -203,7 +203,7 @@ final class StatusViewTests: XCTestCase {
             totalIndexedFiles: 20
         ))
 
-        let item = StatusView.sourcesStatusItem(for: appState)
+        let item = PageStatus.sourcesStatusItem(for: appState)
         XCTAssertEqual(item.section, .sources)
         XCTAssertEqual(item.severity, .healthy)
         XCTAssertTrue(item.statusDetails.contains("2 source(s) active"))
@@ -236,7 +236,7 @@ final class StatusViewTests: XCTestCase {
             totalExpectedElements: 50
         ))
 
-        let item = StatusView.sourcesStatusItem(for: appState)
+        let item = PageStatus.sourcesStatusItem(for: appState)
         XCTAssertEqual(item.section, .sources)
         XCTAssertEqual(item.severity, .healthy)
         XCTAssertTrue(item.statusDetails.contains("1 source(s) active"))
@@ -273,7 +273,7 @@ final class StatusViewTests: XCTestCase {
             ]
         ))
 
-        let item = StatusView.modelsStatusItem(for: appState)
+        let item = PageStatus.modelsStatusItem(for: appState)
         XCTAssertEqual(item.section, .models)
         XCTAssertEqual(item.severity, .healthy)
         XCTAssertTrue(item.statusDetails.contains("20 chunk(s) remaining to embed across models"))
