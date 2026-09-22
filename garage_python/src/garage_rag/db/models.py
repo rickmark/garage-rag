@@ -99,7 +99,10 @@ class Source(Base):
     allow_cloud_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     expected_elements: Mapped[int] = mapped_column(BigInteger, default=0)
-    expected_items: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The last scan (008_source_scan.sql); config stays user-facing settings only.
+    scan_item_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scan_details: Mapped[dict] = mapped_column(JSONB, default=dict)
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

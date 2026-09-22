@@ -60,6 +60,13 @@ is the extension point for social media connectors.
 `allow_cloud_enrichment` defaults `false` and is the third level of the egress
 guard.
 
+`expected_elements` is the item count of the last scan, which the app's
+progress bars measure ingest against. The rest of that scan lives beside it
+(`008_source_scan.sql`): `scan_item_type` (files, messages, …), `scan_details`
+(the scanner's per-kind breakdown) and `scanned_at`. `config` holds only the
+source's own settings, such as `include_code`, as written by `sync` from
+garage.json.
+
 ### `authors` / `author_identities`
 
 An author owns many identities (`git_email`, `email`, `phone`,

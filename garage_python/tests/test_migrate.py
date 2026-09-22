@@ -229,7 +229,7 @@ def test_persist_scan_result() -> None:
     from garage_rag.db.models import Source
     from garage_rag.ingest.scanner import SourceScanResult, persist_scan_result
 
-    mock_source = Source(slug="test-src", expected_elements=0, expected_items=0, config={})
+    mock_source = Source(slug="test-src", expected_elements=0, config={"include_code": True})
     mock_session = MagicMock()
     mock_query = mock_session.query.return_value
     mock_filter = mock_query.filter_by.return_value
@@ -247,7 +247,8 @@ def test_persist_scan_result() -> None:
     persist_scan_result(mock_session, scan_res)
 
     assert mock_source.expected_elements == 42
-    assert mock_source.expected_items == 42
-    assert mock_source.config["expected_items"] == 42
-    assert mock_source.config["item_type"] == "files"
-    assert mock_source.config["scan_details"] == {"scanned": 42}
+    assert mock_source.scan_item_type == "files"
+    assert mock_source.scan_details == {"scanned": 42}
+    assert mock_source.scanned_at is not None
+    # Scan bookkeeping stays out of the user-facing config.
+    assert mock_source.config == {"include_code": True}

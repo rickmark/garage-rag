@@ -22,6 +22,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -575,10 +576,6 @@ def persist_scan_result(session: Any, scan_result: SourceScanResult) -> None:
     source = session.query(Source).filter_by(slug=scan_result.source_slug).one_or_none()
     if source is not None:
         source.expected_elements = scan_result.item_count
-        source.expected_items = scan_result.item_count
-        cfg = dict(source.config or {})
-        cfg["expected_items"] = scan_result.item_count
-        cfg["item_type"] = scan_result.item_type
-        cfg["scan_details"] = scan_result.details
-        cfg["scanned_at"] = time.time()
-        source.config = cfg
+        source.scan_item_type = scan_result.item_type
+        source.scan_details = dict(scan_result.details or {})
+        source.scanned_at = datetime.now(UTC)
