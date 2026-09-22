@@ -125,8 +125,7 @@ class _Handler(BaseHTTPRequestHandler):
             dims = body.get("dimensions") or 4
             # Deliberately out of order: the client must sort by ``index``.
             data = [
-                {"object": "embedding", "index": i, "embedding": _vector(i, dims)}
-                for i in reversed(range(len(inputs)))
+                {"object": "embedding", "index": i, "embedding": _vector(i, dims)} for i in reversed(range(len(inputs)))
             ]
             tokens = sum(len(t.split()) for t in inputs)
             self._send(

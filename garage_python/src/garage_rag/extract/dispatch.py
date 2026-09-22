@@ -132,9 +132,7 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
-IMAGE_EXTENSIONS = frozenset(
-    {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif"}
-)
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif"})
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 DOCX_EXTENSIONS = frozenset({".docx", ".docm"})
@@ -244,9 +242,7 @@ def extractor_for(path: Path) -> Extractor:
     if not suffix and name in NAMED_CODE_FILES:
         return _code
     if suffix in LEGACY_OFFICE_EXTENSIONS:
-        raise UnsupportedFile(
-            f"legacy binary format {suffix} needs LibreOffice conversion: {path.name}"
-        )
+        raise UnsupportedFile(f"legacy binary format {suffix} needs LibreOffice conversion: {path.name}")
     if suffix in UNSUPPORTED_BINARY_EXTENSIONS:
         raise UnsupportedFile(f"binary container {suffix} has no extractor: {path.name}")
 
@@ -283,9 +279,7 @@ def extract(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
     if size == 0:
         raise ExtractionError(f"empty file: {path}")
     if size > settings.max_file_bytes:
-        raise ExtractionError(
-            f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}"
-        )
+        raise ExtractionError(f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}")
 
     extractor = extractor_for(path)
     result = _image(path, source_allows_cloud=source_allows_cloud) if extractor is _image else extractor(path)

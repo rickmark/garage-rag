@@ -190,10 +190,7 @@ class SourceSpec(BaseModel):
     )
     allow_cloud_enrichment: bool = Field(
         default=False,
-        description=(
-            "Permit the cloud OCR fallback for this source. Never honoured for "
-            "communication sources."
-        ),
+        description=("Permit the cloud OCR fallback for this source. Never honoured for communication sources."),
     )
     enabled: bool = Field(default=True, description="Set false to skip this source.")
 
@@ -237,6 +234,7 @@ class Settings(BaseModel):
         if isinstance(v, str):
             return ensure_psycopg_database_url(v)
         return v
+
     hnsw_ef_search: int = Field(
         default=100,
         description="HNSW probe width at query time. Higher is better recall, slower.",
@@ -264,10 +262,7 @@ class Settings(BaseModel):
     )
     llama_host: str = Field(
         default="http://127.0.0.1:8790",
-        description=(
-            "Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService "
-            "(loopback only)."
-        ),
+        description=("Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService (loopback only)."),
     )
     lmstudio_api_token_file: str | None = Field(
         default=None,
@@ -290,17 +285,14 @@ class Settings(BaseModel):
     chunk_overlap: int = Field(
         default=150,
         description=(
-            "Characters repeated between adjacent prose chunks, so a sentence "
-            "spanning a boundary is still retrievable."
+            "Characters repeated between adjacent prose chunks, so a sentence spanning a boundary is still retrievable."
         ),
     )
     code_chunk_size: int = Field(
         default=1200,
         description="Target characters per code chunk. Larger, to keep functions intact.",
     )
-    code_chunk_overlap: int = Field(
-        default=100, description="Characters repeated between adjacent code chunks."
-    )
+    code_chunk_overlap: int = Field(default=100, description="Characters repeated between adjacent code chunks.")
 
     # ---- cloud placeholders ---------------------------------------------
     materialize_placeholders: bool = Field(
@@ -311,12 +303,8 @@ class Settings(BaseModel):
             "mean hundreds of gigabytes. Bounded by the limits below."
         ),
     )
-    materialize_limit: int = Field(
-        default=2000, description="Files materialized per run; 0 means unlimited."
-    )
-    materialize_max_bytes: int = Field(
-        default=20 * 1024**3, description="Byte budget per run; 0 means unlimited."
-    )
+    materialize_limit: int = Field(default=2000, description="Files materialized per run; 0 means unlimited.")
+    materialize_max_bytes: int = Field(default=20 * 1024**3, description="Byte budget per run; 0 means unlimited.")
     materialize_timeout_seconds: float = Field(
         default=120.0,
         description=(
@@ -334,9 +322,7 @@ class Settings(BaseModel):
         ),
     )
     mcp_port: int = Field(default=8787, description="Port for the HTTP transport.")
-    mcp_http_path: str = Field(
-        default="/mcp", description="HTTP route the MCP endpoint is served on."
-    )
+    mcp_http_path: str = Field(default="/mcp", description="HTTP route the MCP endpoint is served on.")
 
     # ---- quality guards -------------------------------------------------
     max_chunks_per_document: int = Field(
@@ -364,8 +350,7 @@ class Settings(BaseModel):
     ocr_min_chars: int = Field(
         default=16,
         description=(
-            "Below this many characters an image is treated as having no text. "
-            "Most images in a source tree are icons."
+            "Below this many characters an image is treated as having no text. Most images in a source tree are icons."
         ),
     )
 
@@ -588,10 +573,7 @@ def flatten(document: dict[str, Any]) -> dict[str, Any]:
                 log.warning("config: %s.%s is no longer a setting and was ignored; remove it", section, key)
                 continue
             if field is None:
-                raise ConfigError(
-                    f"unknown key {key!r} in section {section!r}; "
-                    f"expected one of: {', '.join(mapping)}"
-                )
+                raise ConfigError(f"unknown key {key!r} in section {section!r}; expected one of: {', '.join(mapping)}")
             flat[field] = value
     return flat
 
@@ -618,8 +600,7 @@ def nest(
 
     if settings.sources:
         document["sources"] = [
-            spec.model_dump(by_alias=True, exclude_defaults=not include_defaults)
-            for spec in settings.sources
+            spec.model_dump(by_alias=True, exclude_defaults=not include_defaults) for spec in settings.sources
         ]
     return document
 
@@ -635,10 +616,7 @@ def load_config(path: Path | None = None) -> Settings:
     if resolved is None or not resolved.is_file():
         if path is not None:
             searched = ", ".join(str(p) for p in ([resolved] if path else candidate_paths()))
-            raise ConfigError(
-                f"no config file found (looked at: {searched}); "
-                "create one with 'garage config init'"
-            )
+            raise ConfigError(f"no config file found (looked at: {searched}); create one with 'garage config init'")
         # No file at all: defaults are a usable configuration.
         return _apply_database_url_environment(Settings())
 
@@ -694,9 +672,7 @@ def json_schema() -> dict[str, Any]:
     documentation lives, since JSON has no comments.
     """
     fields = Settings.model_fields
-    properties: dict[str, Any] = {
-        "$schema": {"type": "string", "description": "Path or URL to this schema."}
-    }
+    properties: dict[str, Any] = {"$schema": {"type": "string", "description": "Path or URL to this schema."}}
 
     type_map: dict[Any, str] = {
         str: "string",
@@ -898,4 +874,3 @@ def reset_settings() -> None:
 def repo_root() -> Path:
     """Path to the repository root (holds the published ``data/`` artifacts)."""
     return Path(__file__).resolve().parents[4]
-

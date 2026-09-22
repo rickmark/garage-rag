@@ -133,10 +133,7 @@ def apply_migrations(
     files = migration_files(schema_dir)
     applied: list[str] = list(ext_applied)
 
-    remaining_files = [
-        f for f in files
-        if f.name not in ext_applied and not is_extension_migration(f)
-    ]
+    remaining_files = [f for f in files if f.name not in ext_applied and not is_extension_migration(f)]
 
     if session is not None:
         for path in remaining_files:

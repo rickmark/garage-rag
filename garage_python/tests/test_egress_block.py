@@ -52,9 +52,7 @@ class TestTypeLevelBlock:
         request = EgressRequest(corpus_class=klass, purpose="image-ocr", source_allows_cloud=True)
         assert request.corpus_class is klass
 
-    @pytest.mark.parametrize(
-        "klass", [CorpusClass.DOCUMENT, CorpusClass.CODE, CorpusClass.COMMUNICATION]
-    )
+    @pytest.mark.parametrize("klass", [CorpusClass.DOCUMENT, CorpusClass.CODE, CorpusClass.COMMUNICATION])
     def test_source_flag_is_required_for_every_class(self, klass: CorpusClass) -> None:
         """Level 3: no class egresses from a source that has not opted in."""
         with pytest.raises(EgressBlocked):
@@ -74,14 +72,9 @@ class TestChokepoint:
     def _imports_anthropic(path: Path) -> bool:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import) and any(
-                a.name.split(".")[0] == "anthropic" for a in node.names
-            ):
+            if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "anthropic" for a in node.names):
                 return True
-            if (
-                isinstance(node, ast.ImportFrom)
-                and (node.module or "").split(".")[0] == "anthropic"
-            ):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "anthropic":
                 return True
         return False
 
@@ -92,8 +85,7 @@ class TestChokepoint:
             if path != EGRESS_MODULE and self._imports_anthropic(path)
         ]
         assert not offenders, (
-            "anthropic must only be imported by enrich/egress.py, the single "
-            f"egress chokepoint; found in: {offenders}"
+            f"anthropic must only be imported by enrich/egress.py, the single egress chokepoint; found in: {offenders}"
         )
 
     def test_egress_module_exists_and_is_the_chokepoint(self) -> None:
@@ -125,9 +117,7 @@ class TestFactExtractionStaysLocal:
         return [
             node
             for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == attr
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == attr
         ]
 
     @staticmethod

@@ -617,12 +617,7 @@ def remove_source(
         if source is None:
             console.print(f"[yellow]no such source[/yellow]: {slug}")
             raise typer.Exit(code=1)
-        count = (
-            session.query(func.count(Document.id))
-            .filter(Document.source_id == source.id)
-            .scalar()
-            or 0
-        )
+        count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
         if not yes:
             typer.confirm(f"Remove source {slug} and delete {count:,} documents?", abort=True)
         # Cascades through chunks into every per-model embedding table.
@@ -635,11 +630,7 @@ def list_sources() -> None:
     """List registered sources."""
     with session_scope() as session:
         sources = session.query(Source).order_by(Source.id).all()
-        doc_counts = dict(
-            session.query(Document.source_id, func.count(Document.id))
-            .group_by(Document.source_id)
-            .all()
-        )
+        doc_counts = dict(session.query(Document.source_id, func.count(Document.id)).group_by(Document.source_id).all())
     if not sources:
         console.print("[yellow]no sources registered[/yellow]")
         return
@@ -791,9 +782,7 @@ def ingest(
                     f"(skipped {progress_counters.skipped:,}, failed {progress_counters.failed:,}){note}"
                 )
                 status.update(status_msg)
-                should_report = (
-                    progress_counters.seen - last_reported >= 50 or progress_counters.seen == total_items
-                )
+                should_report = progress_counters.seen - last_reported >= 50 or progress_counters.seen == total_items
                 if not console.is_terminal and should_report:
                     last_reported = progress_counters.seen
                     console.print(status_msg)
@@ -1160,8 +1149,7 @@ def mcp_install(
 
     if not dry_run:
         console.print(
-            "\nRestart client(s), then try asking: "
-            "[cyan]what does my reference material say about secure boot?[/cyan]"
+            "\nRestart client(s), then try asking: [cyan]what does my reference material say about secure boot?[/cyan]"
         )
 
 
@@ -1319,16 +1307,18 @@ def mcp_test(
     try:
         req = urllib.request.Request(
             target_url,
-            data=json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "garage-cli-test", "version": "1.0"},
-                },
-            }).encode("utf-8"),
+            data=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "garage-cli-test", "version": "1.0"},
+                    },
+                }
+            ).encode("utf-8"),
             headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         )
         t0 = time.perf_counter()

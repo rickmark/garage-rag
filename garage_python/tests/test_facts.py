@@ -128,9 +128,7 @@ def test_extract_facts_routes_to_llama_xpc_when_requested(monkeypatch) -> None:
 
     monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
 
-    extractions = extract_facts(
-        "Acme Corp was founded in 1998.", model_id="gemma2-2b", provider="llama_xpc"
-    )
+    extractions = extract_facts("Acme Corp was founded in 1998.", model_id="gemma2-2b", provider="llama_xpc")
 
     assert extractions == [grounded]
     assert isinstance(captured["model"], LlamaXPCLanguageModel)
@@ -150,9 +148,7 @@ def test_extract_facts_rejects_unknown_provider() -> None:
 
 def test_llama_xpc_language_model_infers_via_chat_completion() -> None:
     fake_client = MagicMock()
-    fake_client.chat_completion.return_value = {
-        "choices": [{"message": {"content": '{"extractions": []}'}}]
-    }
+    fake_client.chat_completion.return_value = {"choices": [{"message": {"content": '{"extractions": []}'}}]}
 
     model = LlamaXPCLanguageModel(model_id="gemma2-2b", client=fake_client)
     results = list(model.infer(["prompt one", "prompt two"]))

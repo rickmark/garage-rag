@@ -224,10 +224,11 @@ def test_ingest_xpc_with_grpc_options():
     def fake_ingest_source(*, gateway, source_slug, **kwargs):
         return mock_counters, mock_walk_stats, mock_budget
 
-    with patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source), \
-         patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls, \
-         patch("garage_rag.service.client.GarageClient") as mock_client_cls:
-
+    with (
+        patch("garage_rag.ingest.pipeline.ingest_source", side_effect=fake_ingest_source),
+        patch("garage_rag.ingest.gateway.GrpcIngestStorageGateway") as mock_gw_cls,
+        patch("garage_rag.service.client.GarageClient") as mock_client_cls,
+    ):
         mock_gw = MagicMock()
         mock_gw_cls.return_value = mock_gw
 
@@ -242,4 +243,3 @@ def test_ingest_xpc_with_grpc_options():
         mock_gw_cls.assert_called_once()
         assert len(progress_events) >= 2
         assert progress_events[-1].phase == "complete"
-

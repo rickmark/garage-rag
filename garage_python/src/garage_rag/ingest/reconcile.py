@@ -76,17 +76,11 @@ def reconcile_source(
     run = latest_complete_run(session, source.id)
     if run is None:
         result.refused = True
-        result.reason = (
-            "no completed scan on record; run a full `garage ingest` (without "
-            "--limit) before reconciling"
-        )
+        result.reason = "no completed scan on record; run a full `garage ingest` (without --limit) before reconciling"
         return result
 
     result.total_documents = (
-        session.query(func.count(Document.id))
-        .filter(Document.source_id == source.id)
-        .scalar()
-        or 0
+        session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
     )
 
     ids = [
@@ -94,9 +88,7 @@ def reconcile_source(
         for row in session.query(Document.id)
         .filter(
             Document.source_id == source.id,
-            ~session.query(IngestSeen.uri)
-            .filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri)
-            .exists(),
+            ~session.query(IngestSeen.uri).filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri).exists(),
         )
         .all()
     ]
@@ -122,4 +114,3 @@ def reconcile_source(
     result.deleted = len(ids)
     log.info("reconcile %s: deleted %d documents", slug, result.deleted)
     return result
-

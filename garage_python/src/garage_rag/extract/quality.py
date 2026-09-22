@@ -99,11 +99,9 @@ def assess(text: str, *, sample_bytes: int = SAMPLE_BYTES) -> QualityVerdict:
         if lines:
             # `match`, not `fullmatch`: checksum manifests are "<hash>  <path>",
             # so the hash leads the line but does not fill it.
-            dense = sum(
-                1
-                for line in lines
-                if _HEX_RUN.match(line.strip()) or _BASE64_RUN.match(line.strip())
-            ) / len(lines)
+            dense = sum(1 for line in lines if _HEX_RUN.match(line.strip()) or _BASE64_RUN.match(line.strip())) / len(
+                lines
+            )
             if dense > 0.8:
                 return QualityVerdict(
                     True,
@@ -153,4 +151,3 @@ def assess(text: str, *, sample_bytes: int = SAMPLE_BYTES) -> QualityVerdict:
     machine = decisive or len(reasons) >= 2
 
     return QualityVerdict(machine, reasons, metrics)
-

@@ -55,9 +55,7 @@ class TestRoundTrip:
     def test_defaults_round_trip(self) -> None:
         original = Settings()
         restored = Settings(**flatten(nest(original)))
-        assert restored.model_dump(exclude={"config_path"}) == original.model_dump(
-            exclude={"config_path"}
-        )
+        assert restored.model_dump(exclude={"config_path"}) == original.model_dump(exclude={"config_path"})
 
     def test_non_defaults_round_trip(self) -> None:
         original = Settings(
@@ -104,9 +102,7 @@ class TestLoading:
         assert load_config(cfg).chunk_overlap == Settings().chunk_overlap
 
     def test_schema_key_is_ignored(self, tmp_path: Path) -> None:
-        cfg = self._write(
-            tmp_path / CONFIG_FILENAME, {"$schema": "./garage.schema.json", "mcp": {"port": 1}}
-        )
+        cfg = self._write(tmp_path / CONFIG_FILENAME, {"$schema": "./garage.schema.json", "mcp": {"port": 1}})
         assert load_config(cfg).mcp_port == 1
 
     def test_unknown_section_is_an_error(self, tmp_path: Path) -> None:
@@ -325,18 +321,12 @@ class TestLMStudioApiToken:
         token_file = tmp_path / "lmstudio.token"
         token_file.write_text("from-file")
         monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", "from-environment")
-        assert (
-            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
-            == "from-environment"
-        )
+        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "from-environment"
 
     def test_reads_token_from_file(self, tmp_path: Path) -> None:
         token_file = tmp_path / "lmstudio.token"
         token_file.write_text("lm-token\n")
-        assert (
-            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
-            == "lm-token"
-        )
+        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "lm-token"
 
     def test_rejects_empty_environment_token(self, monkeypatch) -> None:
         monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", " ")
@@ -357,9 +347,7 @@ class TestIdentityParsing:
         ]
 
     def test_whitespace_tolerated(self) -> None:
-        assert Settings(self_identities=[" email : a@b.c "]).self_identity_pairs() == [
-            ("email", "a@b.c")
-        ]
+        assert Settings(self_identities=[" email : a@b.c "]).self_identity_pairs() == [("email", "a@b.c")]
 
 
 class TestSchema:
@@ -416,7 +404,10 @@ class TestDatabaseEnvironment:
 
         assert ensure_psycopg_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
         assert ensure_psycopg_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
-        assert ensure_psycopg_database_url("postgresql+psycopg://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+        assert (
+            ensure_psycopg_database_url("postgresql+psycopg://user:pass@host/db")
+            == "postgresql+psycopg://user:pass@host/db"
+        )
 
         settings = Settings(database_url="postgresql://user:pass@host/db")
         assert settings.database_url == "postgresql+psycopg://user:pass@host/db"
@@ -557,9 +548,7 @@ class TestSetGetHelpers:
         # Every other section is written at its default, as `config init` does.
         assert document["chunking"]["size"] == Settings().chunk_size
 
-    def test_update_config_keeps_existing_values_and_ignores_the_environment(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_update_config_keeps_existing_values_and_ignores_the_environment(self, tmp_path: Path, monkeypatch) -> None:
         from garage_rag.config import update_config
 
         monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg:///app-managed")

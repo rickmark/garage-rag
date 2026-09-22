@@ -1,5 +1,9 @@
 """Targets in the repository root"""
 
+# tools/swiftcheck is a venv-only dev script (tree-sitter comes from the `dev` extras, which
+# the @pypi hub does not expose), not a Bazel target.
+# gazelle:exclude tools/swiftcheck
+
 exports_files(
     [
         "README.md",

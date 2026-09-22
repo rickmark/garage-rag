@@ -69,16 +69,12 @@ class TestPathRules:
         assert trust is TrustTier.REFERENCE
         assert label == "path:vendored"
 
-    @pytest.mark.parametrize(
-        "marker", ["node_modules", "vendor", "Pods", "third_party", "site-packages"]
-    )
+    @pytest.mark.parametrize("marker", ["node_modules", "vendor", "Pods", "third_party", "site-packages"])
     def test_vendor_markers(self, marker: str) -> None:
         assert is_vendored(Path(f"/a/b/{marker}/c/d.md"))
 
     def test_unmatched_path_uses_supplied_default(self) -> None:
-        trust, label = classify_path(
-            self.ROOT / "Misc/thing.md", self.ROOT, default=TrustTier.RECEIVED
-        )
+        trust, label = classify_path(self.ROOT / "Misc/thing.md", self.ROOT, default=TrustTier.RECEIVED)
         assert trust is TrustTier.RECEIVED
         assert label == "path:default"
 
@@ -211,17 +207,13 @@ class TestCorpusClassification:
         assert not is_code_path(Path("/r/LICENSE"))
 
     def test_conversation_is_communication(self) -> None:
-        assert (
-            classify(Path("/x/thread.txt"), ContentKind.CONVERSATION) is CorpusClass.COMMUNICATION
-        )
+        assert classify(Path("/x/thread.txt"), ContentKind.CONVERSATION) is CorpusClass.COMMUNICATION
 
     def test_code_path_excludes_docs(self) -> None:
         assert is_code_path(Path("/r/x.swift"))
         assert not is_code_path(Path("/r/x.md"))
 
-    @pytest.mark.parametrize(
-        "name", ["security.rb", "license.py", "changelog.js", "authors.go", "readme.ts"]
-    )
+    @pytest.mark.parametrize("name", ["security.rb", "license.py", "changelog.js", "authors.go", "readme.ts"])
     def test_doc_stem_does_not_override_code_extension(self, name: str) -> None:
         """Regression: a source file named `security.rb` is code, not prose.
 

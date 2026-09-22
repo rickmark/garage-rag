@@ -243,4 +243,3 @@ def chunk_text(
         return chunk_tabular(text, size=size)
     # CONVERSATION text arrives pre-windowed; treat the windows as prose.
     return chunk_prose(text, size=size, overlap=overlap)
-

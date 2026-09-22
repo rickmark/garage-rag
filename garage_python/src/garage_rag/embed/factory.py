@@ -34,6 +34,4 @@ def get_embedder(provider: str, model_ref: str) -> Embedder:
         from garage_rag.embed.llama_xpc import LlamaXPCEmbedder
 
         return LlamaXPCEmbedder(model_ref)
-    raise ValueError(
-        f"unknown embedding provider {provider!r}; supported: {', '.join(sorted(PROVIDERS))}"
-    )
+    raise ValueError(f"unknown embedding provider {provider!r}; supported: {', '.join(sorted(PROVIDERS))}")

@@ -123,9 +123,7 @@ class TestOllama:
     def test_chat_maps_options_and_usage(self) -> None:
         model = LocalChatModel(settings=Settings(fact_provider="ollama", fact_model="gemma2:2b"))
         client = MagicMock()
-        client.chat.return_value = MagicMock(
-            message=MagicMock(content="hi there"), prompt_eval_count=20, eval_count=4
-        )
+        client.chat.return_value = MagicMock(message=MagicMock(content="hi there"), prompt_eval_count=20, eval_count=4)
         with patch.object(model, "_ollama_client", return_value=client):
             reply = model.complete(MESSAGES, max_tokens=32, temperature=0.5)
         assert reply == ChatReply(text="hi there", prompt_tokens=20, completion_tokens=4)

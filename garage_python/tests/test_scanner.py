@@ -31,6 +31,7 @@ runner = CliRunner()
 # 1. Filesystem Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_filesystem_nonexistent_path(tmp_path: Path) -> None:
     non_existent = tmp_path / "does_not_exist"
     res = scan_filesystem(non_existent, source_slug="test-missing")
@@ -101,6 +102,7 @@ def test_scan_filesystem_exclude_prefixes_prune_subtrees(tmp_path: Path) -> None
 # 2. Git Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_git_repository(tmp_path: Path) -> None:
     # Initialize a git repository
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
@@ -144,6 +146,7 @@ def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 3. SQLite Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_sqlite_database(tmp_path: Path) -> None:
     db_file = tmp_path / "test.db"
@@ -212,6 +215,7 @@ def test_scan_sqlite_apple_messages_counts_threads_not_messages(tmp_path: Path) 
 # 4. Maildir Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_maildir(tmp_path: Path) -> None:
     # Standard maildir structure: cur, new, tmp
     cur_dir = tmp_path / "cur"
@@ -240,6 +244,7 @@ def test_scan_maildir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 5. Feed Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
     # RSS 2.0 Feed
@@ -290,6 +295,7 @@ def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
 # 6. Source Dispatcher Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_source_dispatcher(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("test", encoding="utf-8")
 
@@ -321,6 +327,7 @@ def test_scan_source_dispatcher(tmp_path: Path) -> None:
 # 7. Pipeline Scan Phase Integration Tests
 # ---------------------------------------------------------------------------
 
+
 def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
     (tmp_path / "doc1.txt").write_text("Content 1", encoding="utf-8")
     (tmp_path / "doc2.txt").write_text("Content 2", encoding="utf-8")
@@ -346,8 +353,7 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
         progress_events.append((phase, total_items, counters.seen))
 
     # begin_session imports ensure_self_author function-locally from the resolver module.
-    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.ingest.pipeline.ingest_one"):
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), patch("garage_rag.ingest.pipeline.ingest_one"):
         counters, walk_stats, budget = ingest_source(
             mock_session_factory,
             "test-slug",
@@ -365,6 +371,7 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 8. gRPC Servicer Scan & Ingest Tests
 # ---------------------------------------------------------------------------
+
 
 def test_grpc_scan_rpc(tmp_path: Path) -> None:
     (tmp_path / "file1.txt").write_text("file 1", encoding="utf-8")
@@ -402,6 +409,7 @@ def test_grpc_scan_rpc(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 9. CLI Scan Command Tests
 # ---------------------------------------------------------------------------
+
 
 def test_cli_scan_command(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("Hello", encoding="utf-8")

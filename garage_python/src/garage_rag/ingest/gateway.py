@@ -299,9 +299,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 doc.error = error or "not materialized"
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def record_extract_failed(
@@ -325,9 +323,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 doc.error = error[:2000]
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def record_rejected(
@@ -349,9 +345,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 session.delete(doc)
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
@@ -391,9 +385,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     doc.mtime = datetime.fromtimestamp(mtime, tz=UTC)
                 if source_sha256:
                     doc.source_sha256 = (
-                        source_sha256
-                        if isinstance(source_sha256, (bytes, bytearray))
-                        else bytes.fromhex(source_sha256)
+                        source_sha256 if isinstance(source_sha256, (bytes, bytearray)) else bytes.fromhex(source_sha256)
                     )
                 if corpus_class:
                     doc.corpus_class = CorpusClass(corpus_class)
@@ -401,9 +393,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     doc.trust_tier = TrustTier(trust_tier)
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def replace_document(
@@ -536,9 +526,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 )
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
             return len(chunks)
 
@@ -706,11 +694,7 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
     ) -> None:
         from garage_rag.proto.garage_pb2 import PersistDocumentRequest
 
-        src_sha = (
-            source_sha256.hex()
-            if isinstance(source_sha256, (bytes, bytearray))
-            else (source_sha256 or "")
-        )
+        src_sha = source_sha256.hex() if isinstance(source_sha256, (bytes, bytearray)) else (source_sha256 or "")
         req = PersistDocumentRequest(
             run_id=run_id,
             source_slug=source_slug,

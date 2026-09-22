@@ -51,9 +51,7 @@ class Embedder(ABC):
             raise EmbeddingError(f"{self.provider_name} embed failed for {self.model_ref}: {exc}") from exc
 
         if vectors is None or len(vectors) != len(batch):
-            raise EmbeddingError(
-                f"{self.model_ref} returned {len(vectors or [])} vectors for {len(batch)} inputs"
-            )
+            raise EmbeddingError(f"{self.model_ref} returned {len(vectors or [])} vectors for {len(batch)} inputs")
         return [list(vector) for vector in vectors]
 
     def probe_dims(self) -> int:

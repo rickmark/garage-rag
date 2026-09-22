@@ -62,8 +62,10 @@ def test_grpc_database_facade_servicer_methods():
     mock_source.default_trust = TrustTier.AUTHORED
     mock_source.allow_cloud_enrichment = False
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.attribute.resolver.ensure_self_author"):
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+    ):
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source
         mock_session.query.return_value.filter_by.return_value.all.return_value = [mock_source]
@@ -154,12 +156,13 @@ def test_grpc_ingest_storage_gateway():
     client = GarageClient(in_process=True)
     gateway = GrpcIngestStorageGateway(client)
 
-    with patch.object(client, "begin_ingest_session") as mock_begin, \
-         patch.object(client, "persist_scan") as mock_scan, \
-         patch.object(client, "check_document_stat") as mock_stat, \
-         patch.object(client, "persist_document") as mock_doc, \
-         patch.object(client, "finalize_ingest_session") as mock_final:
-
+    with (
+        patch.object(client, "begin_ingest_session") as mock_begin,
+        patch.object(client, "persist_scan") as mock_scan,
+        patch.object(client, "check_document_stat") as mock_stat,
+        patch.object(client, "persist_document") as mock_doc,
+        patch.object(client, "finalize_ingest_session") as mock_final,
+    ):
         mock_begin.return_value = BeginIngestSessionResponse(
             source_id=1,
             slug="grpc-src",
@@ -263,12 +266,13 @@ def test_ingest_source_with_grpc_gateway(tmp_path: Path):
     client = GarageClient(in_process=True)
     gateway = GrpcIngestStorageGateway(client)
 
-    with patch.object(client, "begin_ingest_session") as mock_begin, \
-         patch.object(client, "persist_scan") as mock_scan, \
-         patch.object(client, "check_document_stat") as mock_stat, \
-         patch.object(client, "persist_document") as mock_doc, \
-         patch.object(client, "finalize_ingest_session") as mock_final:
-
+    with (
+        patch.object(client, "begin_ingest_session") as mock_begin,
+        patch.object(client, "persist_scan") as mock_scan,
+        patch.object(client, "check_document_stat") as mock_stat,
+        patch.object(client, "persist_document") as mock_doc,
+        patch.object(client, "finalize_ingest_session") as mock_final,
+    ):
         mock_begin.return_value = BeginIngestSessionResponse(
             source_id=1,
             slug="mock-slug",
@@ -315,11 +319,12 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
     mock_source.default_trust = TrustTier.AUTHORED
     mock_source.allow_cloud_enrichment = False
 
-    with patch("garage_rag.db.engine.session_scope") as mock_scope, \
-         patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.ingest.scanner.persist_scan_result"), \
-         patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author:
-
+    with (
+        patch("garage_rag.db.engine.session_scope") as mock_scope,
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.ingest.scanner.persist_scan_result"),
+        patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author,
+    ):
         # Every facade RPC looks up the Source first and then the Document with the
         # same ``session.query(...).filter_by(...).one_or_none()`` chain, so the
         # query mock has to answer per model rather than with one shared return value.
@@ -411,10 +416,14 @@ def test_sqlalchemy_storage_gateway_hash_types():
 
     mock_doc = MagicMock()
     mock_session.query.return_value.filter_by.return_value.one_or_none.side_effect = [
-        mock_source, mock_doc,  # replace_document call 1
-        mock_source, mock_doc,  # replace_document call 2
-        mock_source, mock_doc,  # refresh_metadata call 1
-        mock_source, mock_doc,  # refresh_metadata call 2
+        mock_source,
+        mock_doc,  # replace_document call 1
+        mock_source,
+        mock_doc,  # replace_document call 2
+        mock_source,
+        mock_doc,  # refresh_metadata call 1
+        mock_source,
+        mock_doc,  # refresh_metadata call 2
     ]
     # The gateway uses the factory as a context manager (``with self.factory() as session``),
     # so the mock must hand back itself from ``__enter__`` for the query chain above to apply.
@@ -542,10 +551,12 @@ def test_stat_skipped_file_is_recorded_as_seen(tmp_path: Path):
     fake_run = MagicMock()
     fake_run.id = 7
 
-    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author, \
-         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
-         patch.object(gateway, "record_seen", wraps=gateway.record_seen) as record_seen:
+    with (
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.attribute.resolver.get_or_create_author") as mock_author,
+        patch("garage_rag.db.models.IngestRun", return_value=fake_run),
+        patch.object(gateway, "record_seen", wraps=gateway.record_seen) as record_seen,
+    ):
         mock_author.return_value = MagicMock(id=10)
 
         # Run 1: nothing in the DB, the file is indexed (replace_document records seen itself).
@@ -591,10 +602,12 @@ def test_no_chunks_file_is_recorded_as_seen(tmp_path: Path):
     fake_run = MagicMock()
     fake_run.id = 3
 
-    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
-         patch("garage_rag.ingest.pipeline.chunk_text", return_value=[]), \
-         patch.object(gateway, "record_seen") as record_seen:
+    with (
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.db.models.IngestRun", return_value=fake_run),
+        patch("garage_rag.ingest.pipeline.chunk_text", return_value=[]),
+        patch.object(gateway, "record_seen") as record_seen,
+    ):
         counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
 
     assert counters.failed == 1
@@ -618,10 +631,12 @@ def test_unexpected_ingest_error_is_recorded_as_seen(tmp_path: Path):
     fake_run = MagicMock()
     fake_run.id = 4
 
-    with patch("garage_rag.attribute.resolver.ensure_self_author"), \
-         patch("garage_rag.db.models.IngestRun", return_value=fake_run), \
-         patch("garage_rag.ingest.pipeline.ingest_one", side_effect=RuntimeError("kaboom")), \
-         patch.object(gateway, "record_seen") as record_seen:
+    with (
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.db.models.IngestRun", return_value=fake_run),
+        patch("garage_rag.ingest.pipeline.ingest_one", side_effect=RuntimeError("kaboom")),
+        patch.object(gateway, "record_seen") as record_seen,
+    ):
         counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
 
     assert counters.failed == 1

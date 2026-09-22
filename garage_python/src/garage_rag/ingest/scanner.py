@@ -76,6 +76,7 @@ ScanResult = SourceScanResult
 # 1. Filesystem scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_filesystem(
     root: Path,
     *,
@@ -180,6 +181,7 @@ def scan_filesystem(
 # ---------------------------------------------------------------------------
 # 2. Git scanner
 # ---------------------------------------------------------------------------
+
 
 def scan_git(
     root: Path,
@@ -287,9 +289,7 @@ def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int], boo
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
             tables = [row[0] for row in cursor.fetchall()]
             for table in tables:
                 try:
@@ -372,6 +372,7 @@ def scan_sqlite(
 # 4. Maildir scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_maildir(
     root: Path,
     *,
@@ -419,6 +420,7 @@ def scan_maildir(
 # ---------------------------------------------------------------------------
 # 5. Feed scanner
 # ---------------------------------------------------------------------------
+
 
 def _count_feed_items(file_path: Path) -> int:
     """Count items/entries in an XML or JSON feed file."""
@@ -509,6 +511,7 @@ def scan_feed(
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
+
 
 def scan_source(
     source: Source | Any,

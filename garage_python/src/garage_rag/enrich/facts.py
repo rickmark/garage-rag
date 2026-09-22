@@ -76,6 +76,7 @@ def configured_backend(model_id: str | None = None, provider: str | None = None)
     settings = get_settings()
     return model_id or settings.fact_model, provider or settings.fact_provider
 
+
 # LangExtract's registered class name for its Ollama backend. Passing it as an
 # explicit ``provider`` bypasses model-id pattern matching entirely.
 OLLAMA_PROVIDER = "OllamaLanguageModel"
@@ -274,13 +275,8 @@ def extract_and_store_facts(
         # Facts need ids before a chunk can reference one via fact_id.
         session.flush()
         base_ord = (
-            session.query(func.coalesce(func.max(Chunk.ord), -1))
-            .filter(Chunk.document_id == document.id)
-            .scalar()
-            + 1
+            session.query(func.coalesce(func.max(Chunk.ord), -1)).filter(Chunk.document_id == document.id).scalar() + 1
         )
-        session.add_all(
-            chunk_for_fact(fact, ord=base_ord + i, model_id=model_id) for i, fact in enumerate(facts)
-        )
+        session.add_all(chunk_for_fact(fact, ord=base_ord + i, model_id=model_id) for i, fact in enumerate(facts))
 
     return facts

@@ -201,9 +201,7 @@ class Chunk(Base):
     chunker: Mapped[str] = mapped_column(Text)
     # Set when this chunk is a fact's text rather than a slice of
     # documents.content, so the fact can be embedded like any other chunk.
-    fact_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True
-    )
+    fact_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True)
     # `tsv` is a generated column; it is read-only from the ORM's perspective and
     # is intentionally not mapped.
 

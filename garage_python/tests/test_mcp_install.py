@@ -42,9 +42,7 @@ def _read(path: Path) -> dict:
 class TestCliInstall:
     def test_cli_defaults_to_http_url(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--yes"])
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert entry["type"] == "http"
@@ -52,31 +50,23 @@ class TestCliInstall:
 
     def test_cli_stdio_flag(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert "command" in entry
 
     def test_cli_conflicting_flags(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--http", "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--http", "--stdio", "--yes"])
         assert result.exit_code != 0
         assert "choose either --http or --stdio" in result.output
 
-    def test_passes_database_url_to_spawned_mcp_server(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_passes_database_url_to_spawned_mcp_server(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
         database_url = "postgresql+psycopg://user:password@localhost:14824/garage-rag"
         monkeypatch.setenv("GARAGE_DATABASE_URL", database_url)
 
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
 
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
@@ -156,9 +146,7 @@ class TestInstallMerge:
         assert _read(target.path)["mcpServers"]["garage-rag"]["command"]
 
     def test_preserves_other_servers(self, target: ClientTarget) -> None:
-        target.path.write_text(
-            json.dumps({"mcpServers": {"other": {"command": "/bin/true", "args": []}}})
-        )
+        target.path.write_text(json.dumps({"mcpServers": {"other": {"command": "/bin/true", "args": []}}}))
         install(target)
         servers = _read(target.path)["mcpServers"]
         assert set(servers) == {"other", "garage-rag"}
@@ -166,9 +154,7 @@ class TestInstallMerge:
 
     def test_preserves_unrelated_top_level_keys(self, target: ClientTarget) -> None:
         """Claude Desktop keeps `preferences` in this file; losing it is real damage."""
-        target.path.write_text(
-            json.dumps({"preferences": {"theme": "dark"}, "coworkUserFilesPath": "/x"})
-        )
+        target.path.write_text(json.dumps({"preferences": {"theme": "dark"}, "coworkUserFilesPath": "/x"}))
         install(target)
         data = _read(target.path)
         assert data["preferences"] == {"theme": "dark"}
@@ -181,9 +167,7 @@ class TestInstallMerge:
             install(target)
 
     def test_force_overwrites_and_backs_up(self, target: ClientTarget) -> None:
-        target.path.write_text(
-            json.dumps({"mcpServers": {"garage-rag": {"command": "stale", "args": []}}})
-        )
+        target.path.write_text(json.dumps({"mcpServers": {"garage-rag": {"command": "stale", "args": []}}}))
         result = install(target, force=True)
         assert result.replaced_entry
         assert result.backup is not None and result.backup.is_file()
@@ -455,18 +439,21 @@ class TestCliMcpTest:
         @dataclass
         class DummySources:
             sources: list = None
+
             def __post_init__(self):
                 self.sources = ["docs", "code"]
 
         @dataclass
         class DummyAuthors:
             authors: list = None
+
             def __post_init__(self):
                 self.authors = ["author1"]
 
         @dataclass
         class DummySearch:
             hits: list = None
+
             def __post_init__(self):
                 self.hits = []
 

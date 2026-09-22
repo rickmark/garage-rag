@@ -1,4 +1,5 @@
 """ingest"""
+
 from __future__ import annotations
 
 import contextlib
@@ -415,4 +416,3 @@ def ingest_xpc(
             ),
         )
         _emit_progress(final_prog)
-

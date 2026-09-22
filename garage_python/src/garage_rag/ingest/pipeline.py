@@ -98,10 +98,7 @@ def ingest_one(
     # --- step 1: skip on unchanged stat, without opening the file -----------
     if existing_stat.exists and not force and not candidate.placeholder:
         same_size = existing_stat.byte_size == candidate.size
-        same_mtime = (
-            existing_stat.mtime > 0
-            and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
-        )
+        same_mtime = existing_stat.mtime > 0 and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
         if same_size and same_mtime and existing_stat.state.upper() == "OK":
             log.debug("Skipped %s: stat matches existing document in DB", candidate.uri)
             counters.skipped += 1

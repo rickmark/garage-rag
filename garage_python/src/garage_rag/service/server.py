@@ -274,10 +274,7 @@ class GarageRpcServicer(GarageServiceServicer):
             limit = request.limit or 100
             offset = max(request.offset, 0)
             documents = (
-                query.order_by(Document.ingested_at.desc(), Document.id.desc())
-                .offset(offset)
-                .limit(limit)
-                .all()
+                query.order_by(Document.ingested_at.desc(), Document.id.desc()).offset(offset).limit(limit).all()
             )
 
             doc_ids = [d.id for d in documents]
@@ -341,19 +338,9 @@ class GarageRpcServicer(GarageServiceServicer):
 
             source = session.get(Source, document.source_id)
 
-            chunks = (
-                session.query(Chunk)
-                .filter(Chunk.document_id == document.id)
-                .order_by(Chunk.ord.asc())
-                .all()
-            )
+            chunks = session.query(Chunk).filter(Chunk.document_id == document.id).order_by(Chunk.ord.asc()).all()
 
-            facts = (
-                session.query(Fact)
-                .filter(Fact.document_id == document.id)
-                .order_by(Fact.ord.asc())
-                .all()
-            )
+            facts = session.query(Fact).filter(Fact.document_id == document.id).order_by(Fact.ord.asc()).all()
 
             authors = [
                 DocumentAuthorInfo(
@@ -432,9 +419,7 @@ class GarageRpcServicer(GarageServiceServicer):
         with session_scope() as session:
             sources = session.query(Source).order_by(Source.id).all()
             doc_counts = dict(
-                session.query(Document.source_id, func.count(Document.id))
-                .group_by(Document.source_id)
-                .all()
+                session.query(Document.source_id, func.count(Document.id)).group_by(Document.source_id).all()
             )
             proto_sources: list[SourceInfo] = [
                 SourceInfo(
@@ -518,12 +503,7 @@ class GarageRpcServicer(GarageServiceServicer):
             if source is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no such source: {request.slug}")
 
-            count = (
-                session.query(func.count(Document.id))
-                .filter(Document.source_id == source.id)
-                .scalar()
-                or 0
-            )
+            count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
 
             session.delete(source)
 
@@ -657,9 +637,7 @@ class GarageRpcServicer(GarageServiceServicer):
 
         with session_scope() as session:
             targets = (
-                [get_model(session, request.model)]
-                if request.model and request.model != "*"
-                else list_models(session)
+                [get_model(session, request.model)] if request.model and request.model != "*" else list_models(session)
             )
             if not targets:
                 context.abort(grpc.StatusCode.NOT_FOUND, "no models registered")
@@ -1289,12 +1267,8 @@ class GarageRpcServicer(GarageServiceServicer):
             session.flush()
             run_id = run.id
 
-            default_class = (
-                src.default_class.value if hasattr(src.default_class, "value") else str(src.default_class)
-            )
-            default_trust = (
-                src.default_trust.value if hasattr(src.default_trust, "value") else str(src.default_trust)
-            )
+            default_class = src.default_class.value if hasattr(src.default_class, "value") else str(src.default_class)
+            default_trust = src.default_trust.value if hasattr(src.default_trust, "value") else str(src.default_trust)
 
             return BeginIngestSessionResponse(
                 source_id=src.id,
@@ -1536,9 +1510,7 @@ class GarageRpcServicer(GarageServiceServicer):
             # Record seen
             if request.run_id:
                 session.execute(
-                    pg_insert(IngestSeen)
-                    .values(run_id=request.run_id, uri=request.uri)
-                    .on_conflict_do_nothing()
+                    pg_insert(IngestSeen).values(run_id=request.run_id, uri=request.uri).on_conflict_do_nothing()
                 )
 
             return PersistDocumentResponse(success=True, chunks_written=chunks_written)
@@ -1606,10 +1578,7 @@ class GarageRpcServicer(GarageServiceServicer):
                 """
             )
             rows = session.execute(sql, {"limit": fetch_limit}).all()
-            chunk_items = [
-                EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1])
-                for r in rows
-            ]
+            chunk_items = [EmbeddingChunkItem(chunk_id=int(r[0]), text=r[1]) for r in rows]
             has_more = (pending_total - len(chunk_items)) > 0
             return GetEmbeddingBatchesResponse(
                 model_slug=model.slug,
@@ -1655,8 +1624,7 @@ class GarageRpcServicer(GarageServiceServicer):
             )
 
             params = [
-                {"chunk_id": item.chunk_id, "embedding": _adapt(list(item.vector), plan)}
-                for item in request.embeddings
+                {"chunk_id": item.chunk_id, "embedding": _adapt(list(item.vector), plan)} for item in request.embeddings
             ]
             session.execute(insert_sql, params)
             return UpdateEmbeddingsResponse(success=True, count=len(params))

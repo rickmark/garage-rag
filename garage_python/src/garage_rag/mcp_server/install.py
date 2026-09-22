@@ -280,9 +280,7 @@ def _read_config(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"{path} is not valid JSON ({exc}); fix or move it before installing"
-        ) from exc
+        raise RuntimeError(f"{path} is not valid JSON ({exc}); fix or move it before installing") from exc
     if not isinstance(data, dict):
         raise RuntimeError(f"{path} does not contain a JSON object")
     return data
@@ -348,9 +346,7 @@ def install(
 
     replaced = server_name in servers
     if replaced and not force:
-        raise FileExistsError(
-            f"{server_name!r} is already configured in {target.path}; pass --force to overwrite it"
-        )
+        raise FileExistsError(f"{server_name!r} is already configured in {target.path}; pass --force to overwrite it")
 
     entry = server_entry(config_path=config_path, extra_env=extra_env, url=url, transport=transport)
     others = sorted(k for k in servers if k != server_name)

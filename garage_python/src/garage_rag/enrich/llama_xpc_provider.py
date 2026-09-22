@@ -47,9 +47,7 @@ class LlamaXPCLanguageModel(base_model.BaseLanguageModel):
         # (temperature, max_workers, ...); none of them apply to this transport.
         self._client = client or LlamaXPCClient()
 
-    def infer(
-        self, batch_prompts: Sequence[str], **kwargs: Any
-    ) -> Iterator[Sequence[core_types.ScoredOutput]]:
+    def infer(self, batch_prompts: Sequence[str], **kwargs: Any) -> Iterator[Sequence[core_types.ScoredOutput]]:
         for prompt in batch_prompts:
             try:
                 response = self._client.chat_completion(

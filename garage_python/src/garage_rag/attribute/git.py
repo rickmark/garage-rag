@@ -56,6 +56,7 @@ class RepoAttribution:
             return []
         return sorted(tallies.values(), key=lambda t: (-t.commits, t.name))
 
+
 def _run_git(args: list[str], cwd: Path, *, timeout: float = _GIT_TIMEOUT) -> str | None:
     try:
         result = subprocess.run(  # noqa: S603 - fixed argv, no shell

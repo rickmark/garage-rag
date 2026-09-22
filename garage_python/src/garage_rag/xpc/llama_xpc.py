@@ -122,15 +122,11 @@ class LlamaXPCClient:
             raw = exc.read()
         except (urllib.error.URLError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
-            raise LlamaXPCError(
-                f"cannot reach LlamaXPCService at {self.base_url}: {reason}", status_code=503
-            ) from exc
+            raise LlamaXPCError(f"cannot reach LlamaXPCService at {self.base_url}: {reason}", status_code=503) from exc
         try:
             payload = json.loads(raw) if raw else {}
         except ValueError as exc:
-            raise LlamaXPCError(
-                f"non-JSON reply from {method} {path} (HTTP {status})", status_code=503
-            ) from exc
+            raise LlamaXPCError(f"non-JSON reply from {method} {path} (HTTP {status})", status_code=503) from exc
         return status, payload
 
     def _call(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
