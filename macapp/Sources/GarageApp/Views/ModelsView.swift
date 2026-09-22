@@ -715,15 +715,8 @@ struct ModelsView: View {
 
     private func registerPreset(_ preset: ModelPresetEntry) {
         registeringPresetSlug = preset.slug
-        var args = ["register-model", preset.slug, "--provider", preset.provider ?? "llama_xpc"]
-        if preset.effectiveDims > 0 {
-            args += ["--dims", "\(preset.effectiveDims)"]
-        }
-        if let ref = preset.modelRef, !ref.isEmpty, ref != preset.slug {
-            args += ["--model-ref", ref]
-        }
         Task {
-            await appState.runGarage(args)
+            await appState.registerModel(preset: preset)
             await appState.fetchRegisteredModels()
             registeringPresetSlug = nil
         }

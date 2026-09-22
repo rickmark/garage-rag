@@ -22,25 +22,6 @@ struct SourcesView: View {
     private let classes = ["document", "code", "communication"]
     private let trusts = ["authored", "reference", "received"]
 
-    private struct SourcePreset: Identifiable {
-        let id: String
-        let title: String
-        let slug: String
-        let root: String
-        let kind: String
-        let corpusClass: String
-        let trust: String
-        let allowCloud: Bool
-    }
-
-    private let commonPresets: [SourcePreset] = [
-        SourcePreset(id: "apple-sms", title: "Messages (apple-sms)", slug: "apple-sms", root: "~/Library/Messages", kind: "sqlite", corpusClass: "communication", trust: "received", allowCloud: false),
-        SourcePreset(id: "apple-mail", title: "Apple Mail (apple-mail)", slug: "apple-mail", root: "~/Library/Mail", kind: "maildir", corpusClass: "communication", trust: "received", allowCloud: false),
-        SourcePreset(id: "documents", title: "Documents", slug: "documents", root: "~/Documents", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false),
-        SourcePreset(id: "downloads", title: "Downloads", slug: "downloads", root: "~/Downloads", kind: "filesystem", corpusClass: "document", trust: "received", allowCloud: false),
-        SourcePreset(id: "desktop", title: "Desktop", slug: "desktop", root: "~/Desktop", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false)
-    ]
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -752,7 +733,7 @@ struct SourcesView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Menu("Choose preset…") {
-                        ForEach(commonPresets) { preset in
+                        ForEach(SourcePreset.all) { preset in
                             Button(preset.title) {
                                 applyPreset(preset)
                             }
@@ -922,12 +903,12 @@ struct SourcesView: View {
     }
 
     private func applyPreset(_ preset: SourcePreset) {
-        slug = preset.slug
-        root = preset.root
-        kind = preset.kind
-        corpusClass = preset.corpusClass
-        trust = preset.trust
-        allowCloud = preset.allowCloud
+        slug = preset.spec.slug
+        root = preset.spec.root
+        kind = preset.spec.kind
+        corpusClass = preset.spec.corpusClass
+        trust = preset.spec.trust
+        allowCloud = preset.spec.allowCloudEnrichment
     }
 
     private func populateForm(from source: RegisteredSource) {
@@ -985,12 +966,16 @@ struct SourcesView: View {
         busy = true
         let trimmedSlug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
-        var args = ["add-source", trimmedSlug, trimmedRoot, "--kind", kind, "--class", corpusClass, "--trust", trust]
-        if allowCloud {
-            args.append("--allow-cloud-enrichment")
-        }
+        let spec = SourceSpec(
+            slug: trimmedSlug,
+            root: trimmedRoot,
+            kind: kind,
+            corpusClass: corpusClass,
+            trust: trust,
+            allowCloudEnrichment: allowCloud
+        )
         Task {
-            await appState.runGarage(args)
+            await appState.addSource(spec)
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false

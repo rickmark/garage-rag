@@ -181,29 +181,6 @@ struct StatusView: View {
 
     // MARK: - Default Sources Quick Add (Empty State)
 
-    private struct QuickSourcePreset: Identifiable {
-        let id: String
-        let title: String
-        let subtitle: String
-        let slug: String
-        let root: String
-        let kind: String
-        let corpusClass: String
-        let trust: String
-    }
-
-    private var quickSourcePresets: [QuickSourcePreset] {
-        var presets: [QuickSourcePreset] = [
-            QuickSourcePreset(id: "documents", title: "Documents", subtitle: "~/Documents", slug: "documents", root: "~/Documents", kind: "filesystem", corpusClass: "document", trust: "authored"),
-            QuickSourcePreset(id: "apple-sms", title: "Messages (sms.db)", subtitle: "~/Library/Messages", slug: "apple-sms", root: "~/Library/Messages", kind: "sqlite", corpusClass: "communication", trust: "received")
-        ]
-        let dropboxPath = ("~/Dropbox" as NSString).expandingTildeInPath
-        if FileManager.default.fileExists(atPath: dropboxPath) {
-            presets.append(QuickSourcePreset(id: "dropbox", title: "Dropbox", subtitle: "~/Dropbox", slug: "dropbox", root: "~/Dropbox", kind: "filesystem", corpusClass: "document", trust: "authored"))
-        }
-        return presets
-    }
-
     private var showDefaultSourcesQuickAdd: Bool {
         appState.postgres.status == .running && appState.registeredSources.isEmpty
     }
@@ -216,7 +193,7 @@ struct StatusView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(alignment: .top, spacing: 10) {
-                    ForEach(quickSourcePresets) { preset in
+                    ForEach(SourcePreset.quickAdd) { preset in
                         quickSourceCard(for: preset)
                     }
                 }
@@ -249,18 +226,18 @@ struct StatusView: View {
                 }
                 .controlSize(.small)
                 .buttonStyle(.bordered)
-                .disabled(quickAddingSourceSlug != nil || isAddingAllSources || quickSourcePresets.isEmpty)
+                .disabled(quickAddingSourceSlug != nil || isAddingAllSources || SourcePreset.quickAdd.isEmpty)
             }
         }
     }
 
-    private func quickSourceCard(for preset: QuickSourcePreset) -> some View {
-        let isAdding = quickAddingSourceSlug == preset.slug
+    private func quickSourceCard(for preset: SourcePreset) -> some View {
+        let isAdding = quickAddingSourceSlug == preset.id
 
         return VStack(alignment: .leading, spacing: 6) {
             Text(preset.title)
                 .font(.subheadline.bold())
-            Text(preset.subtitle)
+            Text(preset.spec.root)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
             Button {
@@ -282,14 +259,10 @@ struct StatusView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func addSourceArgs(_ preset: QuickSourcePreset) -> [String] {
-        ["add-source", preset.slug, preset.root, "--kind", preset.kind, "--class", preset.corpusClass, "--trust", preset.trust]
-    }
-
-    private func addQuickSource(_ preset: QuickSourcePreset) {
-        quickAddingSourceSlug = preset.slug
+    private func addQuickSource(_ preset: SourcePreset) {
+        quickAddingSourceSlug = preset.id
         Task {
-            await appState.runGarage(addSourceArgs(preset))
+            await appState.addSource(preset.spec)
             await appState.fetchRegisteredSources()
             quickAddingSourceSlug = nil
         }
@@ -297,11 +270,11 @@ struct StatusView: View {
 
     private func addAllQuickSources() {
         isAddingAllSources = true
-        let presets = quickSourcePresets
+        let presets = SourcePreset.quickAdd
         Task {
             for preset in presets {
-                quickAddingSourceSlug = preset.slug
-                await appState.runGarage(addSourceArgs(preset))
+                quickAddingSourceSlug = preset.id
+                await appState.addSource(preset.spec)
             }
             await appState.fetchRegisteredSources()
             quickAddingSourceSlug = nil
@@ -412,21 +385,10 @@ struct StatusView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func registerModelArgs(_ preset: ModelPresetEntry) -> [String] {
-        var args = ["register-model", preset.slug, "--provider", preset.provider ?? "llama_xpc"]
-        if preset.effectiveDims > 0 {
-            args += ["--dims", "\(preset.effectiveDims)"]
-        }
-        if let ref = preset.modelRef, !ref.isEmpty, ref != preset.slug {
-            args += ["--model-ref", ref]
-        }
-        return args
-    }
-
     private func addFeaturedModel(_ preset: ModelPresetEntry) {
         quickAddingModelSlug = preset.slug
         Task {
-            await appState.runGarage(registerModelArgs(preset))
+            await appState.registerModel(preset: preset)
             await appState.fetchRegisteredModels()
             quickAddingModelSlug = nil
         }
@@ -438,7 +400,7 @@ struct StatusView: View {
         Task {
             for preset in presets {
                 quickAddingModelSlug = preset.slug
-                await appState.runGarage(registerModelArgs(preset))
+                await appState.registerModel(preset: preset)
             }
             await appState.fetchRegisteredModels()
             quickAddingModelSlug = nil
