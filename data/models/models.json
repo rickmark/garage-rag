@@ -8,6 +8,7 @@
       "provider": "llama_xpc",
       "native_dims": 1024,
       "default_dims": 1024,
+      "distance": "cosine",
       "context_size": 8192,
       "download_model_id": "gpustack/bge-m3-GGUF",
       "download_file": "bge-m3-Q8_0.gguf",
@@ -1059,6 +1060,7 @@
       "provider": "llama_xpc",
       "native_dims": 768,
       "default_dims": 768,
+      "distance": "cosine",
       "context_size": 8192,
       "download_model_id": "nomic-ai/nomic-embed-text-v1.5-GGUF",
       "download_file": "nomic-embed-text-v1.5.Q8_0.gguf",
@@ -1084,6 +1086,7 @@
       "provider": "llama_xpc",
       "native_dims": 384,
       "default_dims": 384,
+      "distance": "cosine",
       "context_size": 512,
       "download_model_id": "mixedbread-ai/mxbai-embed-xsmall-v1",
       "download_file": "gguf/mxbai-embed-xsmall-v1-q8_0.gguf",
@@ -1109,6 +1112,7 @@
       "provider": "llama_xpc",
       "native_dims": 1024,
       "default_dims": 1024,
+      "distance": "cosine",
       "context_size": 8192,
       "description": "Larger mxbai embedding model with higher retrieval accuracy at the cost of more memory and slower embedding.",
       "use_cases": [
@@ -2156,6 +2160,7 @@
       "provider": "llama_xpc",
       "native_dims": 768,
       "default_dims": 768,
+      "distance": "cosine",
       "context_size": 8192,
       "download_model_id": "unsloth/embeddinggemma-300m-GGUF",
       "download_file": "embeddinggemma-300M-Q8_0.gguf",
@@ -2950,6 +2955,7 @@
       "provider": "llama_xpc",
       "native_dims": 1024,
       "default_dims": 1024,
+      "distance": "cosine",
       "context_size": 8192,
       "download_model_id": "ChristianAzinn/snowflake-arctic-embed-m-gguf",
       "download_file": "snowflake-arctic-embed-m-Q8_0.GGUF",
@@ -2975,6 +2981,11 @@
       "provider": "llama_xpc",
       "native_dims": 1024,
       "default_dims": 1024,
+      "distance": "cosine",
+      "supports_mrl": true,
+      "provider_refs": {
+        "ollama": "qwen3-embedding:0.6b"
+      },
       "context_size": 8192,
       "description": "Small Qwen3 embedding model balancing speed and retrieval quality.",
       "use_cases": [
@@ -2996,6 +3007,11 @@
       "provider": "llama_xpc",
       "native_dims": 2560,
       "default_dims": 2560,
+      "distance": "cosine",
+      "supports_mrl": true,
+      "provider_refs": {
+        "ollama": "qwen3-embedding:4b"
+      },
       "context_size": 8192,
       "description": "Mid-size Qwen3 embedding model with higher retrieval accuracy at higher memory cost.",
       "use_cases": [
@@ -3018,6 +3034,11 @@
       "provider": "llama_xpc",
       "native_dims": 4096,
       "default_dims": 4000,
+      "distance": "cosine",
+      "supports_mrl": true,
+      "provider_refs": {
+        "ollama": "qwen3-embedding:8b"
+      },
       "context_size": 32768,
       "description": "Largest Qwen3 embedding model with the highest retrieval accuracy and a very long context window. Requires more memory.",
       "use_cases": [
@@ -3096,6 +3117,7 @@
       "provider": "llama_xpc",
       "native_dims": 4096,
       "default_dims": 4096,
+      "distance": "cosine",
       "context_size": 8192,
       "download_model_id": "mradermacher/llama-embed-nemotron-8b-GGUF",
       "download_file": "llama-embed-nemotron-8b.Q8_0.gguf",

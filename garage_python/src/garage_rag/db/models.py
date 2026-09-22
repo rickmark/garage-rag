@@ -303,6 +303,9 @@ class EmbeddingModel(Base):
     stored_dims: Mapped[int] = mapped_column(Integer)
     storage_kind: Mapped[StorageKind] = mapped_column(String)
     index_kind: Mapped[IndexKind] = mapped_column(String)
+    # cosine | l2 | inner_product (009_model_distance.sql): the index's operator
+    # class and the search operator both follow it.
+    distance: Mapped[str] = mapped_column(Text, default="cosine")
     normalized: Mapped[bool] = mapped_column(Boolean, default=True)
     table_name: Mapped[str] = mapped_column(Text, unique=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)

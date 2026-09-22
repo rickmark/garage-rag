@@ -94,6 +94,11 @@ final class GarageGRPCService: ObservableObject {
         if FileManager.default.isExecutableFile(atPath: Paths.garageMCP.path) {
             env["GARAGE_MCP_EXECUTABLE"] = Paths.garageMCP.resolvingSymlinksInPath().path
         }
+        // The model catalog RegisterModel reads widths and distance metrics from:
+        // the app's own models.json, so the presets and the pipeline agree.
+        if FileManager.default.fileExists(atPath: Paths.modelsJSON.path) {
+            env["GARAGE_MODEL_MANIFEST"] = Paths.modelsJSON.path
+        }
         return env
     }
 

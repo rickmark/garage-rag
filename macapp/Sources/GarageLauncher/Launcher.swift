@@ -57,6 +57,7 @@ public enum Launcher {
         let executable = executablePath()
         let appBundle = containingAppBundle(of: executable)
         exportMCPLauncherPath(nextTo: executable)
+        exportModelManifest(in: appBundle)
 
         if entry.needsDatabase(CommandLine.arguments) {
             do {
@@ -102,6 +103,16 @@ public enum Launcher {
         let path = executable.deletingLastPathComponent().appendingPathComponent("garage-mcp").path
         if FileManager.default.isExecutableFile(atPath: path) {
             setenv("GARAGE_MCP_EXECUTABLE", path, 1)
+        }
+    }
+
+    /// Points Python at the bundle's models.json (widths, distance metrics) unless the
+    /// caller chose another; outside the bundle garage_rag finds the repo's copy.
+    private static func exportModelManifest(in appBundle: URL?) {
+        guard ProcessInfo.processInfo.environment["GARAGE_MODEL_MANIFEST"] == nil, let appBundle else { return }
+        let manifest = appBundle.appendingPathComponent("Contents/Resources/models.json")
+        if FileManager.default.fileExists(atPath: manifest.path) {
+            setenv("GARAGE_MODEL_MANIFEST", manifest.path, 1)
         }
     }
 

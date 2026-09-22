@@ -263,6 +263,7 @@ message ModelInfo {
     string table_name = 8;
     bool is_default = 9;
     string model_id = 10;
+    string distance = 11;  // cosine | l2 | inner_product
 }
 
 message ListModelsRequest {}
@@ -396,6 +397,7 @@ message RegisterModelRequest {
     string provider = 4;
     string model_id = 5;
     bool make_default = 6;
+    string distance = 7;     // empty = models.json (cosine for models it does not list)
 }
 
 message RegisterModelResponse {

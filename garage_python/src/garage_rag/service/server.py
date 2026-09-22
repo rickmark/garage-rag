@@ -568,6 +568,7 @@ class GarageRpcServicer(GarageServiceServicer):
                     table_name=m.table_name,
                     is_default=m.is_default,
                     model_id=m.model_id or "",
+                    distance=m.distance,
                 )
                 for m in models
             ]
@@ -742,6 +743,7 @@ class GarageRpcServicer(GarageServiceServicer):
             model_ref=request.model_ref or None,
             provider=request.provider or None,
             model_id=request.model_id or None,
+            distance=request.distance or None,
             make_default=request.make_default,
         )
         return RegisterModelResponse(
@@ -756,6 +758,7 @@ class GarageRpcServicer(GarageServiceServicer):
                 table_name=row.table_name,
                 is_default=row.is_default,
                 model_id=row.model_id or "",
+                distance=row.distance,
             ),
             notes=row.notes,
             message="\n".join([row.message, *row.notes]),

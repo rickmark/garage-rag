@@ -192,10 +192,28 @@ pgvector 0.8 HNSW ceilings are hard limits — `vector` ≤ 2000 dims, `halfvec`
 
 | Model width | Storage | Index |
 |---|---|---|
-| ≤ 2000 | `vector(d)` | HNSW cosine |
-| 2001–4000 | `halfvec(d)` | HNSW cosine |
-| > 4000, Matryoshka | `halfvec(4000)` truncated + renormalized | HNSW cosine |
-| > 4000, not Matryoshka | `vector(d)` | HNSW on `binary_quantize(...)::bit(d)`, re-ranked on exact cosine |
+| ≤ 2000 | `vector(d)` | HNSW on the model's distance |
+| 2001–4000 | `halfvec(d)` | HNSW on the model's distance |
+| > 4000, Matryoshka | `halfvec(4000)` truncated + renormalized | HNSW on the model's distance |
+| > 4000, not Matryoshka | `vector(d)` | HNSW on `binary_quantize(...)::bit(d)`, re-ranked on the exact distance |
+
+#### Distance
+
+`embedding_models.distance` (`009_model_distance.sql`) is the similarity the
+model was trained for: `cosine`, `l2` or `inner_product`. It is declared per
+model in `data/models/models.json` (or `register-model --distance` for a model
+the catalog does not list) and fixes two things that must agree: the HNSW
+operator class (`vector_cosine_ops`, `halfvec_l2_ops`, `vector_ip_ops`, …) and
+the operator search orders by (`<=>`, `<->`, `<#>`). An index built for one
+metric is not used by a query on another, so the metric is chosen once, at
+registration. Models registered before the column existed were indexed for
+cosine, which is its default.
+
+`models.json` is the one model catalog: the app reads it for presets and
+downloads, and `garage_rag.db.catalog` reads the same file for widths,
+`supports_mrl`, `distance` and per-provider names (`provider_refs`, e.g. an
+Ollama tag), found through `GARAGE_MODEL_MANIFEST` (the app points it at its
+bundled copy) or in the repository.
 
 Truncation is only sound for MRL-trained models, so `supports_mrl` is declared
 per model rather than assumed. A CHECK constraint refuses to register an

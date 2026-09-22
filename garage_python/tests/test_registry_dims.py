@@ -17,11 +17,11 @@ from pgvector import HalfVector
 from pgvector.sqlalchemy import HALFVEC, VECTOR
 
 from garage_rag.config import Settings
+from garage_rag.db.catalog import known_models
 from garage_rag.db.emb_tables import get_model
 from garage_rag.db.registry import (
     HNSW_MAX_HALFVEC_DIMS,
     HNSW_MAX_VECTOR_DIMS,
-    KNOWN_MODELS,
     column_type_sql,
     index_ddl,
     plan_storage,
@@ -118,7 +118,7 @@ class TestTableNaming:
         import re
 
         pattern = re.compile(r"^emb_[a-z0-9_]+$")
-        for slug in [*KNOWN_MODELS, "weird!!name", "UPPER", "dots.and-dashes"]:
+        for slug in [*known_models(), "weird!!name", "UPPER", "dots.and-dashes"]:
             assert pattern.match(table_name_for(slug)), slug
 
     def test_respects_postgres_identifier_limit(self) -> None:
@@ -156,7 +156,7 @@ class TestTruncation:
 
 class TestKnownModels:
     def test_every_known_model_is_registrable(self) -> None:
-        for slug, spec in KNOWN_MODELS.items():
+        for slug, spec in known_models().items():
             assert spec.slug == slug
             plan = plan_storage(spec.dims, supports_mrl=spec.supports_mrl)
             assert plan.stored_dims > 0
@@ -164,21 +164,21 @@ class TestKnownModels:
 
     def test_qwen3_family_declares_mrl(self) -> None:
         """Truncation is only sound for MRL-trained models, so the flag matters."""
-        for slug, spec in KNOWN_MODELS.items():
+        for slug, spec in known_models().items():
             if slug.startswith("qwen3-embedding"):
                 assert spec.supports_mrl, f"{slug} must declare MRL support"
 
     def test_pulled_models_have_expected_widths(self) -> None:
-        assert KNOWN_MODELS["bge-m3"].dims == 1024
-        assert KNOWN_MODELS["nomic-embed-text"].dims == 768
-        assert KNOWN_MODELS["mxbai-embed-xsmall"].dims == 384
+        assert known_models()["bge-m3"].dims == 1024
+        assert known_models()["nomic-embed-text"].dims == 768
+        assert known_models()["mxbai-embed-xsmall"].dims == 384
 
     def test_known_models_default_provider_is_llama_xpc(self) -> None:
-        for slug, spec in KNOWN_MODELS.items():
+        for slug, spec in known_models().items():
             assert spec.provider == "llama_xpc", f"{slug} must default to llama_xpc provider"
 
     def test_known_models_have_model_id(self) -> None:
-        for _slug, spec in KNOWN_MODELS.items():
+        for _slug, spec in known_models().items():
             assert spec.model_id is not None
             assert "/" in spec.model_id
 
@@ -187,7 +187,13 @@ class TestKnownModels:
 # The storage plan at query time: the bind parameter must match the column
 # ---------------------------------------------------------------------------
 def _model_row(
-    *, dims: int, stored_dims: int, storage_kind: str, slug: str = "m", index_kind: str = "hnsw"
+    *,
+    dims: int,
+    stored_dims: int,
+    storage_kind: str,
+    slug: str = "m",
+    index_kind: str = "hnsw",
+    distance: str = "cosine",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         slug=slug,
@@ -195,6 +201,7 @@ def _model_row(
         stored_dims=stored_dims,
         storage_kind=storage_kind,
         index_kind=index_kind,
+        distance=distance,
         provider="ollama",
         model_ref=slug,
         table_name=f"emb_{slug}",

@@ -117,8 +117,24 @@ py_test(
 )
 
 py_test(
+    name = "test_model_catalog",
+    srcs = ["test_model_catalog.py"],
+    data = [
+        "//data/models:model_manifest",
+        "//data/sql:sql_schema",
+    ],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/search",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_registry_dims",
     srcs = ["test_registry_dims.py"],
+    data = ["//data/models:model_manifest"],
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
@@ -292,6 +308,7 @@ test_suite(
         ":test_mcp_install",
         ":test_mcp_server",
         ":test_migrate",
+        ":test_model_catalog",
         ":test_registry_dims",
         ":test_scanner",
     ],

@@ -87,6 +87,7 @@ extension GarageGRPCService {
         modelRef: String? = nil,
         provider: String? = nil,
         modelID: String? = nil,
+        distance: String? = nil,
         makeDefault: Bool = false
     ) async throws -> Garage_RegisterModelResponse {
         var request = Garage_RegisterModelRequest()
@@ -95,6 +96,8 @@ extension GarageGRPCService {
         request.modelRef = modelRef ?? ""
         request.provider = provider ?? ""
         request.modelID = modelID ?? ""
+        // Empty: models.json's metric for a catalogued model, cosine otherwise.
+        request.distance = distance ?? ""
         request.makeDefault = makeDefault
         return try await call { try await $0.registerModel(request, callOptions: $1) }
     }
@@ -233,7 +236,7 @@ extension Garage_ListModelsResponse {
         guard !models.isEmpty else { return "no models registered" }
         return models.map { model in
             var line = "\(model.slug)\(model.isDefault ? " (default)" : ""): \(model.provider) \(model.modelRef)"
-            line += ", \(model.dims) dims → \(model.storageKind)(\(model.storedDims)), \(model.indexKind) on \(model.tableName)"
+            line += ", \(model.dims) dims → \(model.storageKind)(\(model.storedDims)), \(model.indexKind)/\(model.distance) on \(model.tableName)"
             return line
         }.joined(separator: "\n")
     }

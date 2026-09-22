@@ -20,13 +20,14 @@ class RegisteredModel:
     index_kind: str
     table_name: str
     is_default: bool
+    distance: str = "cosine"
     notes: list[str] = field(default_factory=list)
 
     @property
     def message(self) -> str:
         return (
             f"registered {self.slug}: {self.dims}-dim -> {self.storage_kind}({self.stored_dims}), "
-            f"index={self.index_kind}, table={self.table_name}"
+            f"index={self.index_kind}, distance={self.distance}, table={self.table_name}"
         )
 
 
@@ -37,17 +38,25 @@ def register_model(
     model_ref: str | None = None,
     provider: str | None = None,
     model_id: str | None = None,
+    distance: str | None = None,
     make_default: bool = False,
 ) -> RegisteredModel:
-    """Register an embedding model and create its table and index. Idempotent on ``slug``."""
-    spec = emb_tables.resolve_spec(slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id)
+    """Register an embedding model and create its table and index. Idempotent on ``slug``.
+
+    Width, distance and the rest come from models.json for a catalogued model;
+    explicit arguments override them. ValueError for an unknown distance, or for
+    a model outside the catalog registered without ``dims``.
+    """
+    spec = emb_tables.resolve_spec(
+        slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id, distance=distance
+    )
     with session_scope() as session:
         row = emb_tables.register_model(session, spec, make_default=make_default)
         notes: list[str] = []
         if row.stored_dims < row.dims:
             notes.append(f"truncated {row.dims} -> {row.stored_dims} (Matryoshka) to fit the halfvec HNSW ceiling")
         if row.index_kind == "hnsw_bq":
-            notes.append("binary-quantized index; queries re-rank on exact cosine")
+            notes.append(f"binary-quantized index; queries re-rank on exact {row.distance} distance")
         return RegisteredModel(
             slug=row.slug,
             provider=row.provider,
@@ -59,6 +68,7 @@ def register_model(
             index_kind=row.index_kind,
             table_name=row.table_name,
             is_default=bool(row.is_default),
+            distance=row.distance,
             notes=notes,
         )
 

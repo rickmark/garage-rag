@@ -366,16 +366,32 @@ def register_model_cmd(
     model_ref: Annotated[str | None, typer.Option(help="Provider-side name, if it differs from the slug.")] = None,
     provider: Annotated[str | None, typer.Option(help="Embedding backend: llama_xpc | ollama | lmstudio.")] = None,
     model_id: Annotated[str | None, typer.Option(help="Model identifier (e.g. HuggingFace repo).")] = None,
+    distance: Annotated[
+        str | None,
+        typer.Option(help="Similarity the model was trained for: cosine | l2 | inner_product. Default: models.json."),
+    ] = None,
     default: Annotated[bool, typer.Option("--default", help="Make this the default.")] = False,
 ) -> None:
     """Register an embedding model and create its table and index."""
     from garage_rag.ops.models import register_model as register
 
-    row = register(slug, dims=dims, model_ref=model_ref, provider=provider, model_id=model_id, make_default=default)
+    try:
+        row = register(
+            slug,
+            dims=dims,
+            model_ref=model_ref,
+            provider=provider,
+            model_id=model_id,
+            distance=distance,
+            make_default=default,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
     console.print(
         f"[green]registered[/green] {row.slug}: {row.dims}-dim -> "
         f"{row.storage_kind}({row.stored_dims}), index={row.index_kind}, "
-        f"table={row.table_name}"
+        f"distance={row.distance}, table={row.table_name}"
     )
     for note in row.notes:
         console.print(f"  [yellow]note[/yellow]: {note}")
@@ -397,6 +413,7 @@ def list_models_cmd(
                 "stored_dims": m.stored_dims,
                 "storage_kind": m.storage_kind,
                 "index_kind": m.index_kind,
+                "distance": m.distance,
                 "table_name": m.table_name,
                 "is_default": bool(m.is_default),
             }
@@ -409,7 +426,20 @@ def list_models_cmd(
         console.print("[yellow]no models registered[/yellow]")
         return
     table = Table()
-    for col in ("slug", "provider", "ref", "model_id", "dims", "stored", "storage", "index", "table", "default"):
+    columns = (
+        "slug",
+        "provider",
+        "ref",
+        "model_id",
+        "dims",
+        "stored",
+        "storage",
+        "index",
+        "distance",
+        "table",
+        "default",
+    )
+    for col in columns:
         table.add_column(col)
     for row in rows:
         table.add_row(
@@ -421,6 +451,7 @@ def list_models_cmd(
             str(row["stored_dims"]),
             row["storage_kind"],
             row["index_kind"],
+            row["distance"],
             row["table_name"],
             "*" if row["is_default"] else "",
         )

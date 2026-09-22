@@ -115,11 +115,20 @@ class TestModels:
             notes=["truncated 4096 -> 2000 (Matryoshka) to fit the halfvec HNSW ceiling"],
         )
         with patch("garage_rag.ops.models.register_model", return_value=row) as op:
-            res = client.register_model(RegisterModelRequest(slug="big", dims=4096, provider="llama_xpc"))
+            res = client.register_model(
+                RegisterModelRequest(slug="big", dims=4096, provider="llama_xpc", distance="inner_product")
+            )
         op.assert_called_once_with(
-            "big", dims=4096, model_ref=None, provider="llama_xpc", model_id=None, make_default=False
+            "big",
+            dims=4096,
+            model_ref=None,
+            provider="llama_xpc",
+            model_id=None,
+            distance="inner_product",
+            make_default=False,
         )
         assert res.model.stored_dims == 2000
+        assert res.model.distance == "cosine"  # what the (mocked) registration reports
         assert list(res.notes) == row.notes
         assert "truncated" in res.message
 

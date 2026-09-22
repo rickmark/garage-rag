@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from garage_rag.db.emb_tables import assert_safe_table, get_model
 from garage_rag.db.engine import apply_search_tuning
-from garage_rag.db.registry import StoragePlan, truncate_vector
+from garage_rag.db.registry import StoragePlan, distance_operator, truncate_vector
 from garage_rag.embed.factory import get_embedder
 from garage_rag.search import SearchMode
 
@@ -197,12 +197,14 @@ def search(
 
     # Each CTE is included only when its engine is in play, so `--mode fts`
     # never loads an embedding model and `--mode vector` never parses a tsquery.
+    # The model's distance picks the operator, matching its index's operator class.
+    op = distance_operator(model.distance) if model is not None else "<=>"
     if model is not None and model.index_kind == "hnsw_bq":
         # The full-width column is unindexed; its HNSW index is on the binary
         # quantization (registry.py). Stage one walks that index on Hamming
         # distance, with the filters in the same scan; stage two re-ranks the
-        # over-fetched rows on exact cosine. The ORDER BY expression must match the
-        # index expression, width included, for the planner to use it.
+        # over-fetched rows on the model's exact distance. The ORDER BY expression
+        # must match the index expression, width included, for the planner to use it.
         bits = int(model.stored_dims)
         params["bq_depth"] = CANDIDATE_DEPTH * BQ_OVERFETCH
         vector_cte = f"""
@@ -218,9 +220,9 @@ def search(
         ),
         vec AS (
             SELECT b.chunk_id,
-                   row_number() OVER (ORDER BY b.embedding <=> :qv) AS rnk
+                   row_number() OVER (ORDER BY b.embedding {op} :qv) AS rnk
             FROM vec_bq b
-            ORDER BY b.embedding <=> :qv
+            ORDER BY b.embedding {op} :qv
             LIMIT :depth
         )
     """
@@ -228,13 +230,13 @@ def search(
         vector_cte = f"""
         vec AS (
             SELECT c.id AS chunk_id,
-                   row_number() OVER (ORDER BY e.embedding <=> :qv) AS rnk
+                   row_number() OVER (ORDER BY e.embedding {op} :qv) AS rnk
             FROM {table} e
             JOIN chunks c    ON c.id = e.chunk_id
             JOIN documents d ON d.id = c.document_id
             JOIN sources s   ON s.id = d.source_id
             WHERE {where}
-            ORDER BY e.embedding <=> :qv
+            ORDER BY e.embedding {op} :qv
             LIMIT :depth
         )
     """
