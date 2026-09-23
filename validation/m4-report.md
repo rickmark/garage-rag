@@ -1561,3 +1561,110 @@ This run was manual UI scripting, not a test. The deadlock is testable without U
 - or an XCUITest that triggers the reset and asserts that the old pid exits within a few seconds
   and the new one's Postgres survives.
 The XCUITest would need the accessibility identifiers above.
+
+---
+
+# Development signing inventory
+
+Read-only, 2026-09-23 10:46–11:00 MDT. Nothing was built, signed, installed or uploaded, and no
+keychain item or profile was changed. Certificate hashes and serial numbers are left out.
+
+## 1. Code-signing identities (`security find-identity -v -p codesigning`)
+
+4 valid identities:
+- `Apple Development: Rick Penwell (23E5F7Z5L7)`
+- `Garage Local Signing` (the local self-signed identity)
+- `Apple Distribution: Richard Penwell (DWVXMLB45Y)`
+- `Developer ID Application: Richard Penwell (DWVXMLB45Y)`
+
+**The Apple Development identity for team DWVXMLB45Y is `Apple Development: Rick Penwell (23E5F7Z5L7)`.**
+`23E5F7Z5L7` is the certificate's personal ID, not a team. The certificate's subject
+`OU = DWVXMLB45Y` confirms the team. It expires 2027-09-02. It is the only Apple Development
+certificate in the keychain.
+
+## 2. This Mac
+
+`system_profiler SPHardwareDataType`:
+- **Provisioning UDID: `00006041-000A61DE3E50801C`**. This is the value to register in the portal.
+- Hardware UUID: `7CDE8722-C499-54C0-ABC0-B41300E5EDFF`.
+
+## 3. Provisioning profiles
+
+`~/Library/MobileDevice/Provisioning Profiles` is empty. All 22 profiles are in
+`~/Library/Developer/Xcode/UserData/Provisioning Profiles`.
+- All are for team `DWVXMLB45Y`.
+- "Dev cert" means `DeveloperCertificates` contains the Apple Development certificate above.
+- "Store" means a Mac App Store distribution profile: no device list, not all devices.
+
+| File | Name | application-identifier | App groups | Type | This Mac | Expires | Dev cert |
+|---|---|---|---|---|---|---|---|
+| 38204c67 | GarageMacAppConnect | `DWVXMLB45Y.me.rickmark.garage-rag` | `group.me.rickmark.garage-rag`, `DWVXMLB45Y.*` | Store | – | 2027-09-01 | no |
+| 739efe3a | Garage RAG - Main App | `DWVXMLB45Y.me.rickmark.garage-rag` | – | Store | – | 2027-09-01 | no |
+| 4adc9101 | Mac Team Store Provisioning Profile: me.rickmark.garage-rag | `DWVXMLB45Y.me.rickmark.garage-rag` | – | Store | – | 2027-09-02 | no |
+| 310723a2 | GarageSplatAppStore | `DWVXMLB45Y.me.rickmark.garage-rag.*` | – | Store | – | 2027-09-01 | no |
+| 4f3511ae / c4e996ce | Garage RAG - Python Service / Mac Team Store …garage-rag.xpc | `…garage-rag.xpc` | – | Store | – | 2027-09-01/02 | no |
+| 34a6aef5 | Mac Team Store …ingest-xpc | `…garage-rag.ingest-xpc` | – | Store | – | 2027-09-02 | no |
+| 96316cff / 72c4776c / da59e163 | Garage RAG - Embedding / Mac Team Store …embed-xpc / **Garage RAG - Ingest** | `…garage-rag.embed-xpc` | – | Store | – | 2027-09-01/02 | no |
+| 9a9c82a1 / e8716eaf / 46031519 | Garage RAG - LLaMa / LLaMa XPC / Mac Team Store …llama-xpc | `…garage-rag.llama-xpc` | – | Store | – | 2027-09-01/02 | no |
+| 245a1c21 / ad4b5a0a | Garage RAG - MCP Server / Mac Team Store …mcp-server-xpc | `…garage-rag.mcp-server-xpc` | – | Store | – | 2027-09-01/02 | no |
+| 38910e60 | Mac Team Store …model-download-xpc | `…garage-rag.model-download-xpc` | – | Store | – | 2027-09-02 | no |
+| 3cff09a2 | Mac Team Store Provisioning Profile: me.rickmark.garage | `DWVXMLB45Y.me.rickmark.garage` | – | Store | – | 2027-09-02 | no |
+| e17ddbd1 | GarageMacAppConnect | `DWVXMLB45Y.me.rickmark.garage.*` | – | Store | – | 2027-09-01 | no |
+| **3bfad8dc** | **Mac Team Provisioning Profile: me.rickmark.garage** | `DWVXMLB45Y.me.rickmark.garage` | – | **Development** (1 device) | **yes** | 2027-09-02 | **yes** |
+| 3d6bcf08 / f0d467d6 | Endpoint Security Extension / Host Profile | `…me.rickmark.endpoint-security.*` | – | Developer ID (`ProvisionsAllDevices`) | all | 2038-08-16 | no |
+| bccbb1d1 | HotMess (iOS / visionOS) | `DWVXMLB45Y.social.hotmess.HotMess` | `group.social.hotmess` | Development | no | **2026-03-07, expired** | no |
+
+Notes:
+- **No development profile exists for `DWVXMLB45Y.me.rickmark.garage-rag`.** The only macOS
+  development profile that covers this Mac and the Apple Development certificate is `3bfad8dc`. It
+  is for the older bundle ID `me.rickmark.garage` (no `-rag`), so it can't sign this app.
+- `da59e163` is named "Garage RAG - Ingest", but its application-identifier is `…embed-xpc`. This
+  is probably a portal naming slip.
+- Only one profile lists app groups at all: `38204c67`, via `DWVXMLB45Y.*`, which covers
+  `DWVXMLB45Y.group.me.rickmark.garage-rag`. The others carry none.
+
+## 4. Xcode
+
+- `xcodebuild -version`: **Xcode 27.0 (27A266a)**.
+- `DVTDeveloperAccountManagerAppleIDLists` exists with one entry, so **an Apple ID account is
+  signed in to Xcode**. The address is not recorded here.
+
+## 5. Profile in the repo (`origin/claude/adoring-ritchie-c084cj` @ `4463955`)
+
+- `ls macapp/*.provisionprofile` → only `macapp/GarageSplatAppStore.provisionprofile`.
+- It is the only profile in the build. `//macapp/Sources/GarageApp` uses it under
+  `//bazel:is_store`. The six XPC services get no profile.
+- Decoded, it is the same profile as installed `38204c67`:
+  - **Name `GarageMacAppConnect`** (despite the file name), UUID `38204c67-149b-4b05-a6b8-f16c331bf2c0`.
+  - Team `DWVXMLB45Y`, application-identifier `DWVXMLB45Y.me.rickmark.garage-rag`.
+  - App groups `group.me.rickmark.garage-rag`, `DWVXMLB45Y.*`.
+  - Also entitles `com.apple.developer.sustained-execution` and `keychain-access-groups`.
+  - `ProvisionedDevices` absent, `ProvisionsAllDevices` false, so it is a **Mac App Store
+    distribution** profile.
+  - Expires 2027-09-01. It does **not** include the Apple Development certificate.
+- So it can only be used with Apple Distribution, and a build signed with it won't launch
+  locally. That matches what this signing change is meant to fix.
+
+## Conclusion: a development profile has to be created
+
+No development profile covering this Mac exists for the app. Create one in the developer portal
+(Profiles → **macOS App Development**):
+
+- **App ID:** `DWVXMLB45Y.me.rickmark.garage-rag` (explicit, bundle ID `me.rickmark.garage-rag`). It
+  already exists; the store profiles use it.
+- **Capabilities on the App ID:**
+  - **App Groups**, with `DWVXMLB45Y.group.me.rickmark.garage-rag`. That is the only group the
+    app and all six XPC services' entitlements name. The existing store profile also carries
+    `group.me.rickmark.garage-rag`, which the entitlements no longer use.
+  - Whatever the App ID already has enabled carries over into the new profile. The store profile
+    shows **Sustained Execution** (`com.apple.developer.sustained-execution`), so that is on too.
+    The build's entitlements don't request it, so it is harmless.
+  - App Sandbox, network client/server, user-selected files, app-scope bookmarks and
+    `disable-library-validation` are plain entitlements. They need no portal capability.
+- **Certificate:** `Apple Development: Rick Penwell (23E5F7Z5L7)`.
+- **Device:** this Mac, Provisioning UDID **`00006041-000A61DE3E50801C`**. Register it under
+  Devices first if it isn't there yet; the `me.rickmark.garage` development profile suggests it
+  already is.
+- **XPC services:** none needed, as long as the build keeps signing them without a profile.
+  Their entitlements are the sandbox plus the team-prefixed group, with no
+  `application-identifier`.
