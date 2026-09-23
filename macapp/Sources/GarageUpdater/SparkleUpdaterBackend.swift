@@ -6,6 +6,7 @@ import Sparkle
 enum UpdaterBackend {
     static let unavailableReason: String? = nil
 
+    @MainActor
     static func makeDriver(configuration: UpdaterConfiguration) -> UpdaterDriving? {
         SparkleUpdaterDriver(configuration: configuration)
     }

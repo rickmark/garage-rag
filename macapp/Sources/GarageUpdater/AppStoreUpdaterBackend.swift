@@ -8,6 +8,7 @@ import Foundation
 enum UpdaterBackend {
     static let unavailableReason: String? = "Garage from the Mac App Store updates through the App Store."
 
+    @MainActor
     static func makeDriver(configuration _: UpdaterConfiguration) -> UpdaterDriving? {
         nil
     }
