@@ -56,6 +56,7 @@ py_test(
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/enrich/langextract",
         "//garage_python/src/garage_rag/mcp_server",
         "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/service",

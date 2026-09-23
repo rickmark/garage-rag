@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Library for building prompts."""
+"""Library for building prompts.
+
+Modified for garage_rag: ``override`` comes from ``typing`` (Python 3.12+)
+rather than ``typing_extensions``.
+"""
 from __future__ import annotations
 
 import dataclasses
 import json
 import pathlib
+from typing import override
 
 import pydantic
-from typing_extensions import override
 import yaml
 
 from garage_rag.enrich.langextract import data
