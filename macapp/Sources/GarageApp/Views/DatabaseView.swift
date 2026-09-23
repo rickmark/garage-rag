@@ -203,6 +203,9 @@ struct DatabaseView: View {
         .onAppear {
             appState.checkPendingMigrations()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
+            showResetConfirmation = false
+        }
         .sheet(isPresented: $showResetConfirmation) {
             DatabaseResetSheet()
                 .environmentObject(appState)

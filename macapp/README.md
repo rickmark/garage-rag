@@ -133,6 +133,10 @@ Validate App first so Xcode confirms it re-signs the nested code (Postgres in `R
 site-packages extensions, `Python.framework`). To run a store build on another Mac, add that Mac to
 the development profile in the developer portal and replace the file.
 
+The first launch of a store build on a Mac that already ran the Developer ID build asks for Keychain
+access to the Postgres password item (`com.rickmark.garage.postgres`): the Developer ID build created
+it, and its access list names only that signature. Answer **Always Allow** once.
+
 ## Why Postgres is built from source
 
 Homebrew's `postgresql@18` bakes absolute `/opt/homebrew/...` paths for its

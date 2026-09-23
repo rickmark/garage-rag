@@ -25,6 +25,8 @@ enum SplashLaunchGate {
 extension Notification.Name {
     /// Posted to (re)open the splash dialog on demand (About menu, menu bar).
     static let garageShowSplash = Notification.Name("me.rickmark.garage-rag.showSplash")
+    /// Posted by `AppDelegate.quit()` so views close their sheets through their own state first.
+    static let garageWillQuit = Notification.Name("me.rickmark.garage-rag.willQuit")
 }
 
 // MARK: - Version info

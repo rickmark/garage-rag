@@ -17,14 +17,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Quit Garage (⌘Q and the menu bar's Quit). AppKit refuses to terminate while a window shows a
     /// sheet ("App termination blocked by modal sheet"), and the splash is shown as one at every
-    /// launch, so close any sheet first.
+    /// launch. The sheets are SwiftUI's, so they are closed through their views' state
+    /// (`garageWillQuit`); ending them in AppKit alone left the state set, and SwiftUI put the
+    /// sheet back before `terminate:` looked. `terminate:` then runs once no sheet is attached (or
+    /// after a second), from the run loop: never from inside a main-actor task, where
+    /// `.terminateLater` deadlocks (see `AppState.terminateFromRunLoop`).
     static func quit() {
-        for window in NSApp.windows {
-            if let sheet = window.attachedSheet {
-                window.endSheet(sheet)
+        NotificationCenter.default.post(name: .garageWillQuit, object: nil)
+        terminateWhenNoSheet(deadline: Date().addingTimeInterval(1))
+    }
+
+    private static func terminateWhenNoSheet(deadline: Date) {
+        let windowsWithSheets = NSApp.windows.filter { $0.attachedSheet != nil }
+        if windowsWithSheets.isEmpty || Date() >= deadline {
+            // A sheet no view state closed: end it in AppKit as a last resort.
+            for window in windowsWithSheets {
+                if let sheet = window.attachedSheet { window.endSheet(sheet) }
             }
+            RunLoop.main.perform { NSApp.terminate(nil) }
+            return
         }
-        NSApp.terminate(nil)
+        // Let SwiftUI apply the state change and animate the sheet out before looking again.
+        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
+            MainActor.assumeIsolated { terminateWhenNoSheet(deadline: deadline) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

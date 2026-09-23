@@ -55,6 +55,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in
             isSplashPresented = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
+            isSplashPresented = false
+        }
         .sheet(isPresented: $isSplashPresented) {
             SplashView()
         }
