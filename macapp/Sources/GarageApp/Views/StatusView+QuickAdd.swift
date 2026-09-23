@@ -119,7 +119,7 @@ extension StatusView {
     var featuredModelsQuickAddSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("No embedding models are registered yet. Add one of these recommended models to enable chunk embedding and search.")
+                Text("No text embedding models are registered yet. Add one of these recommended models to enable chunk embedding and search.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

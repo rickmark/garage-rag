@@ -147,7 +147,7 @@ struct FirstRunView: View {
         case .selectData:
             "Choose what Garage should index. You can add, remove or fine-tune sources any time from the Sources page."
         case .selectModels:
-            "Pick the embedding model that powers search, and optionally a distillation model that extracts facts from your documents."
+            "Optionally pick a distillation model that extracts facts from your documents, then the text embedding model that powers search."
         case .setupAgent:
             "Connect your AI assistants to Garage's MCP server so they can search your corpus."
         }
@@ -596,31 +596,8 @@ struct FirstRunSelectModelsPage: View {
             }
 
             FirstRunSectionTitle(
-                title: "Embedding models",
-                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and backfill."
-            )
-
-            if coordinator.embeddingPresets.isEmpty {
-                Text("No embedding presets were found in models.json.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(coordinator.embeddingPresets) { preset in
-                        modelRow(
-                            preset,
-                            selected: coordinator.selectedEmbeddingSlugs.contains(preset.slug),
-                            registered: appState.registeredModels.contains { $0.slug == preset.slug }
-                        ) {
-                            coordinator.toggleEmbedding(preset)
-                        }
-                    }
-                }
-            }
-
-            FirstRunSectionTitle(
-                title: "Distillation model",
-                subtitle: "Optional. A small instruction-tuned model that gleans atomic facts from your documents and answers rag_ask over MCP. One model is active at a time (facts.model in garage.json)."
+                title: "Distillation models",
+                subtitle: "Optional. A small instruction-tuned model that gleans atomic facts from your documents, so agents can answer from facts as well as passages."
             )
 
             if coordinator.distillationPresets.isEmpty {
@@ -637,6 +614,29 @@ struct FirstRunSelectModelsPage: View {
                             activeForFacts: appState.factsModel == preset.slug
                         ) {
                             coordinator.toggleDistillation(preset)
+                        }
+                    }
+                }
+            }
+
+            FirstRunSectionTitle(
+                title: "Text embedding models",
+                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and backfill."
+            )
+
+            if coordinator.embeddingPresets.isEmpty {
+                Text("No text embedding presets were found in models.json.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(coordinator.embeddingPresets) { preset in
+                        modelRow(
+                            preset,
+                            selected: coordinator.selectedEmbeddingSlugs.contains(preset.slug),
+                            registered: appState.registeredModels.contains { $0.slug == preset.slug }
+                        ) {
+                            coordinator.toggleEmbedding(preset)
                         }
                     }
                 }
