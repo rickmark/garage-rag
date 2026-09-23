@@ -1208,3 +1208,71 @@ for the client, unproven for identical vectors across servers.**
   - load control (`keep_alive`, `/api/ps`, not used).
 - The one open question is embedding parity, `/api/embed` vs `/v1/embeddings`, on a real
   embedding model. That needs a model pulled into Ollama first.
+
+# Rebases onto main after PR #15
+
+PR #15 was squash-merged into `main` as `0e0b7dc`. Each branch was rebased by replaying only its own
+commits: `git rebase --onto origin/main $(git merge-base HEAD origin/claude/adoring-ritchie-c084cj)`.
+2026-09-23 21:00–21:20 UTC. Note that `main` is not byte-for-byte the PR head: `git diff 97e3dd2
+origin/main` shows 10 files changed, +134 / −1707.
+
+## `claude/reset-xcuitest`: rebased, tested, pushed
+
+- **Replayed:** `eb4bbfa` → `b3f2069`, `2f89694` → `9ae703c`, `2391b76` → `c08e1ab`, onto `0e0b7dc`.
+  **No conflicts.** The merge-base with the PR branch was `97e3dd2`, and the earlier merge commits
+  dropped out. The old head is kept locally as `backup/reset-xcuitest-pre-main-rebase`.
+- **Tests on `c08e1ab`:**
+  - `//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests` passes: **260 tests, 0 failures**.
+    `GarageAppGroupTests` 8/8, `ModelDownloadServiceTests` 4/4, `AppStateTests` 35/35.
+  - `//ext/python:python_framework_codesign_test` passes (cached: its inputs are unchanged).
+  - `//macapp/Tests/GarageAppResetUITests/...` builds.
+- **Pushed** with `--force-with-lease` (expected `2391b76`): `origin/claude/reset-xcuitest` = **`c08e1ab`**.
+- **The UI test was not run.** The rebase does not change the blocker from "Check of 898c0e6"
+  (Task B):
+  - `xcodebuild build-for-testing -scheme GarageAppResetUITests` now gets past the
+    `python_framework.framework.zip` signing failure (fixed by `c08e1ab`). It then fails in Xcode's
+    own `Validate` step on the app: `Framework …/Garage.app/Contents/Frameworks/PythonXPCService.framework
+    contains Info.plist, expected Versions/Current/Resources/Info.plist since the platform does not
+    use shallow bundles`.
+  - rules_apple's `macos_framework` only builds flat frameworks, and `VALIDATE_PRODUCT=NO` does not
+    skip that step. `aspect build` doesn't run it, which is why only the Xcode path fails.
+  - Options (a decision for the owner, not made here): rewrite the framework into the versioned layout
+    after rules_apple builds it; stop packaging PythonXPCService as a framework; or find another way
+    past Xcode's validation. This also bears on `claude/store-sandbox-python`, which now ships
+    `site-python` inside that framework.
+  - Automation Mode was never reached, so no password prompt came up.
+
+## `claude/awesome-gauss-9mc3jq`: rebase STOPPED on a conflict in logic both sides changed
+
+- **Flattened first:** the branch brought in the first-run assistant through merge commit `6848049`,
+  and that merge carried its port to the gRPC operations. A plain rebase drops merge commits, so
+  `cfc752b` would have replayed unported. That merge was flattened into one ordinary commit (tree
+  identical to `6848049`, crediting `cfc752b`'s author), with the nine later commits cherry-picked
+  on top.
+  - The flattened branch's tree equals the original tip exactly.
+  - It is kept locally as `tmp-flat`, with a backup of the original at
+    `backup/awesome-gauss-pre-main-rebase`.
+- **The rebase onto `0e0b7dc` stopped at its first commit** (`9c7fc0d`, "Add an in-app bug reporter
+  to GarageApp"), with conflicts in `GarageApp.swift` and `Views/ContentView.swift`. They are **not
+  mechanical**:
+  - `main` (from `898c0e6`) routes ⌘Q through `CommandGroup(replacing: .appTermination)` →
+    `AppDelegate.quit()`. That posts `.garageWillQuit`, and `ContentView` answers by setting
+    `isSplashPresented = false`, so SwiftUI stops re-attaching the splash before `terminate:` runs.
+  - The branch replaced `isSplashPresented` with one `activeSheet: ActiveSheet?` (splash, bug
+    report, and later the setup assistant, which takes the whole window). Its `present(_:)` swaps
+    sheets through `nil` with a deferred task.
+  - Combining them means deciding how quit dismisses an `activeSheet` (including cancelling a pending
+    swap, which could re-present a sheet mid-quit), and whether the setup assistant counts.
+  - The same seam comes back in later commits: the BugNub commit and the flattened assistant commit
+    both rework `ContentView`'s body.
+  - **A second overlap further down:** `main` has `AppState.terminateFromRunLoop` ("`NSApp.terminate`
+    from the run loop rather than from inside a main-actor job"). That is the same deadlock fix as
+    the branch's `40f04e3` ("Don't hang mid-quit after a database reset"), written independently, so
+    one of the two must be chosen.
+- **Aborted** with `git rebase --abort`. The branch is unchanged at its previous tip, now plus one new
+  commit (below). Nothing was force-pushed.
+- **CI's red checks on `c237061`:**
+  - On the branch tip, `aspect gazelle` changes nothing.
+  - `aspect buildifier` wanted only `ext/sparkle/BUILD.bazel` (`out` listed before `src` in three
+    `native_binary` rules). That is committed as **`fb7e4c5`** on the branch, not pushed.
+  - `aspect test //...` was not run, since the rebase was not completed.
