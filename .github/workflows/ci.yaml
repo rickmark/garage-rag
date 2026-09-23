@@ -56,8 +56,18 @@ jobs:
             bazel-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Point Bazel at the caches
         # user.bazelrc is git-ignored and try-imported last by .bazelrc.
-        run: echo "common --disk_cache=$HOME/.cache/bazel-disk --repository_cache=$HOME/.cache/bazel-repo" >> user.bazelrc
-      - run: aspect test --task:name test -- //...
+        # -MaxFDLimit: on macOS the JVM otherwise caps Bazel's open files at 10240
+        # whatever ulimit allows (see the test step).
+        run: |
+          echo "common --disk_cache=$HOME/.cache/bazel-disk --repository_cache=$HOME/.cache/bazel-repo" >> user.bazelrc
+          echo "startup --host_jvm_args=-XX:-MaxFDLimit" >> user.bazelrc
+      - run: |
+          # Hashing and caching the site-packages tree artifacts (thousands of
+          # files each) ran Bazel out of file descriptors ("Too many open files")
+          # at the runner's default limit.
+          ulimit -n 65536 2>/dev/null || ulimit -n "$(sysctl -n kern.maxfilesperproc)"
+          echo "open file limit: $(ulimit -n)"
+          aspect test --task:name test -- //...
         # Stop before the 6h limit: a job the runner kills skips its remaining
         # steps, so the save below would never run and the next run would start
         # cold again.
