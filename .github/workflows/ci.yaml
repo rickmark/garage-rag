@@ -1,11 +1,17 @@
 name: CI
 
-# Runs the Aspect CLI tasks on ephemeral GitHub-hosted runners. Each task is its
-# own job so results show up as separate status checks. The Aspect CLI version
-# actually invoked is pinned by .aspect/version.axl; the launcher binary each job
-# downloads below is pinned by tools/tools.lock.json (the same lockfile
-# //tools:bazel_env reads for local dev), so bumping that file keeps CI in sync
-# without touching this workflow. See https://aspect.build/docs/cli/tasks-ci
+# The fast checks every push gets, most of them on Linux:
+#
+# - `python`: ruff and the whole pytest suite in a uv venv, with a pgvector
+#   Postgres service so test_postgres.py runs instead of skipping. It is the same
+#   recipe the web-session hook uses (.claude/hooks/session-start.sh).
+# - `swiftcheck`: the tree-sitter Swift syntax gate (tools/swiftcheck).
+# - `format`, `gazelle`, `buildifier`: the Aspect CLI tasks, which need no Mac.
+# - `lint`: stays on macOS, because it analyzes //..., Apple targets included.
+#
+# The Bazel build and test of //... (the app, Postgres, ICU, Python.framework
+# and llama.cpp from source) is in macos.yaml. It runs only when the build could
+# have changed, and a newer push does not cancel it.
 on:
   push:
     branches: [main]
@@ -15,155 +21,90 @@ on:
 permissions:
   # Required by the Aspect CLI artifact upload feature.
   id-token: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: macos-latest
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # A superuser: pgvector is not a trusted extension, and each run creates
+      # and drops its own garage_test_* database.
+      GARAGE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      # test_scanner runs git; keep the runner's global config out of it.
+      GIT_CONFIG_GLOBAL: /dev/null
+    defaults:
+      run:
+        working-directory: garage_python
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install bazelisk
-      - name: Install Aspect CLI
-        run: |
-          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
-          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
-          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
-          chmod +x "$RUNNER_TEMP/bin/aspect"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      # A cold build of //... (Postgres, ICU, Python.framework, llama.cpp from
-      # source) runs past the hosted runner's 6h job limit, so every run started
-      # from nothing and none finished. Bazel's disk and repository caches carry
-      # the work across runs instead.
-      - name: Restore Bazel caches
-        id: bazel-cache
-        uses: actions/cache/restore@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          path: |
-            ~/.cache/bazel-disk
-            ~/.cache/bazel-repo
-          key: bazel-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock') }}-${{ github.sha }}
-          restore-keys: |
-            bazel-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock') }}-
-            bazel-test-${{ runner.os }}-${{ runner.arch }}-
-      - name: Point Bazel at the caches
-        # user.bazelrc is git-ignored and try-imported last by .bazelrc.
-        #
-        # Writing the site-packages tree artifacts (tens of thousands of files) into
-        # the disk cache ran Bazel out of file descriptors ("Too many open files"),
-        # even at 65536. The actions that produce them only copy and sign files, so
-        # they stay out of the cache (no-cache; no-remote-cache still uses the disk
-        # cache) and simply re-run on each fresh runner.
+          enable-cache: true
+          cache-dependency-glob: garage_python/pyproject.toml
+      - name: Create the venv
+        # uv.lock only resolves for macOS, so install from pyproject, as the
+        # web-session hook does on Linux.
         run: |
-          echo "common --disk_cache=$HOME/.cache/bazel-disk --repository_cache=$HOME/.cache/bazel-repo" >> user.bazelrc
-          echo "common --modify_execution_info=^(PythonSitePackages|CopyToDirectory|Codesign)\$=+no-cache" >> user.bazelrc
-          echo "startup --host_jvm_args=-XX:-MaxFDLimit" >> user.bazelrc
-          cat user.bazelrc
-      - run: |
-          # Headroom for the rest: the runner's shell default is 256, and on macOS
-          # the JVM caps Bazel at 10240 unless told not to (-MaxFDLimit above).
-          ulimit -n 65536 2>/dev/null || ulimit -n "$(sysctl -n kern.maxfilesperproc)"
-          echo "open file limit: $(ulimit -n)"
-          aspect test --task:name test -- //...
-        # Stop before the 6h limit: a job the runner kills skips its remaining
-        # steps, so the save below would never run and the next run would start
-        # cold again.
-        timeout-minutes: 320
-      - name: Save Bazel caches
-        if: always() && steps.bazel-cache.outputs.cache-primary-key != ''
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/bazel-disk
-            ~/.cache/bazel-repo
-          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
+          uv venv --python 3.13 .venv
+          uv pip install --python .venv -e '.[dev]'
+      - name: ruff
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+      - name: pytest
+        run: .venv/bin/pytest -q
+
+  swiftcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - name: Swift syntax gate (tree-sitter)
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" tree-sitter tree-sitter-swift
+          "$RUNNER_TEMP/venv/bin/python" tools/swiftcheck/swift_syntax_check.py
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-aspect
+      - run: aspect format --task:name format
 
   gazelle:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install bazelisk
-      - name: Install Aspect CLI
-        run: |
-          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
-          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
-          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
-          chmod +x "$RUNNER_TEMP/bin/aspect"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-aspect
       - run: aspect gazelle --task:name gazelle
 
   buildifier:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install bazelisk
-      - name: Install Aspect CLI
-        run: |
-          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
-          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
-          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
-          chmod +x "$RUNNER_TEMP/bin/aspect"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-aspect
       - run: aspect buildifier --task:name buildifier
-
-
-  format:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install bazelisk
-      - name: Install Aspect CLI
-        run: |
-          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
-          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
-          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
-          chmod +x "$RUNNER_TEMP/bin/aspect"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - run: aspect format --task:name format
 
   lint:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies via Brew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew install bazelisk
-      - name: Install Aspect CLI
-        run: |
-          url=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .url' tools/tools.lock.json)
-          sha=$(jq -r '.aspect.binaries[] | select(.os=="macos" and .cpu=="arm64") | .sha256' tools/tools.lock.json)
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/aspect" "$url"
-          echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
-          chmod +x "$RUNNER_TEMP/bin/aspect"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-aspect
       - run: aspect lint --task:name lint -- //...
-

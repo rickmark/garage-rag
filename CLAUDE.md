@@ -109,10 +109,29 @@ the server is touched. Put new tests that need real SQL there, and keep logic te
 - **Bazel** passes the variable through (`test --test_env=GARAGE_TEST_DATABASE_URL` in `.bazelrc`),
   so `aspect test //garage_python/tests:test_postgres` uses the same server as the venv's `pytest`.
 - **Web sessions** get a server from the start hook (below).
-- **CI's hosted runners** have no server, so these tests skip there.
+- **CI** runs them in the Linux `python` job (`.github/workflows/ci.yaml`) against a
+  `pgvector/pgvector` service container. The macOS Bazel job has no server, so they skip there.
 - **Never point it at the app's own cluster.** The vendored Postgres (`//ext/postgres`, port 14824,
   password in the Keychain) holds the real corpus. It is for end-to-end app testing, the launchers,
   and the tests of the vendored build itself.
+
+### CI
+
+- **`.github/workflows/ci.yaml`** runs on every push, and a newer push cancels an older run.
+  - On Linux: the `python` job (ruff and the whole venv pytest suite, with a Postgres service),
+    `swiftcheck`, `format`, `gazelle` and `buildifier`.
+  - On macOS: `lint`, which analyzes Apple targets.
+- **`.github/workflows/macos.yaml`** runs `aspect test //...` on macOS, building the app and the
+  vendored Postgres, ICU, Python.framework and llama.cpp. Because it is slow:
+  - pull requests run it only when build inputs change (see its `paths`);
+  - `main` runs it on every push and nightly;
+  - a newer push waits for a running build instead of cancelling it.
+  - It restores and saves Bazel's disk and repository caches. For CI only, it adds
+    `--build_tests_only` and `--noapple_generate_dsym`.
+- Run it by hand from the Actions tab (workflow_dispatch) when a Python-only change needs the Bazel
+  build.
+- `.github/actions/setup-aspect` installs the Aspect CLI pinned in `tools/tools.lock.json` for the
+  runner's OS and CPU.
 
 ### Swift app dev loop
 
