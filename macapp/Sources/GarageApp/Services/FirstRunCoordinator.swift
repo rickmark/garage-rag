@@ -412,6 +412,10 @@ final class FirstRunCoordinator: ObservableObject {
     /// has been completed before (the "Setup Assistant…" menu item).
     func begin(force: Bool = false) {
         guard force || !hasCompleted else { return }
+        // A re-run requested while a page is still registering sources or models
+        // would reset the picks that commit is iterating; the running assistant
+        // already shows its progress, so just keep it.
+        guard !(isActive && isWorking) else { return }
         errorMessage = nil
         progressMessage = nil
         registrationSummary = nil

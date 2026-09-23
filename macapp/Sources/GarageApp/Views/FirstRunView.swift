@@ -162,6 +162,7 @@ struct FirstRunView: View {
             }
             .buttonStyle(.link)
             .font(.caption)
+            .disabled(coordinator.isWorking)
             .accessibilityIdentifier("firstRun.skipSetup")
 
             Spacer()
