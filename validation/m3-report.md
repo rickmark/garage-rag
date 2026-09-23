@@ -343,3 +343,100 @@ behaviour suggests one.
 `claude/adoring-ritchie-c084cj` unchanged. The scratch database `garage_recheck` was dropped and no
 `garage*` databases remain on the Homebrew cluster; the app's own database was never written to.
 Garage.app is quit and its cluster stopped — 14824, 8787 and 8790 all have zero listeners.
+
+---
+
+# test_postgres (db263ef)
+
+`garage_python/tests/test_postgres.py` run against this Mac's Homebrew development server, on
+`db263ef` ("Test against a development Postgres server; document it"). Same machine as the sections
+above: Apple M3 Max, 128 GB · macOS 27.0 (26A428).
+
+| Step | Result |
+|---|---|
+| 2. Under Bazel (`--test_env` passthrough + bundled libpq) | **PASS** — 16 passed |
+| 3. Through the venv's pytest | **PASS** — 16 passed |
+| 4. No `garage_test_*` databases left behind | **PASS** — none |
+
+## Server
+
+| | |
+|---|---|
+| Server | PostgreSQL **18.4** (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang 21.0.0 |
+| pgvector | **0.8.6** |
+| Port | 5432 (Homebrew service) |
+| URL form | `postgresql://localhost:5432/postgres` — exactly the form CLAUDE.md documents |
+| Role | the login user, confirmed `usesuper = t`, via local trust auth |
+
+The URL carries **no password and no credential of any kind**: Homebrew's cluster uses local trust
+auth for the login user, which is also the superuser the test needs in order to create a database
+and install pgvector (not a trusted extension). Nothing secret is recorded here or written to any
+tracked file.
+
+The app's own cluster on port 14824 was **not** used and was down (zero listeners) for the whole
+run, per the "never point it at the app's own cluster" rule.
+
+## 2. Under Bazel — PASS
+
+```
+GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres \
+  aspect test //garage_python/tests:test_postgres --test_output=errors
+
+//garage_python/tests:test_postgres      PASSED in 2.5s
+Executed 1 out of 1 test: 1 test passes.
+```
+
+The test log shows the tests actually executing rather than skipping — `16 passed in 1.04s`,
+covering the migrations and 008's data move, the per-model DDL for each distance metric
+(`vector_cosine_ops`, `vector_l2_ops`, `vector_ip_ops`), the halfvec and binary-quantized index
+shapes, hybrid search on all three metrics, keyword-only search, and the egress filter.
+
+Because a skip would also report `PASSED` at the Bazel level, the passthrough was verified with a
+control run of the same target with the variable unset:
+
+| run | result |
+|---|---|
+| `GARAGE_TEST_DATABASE_URL` set | `16 passed in 1.04s` |
+| variable unset | `16 skipped in 0.18s` |
+
+So `.bazelrc`'s `test --test_env=GARAGE_TEST_DATABASE_URL` (line 23) does reach the sandboxed test,
+and the bundled libpq resolves under Bazel — the suite connects and runs real SQL.
+
+## 3. Through the venv — PASS
+
+```
+cd garage_python && GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres \
+  .venv/bin/python -m pytest -q tests/test_postgres.py
+
+................                                                         [100%]
+16 passed in 1.55s
+```
+
+Same 16 tests, same server, from outside Bazel.
+
+**Setup note:** `garage_python/.venv` did not exist on this machine — neither in this worktree nor
+in the main one — so `uv sync` was run first to create it (Python 3.13.13, resolved from
+`uv.lock`). CLAUDE.md's "Swift app dev loop" section describes the venv as already present ("There
+is also a real `.venv` under `garage_python/.venv`"); a fresh clone needs the `uv sync` step, which
+may be worth stating explicitly next to the `GARAGE_TEST_DATABASE_URL` instructions. `.venv` is
+gitignored (`.gitignore:2`), so creating it left the working tree clean.
+
+## 4. No leftover databases — PASS
+
+After both runs:
+
+```
+SELECT datname FROM pg_database WHERE datname LIKE 'garage_test%';   -- (0 rows)
+SELECT datname FROM pg_database WHERE datname LIKE 'garage%';        -- (0 rows)
+```
+
+Not one `garage_test_*` database survives, and no `garage*` database of any kind remains on the
+server — the throwaway database is created, migrated and dropped cleanly by each run, including
+across the two separate invocations. The unrelated pre-existing databases on that server were
+untouched.
+
+## Environment left behind
+
+`claude/adoring-ritchie-c084cj` unchanged at `db263ef`. No scratch databases remain. The app's
+cluster was never started or connected to. `GARAGE_TEST_DATABASE_URL` was passed on the command
+line only and is not written into any tracked file.
