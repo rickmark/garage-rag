@@ -440,3 +440,284 @@ untouched.
 `claude/adoring-ritchie-c084cj` unchanged at `db263ef`. No scratch databases remain. The app's
 cluster was never started or connected to. `GARAGE_TEST_DATABASE_URL` was passed on the command
 line only and is not written into any tracked file.
+
+---
+
+# Round 3 (4c067e4)
+
+App Store signing on the M3, split with the M4 (the M4 covers the Developer ID universal app and
+the full `aspect test //...`). Same machine: Apple M3 Max · macOS 27.0 (26A428) · Xcode 27.0
+(27A266a). Checked out `4c067e4` ("Stage frameworks for codesign_test with real files and relative
+links") detached; `7cdbdc5` and `8735dff` are its parents.
+
+Identities on this Mac's keychain: Apple Development, Garage Local Signing, Developer ID Application
+and **Apple Distribution: Richard Penwell (DWVXMLB45Y)**.
+
+| Step | Result |
+|---|---|
+| 1. `aspect build //macapp:GarageStore.app` + codesign checks | **PASS** (two entitlement notes below) |
+| 2. `aspect build //macapp:GarageStore.xcarchive` + checks | **PASS** (`dSYMs/` is empty) |
+| 3. `codesign_test` targets | **FAIL** under the default sandboxed run; passes outside the sandbox |
+| 4. Python tests under Bazel, then the venv | **PASS**: 26/26 targets, 597 venv tests (with one venv workaround) |
+
+**No Keychain prompt appeared.** Both Apple Distribution builds signed without stopping, and no
+signing step waited for a Keychain ACL. The only prompt of any kind was the Secretive git-signing
+request in step 4, which is unrelated to the build.
+
+Not run, per instructions: notarize, the installer, pkgbuild, any install target, `xcarchive_open`,
+and any upload (altool, notarytool, Transporter). The app's cluster on 14824 was not started or
+contacted; it had no listener the whole time.
+
+## 1. `//macapp:GarageStore.app`: PASS
+
+`aspect build //macapp:GarageStore.app` exited 0 in 7 m 51 s (175 actions). The output is
+`bazel-out/darwin_arm64-fastbuild-macos-arm64-min14.0-ST-a379604bb3e5/bin/macapp/Sources/GarageApp/GarageApp.zip`,
+a zip, and `bazel-bin` does not point at that configuration, so the path is config-specific. The
+checks below ran on the unzipped `Garage.app`.
+
+```
+$ codesign --verify --deep --strict --verbose=2 Garage.app
+...
+Garage.app: valid on disk
+Garage.app: satisfies its Designated Requirement
+[exit=0]
+
+$ codesign -dvv Garage.app
+Identifier=me.rickmark.garage-rag
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=75394 flags=0x10000(runtime) hashes=2345+7 location=embedded
+Authority=Apple Distribution: Richard Penwell (DWVXMLB45Y)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=DWVXMLB45Y
+Runtime Version=27.0.0
+Sealed Resources version=2 rules=13 files=25404
+```
+
+The authority chain matches what was expected, and hardened runtime is set (`flags=0x10000(runtime)`).
+
+Entitlements (`codesign -d --entitlements - Garage.app`):
+
+```
+com.apple.security.app-sandbox                    true
+com.apple.security.application-groups             [DWVXMLB45Y.group.me.rickmark.garage-rag]
+com.apple.security.cs.disable-library-validation  true
+com.apple.security.files.bookmarks.app-scope      true
+com.apple.security.files.user-selected.read-only  true
+com.apple.security.files.user-selected.read-write true
+com.apple.security.network.client                 true
+com.apple.security.network.server                 true
+```
+
+Nested code. Every item returns `valid on disk` / `satisfies its Designated Requirement`, exit 0,
+Authority=Apple Distribution, TeamIdentifier=DWVXMLB45Y:
+
+| Item | Identifier |
+|---|---|
+| `Frameworks/Python.framework` | `org.python.python` |
+| `Frameworks/PythonXPCService.framework` | `me.rickmark.garage-rag.PythonXPCService` |
+| `XPCServices/GarageEmbedXPCService.xpc` | `me.rickmark.garage-rag.embed-xpc` |
+| `XPCServices/GarageIngestXPCService.xpc` | `me.rickmark.garage-rag.ingest-xpc` |
+| `XPCServices/GarageMCPServerService.xpc` | `me.rickmark.garage-rag.mcp-server-xpc` |
+| `XPCServices/GarageXPCService.xpc` | `me.rickmark.garage-rag.xpc` |
+| `XPCServices/LlamaXPCService.xpc` | `me.rickmark.garage-rag.llama-xpc` |
+| `XPCServices/ModelDownloadXPCService.xpc` | `me.rickmark.garage-rag.model-download-xpc` |
+
+`Contents/embedded.provisionprofile` is **present**. Decoded with `security cms -D`: name
+`GarageMacAppConnect`, team `DWVXMLB45Y`, expires 2027-09-01, and it is a distribution profile (no
+`ProvisionedDevices`). Its entitlements:
+
+```
+com.apple.application-identifier        DWVXMLB45Y.me.rickmark.garage-rag
+com.apple.developer.team-identifier     DWVXMLB45Y
+com.apple.security.application-groups   [group.me.rickmark.garage-rag, DWVXMLB45Y.*]
+keychain-access-groups                  [DWVXMLB45Y.*]
+com.apple.developer.sustained-execution true
+```
+
+The app's group `DWVXMLB45Y.group.me.rickmark.garage-rag` is covered by the `DWVXMLB45Y.*` wildcard.
+
+### Entitlement notes: not failures here, but likely to matter at upload
+
+These came from reading the signatures. Nothing was uploaded, so App Store Connect's verdict on them
+is **not verified**.
+
+1. **The signed app carries no `com.apple.application-identifier` or
+   `com.apple.developer.team-identifier` entitlement.** The profile grants both, and Xcode-archived
+   Mac App Store apps normally embed them. App Store validation typically rejects a sandboxed app
+   whose signature lacks the application identifier, so this is the first thing to check if an
+   upload is refused.
+2. **Every XPC service has `com.apple.security.inherit = true` alongside its own entitlements.**
+   Those entitlements are the app-sandbox, application-groups, network, file-access and
+   disable-library-validation set. Apple documents `inherit` as valid only with `app-sandbox` and
+   nothing else, and it is meant for helper executables launched as child processes, not for XPC
+   services, which get their own sandbox from their own entitlements. Each service here already
+   has a full sandbox set, so dropping `inherit` looks like the fix. As it is, the combination risks
+   the service failing to launch sandboxed, or being rejected at validation.
+
+## 2. `//macapp:GarageStore.xcarchive`: PASS
+
+`aspect build //macapp:GarageStore.xcarchive` exited 0 in 19.9 s, reusing the step 1 outputs. The
+archive is at `bazel-out/darwin_arm64-fastbuild-ST-37fe811ccc69/bin/macapp/_GarageStore_xcarchive_raw/Garage.xcarchive`.
+
+```
+$ codesign --verify --deep --strict --verbose=2 Products/Applications/Garage.app
+Products/Applications/Garage.app: valid on disk
+Products/Applications/Garage.app: satisfies its Designated Requirement
+[exit=0]
+Authority=Apple Distribution: Richard Penwell (DWVXMLB45Y)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+
+$ codesign --verify --deep --strict --verbose=2 Products/Applications/Garage.app/Contents/Frameworks/Python.framework
+...Python.framework: valid on disk
+...Python.framework: satisfies its Designated Requirement
+[exit=0]
+
+$ plutil -p Info.plist
+{
+  "ApplicationProperties" => {
+    "ApplicationPath" => "Applications/Garage.app"
+    "CFBundleIdentifier" => "me.rickmark.garage-rag"
+    "CFBundleShortVersionString" => "0.9"
+    "CFBundleVersion" => "213"
+    "SigningIdentity" => "Apple Distribution: Richard Penwell (DWVXMLB45Y)"
+  }
+  "ArchiveVersion" => 2
+  "CreationDate" => 2026-09-23 13:22:29 +0000
+  "Name" => "Garage"
+  "SchemeName" => "Garage"
+}
+```
+
+Note: the archive's `dSYMs/` directory is **empty**, even though step 1 produced
+`Garage.app.dSYM` (`--apple_generate_dsym` is on in `.bazelrc`). An upload would then carry no
+symbols for crash reports. Xcode's archives also add `Team` and `Architectures` under
+`ApplicationProperties`; this one lacks both. Organizer and upload tooling may or may not require
+them. This was not tested.
+
+## 3. `codesign_test` targets: FAIL (sandbox-only)
+
+`aspect query` does not exist in this Aspect CLI (v2026.28.4): it reports "unrecognized subcommand
+'query'". `bazel query` was used instead:
+
+```
+$ bazel query 'kind(codesign_test, //...)'
+//ext/python:python_framework_codesign_test
+[exit=0]
+```
+
+That is the only target. `aspect test` also rejects `--test_output=errors` on the command line
+("unexpected argument"), and `-- --test_output=errors` is taken as a target pattern. The working
+form is `--bazel-flag=--test_output=errors`.
+
+```
+$ aspect test //ext/python:python_framework_codesign_test --bazel-flag=--test_output=errors
+Expected signing identity: Garage Local Signing
+Store distribution:        NO
+Hardened runtime required: NO
+Verifying bundle: Python.framework
+.../stage/Python.framework: bundle format is ambiguous (could be app or framework)
+[FAIL] Bundle verification failed: Python.framework
+.../stage/Python.framework/Python: bundle format is ambiguous (could be app or framework)
+[FAIL] Python.framework/Python: codesign verification failed
+[PASS] Python.framework/Versions/3.13/Python
+[PASS] Python.framework/Versions/Current/Python
+Checked 3 Mach-O binaries: 2 passed, 1 failed
+Bundles: 1 failed verification
+//ext/python:python_framework_codesign_test   FAILED in 15.3s
+[exit=3]
+```
+
+**Progress from before 4c067e4:** "Too many levels of symbolic links" and the "-1 passed" count are
+**gone**. The test now reaches codesign and counts correctly. It still fails, though, and the
+failure is in the test's staging, not the framework.
+
+**Cause:** under darwin-sandbox, the framework's internal links do not reach the test as relative
+links. The top-level `Python` and `Versions/Current` arrive as **absolute** links into the execroot,
+because Bazel resolves symlinks inside a tree artifact when it stages it into the sandbox. 4c067e4's
+new pass replaces every absolute link with a `cp -RL` copy. That turns `Python` into a regular file
+and `Versions/Current` into a real directory, so the staged framework is flattened, and codesign
+correctly calls it ambiguous. The log gives it away: `Versions/Current/Python` is checked as a
+regular file, which cannot happen if `Current` were a link.
+
+Evidence that the framework itself is fine:
+
+- The real output tree `bazel-bin/ext/python/Python.framework` has the right relative links
+  (`Python -> Versions/Current/Python`, `Resources -> …`, `Headers -> …`, `Versions/Current ->
+  3.13`). The test's own `tar` staging, run by hand from that tree, keeps all four as relative links.
+- The same test **passes** when run outside the sandbox:
+
+  ```
+  $ aspect test //ext/python:python_framework_codesign_test --bazel-flag=--test_output=errors \
+      --bazel-flag=--strategy=TestRunner=local --bazel-flag=--nocache_test_results
+  [PASS] Bundle valid: Python.framework
+  [PASS] Python.framework/Versions/3.13/Python
+  Checked 1 Mach-O binaries: 1 passed, 0 failed
+  //ext/python:python_framework_codesign_test   PASSED in 2.7s
+  ```
+- The Apple Distribution-signed copy inside `GarageStore.app` and inside the archive verifies with
+  `--deep --strict` (steps 1–2).
+
+Possible fixes: have the staging rebuild the canonical framework links (`Versions/Current -> <ver>`
+and top-level `X -> Versions/Current/X`) after resolving the absolute ones, instead of copying them
+through. Or tag the test `no-sandbox` / `local`.
+
+Also noted: the test ran under the default `local_signed` config (Garage Local Signing, not store).
+`--config=store` cannot run it at all, because no execution platform satisfies
+`//bazel:universal_store`:
+
+```
+ERROR: ... While resolving toolchains for target //ext/python:python_framework_codesign_test:
+No matching toolchains found for types: @@bazel_tools//tools/test:default_test_toolchain_type
+```
+
+So the `is_store` / Apple Distribution assertions in `codesign_test` are currently unreachable from
+`aspect test`.
+
+## 4. Python tests: PASS
+
+Server: Homebrew PostgreSQL 18.4, pgvector 0.8.6, `localhost:5432`, same as the db263ef run.
+
+```
+$ GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres \
+    aspect test //garage_python/tests:suite --bazel-flag=--test_output=errors
+Executed 26 out of 26 tests: 26 tests pass.
+[exit=0]
+```
+
+| Target | Result | Test log |
+|---|---|---|
+| `test_ingest_gateway` (7cdbdc5) | **PASSED** | 12 passed |
+| `test_scanner` (7cdbdc5) | **PASSED** | 16 passed |
+| `test_migrate` (8735dff) | **PASSED** | 11 passed |
+| `test_postgres` | **PASSED** | 16 passed, not skipped |
+
+The other 22 targets also passed. No `garage*` databases were left on the server afterwards.
+
+### venv
+
+`garage_python/.venv` was missing again, so `uv sync` created it (exit 0).
+
+The first `.venv/bin/python -m pytest -q` **hung** in `test_scanner.py::test_scan_git_repository`.
+The test's `git commit` picks up the user's global `commit.gpgsign = true` with `gpg.format = ssh`,
+so it ran `ssh-keygen -Y sign` against a Secretive (Secure Enclave) key. That waited on an approval
+prompt for over 10 minutes before the run was killed; nothing was approved. It did not happen under
+Bazel, where the sandbox does not see the global git config. The test should isolate itself:
+`-c commit.gpgsign=false` on the commit, or `GIT_CONFIG_GLOBAL=/dev/null` in the subprocess env.
+
+With the global git config masked:
+
+```
+$ GIT_CONFIG_GLOBAL=/dev/null GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres \
+    .venv/bin/python -m pytest -q
+597 passed in 15.62s
+[exit=0]
+```
+
+## Environment left behind
+
+`claude/adoring-ritchie-c084cj` unchanged; nothing was pushed to it. The main checkout was returned
+to `second_machine_build`, which was not modified. `garage_python/.venv` now exists (gitignored). No
+`garage*` databases remain on the Homebrew server. The app's 14824 cluster was never touched.
+Unzipped copies of the app sit in the session scratchpad only.
