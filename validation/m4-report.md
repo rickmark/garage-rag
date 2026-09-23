@@ -1294,3 +1294,270 @@ Cancel / Reset and Relaunch. Notes:
   default (bordered) button style, and `role: .destructive` does not make it red either. If red is
   intended, use `.buttonStyle(.borderedProminent)` with the tint, or `.foregroundStyle(.red)`.
   An off-screen, non-key window may also mute accent colours, so confirm this in the running app.
+
+---
+
+# Restart during the live run: state assessment
+
+Assessed 2026-09-23 09:53–10:10 MDT (15:53–16:10 UTC), read-only. Nothing was launched, started,
+moved, copied or deleted. The only tools that touched Garage data were `ls`/`du`/`stat` and
+`pg_controldata`, which reads `global/pg_control` and starts nothing. Times below are MDT.
+
+## Three corrections to the premise
+
+1. **The Mac did not restart.** `kern.boottime` is Mon Sep 21 06:30, with 2 days of uptime, and
+   loginwindow is the same process (pid 416). What ended the previous session was **IntelliJ IDEA
+   quitting at 09:48:25** after a Screen Recording grant (see TCC below). The session ran inside it.
+   IntelliJ relaunched at 09:50:12.
+2. **Step C already ran. The reset deleted the live Developer ID cluster.** The group-container
+   `pgdata` is a new cluster: system identifier `7688758297929209597`, initdb at 09:49:03, REDO WAL
+   file `…0001`. The previous cluster (`7687906557992608111`, about 300M) now exists **only** in
+   `~/GarageBackup-20260923/developer-id/pgdata`.
+3. **That backup is a crash-consistent copy, not a clean shutdown.** `pg_controldata` says
+   `Database cluster state: in production`, with `pg_control` last modified 09:25:37.
+   - No postmaster ran from it when `ditto` copied it at about 09:40:13. The 09:25 app (pid 81924)
+     finished terminating at 09:27:47.
+   - At 09:40:58 the migration moved this same `pgdata`, and it refuses to move one a live postmaster
+     holds.
+   - Its latest checkpoint's REDO WAL file, `000000010000000000000099`, is present in the backup's
+     `pg_wal/` (last written 09:27). So it **should recover by WAL replay on first start**. This is
+     not verified; nothing was started.
+   - **Recommendation:** make a second copy of `~/GarageBackup-20260923/developer-id` before any
+     Postgres is ever started on it or on a copy of it. Not done here.
+
+## 1. Processes and ports
+
+- No `GarageApp`, Garage XPC service, `garage`/`garage-mcp` launcher or Garage-bundled `postgres` is
+  running. `launchctl list` has no Garage jobs.
+- Nothing listens on **14824, 8787 or 8790** (`lsof -iTCP -sTCP:LISTEN` returns nothing).
+- The only Postgres running is Homebrew `postgresql@18` (pid 3373, since 05:43, `-D
+  /opt/homebrew/var/postgresql@18`, port 5432). That is the `GARAGE_TEST_DATABASE_URL` test server,
+  not Garage's.
+- A Bazel server (pid 14985) is idle from the earlier build.
+
+## 2. Backups (`~/GarageBackup-20260923`, created 09:40)
+
+| Folder | Size | Contents | `PG_VERSION` | `postmaster.pid` | Cluster state |
+|---|---|---|---|---|---|
+| `developer-id` | 1.0G | `pgdata` 300M, `models` 774M, `logs` (empty), `.DS_Store` | `18` | none | **in production** (sysid …608111) |
+| `app-store` | 64M | `pgdata` 64M, `logs` (empty), `.DS_Store` | `18` | none | shut down (sysid …151173) |
+
+Neither backup has a `garage.json`, and neither did its source (see §3).
+
+## 3. Migration state
+
+- **`~/Library/Application Support/GarageApp` is a symlink** (created 09:40) pointing to
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp`.
+  Its listing is therefore the group folder's.
+- **Group-container folder** (created 09:40, contents from 09:48–09:49):
+  - `pgdata` 75M: the **new** cluster (`PG_VERSION` 18, dated 09:49:03). `postmaster.opts` names
+    `~/GarageTest/Garage.app/.../postgres -p 14824`. State `in production`, meaning it was not shut
+    down cleanly at the 09:49 quit. No `postmaster.pid`.
+  - `models` 774M: `bge-m3-Q8_0.gguf`, `nomic-embed-text-v1.5.Q8_0.gguf` and `gguf/`. These match
+    the backup.
+  - `logs`: empty.
+  - **No `garage.json`.** None exists anywhere: not in the group folder, the backups, `~/.garage.json`
+    or `~/garage.json`. So none was migrated.
+- **App Store container** (`~/Library/Containers/me.rickmark.garage-rag/Data/Library/Application Support/GarageApp`)
+  is untouched since Sep 20: `pgdata` 64M (`PG_VERSION` 18, cleanly `shut down`, same sysid as the
+  `app-store` backup), `logs` (empty), `.DS_Store`. The migration only handled the unsandboxed
+  folder, as designed.
+- **Folders with a `pgdata` that has `PG_VERSION`:** the group folder (new cluster), the App Store
+  container (original, clean), and both backups. **No folder has a stale `postmaster.pid`.**
+
+## 4. What the logs show (unified log, 09:00–09:54)
+
+Reproducing the log queries:
+- In zsh, `log` is a builtin, so use `/usr/bin/log`.
+- `log show --start` takes local time. The routine's "15:00:00" is 15:00 MDT, which is in the
+  future. I used `09:00:00` (= 15:00 UTC).
+
+| Time | Event |
+|---|---|
+| 09:25–09:27:47 | An earlier Developer ID app (pid 81924, run from a `bazel_temp` extraction) ran and quit. It left the cluster `in production`. |
+| 09:40:13 | `ditto`, with IntelliJ as responsible process, makes the backups (A). |
+| 09:40:55 | `~/GarageTest/Garage.app` launched (pid 49456) (B). |
+| **09:40:58.517** | `GarageDataMigration`: **"Moved logs / models / pgdata into the shared data folder …"** Three lines, no errors. |
+| 09:41:02 | MCP up on 8787 with "3 sources registered", so the migrated cluster opened fine. |
+| 09:41:55–09:42:11 | A **SecurityAgent** dialog (not TCC). Probably a Keychain or authorization prompt. **Unexplained**, but it did not block anything. |
+| 09:42:34–09:48:17 | Previous session's UI scripting: `System Events` plus about 14 `osascript` runs. |
+| 09:42:53 | App 49456 exits. |
+| 09:46:09 | App relaunched (pid 50327). MCP up at 09:46:14 with "3 sources registered". |
+| 09:47:50 | Previous session runs `screencapture`, which raises the TCC prompt below. |
+| 09:48:14–09:48:24 | System Settings › Privacy & Security is opened and authenticated (LocalAuthentication 09:48:17). Screen Recording is granted to IntelliJ. |
+| **09:48:25** | **IntelliJ IDEA quits (Quit & Reopen). The previous session ends here.** |
+| 09:48:41.8 | A click (`sendAction:`) in app 50327 starts the reset. MCP stops at 09:48:42; gRPC is cancelled. |
+| 09:48:47.6 | 50327 SIGKILLs its six XPC services (`terminateAll`). |
+| 09:48:47.7 | The relaunch spawns **pid 50891**. |
+| 09:48:47.77 | 50327 gets `terminate:` and answers **`applicationShouldTerminate: NSTerminateLater`**. |
+| **09:49:03** | **New cluster initdb'd** in the group folder by 50891. |
+| 09:49:08 | MCP up with **"0 sources registered"**. |
+| 09:49:19–09:49:33 | Ingest runs over `~/Documents` in the new database. Logged: 9 extraction failures (images and a PDF), then 2 "Ingest failed" and 2 "Could not record … connection refused" as Postgres goes away. |
+| **09:49:28.838** | 50891 gets **`performKeyEquivalent:` → `terminate:`** with `shouldRestore=0`: a keyboard quit (⌥⌘Q). It stops MCP, Postgres and its XPC services, and exits at 09:49:34. |
+| **09:50:14** | **Old instance 50327 finally exits.** |
+
+- The reset's own messages ("deleted database cluster … for a reset", "Database reset: …") only go
+  to the in-app log view, not `os_log`, so they can't be recovered. The evidence that the reset ran
+  is the new cluster itself.
+- **Attribution (inference):** the reset click at 09:48:41 and the keyboard quit at 09:49:28 both
+  happened **after IntelliJ had quit**, and no `osascript` was running at either time. So neither came
+  from the previous session's scripting.
+
+### Findings for PR #15 from this run
+
+- **R1. The wait-for-the-old-instance guard did not hold.**
+  - 50327 said `NSTerminateLater` and lived about 86s after the relaunch, until 09:50:14.
+  - 50891 initialized the new cluster 16s after launch (09:49:03) and started MCP at 09:49:08.
+  - `waitForExit(timeout: 30)` could not have released before about 09:49:17.7, so **50891 did not
+    wait on 50327 at all.**
+  - Possible explanations: 50891 was not given `--after-database-reset <pid>` (then it took the
+    ordinary `launchServices(startsPostgres:)` path, which also fits the plain initdb-on-start), or
+    the pid it got was wrong. **Cause undetermined.** The unified log does not show launch arguments.
+  - The old instance's quit path (stop Postgres by pid file, XPC services by name) therefore ran
+    while the new instance was live. That is exactly the overlap `waitForExit` is there to prevent.
+  - Also worth checking: why the old instance's `NSTerminateLater` took 86s.
+- **R2. Quitting leaves the cluster uncleanly stopped.** The 09:27 quit and the 09:49 quit both left
+  `pg_control` `in production`, with no shutdown checkpoint. Every relaunch then does crash recovery.
+- **R3. Sources after the reset.** There is no `garage.json` anywhere, and MCP reported 0 sources at
+  09:49:08. Yet ingest ran over `~/Documents` at 09:49:19. Where those source registrations came from
+  (`syncSources` with no `garage.json`, or something else) is **unexplained**.
+
+## 5. The TCC prompt
+
+The TCC log (tccd, 09:40–09:51) was aggregated by service, client and result.
+
+- **The prompt was `kTCCServiceScreenCapture` (Screen Recording), for `com.jetbrains.intellij` as
+  the responsible process.**
+  - It was triggered at 09:47:50 by `com.apple.screencapture`, run by the previous session through
+    `replayd`. The first result was `auth=0` (denied / not yet allowed), and
+    `universalAccessAuthWarn` showed.
+  - It was granted in Privacy & Security at 09:48:14–09:48:22. From 09:48:22 on, IntelliJ's Screen
+    Recording checks return `auth=2`.
+  - The mandatory "Quit & Reopen" then quit IntelliJ at 09:48:25, taking the session with it.
+- **It came from the previous session's `screencapture`, not from Garage or its launchers.**
+- **`kTCCServiceSystemPolicyAppData` ("access data from other apps") was never requested** in the
+  window.
+- `osascript` / `System Events` Accessibility and ListenEvent requests (responsible: IntelliJ) were
+  already allowed (`auth=2`, reason 4). No prompt.
+- Garage's own requests all resolved silently:
+  - ListenEvent / ScreenCapture window checks: `auth=1`, reason 5.
+  - `kTCCServiceDeveloperTool` from syspolicyd: `auth=0`, "does not allow prompting".
+  - Full Disk Access for `me.rickmark.garage-rag(.xpc)`: `auth=2`, already granted.
+  - One `AppleEvents` policy error: the hardened runtime lacks
+    `com.apple.security.automation.apple-events`. It did not prompt.
+- The rest of the volume was unrelated (for example, about 1,700 AddressBook preflights from other
+  processes).
+- `sqlite3 ~/Library/Application Support/com.apple.TCC/TCC.db` fails with "unable to open database
+  file", which is expected without Full Disk Access for the shell. Not retried.
+
+## 6. Git worktrees
+
+- `~/Developer/garage` (detached at `e67d0a9`): one **staged new file**,
+  `.idea/runConfigurations/__macapp_GarageStore_app.xml`. Left as is.
+- `~/Developer/garage-m4-notes` (`claude/m4-validation-notes` at `12e6b29`, even with origin): clean
+  before this section.
+- `~/Developer/garage-validate` (detached at `80c11fc`): clean.
+- `git stash list`: empty.
+
+## Where A, B and C stand
+
+- **A: done.** Both backups exist. The Developer ID one is crash-consistent and its REDO WAL
+  segment is present.
+- **B: done.** The build was extracted to `~/GarageTest/Garage.app` and launched, and the migration
+  ran cleanly.
+- **C: done.** The reset ran, but the new database was then interrupted by a keyboard quit mid-ingest
+  and is `in production`, with partial content.
+
+Nothing is running. **Waiting for instructions before any further step.** Restoring the old corpus
+would mean starting Postgres on the backup, which has not been done.
+
+---
+
+# Re-run of step C (Reset Database), instrumented
+
+Run 2026-09-23 10:13–10:20 MDT on `~/GarageTest/Garage.app` (Developer ID build of `e67d0a9`).
+- Driven by System Events UI scripting (`osascript`, no screenshots). The steps: dismiss the
+  first-run splash (`splash.continue`), select **Database** in the sidebar, click **Reset
+  Database…**, check the sheet text, then click **Reset and Relaunch**.
+- Recorded by a 0.5s change-only sampler (processes with their arguments, listeners on
+  14824/8787/8790/50051, `pgdata/PG_VERSION` and `postmaster.pid`), plus
+  `log stream` for AppKit `Application` and `me.rickmark.garage-rag`.
+- The cluster that was reset was the 09:49 one (1 source, 0 documents). The old corpus in
+  `~/GarageBackup-20260923/developer-id` was not touched.
+
+## Timeline
+
+| Time | Event |
+|---|---|
+| 10:13:44 | Old instance **59193** launched (no arguments). It shows the splash sheet on every launch. |
+| 10:17:04.3 | "Reset and Relaunch" clicked. |
+| 10:17:09.8 | 59193: `terminate:` → **`applicationShouldTerminate: NSTerminateLater`**, and then **no reply, ever**. |
+| 10:17:10.1 | New instance **65612** starts **with `--after-database-reset 59193`**. The old `pgdata` is gone (no `PG_VERSION`). |
+| 10:17:10.8 | 65612's six XPC services are already running (launchd on-demand, while it is still inside `waitForExit`). |
+| 10:17:40–41 | `waitForExit` **times out after 30s** (59193 is still alive). initdb creates a new cluster (sysid `7688765675024221410`), and Postgres starts. |
+| 10:17:43 | gRPC 50051 and MCP 8787 are up. `finishDatabaseReset` reports "a new, empty database was created and the sources in garage.json were registered again". |
+| 10:19:53 | 59193 is still hung after 2m44s. I sent it **SIGKILL**, which skips its quit path. It had no children, and its Postgres and XPC services were already gone. |
+
+After the kill, 65612 runs alone with Postgres 14824, MCP 8787, gRPC 50051 and llama 8790, on its
+splash sheet. The 09:48 run behaved the same way: the old instance stayed alive for 86s after
+`NSTerminateLater`.
+
+## Finding R1, root cause: the old instance deadlocks in `terminate:`
+
+A `sample` of 59193 shows the main thread parked in:
+`closure in AppState.relaunchAfterDatabaseReset()` → `-[NSApplication terminate:]` →
+`-[NSApplication _shouldTerminate]` → `nextEventMatchingMask:…` → `mach_msg`.
+
+1. `relaunchAfterDatabaseReset()` calls `NSApp.terminate(nil)` from inside
+   `Task { @MainActor in … }`, the `openApplication` completion. That task is a job running on
+   the **main dispatch queue**.
+2. `AppDelegate.applicationShouldTerminate` returns `.terminateLater`. AppKit then spins a
+   nested event loop **inside that job**, waiting for `reply(toApplicationShouldTerminate:)`.
+3. The reply, and the 5s timeout, are both scheduled as further `Task { @MainActor … }` jobs.
+   The main queue is serial and is still executing job 1, so **they never run**. The app hangs
+   until it is killed.
+
+A plain ⌘Q or menu quit does not hang: 10:12:31 replied after 5.2s. There, `terminate:` comes
+from event dispatch, not from inside a main-queue job.
+
+Consequences:
+- **`waitForExit` can only time out**, so the new instance always starts Postgres while the old one
+  is still alive.
+- **If the old instance ever comes unstuck, it takes down the new one.** After the reset its
+  `postgres.status` is `.stopped`, so `stop()` falls through to `stopAnyRunningInstance()`. That
+  reads `pgdata/postmaster.pid`, which by then is the **new** instance's, and runs
+  `pg_ctl stop -m fast`. Then `terminateImmediately()` → `XPCServiceManager.stopAnyRunningInstances()`
+  kills the new instance's XPC services by executable name.
+- The new instance's XPC services start about 0.6s after launch, before the wait. launchd spawns
+  them on demand when something connects, so "start nothing until the old one is gone" doesn't
+  cover them either.
+
+Suggested fix: don't call `terminate:` from inside a main-actor task. Schedule it on the run loop
+instead, for example `NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)`
+or `RunLoop.main.perform { NSApp.terminate(nil) }`. As a guard, the old instance should also skip
+its quit-time `stopAnyRunningInstance()` / XPC-by-name kill once it has handed off to a relaunch.
+
+## Other findings from the re-run
+
+- **R2 (confirmed):** a normal quit hits the 5s `applicationShouldTerminate` timeout
+  (`NSTerminateLater` 10:12:31.70 → reply 10:12:36.93). Every cluster here was left
+  `in production`, including the new one.
+- **Reset message with no `garage.json`:** "the sources in garage.json were registered again" is
+  shown when there is no `garage.json`. 0 sources are registered. The text should say so.
+- **Splash after a reset relaunch:** the first-run/about sheet appears again on the
+  `--after-database-reset` instance. It probably shouldn't.
+- **Credential in the UI:** the Database page shows the full connection URL, **including the
+  Postgres password**, as plain text. It is visible to anyone looking at the screen and to the
+  accessibility API. Consider masking it. The value is not reproduced here.
+- **Accessibility:** buttons on the Database page and in the reset sheet expose no `AXTitle`.
+  Only the splash buttons carry `AXIdentifier`s. Adding identifiers (e.g. `database.reset`,
+  `reset.confirm`) would make this flow scriptable and testable.
+
+## Turning this into a test
+
+This run was manual UI scripting, not a test. The deadlock is testable without UI:
+- a unit test in which a main-actor task calls the relaunch completion path with a stub
+  `terminate`, asserting that the reply arrives;
+- or an XCUITest that triggers the reset and asserts that the old pid exits within a few seconds
+  and the new one's Postgres survives.
+The XCUITest would need the accessibility identifiers above.
