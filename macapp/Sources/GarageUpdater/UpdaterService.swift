@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Detects whether the code is currently running within a test environment.

@@ -33,6 +33,13 @@ final class UpdaterConfigurationTests: XCTestCase {
         assertUnavailable(.resolve(feedURL: "file:///tmp/appcast.xml", publicEDKey: "abc"))
     }
 
+    /// `URL(string:)` accepts a scheme with no authority, so an https scheme on its own
+    /// does not mean there is anywhere to fetch from.
+    func testFeedURLMustHaveAHost() {
+        assertUnavailable(.resolve(feedURL: "https:appcast.xml", publicEDKey: "abc"))
+        assertUnavailable(.resolve(feedURL: "https:///appcast.xml", publicEDKey: "abc"))
+    }
+
     func testSigningKeyIsRequired() {
         assertUnavailable(.resolve(feedURL: "https://example.com/appcast.xml", publicEDKey: nil))
         assertUnavailable(.resolve(feedURL: "https://example.com/appcast.xml", publicEDKey: ""))

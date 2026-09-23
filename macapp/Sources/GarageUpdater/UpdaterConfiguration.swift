@@ -50,7 +50,13 @@ extension UpdaterAvailability {
         guard let rawFeedURL = trimmed(feedURL) else {
             return .unavailable(reason: "This build has no update feed configured.")
         }
-        guard let url = URL(string: rawFeedURL), url.scheme?.lowercased() == "https" else {
+        // A scheme alone is not enough: `URL(string: "https:appcast.xml")` parses, reports
+        // scheme "https" and has no host at all, which would start Sparkle against a feed
+        // it can never fetch.
+        guard let url = URL(string: rawFeedURL),
+              url.scheme?.lowercased() == "https",
+              let host = url.host(), !host.isEmpty
+        else {
             return .unavailable(reason: "The configured update feed is not a valid HTTPS URL.")
         }
         guard let key = trimmed(publicEDKey) else {
