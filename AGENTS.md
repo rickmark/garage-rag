@@ -152,7 +152,8 @@ linear history.
 Two independent axes on every document:
 
 - `corpus_class` — **what it is**: `document` | `code` | `communication` (communications never
-  leave the machine — this is what the egress guard keys on, not trust).
+  reach a cloud API from Garage — this is what the egress guard keys on, not trust. MCP clients still
+  receive whatever excerpts they retrieve, communications included; see `docs/privacy.md`).
 - `trust_tier` — **how much it's trusted**: `authored` | `reference` | `received`.
 
 Embeddings live one table per model (`emb_<slug>`, e.g. `emb_bge_m3`) rather than one shared table,

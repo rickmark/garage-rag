@@ -78,7 +78,7 @@ struct FirstRunView: View {
 
             Spacer()
 
-            Text("Everything Garage indexes stays on this Mac. Communications never reach a cloud API.")
+            Text("Garage keeps its index on this Mac and never sends it to the cloud. Agents you connect receive only the excerpts their searches return, and may send those to their own cloud model.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -773,6 +773,12 @@ struct FirstRunSetupAgentPage: View {
                     .background(Color.primary.opacity(0.04))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
+
+            Text("A connected agent receives the excerpts its searches return — only those, not your whole index — and may send them to its own cloud model, including excerpts from Messages and Mail if you index them. What happens to them then is up to that agent's privacy terms, not Garage's.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("firstRun.agentPrivacy")
 
             Text("You can always revisit this from the MCP Server page, where you can also test tool calls against the running server.")
                 .font(.caption)

@@ -38,6 +38,16 @@ Garage does not send your content to third-party services.
 
 If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
+### AI agents you connect
+
+Garage can serve its index to AI agents you choose to connect to it through its MCP server, such as Claude Desktop, Claude Code, or Cursor. Garage itself does not send this content to the cloud, but a connected agent may:
+
+- An agent receives the excerpts its searches return, not your entire index.
+- Many agents send what they receive, together with your conversation, to their own cloud model provider. This can include excerpts from private communications (Messages, Mail) if you have indexed them.
+- Garage does not control how an agent or its provider handles that content; it is governed by the agent's own terms and privacy policy.
+
+You choose which agents to connect, and can disconnect them at any time.
+
 ## 4. User Control
 
 You choose which folders and sources Garage indexes, and you can remove a source and its indexed content at any time. Garage sends your content off your device only if you configure an Ollama or LM Studio server on another computer (section 2) or serve MCP clients on other computers (section 3); communications are never sent to a model server that is not on your device.
@@ -50,7 +60,9 @@ Any data saved by the application is stored locally on your device or in storage
 
 ## 6. Data Sharing
 
-Garage does not sell, rent, trade, or share user data, and does not transmit your content to third parties.
+Garage does not sell, rent, trade, or share user data.
+
+Data is shared with third parties only when you explicitly choose to use a feature that requires third-party processing, such as optional OCR or text recognition for images containing text, or when an AI agent you have connected retrieves excerpts and sends them to its own provider.
 
 ## 7. Children’s Privacy
 
