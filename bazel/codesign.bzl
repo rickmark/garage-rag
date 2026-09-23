@@ -478,11 +478,16 @@ fi
     providers = [DefaultInfo(**default_info_kwargs)]
 
     if ctx.attr.is_framework and output_zip:
+        # rules_apple's default bundler unpacks a zip in the `framework` bucket into
+        # Contents/Frameworks; its tree-artifact bundler copies the file as it is, which left a
+        # `<name>.framework.zip` in Frameworks that then failed to sign. Hand that bundler the
+        # signed framework directory instead.
+        framework_resource = output if ctx.attr.framework_as_directory else output_zip
         resource_info = new_appleresourceinfo(
             framework = [
-                (None, None, depset([output_zip])),
+                (None, None, depset([framework_resource])),
             ],
-            owners = depset([(output_zip.short_path, str(ctx.label))]),
+            owners = depset([(framework_resource.short_path, str(ctx.label))]),
             unowned_resources = depset([]),
         )
         providers.append(resource_info)
@@ -513,6 +518,12 @@ codesign = rule(
         "entitlements_by_filename": attr.string_keyed_label_dict(
             allow_files = True,
             doc = "Entitlements plist files to use for specific output basenames.",
+        ),
+        "framework_as_directory": attr.bool(
+            default = False,
+            doc = "With is_framework, give the bundle the signed framework directory rather than its zip. " +
+                  "Set it under apple.experimental.tree_artifact_outputs=1 (//bazel:tree_artifact_outputs), " +
+                  "whose bundler copies framework resources as-is instead of unpacking zips.",
         ),
         "is_framework": attr.bool(
             default = False,
