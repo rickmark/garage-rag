@@ -1807,3 +1807,49 @@ The sheet as rendered (light appearance), matching the accessibility tree:
 - **New, minor: the splash sheet blocks ⌘Q** (`App termination blocked by modal sheet`). On a normal
   launch the first ⌘Q does nothing. Options: dismiss the splash on `terminate:`, or show it as a
   window rather than a sheet.
+
+---
+
+# GarageRAGDevelopmentApp profile
+
+2026-09-23 11:16 MDT. Read-only lookup; the only write is the copy described at the end.
+
+**Where it is.** It is not in `~/Library/Developer/Xcode/UserData/Provisioning Profiles`,
+`~/Library/MobileDevice/Provisioning Profiles` (empty) or `~/Downloads`. Spotlight
+(`mdfind 'kMDItemFSName == "*.provisionprofile"'`) finds it in one place:
+`~/Developer/garage/macapp/GarageRAGDevelopmentApp.provisionprofile`. The user saved it there at
+10:51, and it is staged in that checkout. It was created after the signing inventory, which is why
+that inventory didn't list it.
+
+Decoded with `security cms -D -i`:
+
+| Field | Value |
+|---|---|
+| Name / UUID | `GarageRAGDevelopmentApp` / `695ea714-2777-4dd6-8d0e-199eae8c5bd3` |
+| TeamIdentifier | `DWVXMLB45Y` |
+| application-identifier | `DWVXMLB45Y.me.rickmark.garage-rag` |
+| com.apple.developer.team-identifier | `DWVXMLB45Y` |
+| App groups | `group.me.rickmark.garage-rag`, `DWVXMLB45Y.*` |
+| ProvisionedDevices | 2, **including this Mac** (`00006041-000A61DE3E50801C`) |
+| ProvisionsAllDevices | false |
+| DeveloperCertificates | contains **`Apple Development: Rick Penwell (23E5F7Z5L7)`** (by SHA-1 match) |
+| get-task-allow | not present. macOS development profiles don't carry it; the device list and the certificate make it a development profile. |
+| ExpirationDate | 2027-09-23 16:51:22 UTC |
+| Other entitlements | `com.apple.developer.sustained-execution`, `keychain-access-groups` |
+
+**It can sign the store configuration of `me.rickmark.garage-rag` with the Apple Development
+identity.**
+- The application-identifier and team-identifier match exactly.
+- `DWVXMLB45Y.*` covers the group `DWVXMLB45Y.group.me.rickmark.garage-rag`.
+- The profile includes the Apple Development certificate and this Mac.
+
+This was also checked in practice with a store build using this profile. That build is in the
+main checkout, with `is_store` pointing at it and `STORE_IDENTITY` switched to Apple Development;
+none of it is committed.
+- The app embeds `GarageRAGDevelopmentApp`, and 247 of its 249 Mach-O files carry that authority.
+  The 2 others are `libpython3.13.a` and `python.o`, which aren't executables.
+- `codesign --verify --deep --strict` passes.
+- The xcarchive records `SigningIdentity = Apple Development: Rick Penwell (23E5F7Z5L7)`.
+
+**Copied** unchanged (`cmp`-identical, sha256 `026caaee22824bb9…`) to
+`validation/GarageRAGDevelopmentApp.provisionprofile` on this branch.
