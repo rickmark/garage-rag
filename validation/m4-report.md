@@ -2023,3 +2023,66 @@ They never receive the flag. From the code:
    `python_framework.framework.zip`; there's no working hand-made runner; and Automation Mode needs
    the user's authentication.
 5. Under `--data-directory`, the model-download XPC service still uses the real models folder.
+
+---
+
+# Check of 898c0e6
+
+Commit **`898c0e6`** ("Close SwiftUI sheets through their state before quitting"). `AppDelegate.quit()`:
+1. posts `garageWillQuit`, which the splash and the reset sheet answer by clearing their SwiftUI state;
+2. waits, polling every 50ms for up to 1s, until no window has an attached sheet;
+3. calls `terminate:` from the run loop.
+
+It also adds the one-time Keychain note to the README. Built in the main checkout (fast-forwarded to
+898c0e6), 2026-09-23 12:45–12:53 MDT. No notarize, installer, pkgbuild, install target,
+`xcarchive_open`, upload, TCC prompt, or copy into /Applications.
+
+## 1. Unit tests: PASS
+`aspect test //macapp/Tests/...` passes 3/3 targets. `GarageAppUnitTests` ran **241 tests,
+0 failures**.
+
+## 2. Developer ID build
+`aspect build //macapp/package:GarageApp` passes. Installed with `ditto -x -k` to `~/GarageTest/Garage.app`,
+**build 225**, `Developer ID Application: Richard Penwell (DWVXMLB45Y)`; `codesign --verify --deep
+--strict` passes. The binary carries `me.rickmark.garage-rag.willQuit`. No Garage was running
+beforehand; the e0d3aae instance had already been quit cleanly, with the cluster `shut down`.
+
+## 3. ⌘Q with the splash sheet showing: FIXED, 10 of 10
+
+A script launched the app, waited for Postgres on 14824 and MCP on 8787, then waited until the
+splash sheet was attached (`sheets=1` every time). It then pressed ⌘Q through System Events. A
+`log stream` of AppKit's `Application` category recorded the termination.
+
+| Run | pid | Quit | Keystroke → exit | "blocked by modal sheet" | Cluster after |
+|---|---|---|---|---|---|
+| 1 | 95111 | yes | 1.07s | 0 | shut down |
+| 2 | 95245 | yes | 1.04s | 0 | shut down |
+| 3 | 95371 | yes | 0.92s | 0 | shut down |
+| 4 | 95509 | yes | 1.02s | 0 | shut down |
+| 5 | 95637 | yes | 1.02s | 0 | shut down |
+| 6 | 95821 | yes | 1.03s | 0 | shut down |
+| 7 | 95938 | yes | 1.03s | 0 | shut down |
+| 8 | 96059 | yes | 1.14s | 0 | shut down |
+| 9 | 96175 | yes | 1.15s | 0 | shut down |
+| 10 | 96323 | yes | 1.03s | 0 | shut down |
+
+Each run logged `applicationShouldTerminate: NSTerminateLater` → `replyToApplicationShouldTerminate:YES`
+about 0.35–0.4s later → `Termination complete`. The rest of the roughly 1s is the sheet being
+dismissed and the osascript overhead. By comparison, e0d3aae was blocked on its second launch.
+
+## 4. ⌘Q with the reset sheet showing: FIXED, and it does not reset
+
+After dismissing the splash, I opened Database → Reset Database…. The sheet was confirmed open
+before the keystroke: `sheets=1`, title "Reset the Garage database?", buttons `reset.backup`,
+`reset.cancel` and `reset.confirm`. Then ⌘Q:
+- quit **0.92s** after the keystroke (`NSTerminateLater` → reply 0.29s later), with no blocked line;
+- **no reset:** no relaunched instance, the same `pgdata/PG_VERSION` inode (`216166146`) and the same
+  system identifier (`…290800`);
+- `pg_controldata`: **`shut down`**.
+
+An earlier attempt also quit cleanly with the same cluster, but my check of the open sheet came
+back empty, so I repeated it with the sheet verified open. The table above records the verified run.
+
+## State left behind
+898c0e6 (`~/GarageTest/Garage.app`, build 225) is **running**, splash dismissed. Postgres 14824,
+MCP 8787 and gRPC 50051 are up on the group-container cluster.
