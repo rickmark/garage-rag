@@ -179,20 +179,25 @@ is behind `select()`s on `//bazel:is_store`:
 The app never shows a disabled "Check for Updates…"; when the running build
 can't update itself the item is absent and the splash explains why instead.
 
-### One-time signing key setup
+### The signing key
 
 Sparkle verifies every downloaded update against an EdDSA public key baked into
-the app, so the key pair has to exist before the first release:
+the app. The pair already exists: the public half is `SUPublicEDKey` in
+`macapp/Sources/GarageApp/Sparkle.plist`, and the private half is in the login
+Keychain of the machine that ran
 
 ```bash
 aspect run //ext/sparkle:generate_keys
 ```
 
-That stores the private key in your login Keychain — it is never committed — and
-prints the public key. Paste it into `macapp/Sources/GarageApp/Sparkle.plist` in
-place of `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`. Until you do, the app reports
-"This build was made without a Sparkle signing key" rather than fetching a feed
-it could not verify.
+Back that Keychain item up. It is the only thing that can sign an update the
+shipped app will accept, and it is never committed — losing it means minting a
+new pair and persuading users of the old one to install a new build by hand.
+
+A fork or a fresh checkout that regenerates the pair has to paste the new public
+key into `Sparkle.plist`. Left as `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`, the app
+reports "This build was made without a Sparkle signing key" rather than fetching
+a feed it could not verify.
 
 ### Cutting a release
 
