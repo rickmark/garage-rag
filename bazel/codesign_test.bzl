@@ -119,6 +119,21 @@ for item in "${{resolved_inputs[@]}}"; do
     fi
 done
 
+# The framework's own links are relative and must stay links. Runfiles can also
+# reach the real files through absolute symlinks, which tar kept as links: left
+# alone they point back into the runfiles tree (codesign then reports "Too many
+# levels of symbolic links") and no staged file is a regular file to check. Those
+# are replaced by copies of what they point to.
+while IFS= read -r link; do
+    target="$(readlink "$link")"
+    case "$target" in
+        /*)
+            rm "$link"
+            cp -RL "$target" "$link"
+            ;;
+    esac
+done < <(find "$STAGE_DIR" -type l)
+
 should_exclude() {{
     local file_path="$1"
     for pat in "${{exclude_patterns[@]+"${{exclude_patterns[@]}}"}}"; do
@@ -138,6 +153,7 @@ echo "============================================================"
 
 total_checked=0
 failed_count=0
+bundle_failed_count=0
 
 # Verify any top-level bundles
 if [ "$deep_verify" = "1" ]; then
@@ -150,7 +166,7 @@ if [ "$deep_verify" = "1" ]; then
         echo "Verifying bundle: $rel_bundle"
         if ! /usr/bin/codesign --verify --deep --strict --verbose=2 "$bundle_path" 2>&1; then
             echo "[FAIL] Bundle verification failed: $rel_bundle"
-            failed_count=$((failed_count + 1))
+            bundle_failed_count=$((bundle_failed_count + 1))
         else
             echo "[PASS] Bundle valid: $rel_bundle"
         fi
@@ -237,6 +253,9 @@ done < <(find "$STAGE_DIR" -type f)
 
 echo "============================================================"
 echo "Checked $total_checked Mach-O binaries: $((total_checked - failed_count)) passed, $failed_count failed"
+if [ "$bundle_failed_count" -gt 0 ]; then
+    echo "Bundles: $bundle_failed_count failed verification"
+fi
 echo "============================================================"
 
 if [ "$total_checked" -eq 0 ]; then
@@ -244,7 +263,7 @@ if [ "$total_checked" -eq 0 ]; then
     exit 1
 fi
 
-if [ "$failed_count" -gt 0 ]; then
+if [ "$failed_count" -gt 0 ] || [ "$bundle_failed_count" -gt 0 ]; then
     exit 1
 fi
 
