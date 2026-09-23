@@ -49,8 +49,9 @@ struct ContentView: View {
             isSplashPresented = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .garageShowFirstRun)) { _ in
+            // The sender starts the assistant on `appState`; this window only
+            // gets its splash sheet out of the way.
             isSplashPresented = false
-            appState.firstRun.begin(force: true)
         }
         .sheet(isPresented: $isSplashPresented) {
             SplashView()

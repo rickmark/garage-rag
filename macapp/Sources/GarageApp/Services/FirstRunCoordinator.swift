@@ -13,7 +13,9 @@ enum FirstRunPreferences {
 }
 
 extension Notification.Name {
-    /// Posted to re-open the setup assistant on demand (app menu, menu bar).
+    /// Posted when the setup assistant is re-opened on demand (app menu, menu
+    /// bar) so open windows dismiss their splash sheet; the assistant itself is
+    /// started on `AppState.firstRun`, not by this notification.
     static let garageShowFirstRun = Notification.Name("me.rickmark.garage-rag.showFirstRun")
 }
 
@@ -293,13 +295,15 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
         )
     }
 
-    /// Lower-cases a folder name and collapses everything that isn't `[a-z0-9]`
-    /// into single dashes, so "My Notes (2024)" becomes "my-notes-2024".
+    /// Lower-cases a folder name, strips diacritics ("Résumé" → "resume"), and
+    /// collapses everything else that isn't `[a-z0-9]` into single dashes, so
+    /// "My Notes (2024)" becomes "my-notes-2024".
     static func slug(forFolderNamed name: String) -> String {
         var out = ""
         var pendingDash = false
         let allowed = CharacterSet.alphanumerics
-        for scalar in name.lowercased().unicodeScalars {
+        let folded = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+        for scalar in folded.unicodeScalars {
             if scalar.isASCII, allowed.contains(scalar) {
                 if pendingDash, !out.isEmpty { out.append("-") }
                 pendingDash = false
@@ -488,7 +492,9 @@ final class FirstRunCoordinator: ObservableObject {
     private func runReadinessLoop(skipIfConfigured: Bool) async {
         guard let appState else { return }
 
-        if appState.postgres.status == .stopped {
+        // `PostgresService.start()` accepts a failed cluster too, so Retry after an
+        // initdb/Keychain/startup failure gets a real second attempt.
+        if Self.needsStart(appState.postgres.status) {
             await appState.startPostgres()
         }
         if Task.isCancelled { return }
@@ -538,6 +544,11 @@ final class FirstRunCoordinator: ObservableObject {
         step = .selectData
     }
 
+    private static func needsStart(_ status: PostgresStatus) -> Bool {
+        if case .failed = status { return true }
+        return status == .stopped
+    }
+
     private static func needsStart(_ status: GarageGRPCStatus) -> Bool {
         if case .failed = status { return true }
         return status == .stopped
@@ -570,10 +581,23 @@ final class FirstRunCoordinator: ObservableObject {
         }
     }
 
-    /// Adds a folder the user picked in the open panel as a selected custom source.
+    /// Adds a folder the user picked in the open panel as a selected custom
+    /// source. The panel's grant only lasts for this process, so the folder's
+    /// security-scoped bookmark is persisted (and handed to the ingest worker)
+    /// here, the same way the Sources page's "Grant Folder Access…" does.
     func addCustomFolder(_ url: URL) {
         let taken = Set(sourceTemplates.map(\.slug)).union(appState?.registeredSources.map(\.slug) ?? [])
         let template = FirstRunSourceTemplate.custom(folder: url, existingSlugs: taken)
+
+        if let appState {
+            do {
+                try appState.volumeAccess.grantSourceAccess(for: url, forSourcePath: url.path)
+            } catch {
+                errorMessage = "Could not keep access to \(url.lastPathComponent): \(error.localizedDescription) "
+                    + "Garage may be unable to read it during ingest; grant it again from the Sources page."
+            }
+        }
+
         guard !sourceTemplates.contains(where: { $0.id == template.id }) else {
             selectedSourceIDs.insert(template.id)
             return

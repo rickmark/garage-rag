@@ -89,11 +89,7 @@ struct MenuBarView: View {
             }
 
             Button("Setup Assistant…") {
-                NSApp.activate(ignoringOtherApps: true)
-                for window in NSApp.windows where window.title == "Garage" {
-                    window.makeKeyAndOrderFront(nil)
-                }
-                NotificationCenter.default.post(name: .garageShowFirstRun, object: nil)
+                GarageApp.presentFirstRun(appState: appState, openWindow: openWindow)
             }
 
             Button("Quit Garage") {

@@ -155,14 +155,14 @@ struct FirstRunView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if coordinator.step != .settingUp {
-                Button("Skip setup") {
-                    coordinator.skip()
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-                .accessibilityIdentifier("firstRun.skipSetup")
+            // Available on every page, including while services are still
+            // starting, so a hung startup never traps the user here.
+            Button("Skip setup") {
+                coordinator.skip()
             }
+            .buttonStyle(.link)
+            .font(.caption)
+            .accessibilityIdentifier("firstRun.skipSetup")
 
             Spacer()
 
@@ -177,9 +177,6 @@ struct FirstRunView: View {
             switch coordinator.step {
             case .settingUp:
                 if coordinator.servicesFailed || coordinator.errorMessage != nil {
-                    Button("Skip setup") {
-                        coordinator.skip()
-                    }
                     Button("Retry") {
                         coordinator.retryServices()
                     }
@@ -486,7 +483,31 @@ struct FirstRunSelectDataPage: View {
         .accessibilityIdentifier("firstRun.diskAccess")
     }
 
+    /// The selectable card, with a custom folder's remove control laid over it as a
+    /// sibling rather than nested inside the selection button, so each is its own
+    /// hit target and accessibility element.
     private func templateCard(_ template: FirstRunSourceTemplate) -> some View {
+        ZStack(alignment: .topTrailing) {
+            templateSelectionButton(template)
+
+            if template.isCustom {
+                Button {
+                    coordinator.removeCustomFolder(template)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(10)
+                .disabled(coordinator.isWorking)
+                .help("Remove this folder from the list")
+                .accessibilityLabel("Remove \(template.title)")
+                .accessibilityIdentifier("firstRun.source.remove.\(template.id)")
+            }
+        }
+    }
+
+    private func templateSelectionButton(_ template: FirstRunSourceTemplate) -> some View {
         let selected = coordinator.selectedSourceIDs.contains(template.id)
         let alreadyRegistered = appState.registeredSources.contains { $0.slug == template.slug }
 
@@ -530,19 +551,9 @@ struct FirstRunSelectDataPage: View {
                     }
                 }
                 Spacer(minLength: 0)
-
-                if template.isCustom {
-                    Button {
-                        coordinator.removeCustomFolder(template)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Remove this folder from the list")
-                }
             }
             .padding(12)
+            .padding(.trailing, template.isCustom ? 20 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(FirstRunStyle.cardBackground(selected: selected))
             .opacity(template.isAvailable ? 1 : 0.45)
