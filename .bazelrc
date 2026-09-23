@@ -17,6 +17,11 @@ common --@aspect_rules_py//py/private/interpreter:python_version=3.13
 
 
 
+# Python tests that need a real Postgres (garage_python/tests/test_postgres.py) run
+# against the server this names and skip when it is unset; see "Testing against
+# Postgres" in CLAUDE.md.
+test --test_env=GARAGE_TEST_DATABASE_URL
+
 # Load settings & overrides specific to the current user from `user.bazelrc`.
 # That file is git-ignored so settings aren't shared with team members. This is
 # the last statement in this config so user settings can override flags set

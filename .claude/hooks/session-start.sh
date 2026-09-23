@@ -10,6 +10,11 @@
 #      every module imports Apple-only frameworks). Needs download.swift.org allowed in
 #      the environment's network policy; if the download fails the hook says so and the
 #      tree-sitter checker remains the fallback.
+#   3. starts the image's Postgres with pgvector (built from source when the
+#      distribution's package predates 0.7, which added halfvec and binary_quantize)
+#      and exports GARAGE_TEST_DATABASE_URL, so garage_python/tests/test_postgres.py runs
+#      instead of skipping. Needs github.com reachable for the pgvector build; if any
+#      step fails the hook says so and those tests skip.
 # Idempotent: every step is skipped when its result already exists, and the container
 # state is cached after the hook completes.
 set -euo pipefail
@@ -94,6 +99,55 @@ fi
 if [ -x "$SWIFT_HOME/usr/bin/swiftc" ]; then
   echo "export PATH=\"$SWIFT_HOME/usr/bin:\$PATH\"" >> "$ENV_FILE"
   log "swift: $("$SWIFT_HOME/usr/bin/swiftc" --version 2>&1 | head -1)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Postgres + pgvector for the real-database tests
+# ---------------------------------------------------------------------------
+PGVECTOR_VERSION="${GARAGE_PGVECTOR_VERSION:-0.8.1}"
+PG_TEST_URL="postgresql://garage_dev:garage_dev@localhost:5432/postgres"
+
+pgvector_at_least_07() {
+  local control="/usr/share/postgresql/$1/extension/vector.control" version
+  [ -f "$control" ] || return 1
+  version="$(sed -n "s/^default_version = '\(.*\)'/\1/p" "$control")"
+  [ "$(printf '%s\n0.7.0\n' "$version" | sort -V | head -1)" = "0.7.0" ]
+}
+
+PG_MAJOR=""
+setup_postgres() {
+  command -v pg_ctlcluster >/dev/null 2>&1 && [ "$(id -u)" = "0" ] || return 1
+  local major
+  major="$(ls /usr/lib/postgresql 2>/dev/null | sort -n | tail -1)"
+  [ -n "$major" ] || return 1
+  if ! pgvector_at_least_07 "$major"; then
+    log "building pgvector $PGVECTOR_VERSION for Postgres $major"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      "postgresql-server-dev-$major" build-essential git >/dev/null 2>&1 || return 1
+    local src
+    src="$(mktemp -d)"
+    git clone --quiet --depth 1 --branch "v$PGVECTOR_VERSION" https://github.com/pgvector/pgvector.git "$src" \
+      && make -s -C "$src" PG_CONFIG="/usr/lib/postgresql/$major/bin/pg_config" OPTFLAGS="" >/dev/null 2>&1 \
+      && make -s -C "$src" PG_CONFIG="/usr/lib/postgresql/$major/bin/pg_config" install >/dev/null 2>&1
+    local built=$?
+    rm -rf "$src"
+    [ "$built" = 0 ] || return 1
+  fi
+  pg_ctlcluster "$major" main start >/dev/null 2>&1 || pg_ctlcluster "$major" main status >/dev/null 2>&1 || return 1
+  # Superuser: pgvector is not a trusted extension, and the tests create a
+  # database per run and CREATE EXTENSION vector in it.
+  su postgres -c "psql -q" >/dev/null <<'SQL' || return 1
+DO $$ BEGIN CREATE ROLE garage_dev; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER ROLE garage_dev WITH LOGIN SUPERUSER PASSWORD 'garage_dev';
+SQL
+  PG_MAJOR="$major"
+}
+
+if setup_postgres; then
+  echo "export GARAGE_TEST_DATABASE_URL=\"$PG_TEST_URL\"" >> "$ENV_FILE"
+  log "postgres: $PG_MAJOR with pgvector; GARAGE_TEST_DATABASE_URL set for test_postgres.py"
+else
+  log "no Postgres test server (needs the image's postgresql and github.com for pgvector); test_postgres.py will skip"
 fi
 
 log "done"

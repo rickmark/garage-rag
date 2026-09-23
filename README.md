@@ -148,6 +148,12 @@ aspect build //:macapp
 aspect test //...
 ```
 
+The tests in `garage_python/tests/test_postgres.py` run against a real Postgres with pgvector.
+They skip unless `GARAGE_TEST_DATABASE_URL` names a development server, such as Homebrew's
+`postgresql@18` with `pgvector` running as a service. Point it at a superuser URL such as
+`postgresql://localhost:5432/postgres`, never at the app's own database. See "Testing against
+Postgres" in `CLAUDE.md`.
+
 ### Code Quality & Formatting
 
 ```bash
