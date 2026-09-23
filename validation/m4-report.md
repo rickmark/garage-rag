@@ -1853,3 +1853,173 @@ none of it is committed.
 
 **Copied** unchanged (`cmp`-identical, sha256 `026caaee22824bb9…`) to
 `validation/GarageRAGDevelopmentApp.provisionprofile` on this branch.
+
+---
+
+# Check of e0d3aae, store launch, reset UI test
+
+Commits checked:
+- **`e0d3aae`** ("Close sheets before quitting; document the App Store signing setup"), on top of
+  `074e335` (store signing) and `b107e82`.
+- `claude/reset-xcuitest` with e0d3aae merged in.
+
+2026-09-23 11:47–12:45 MDT. No notarize, installer, pkgbuild, install target, `xcarchive_open` or
+upload. No TCC prompt was accepted. Two prompts that were not TCC were answered by the user, as
+described below.
+
+## 1. e0d3aae, Developer ID
+
+- **Unit tests:** `aspect test //macapp/Tests/...` passes, 3/3 targets. `GarageAppUnitTests` ran
+  **241 tests, 0 failures**; e0d3aae adds no tests.
+- **Build:** `aspect build //macapp/package:GarageApp` passes. Installed with `ditto -x -k` to
+  `~/GarageTest/Garage.app`, **build 224**, Developer ID signed; `codesign --verify --deep
+  --strict` passes. First, the b107e82 instance was quit with ⌘Q, and the cluster was left
+  `shut down`.
+- **⌘Q with the splash sheet showing: works only sometimes.**
+  - First launch (pid 41595), splash up (`sheets=1`): ⌘Q →
+    `applicationShouldTerminate: NSTerminateLater` → reply after 0.69s → exit **1.30s** after the
+    keystroke. There was no "blocked by modal sheet" line. `pg_controldata`: **`shut down`**.
+  - Second launch (pid 41851), splash up: **two ⌘Qs, at 11:55:11 and 11:56:32, each logged `App
+    termination blocked by modal sheet` → `Termination aborted`.** Both went through the new
+    menu command (`performKeyEquivalent:` → `sendAction:` → `terminate:` about 0.3s later), so
+    `AppDelegate.quit()` ran, yet the splash was still attached when AppKit checked.
+  - Likely cause: `quit()` calls AppKit's `endSheet` on a sheet that SwiftUI presents from
+    `@State isSplashPresented`. That state stays `true`, so SwiftUI can re-attach the sheet before
+    `terminate:` checks. **Suggested fix:** dismiss through the SwiftUI state (for example
+    post a notification that sets `isSplashPresented = false`), then call `terminate` on a later
+    run-loop turn. Or don't block termination on the splash at all.
+  - After dismissing the splash (`splash.continue`), ⌘Q quit cleanly and the cluster was `shut down`.
+- **Menu bar extra → "Quit Garage": not driven end to end.**
+  - The extra (default `.menu` style) opens only on a real click. A CGEvent click opened it: a
+    260×208 menu-layer window owned by Garage.
+  - Its items are not in Garage's accessibility tree (`menu 1 of menu bar item 1` → Invalid index).
+    `AXPress` and System Events `click at` did not open it. ↑/Return went to the main window.
+  - I stopped there. In code, `MenuBarView`'s "Quit Garage" now calls the same
+    `AppDelegate.quit()` as ⌘Q, so it takes the same path, including the flaky sheet behaviour.
+
+## 2. Store build, run locally
+
+`aspect build //macapp:GarageStore.app` at e0d3aae passes. I staged it at
+`~/GarageTest/GarageStore.app`, **build 224**:
+- signed `Apple Development: Rick Penwell (23E5F7Z5L7)`, embedded profile `GarageRAGDevelopmentApp`;
+- `codesign --verify --deep --strict` passes;
+- entitlements: `app-sandbox = true`, groups `[DWVXMLB45Y.group.me.rickmark.garage-rag]`,
+  application-identifier `DWVXMLB45Y.me.rickmark.garage-rag`.
+
+It was launched at 11:57:24 with the Developer ID app not running.
+
+- **It starts.** The app and all six XPC services were running within a second. amfid verified
+  it, with no AMFI or taskgated errors.
+- **It is blocked on the Keychain first.** securityd:
+  `displaying keychain prompt for …/GarageStore.app(46447)`. The Developer ID build created the
+  Postgres password item (`com.rickmark.garage.postgres`), and its ACL does not include the
+  Apple Development signature. Postgres does not start until the dialog is answered.
+  - The user chose **Always Allow** (clicked by hand at about 12:19). From now on, store builds
+    signed with this certificate can read the item.
+  - Every developer switching between the Developer ID and store builds will hit this once.
+- **Postgres then came up from the group-container `pgdata`.** postmaster 70518, parent is the
+  store app, `-D ~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`,
+  port 14824. It is the same cluster the Developer ID build uses: system identifier `…290800`.
+- **The Database page** shows "Running on port 14824", Data directory
+  `~/Library/Application Support/GarageApp/pgdata`, the Connection URL with `••••••`, and "Schema
+  up to date".
+- **⌘Q is clean** (splash dismissed first): `NSTerminateLater` → reply after 0.12s → exit 0.39s after
+  the keystroke, no listeners left, `pg_controldata` **`shut down`**.
+
+### Blocker: Python cannot start in the sandboxed XPC services
+
+**MCP (8787) and gRPC (50051) never come up in the store build.** All four Python XPC services
+(ingest, embed, GarageXPCService, MCP) log, every 30s:
+```
+Python initialization failed: Py_InitializeFromConfig failed (code 4): pyinit_core_reconfigure: failed to read thread state
+```
+Only llama (8790), which doesn't embed Python, comes up. The kernel's sandbox reports explain it.
+**The sandboxed XPC services may not read the parent app's bundle outside their own `.xpc`:**
+```
+deny(1) file-read-data <app>/Contents/Frameworks/libpq.dylib        (63–75× per service)
+deny(1) file-read-data <app>/Contents/Frameworks                    (36–42× per service)
+deny(1) file-read-data <app>/Contents/Resources/site-python          (+ lib-dynload, site-packages)
+```
+The embedded interpreter's standard library and packages live in `Contents/Resources/site-python`,
+and libpq in `Contents/Frameworks`, so Python can't initialize. Until today the store build was
+Apple Distribution–signed and could not run locally, so this never showed.
+
+As it stands, **the App Store build cannot run its Python services**: no MCP, no gRPC, no
+ingest or embedding.
+
+Options:
+- Give each XPC service what it loads inside its own bundle, or in a framework it links, rather than
+  reading the app's Resources by path.
+- Use a read-only temporary-exception entitlement for the app bundle. App Review is unlikely to
+  accept that.
+- Run the Python services as XPC services that inherit the app's sandbox. Today they have their own
+  `app-sandbox`, not `com.apple.security.inherit`.
+
+## 3. `claude/reset-xcuitest`: merged and pushed, UI test NOT run
+
+- **Merge:** `origin/claude/adoring-ritchie-c084cj` (e0d3aae) was merged into
+  `claude/reset-xcuitest`, with no rebase or force-push. The result is merge commit **`e269982`**
+  (signed, parents `eb4bbfa`, `e0d3aae`), with no conflicts. **Pushed.**
+- **Build and unit tests:** `aspect build` of `//macapp/Tests/GarageAppResetUITests` and the app
+  passes. `GarageAppUnitTests` ran **252 tests, 0 failures** (e0d3aae's 241 plus 11 new). All 8
+  `GarageAppGroupTests` pass, and so do the 3 `AppStateTests` relaunch-argument additions.
+- **The UI test has not run.** Three separate obstacles:
+  1. **From the generated Xcode project** (`xcodebuild test -scheme GarageAppResetUITests`): the
+     build fails before any test runs.
+     - rules_xcodeproj's debug configuration puts `Contents/Frameworks/python_framework.framework.zip`
+       into the app, and `codesign --sign "Garage Local Signing"` exits 1 on it (`CodeSignError`).
+     - The same app builds and signs under `aspect build`. The branch doesn't touch
+       `//ext/python`, so this is how the Xcode-project configuration builds the Python framework.
+  2. **Running the Bazel-built bundle by hand** (`xcodebuild test-without-building` with a
+     UI-test `.xctestrun`: `IsUITestBundle`, `UITargetAppPath`, and a runner made from Xcode's
+     `XCTRunner.app`):
+     - The runner launches, but the bundle is refused: `dlopen_preflight(...GarageAppResetUITests)
+       => false`.
+     - That persisted after embedding the XCTest frameworks in the runner.
+     - After three attempts I stopped. A correctly assembled runner, or rules_apple UI-test support,
+       is still missing.
+  3. **Automation Mode is disabled.** `automationmodetool` says "This device requires user
+     authentication to enable Automation Mode". A UI-test run will ask the user for a password
+     the first time.
+- **Nothing reached real data during these attempts.** The app never launched with
+  `--data-directory`. The group folder (including `pgdata/global/pg_control`) and `~/Library/Logs/Garage`
+  are unchanged between 12:21 and 12:30.
+
+### XPC services under `--data-directory`
+
+They never receive the flag. From the code:
+- **Logs:** `GarageFileLogger` writes to `~/Library/Logs/Garage` first, falls back to the group
+  container's `Library/Logs/Garage`, and never writes to the data folder. Under a test, the service
+  logs share `~/Library/Logs/Garage` with a real Garage but stay out of the data folder.
+- **Models:** `ModelDownloaderEngine` resolves `GarageAppGroup.dataDirectory` in its own
+  process, where the override is nil. The app never calls `setModelsDirectory`.
+  - So under a test the download service points at the **real** folder. For the unentitled,
+    locally signed test host that is `~/Library/Application Support/GarageApp/models`, which links
+    into the group container.
+  - At launch it only does `createDirectory` on that existing folder, which writes nothing.
+  - A download started from the Models page during a test would land in real data.
+  - **Suggested fix:** have the app send `setModelsDirectory(Paths.modelsDir.path)` at launch when
+    `--data-directory` is set.
+- The ingest, embed, MCP and gRPC services get the database URL and working directory from the
+  app, so they follow the override.
+
+## State left behind
+
+- **Developer ID e0d3aae** (`~/GarageTest/Garage.app`, build 224, pid 97964) is running, splash
+  dismissed. Postgres 14824, MCP 8787 and gRPC 50051 are up on the group-container cluster
+  (`…290800`).
+- `~/GarageTest/GarageStore.app` (build 224) is kept, not running.
+- The Keychain item `com.rickmark.garage.postgres` now also trusts the Apple Development signature
+  (Always Allow).
+
+## Findings
+
+1. **⌘Q with the splash sheet showing is still blocked on some launches** ("App termination blocked by
+   modal sheet", twice on pid 41851). `endSheet` versus SwiftUI's `isSplashPresented`; see §1.
+2. **Blocker for the App Store build:** the sandboxed Python XPC services can't read the app bundle's
+   `Frameworks` and `Resources/site-python`, so Python never starts. No MCP, gRPC, ingest or embedding.
+3. The store build needs a one-time Keychain allowance for the Postgres password item.
+4. The reset UI test can't run yet. The Xcode-project build fails to codesign
+   `python_framework.framework.zip`; there's no working hand-made runner; and Automation Mode needs
+   the user's authentication.
+5. Under `--data-directory`, the model-download XPC service still uses the real models folder.
