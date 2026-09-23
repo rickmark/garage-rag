@@ -16,7 +16,7 @@
 
 Only what local fact distillation needs: prompting, chunking, the resolver and
 its alignment, and the annotator loop, driven by a caller-built model
-(``garage_rag.enrich.ollama_provider``, ``garage_rag.enrich.llama_xpc_provider``).
+(``garage_rag.enrich.local_provider.LocalLanguageModel``).
 
 Modified for garage_rag. Upstream's ``core`` package is flattened into this one.
 Left out entirely: the provider registry and model-id routing (``factory``,

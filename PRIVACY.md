@@ -36,11 +36,11 @@ Garage contains no client for any cloud AI service. The language models it uses 
 
 Garage does not send your content to third-party services.
 
-If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
 ## 4. User Control
 
-You choose which folders and sources Garage indexes, and you can remove a source and its indexed content at any time. Garage has no setting that sends your content off your device.
+You choose which folders and sources Garage indexes, and you can remove a source and its indexed content at any time. Garage sends your content off your device only if you configure an Ollama or LM Studio server on another computer (section 2) or serve MCP clients on other computers (section 3); communications are never sent to a model server that is not on your device.
 
 ## 5. Data Storage
 
