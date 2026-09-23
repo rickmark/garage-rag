@@ -41,7 +41,7 @@ Garage contains **no advertising trackers, no analytics SDKs, and no background 
 ## 3. Local Processing & Storage
 
 All data indexed by Garage is processed and stored locally on your device in your private PostgreSQL database located in:  
-`~/Library/Application Support/GarageApp/pgdata`
+`~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`
 
 Your files, text, images, code, and communications never leave your device unless you explicitly enable optional third-party integrations.
 
@@ -51,7 +51,7 @@ Your files, text, images, code, and communications never leave your device unles
 
 Garage may offer optional features that allow you to submit selected content to third-party providers for processing:
 
-- **Cloud Optical Character Recognition (OCR)**: If enabled, image text extraction with low local confidence may optionally escalate to third-party vision models (such as Anthropic or OpenAI).
+- **Cloud Optical Character Recognition (OCR)**: If enabled, image text extraction with low local confidence may optionally escalate to a third-party vision model (Anthropic's Claude API, the only cloud provider the application integrates).
 - **Third-Party Model Providers**: If configured, local embedding requests may connect to user-specified external API endpoints.
 
 ### User Control
@@ -85,5 +85,5 @@ This Privacy Policy may be updated from time to time. Any material updates will 
 
 If you have questions about this Privacy Policy or our local-first security architecture, please reach out:
 
-- **GitHub Issues**: [https://github.com/rickmark/garage/issues](https://github.com/rickmark/garage/issues)
+- **GitHub Issues**: [https://github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
 - **Email**: [privacy@rickmark.com](mailto:privacy@rickmark.com)

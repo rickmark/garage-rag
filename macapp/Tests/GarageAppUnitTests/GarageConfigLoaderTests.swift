@@ -379,6 +379,67 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertTrue(factDistilPresets.contains { $0.slug == "gemma2-2b" })
     }
 
+    func testLoadFactsSettingsDefaultsWhenSectionAbsent() throws {
+        let json = """
+        {
+            "database": { "url": "postgresql+psycopg:///rag" },
+            "sources": []
+        }
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_facts_absent_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let facts = GarageConfigLoader.loadFactsSettings(fileURL: tempURL)
+        XCTAssertEqual(facts.model, GarageConfigLoader.defaultFactsModel)
+        XCTAssertEqual(facts.provider, GarageConfigLoader.defaultFactsProvider)
+        XCTAssertEqual(facts.model, "gemma2-2b")
+        XCTAssertEqual(facts.provider, "llama_xpc")
+
+        // A missing file also yields the defaults.
+        let fakeURL = URL(fileURLWithPath: "/tmp/non_existent_facts_\(UUID().uuidString).json")
+        let missing = GarageConfigLoader.loadFactsSettings(fileURL: fakeURL)
+        XCTAssertEqual(missing.model, "gemma2-2b")
+        XCTAssertEqual(missing.provider, "llama_xpc")
+    }
+
+    func testLoadFactsSettingsFromConfigJSON() throws {
+        let json = """
+        {
+            "database": { "url": "postgresql+psycopg:///rag" },
+            "facts": {
+                "model": "llama-3.2-3b-instruct",
+                "provider": "ollama"
+            }
+        }
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_facts_present_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let facts = GarageConfigLoader.loadFactsSettings(fileURL: tempURL)
+        XCTAssertEqual(facts.model, "llama-3.2-3b-instruct")
+        XCTAssertEqual(facts.provider, "ollama")
+    }
+
+    func testLoadFactsSettingsPartialSectionFillsDefaults() throws {
+        let json = """
+        {
+            "facts": { "model": "qwen-2.5-coder-7b" }
+        }
+        """
+
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_facts_partial_\(UUID().uuidString).json")
+        try json.data(using: .utf8)!.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let facts = GarageConfigLoader.loadFactsSettings(fileURL: tempURL)
+        XCTAssertEqual(facts.model, "qwen-2.5-coder-7b")
+        XCTAssertEqual(facts.provider, "llama_xpc")
+    }
+
     func testLoadModelPresetsFallbackToDefault() {
         let fakeURL = URL(fileURLWithPath: "/tmp/non_existent_models_\(UUID().uuidString).json")
         let presets = GarageConfigLoader.loadModelPresets(fileURL: fakeURL)

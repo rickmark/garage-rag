@@ -76,6 +76,65 @@ public enum XPCServiceState: Equatable, Sendable {
 }
 
 /// Metadata and real-time state for an individual XPC helper service.
+/// The functional ("beyond ping") test a service's diagnostic runs: the name and
+/// description on its result, and what the Status page shows before it runs.
+public struct ServiceDiagnosticTest: Equatable, Sendable {
+    public let name: String
+    public let description: String
+
+    public static let selfTests = ServiceDiagnosticTest(
+        name: "In-Service Self Tests",
+        description: "Runs the self tests embedded in the helper (Python runtime, imports, managed services)."
+    )
+    public static let generic = ServiceDiagnosticTest(
+        name: "Generic Service Check",
+        description: "Basic ping and responsiveness verification."
+    )
+    public static let modelDownload = ServiceDiagnosticTest(
+        name: "Payload Download & SHA-256 Checksum Test",
+        description: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity."
+    )
+    public static let llama = ServiceDiagnosticTest(
+        name: "Llama Tokenizer & Health Status Test",
+        description: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt."
+    )
+
+    // Fallbacks run only when a Python-hosted helper does not answer its self tests.
+    public static let embed = ServiceDiagnosticTest(
+        name: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
+        description: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text."
+    )
+    public static let ingestPing = ServiceDiagnosticTest(
+        name: "Ingest Helper Reachability Test",
+        description: "Pings the ingest helper over XPC and records its reply and latency."
+    )
+    public static let mcpPing = ServiceDiagnosticTest(
+        name: "MCP Helper Reachability Test",
+        description: "Pings the MCP server helper over XPC and records its reply and latency."
+    )
+    public static let backend = ServiceDiagnosticTest(
+        name: "Garage Backend Core Coordination Test",
+        description: "Tests Core XPC daemon coordination and backend lifecycle communication."
+    )
+
+    /// The test `XPCServiceManager.runDiagnosticTest(for:)` runs for a service id or bundle id.
+    public static func primary(for serviceId: String) -> ServiceDiagnosticTest {
+        switch serviceId {
+        case "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
+             "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
+             "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc",
+             "garage-xpc", "me.rickmark.garage-rag.xpc":
+            return .selfTests
+        case "model-download-xpc", "me.rickmark.garage-rag.model-download-xpc":
+            return .modelDownload
+        case "llama-xpc", "me.rickmark.garage-rag.llama-xpc":
+            return .llama
+        default:
+            return .generic
+        }
+    }
+}
+
 public struct XPCServiceInfo: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -313,14 +372,6 @@ public final class XPCServiceManager: ObservableObject {
         "GarageXPCService"
     ]
 
-    /// Services whose diagnostics are provided by the in-service self tests of the shared Python runtime base.
-    public nonisolated static let selfTestDrivenServiceIds: Set<String> = [
-        "garage-xpc", "me.rickmark.garage-rag.xpc",
-        "ingest-xpc", "me.rickmark.garage-rag.ingest-xpc",
-        "embed-xpc", "me.rickmark.garage-rag.embed-xpc",
-        "mcp-server-xpc", "me.rickmark.garage-rag.mcp-server-xpc"
-    ]
-
     private static let statusCallTimeout: UInt64 = 20_000_000_000
     private static let selfTestCallTimeout: UInt64 = 180_000_000_000
     private static let restartCallTimeout: UInt64 = 120_000_000_000
@@ -508,8 +559,8 @@ public final class XPCServiceManager: ObservableObject {
             guard let report = GarageXPCStatusReport.decode(fromJSON: json) else {
                 diagnosticResults[service.id] = ServiceDiagnosticTestResult(
                     serviceId: service.id,
-                    testName: "In-Service Self Tests",
-                    testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                    testName: ServiceDiagnosticTest.selfTests.name,
+                    testDescription: ServiceDiagnosticTest.selfTests.description,
                     isSuccess: false,
                     durationMs: elapsed,
                     summary: "Self tests \(passed ? "passed" : "failed") but the report could not be decoded",
@@ -529,8 +580,8 @@ public final class XPCServiceManager: ObservableObject {
             logger.warning("Self tests failed to run on '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             diagnosticResults[service.id] = ServiceDiagnosticTestResult(
                 serviceId: service.id,
-                testName: "In-Service Self Tests",
-                testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+                testName: ServiceDiagnosticTest.selfTests.name,
+                testDescription: ServiceDiagnosticTest.selfTests.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Self tests could not be run: \(error.localizedDescription)",
@@ -571,8 +622,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: serviceId,
-            testName: "In-Service Self Tests",
-            testDescription: "Runs the self tests embedded in the helper (Python runtime, imports, managed services).",
+            testName: ServiceDiagnosticTest.selfTests.name,
+            testDescription: ServiceDiagnosticTest.selfTests.description,
             isSuccess: report.allTestsPassed,
             durationMs: durationMs,
             summary: summary,
@@ -612,42 +663,6 @@ public final class XPCServiceManager: ObservableObject {
         )
         _ = await fetchStatusReport(serviceId: service.id)
         return outcome
-    }
-
-    /// Pushes configuration (database URL, gRPC endpoint, ...) to every registered helper. Failures are logged and ignored.
-    public func pushConfiguration(_ options: [String: String]) async {
-        guard !options.isEmpty else { return }
-        let targets = services
-        await withTaskGroup(of: Void.self) { group in
-            for service in targets {
-                group.addTask { [weak self] in
-                    do {
-                        let (success, message): (Bool, String?) = try await Self.performCommonCall(bundleId: service.bundleId, timeoutNanoseconds: Self.statusCallTimeout) { proxy, relay in
-                            proxy.updateConfiguration(options) { success, message in
-                                relay.resume(returning: (success, message))
-                            }
-                        }
-                        if !success {
-                            await self?.appendLog("[\(service.name)] Configuration update rejected: \(message ?? "unknown reason")", stream: .stderr, source: service.id, level: .warning)
-                        }
-                    } catch {
-                        logger.debug("Configuration push to '\(service.bundleId, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)")
-                        await self?.appendLog("[\(service.name)] Configuration push failed: \(error.localizedDescription)", stream: .stderr, source: service.id, level: .warning)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Convenience wrapper that maps the app's known endpoints onto `GarageXPCConfigurationKey` and pushes them to all helpers.
-    public func pushKnownConfiguration(databaseURL: String?, grpcHost: String?, grpcPort: Int?) async {
-        var options: [String: String] = [:]
-        if let databaseURL = databaseURL, !databaseURL.isEmpty { options[GarageXPCConfigurationKey.databaseURL] = databaseURL }
-        if let grpcHost = grpcHost, !grpcHost.isEmpty { options[GarageXPCConfigurationKey.grpcHost] = grpcHost }
-        if let grpcPort = grpcPort, grpcPort > 0 { options[GarageXPCConfigurationKey.grpcPort] = String(grpcPort) }
-        guard !options.isEmpty else { return }
-        appendLog("Pushing configuration to XPC helpers: \(options.keys.sorted().joined(separator: ", "))", source: "xpc-services", level: .info)
-        await pushConfiguration(options)
     }
 
     // MARK: - Restart Operations
@@ -698,9 +713,10 @@ public final class XPCServiceManager: ObservableObject {
 
     // MARK: - Termination Operations
 
-    /// Terminates all known running XPC helper services.
+    /// Terminates all known running XPC helper services and drops the live log streaming connections.
     public func terminateAll() {
         appendLog("Terminating all active XPC helper processes...", source: "xpc-services", level: .warning)
+        stopAllStreaming()
         for service in services {
             if let currentPid = service.pid, currentPid > 0 {
                 logger.info("Terminating XPC service '\(service.bundleId, privacy: .public)' (pid: \(currentPid))")
@@ -713,6 +729,8 @@ public final class XPCServiceManager: ObservableObject {
 
     /// Finds and terminates any active Garage XPC service helper processes across the system.
     public static func stopAnyRunningInstances() {
+        // This walks the whole process table and SIGTERM/SIGKILLs by executable name; never do that from a unit test.
+        guard !isRunningInTestEnvironment else { return }
         let targetNames = Set(knownServiceExecutableNames)
         var pids = [pid_t](repeating: 0, count: 2048)
         let bytesReturned = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(MemoryLayout<pid_t>.size * pids.count))
@@ -772,10 +790,13 @@ public final class XPCServiceManager: ObservableObject {
         connection.interruptionHandler = {
             logger.warning("Live log streaming connection for '\(bundleId, privacy: .public)' was interrupted")
         }
-        connection.invalidationHandler = { [weak self] in
+        // Only drop the registry entry if it still belongs to this connection: a restart replaces the entry with a
+        // new connection, and the old connection's invalidation must not remove the new one.
+        connection.invalidationHandler = { [weak self, weak connection] in
             Task { @MainActor [weak self] in
-                self?.streamingConnections.removeValue(forKey: key)
-                self?.streamingAdapters.removeValue(forKey: key)
+                guard let self = self, let connection = connection, self.streamingConnections[key] === connection else { return }
+                self.streamingConnections.removeValue(forKey: key)
+                self.streamingAdapters.removeValue(forKey: key)
             }
         }
 
@@ -871,6 +892,16 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Invalidates `connection` (which fails every call pending on it) once the timeout elapses, unless the returned
+    /// task is cancelled first. Every one-shot helper call goes through this so a hung helper cannot wedge a caller.
+    private static func invalidate(_ connection: NSXPCConnection, bundleId: String, afterNanoseconds timeoutNanoseconds: UInt64) -> Task<Void, Error> {
+        Task {
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            logger.warning("XPC call to '\(bundleId, privacy: .public)' timed out; invalidating connection")
+            connection.invalidate()
+        }
+    }
+
     /// Opens a one-shot connection using the common protocol, performs the bundle handshake, and runs `body`.
     /// The connection is invalidated (which fails the pending call) if no reply arrives within the timeout.
     private static func performCommonCall<T>(
@@ -883,11 +914,7 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         defer { connection.invalidate() }
 
-        let timeoutTask = Task {
-            try await Task.sleep(nanoseconds: timeoutNanoseconds)
-            logger.warning("XPC call to '\(bundleId, privacy: .public)' timed out; invalidating connection")
-            connection.invalidate()
-        }
+        let timeoutTask = invalidate(connection, bundleId: bundleId, afterNanoseconds: timeoutNanoseconds)
         defer { timeoutTask.cancel() }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -913,6 +940,10 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         defer { connection.invalidate() }
 
+        // Same timeout as the other status calls: a helper that never answers must not wedge refreshAll().
+        let timeoutTask = invalidate(connection, bundleId: bundleId, afterNanoseconds: statusCallTimeout)
+        defer { timeoutTask.cancel() }
+
         return try await withCheckedThrowingContinuation { continuation in
             let relay = ContinuationRelay(continuation)
 
@@ -933,58 +964,6 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
                 }
             }
-        }
-    }
-
-    /// Fetches captured stdout and stderr logs from an XPC service and incorporates them into the log stream.
-    public func fetchServiceLogs(serviceId: String, clear: Bool = false) async -> (stdout: String?, stderr: String?) {
-        guard let service = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId }) else {
-            return (nil, nil)
-        }
-        let bundleId = service.bundleId
-        let connection = NSXPCConnection(serviceName: bundleId)
-        let adapter = XPCLogReceiverAdapter(serviceId: service.id, manager: self, osLogStreamService: osLogStreamService)
-        connection.remoteObjectInterface = NSXPCInterface(with: GarageCommonXPCServiceProtocol.self)
-        connection.exportedInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
-        connection.exportedObject = adapter
-        connection.resume()
-        defer { connection.invalidate() }
-
-        do {
-            let (stdout, stderr): (String?, String?) = try await withCheckedThrowingContinuation { continuation in
-                let relay = ContinuationRelay(continuation)
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    relay.resume(throwing: error)
-                }) as? GarageCommonXPCServiceProtocol else {
-                    relay.resume(throwing: NSError(domain: "XPCServiceManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create XPC proxy"]))
-                    return
-                }
-
-                Self.configureBundle(on: proxy) {
-                    proxy.fetchBufferedOutput(clearBuffer: clear) { out, err, error in
-                        if let error = error {
-                            relay.resume(throwing: error)
-                        } else {
-                            relay.resume(returning: (out, err))
-                        }
-                    }
-                }
-            }
-
-            if let out = stdout, !out.isEmpty {
-                for line in out.components(separatedBy: .newlines) where !line.isEmpty {
-                    appendLog(line, stream: .stdout, source: service.id, level: .info)
-                }
-            }
-            if let err = stderr, !err.isEmpty {
-                for line in err.components(separatedBy: .newlines) where !line.isEmpty {
-                    appendLog(line, stream: .stderr, source: service.id, level: .error)
-                }
-            }
-            return (stdout, stderr)
-        } catch {
-            logger.warning("Failed to fetch logs from \(bundleId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return (nil, nil)
         }
     }
 
@@ -1014,8 +993,8 @@ public final class XPCServiceManager: ObservableObject {
         default:
             result = ServiceDiagnosticTestResult(
                 serviceId: serviceId,
-                testName: "Generic Service Check",
-                testDescription: "Basic ping and responsiveness verification.",
+                testName: ServiceDiagnosticTest.generic.name,
+                testDescription: ServiceDiagnosticTest.generic.description,
                 isSuccess: false,
                 durationMs: 0,
                 summary: "Unknown service ID: \(serviceId)",
@@ -1088,6 +1067,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: GarageEmbedXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let (success, details): (Bool, String) = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1109,8 +1090,8 @@ public final class XPCServiceManager: ObservableObject {
             let summary = success ? "Model mxbai-embed-xsmall loaded & embedded test string in \(String(format: "%.1f", elapsed))ms" : "Embedding computation failed"
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
+                testName: ServiceDiagnosticTest.embed.name,
+                testDescription: ServiceDiagnosticTest.embed.description,
                 isSuccess: success,
                 durationMs: elapsed,
                 summary: summary,
@@ -1120,8 +1101,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "embed-xpc",
-                testName: "Embeddings Model (mxbai-embed-xsmall) & Fixed-Value Vector Test",
-                testDescription: "Loads vector embedding module with mxbai-embed-xsmall and computes float vector coordinates for a fixed sample text.",
+                testName: ServiceDiagnosticTest.embed.name,
+                testDescription: ServiceDiagnosticTest.embed.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Embed XPC service test failed: \(error.localizedDescription)",
@@ -1140,8 +1121,8 @@ public final class XPCServiceManager: ObservableObject {
             let summary = isValid ? "Payload downloaded and SHA-256 hash verified in \(String(format: "%.1f", elapsed))ms" : "SHA-256 integrity verification failed"
             return ServiceDiagnosticTestResult(
                 serviceId: "model-download-xpc",
-                testName: "Payload Download & SHA-256 Checksum Test",
-                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                testName: ServiceDiagnosticTest.modelDownload.name,
+                testDescription: ServiceDiagnosticTest.modelDownload.description,
                 isSuccess: isValid,
                 durationMs: elapsed,
                 summary: summary,
@@ -1151,8 +1132,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "model-download-xpc",
-                testName: "Payload Download & SHA-256 Checksum Test",
-                testDescription: "Downloads fixed small test payload data and validates SHA-256 cryptographic hash integrity.",
+                testName: ServiceDiagnosticTest.modelDownload.name,
+                testDescription: ServiceDiagnosticTest.modelDownload.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Download test failed: \(error.localizedDescription)",
@@ -1170,6 +1151,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: LlamaXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let pingResponse: String = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1220,8 +1203,8 @@ public final class XPCServiceManager: ObservableObject {
 
             return ServiceDiagnosticTestResult(
                 serviceId: "llama-xpc",
-                testName: "Llama Tokenizer & Health Status Test",
-                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                testName: ServiceDiagnosticTest.llama.name,
+                testDescription: ServiceDiagnosticTest.llama.description,
                 isSuccess: true,
                 durationMs: elapsed,
                 summary: "Llama XPC tokenizer & health check completed in \(String(format: "%.1f", elapsed))ms",
@@ -1231,8 +1214,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "llama-xpc",
-                testName: "Llama Tokenizer & Health Status Test",
-                testDescription: "Tests Llama inference service properties, model slots, and tokenizer on a fixed prompt.",
+                testName: ServiceDiagnosticTest.llama.name,
+                testDescription: ServiceDiagnosticTest.llama.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Llama XPC test failed: \(error.localizedDescription)",
@@ -1267,8 +1250,8 @@ public final class XPCServiceManager: ObservableObject {
 
         return ServiceDiagnosticTestResult(
             serviceId: "ingest-xpc",
-            testName: "Document Ingest Pipeline & Python Runtime Test",
-            testDescription: "Inspects PythonKit dynamic library resolution, tests signal handlers, verifies document extractors and chunkers.",
+            testName: ServiceDiagnosticTest.ingestPing.name,
+            testDescription: ServiceDiagnosticTest.ingestPing.description,
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1295,16 +1278,14 @@ public final class XPCServiceManager: ObservableObject {
 
         var lines: [String] = []
         lines.append("MCP Server XPC: \(pingResult ?? "Unreachable (\(pingErr?.localizedDescription ?? "error"))")")
-        lines.append("Registered Standard MCP Tools: rag_search, rag_stats, rag_sources, rag_ingest")
-        lines.append("Protocol: Model Context Protocol (JSON-RPC 2.0)")
         lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
 
-        let summary = isSuccess ? "MCP server handshake & tools check completed in \(String(format: "%.1f", elapsed))ms" : "MCP server check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
+        let summary = isSuccess ? "MCP helper ping completed in \(String(format: "%.1f", elapsed))ms" : "MCP server check failed: \(pingErr?.localizedDescription ?? "Unreachable")"
 
         return ServiceDiagnosticTestResult(
             serviceId: "mcp-server-xpc",
-            testName: "Model Context Protocol (MCP) Server & Tools Test",
-            testDescription: "Initializes MCP protocol connection and discovers registered tools and capabilities.",
+            testName: ServiceDiagnosticTest.mcpPing.name,
+            testDescription: ServiceDiagnosticTest.mcpPing.description,
             isSuccess: isSuccess,
             durationMs: elapsed,
             summary: summary,
@@ -1322,6 +1303,8 @@ public final class XPCServiceManager: ObservableObject {
             connection.remoteObjectInterface = NSXPCInterface(with: GarageXPCServiceProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
+            let timeoutTask = Self.invalidate(connection, bundleId: bundleId, afterNanoseconds: Self.selfTestCallTimeout)
+            defer { timeoutTask.cancel() }
 
             let (success, summaryText, detailsText): (Bool, String, String) = try await withCheckedThrowingContinuation { continuation in
                 let relay = ContinuationRelay(continuation)
@@ -1342,7 +1325,6 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             var lines: [String] = []
             lines.append("Garage Core Backend XPC: \(summaryText)")
-            lines.append("Coordination: CLI dispatch, daemon lifecycle, and SQLite/Postgres backend interfaces")
             if !detailsText.isEmpty {
                 lines.append("Details: \(detailsText)")
             }
@@ -1350,8 +1332,8 @@ public final class XPCServiceManager: ObservableObject {
 
             return ServiceDiagnosticTestResult(
                 serviceId: "garage-xpc",
-                testName: "Garage Backend Core Coordination Test",
-                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                testName: ServiceDiagnosticTest.backend.name,
+                testDescription: ServiceDiagnosticTest.backend.description,
                 isSuccess: success,
                 durationMs: elapsed,
                 summary: "\(summaryText) in \(String(format: "%.1f", elapsed))ms",
@@ -1362,8 +1344,8 @@ public final class XPCServiceManager: ObservableObject {
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             return ServiceDiagnosticTestResult(
                 serviceId: "garage-xpc",
-                testName: "Garage Backend Core Coordination Test",
-                testDescription: "Tests Core XPC daemon coordination and backend lifecycle communication.",
+                testName: ServiceDiagnosticTest.backend.name,
+                testDescription: ServiceDiagnosticTest.backend.description,
                 isSuccess: false,
                 durationMs: elapsed,
                 summary: "Garage backend helper check failed: \(error.localizedDescription)",

@@ -1,22 +1,36 @@
 import Foundation
+import PythonXPCService
 
-/// Resolves where the Postgres install and the frozen `garage` CLI live.
+/// Resolves where the Postgres install and the `garage` CLI live.
 ///
-/// Packaged builds (produced by Scripts/build-app.sh) vendor both under the
-/// app bundle's Resources/ so the app runs with zero prerequisites. When run
-/// unpackaged (`swift run`, during development) there is no bundle to vendor
-/// into, so we fall back to the Homebrew install and the repo's uv venv —
-/// the same tools the README already asks a developer to have.
+/// The Bazel-built app bundle (`//macapp:GarageApp`) vendors both under the
+/// app bundle's Resources/ so the app runs with zero prerequisites; the
+/// `devRepoRoot` fallbacks below only matter when a resource is missing
+/// from the bundle.
 enum Paths {
+    /// The data directory: `Library/Application Support/GarageApp` in the App Group container, which
+    /// the App Store and Developer ID builds share, or the per-user one when the process is not
+    /// entitled for the group (locally signed and test builds). `GarageDataMigration` moves data
+    /// from the per-user location into it at launch.
     static let appSupportDir: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("GarageApp", isDirectory: true)
+        let dir = GarageAppGroup.dataDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
 
     static let pgDataDir = appSupportDir.appendingPathComponent("pgdata", isDirectory: true)
-    static let pgSocketDir = appSupportDir.appendingPathComponent("sockets", isDirectory: true)
+
+    /// `url` as people should read it: a path under the data directory is shown below
+    /// `~/Library/Application Support/GarageApp`, however it is really reached. The group container
+    /// path is long and the sandbox's home is its own container, while that one is the path people
+    /// know (and, on a Developer ID build, a link to the group folder). Other paths are shown as is.
+    static func displayPath(of url: URL, dataDirectory: URL = appSupportDir) -> String {
+        let path = url.standardizedFileURL.path
+        let data = dataDirectory.standardizedFileURL.path
+        guard path == data || path.hasPrefix(data + "/") else { return path }
+        return "~/Library/Application Support/\(GarageAppGroup.dataFolderName)" + path.dropFirst(data.count)
+    }
+
     static let modelsDir: URL = {
         let dir = appSupportDir.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -33,7 +47,6 @@ enum Paths {
         return Bundle.main.resourceURL!
     }
 
-    private static let postgresPrefix = URL(fileURLWithPath: "/opt/homebrew/opt/postgresql")
     private static let devRepoRoot: URL = {
         let candidate1 = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Developer/garage"))
         if FileManager.default.fileExists(atPath: candidate1.path) {
@@ -186,8 +199,6 @@ enum Paths {
         let devCandidates = [
             devRepoRoot.appendingPathComponent(".venv/bin/garage-mcp"),
             devRepoRoot.appendingPathComponent("bazel-bin/garage_python/garage-mcp"),
-            URL(fileURLWithPath: "/opt/homebrew/bin/garage-mcp"),
-            URL(fileURLWithPath: "/usr/local/bin/garage-mcp"),
         ]
         for candidate in devCandidates {
             if FileManager.default.isExecutableFile(atPath: candidate.path) {
@@ -197,11 +208,12 @@ enum Paths {
         return bundled
     }
 
-    /// Working directory for `garage` CLI invocations, and where its `.env`
-    /// lives. In dev mode this is the repo checkout, matching what a
-    /// developer running `garage` by hand would get. Packaged builds have no
-    /// checkout, so they get a private .env under Application Support instead
-    /// (garage reads it via GARAGE_ENV_FILE, not cwd-relative discovery).
+    /// Working directory of the gRPC server, where it finds `./garage.json`,
+    /// and where its `.env` lives. In dev mode this is the repo checkout,
+    /// matching what a developer running `garage` by hand would get. Packaged
+    /// builds have no checkout, so they get a private .env under Application
+    /// Support instead (garage reads it via GARAGE_ENV_FILE, not cwd-relative
+    /// discovery).
     static var garageWorkingDirectory: URL {
         isPackaged ? appSupportDir : devRepoRoot
     }

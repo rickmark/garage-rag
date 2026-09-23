@@ -22,6 +22,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,13 +30,13 @@ from garage_rag.config import (
     DEFAULT_EXCLUDE_DIRS,
     get_settings,
 )
-from garage_rag.db.models import CorpusClass, Source
+from garage_rag.db.models import Source
 from garage_rag.extract.dispatch import is_indexable
 from garage_rag.ingest.classify import is_code_path
 from garage_rag.ingest.walker import (
     _is_hidden,
     default_exclude_prefixes,
-    is_dependency_path,
+    is_dependency_dir,
     is_diagnostic_dir,
     is_diagnostic_file,
 )
@@ -55,10 +56,6 @@ class SourceScanResult:
     details: dict[str, Any] = field(default_factory=dict)
     duration_seconds: float = 0.0
     error: str | None = None
-
-    @property
-    def source(self) -> str:
-        return self.source_slug
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,15 +77,19 @@ ScanResult = SourceScanResult
 # 1. Filesystem scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_filesystem(
     root: Path,
     *,
     source_slug: str = "",
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
-    max_bytes: int | None = None,
 ) -> SourceScanResult:
-    """Count indexable files in a filesystem tree."""
+    """Count indexable files in a filesystem tree.
+
+    ``exclude_prefixes`` are root-relative directory prefixes (``"Library/"``);
+    matching subtrees are pruned before descent, mirroring ``walker.walk``.
+    """
     start_time = time.perf_counter()
     if not root.exists():
         return SourceScanResult(
@@ -113,8 +114,7 @@ def scan_filesystem(
             duration_seconds=time.perf_counter() - start_time,
         )
 
-    settings = get_settings()
-    limit_bytes = max_bytes if max_bytes is not None else settings.max_file_bytes
+    limit_bytes = get_settings().max_file_bytes
     file_count = 0
     dir_count = 0
     skipped_ext = 0
@@ -131,15 +131,19 @@ def scan_filesystem(
                 if d not in DEFAULT_EXCLUDE_DIRS
                 and not _is_hidden(d)
                 and not is_diagnostic_dir(d)
-                and not is_dependency_path(str(parent / d))
+                and not is_dependency_dir(parent / d, root)
             ]
+
+            if exclude_prefixes and parent != root:
+                relative = parent.relative_to(root).as_posix() + "/"
+                if relative.startswith(exclude_prefixes):
+                    dirnames[:] = []
+                    continue
 
             for filename in filenames:
                 if _is_hidden(filename) or is_diagnostic_file(filename):
                     continue
                 file_path = parent / filename
-                if exclude_prefixes and str(file_path).startswith(exclude_prefixes):
-                    continue
                 if not is_indexable(file_path):
                     skipped_ext += 1
                     continue
@@ -179,6 +183,7 @@ def scan_filesystem(
 # 2. Git scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_git(
     root: Path,
     *,
@@ -186,20 +191,30 @@ def scan_git(
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
 ) -> SourceScanResult:
-    """Count tracked indexable files in a git repository."""
-    start_time = time.perf_counter()
-    if not root.exists():
-        return SourceScanResult(
-            source_slug=source_slug,
-            kind="git",
-            root=root,
-            item_count=0,
-            item_type="files",
-            duration_seconds=time.perf_counter() - start_time,
-            error=f"path does not exist: {root}",
-        )
+    """Count the files ingest will walk in a git working tree.
 
-    # Check if git is available and root is in a git repository
+    Ingest walks the working tree, untracked files included, so the count comes
+    from the same filesystem walk; counting ``git ls-files`` instead made
+    ``expected_elements`` disagree with what a run sees. The tracked-file count
+    is kept as a detail.
+    """
+    result = scan_filesystem(
+        root,
+        source_slug=source_slug,
+        include_code=include_code,
+        exclude_prefixes=exclude_prefixes,
+    )
+    result.kind = "git"
+    if result.error is None:
+        tracked = _count_tracked_files(root)
+        result.details = {**result.details, "is_git_repo": tracked is not None}
+        if tracked is not None:
+            result.details["tracked_files"] = tracked
+    return result
+
+
+def _count_tracked_files(root: Path) -> int | None:
+    """``git ls-files`` count, or None when ``root`` is not a git work tree."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z"],
@@ -207,51 +222,12 @@ def scan_git(
             check=False,
             timeout=10,
         )
-        if proc.returncode == 0:
-            raw_entries = proc.stdout.split(b"\x00")
-            tracked_count = 0
-            indexable_count = 0
-            for entry in raw_entries:
-                if not entry:
-                    continue
-                tracked_count += 1
-                rel_path_str = entry.decode("utf-8", errors="replace")
-                file_path = root / rel_path_str
-                if exclude_prefixes and str(file_path).startswith(exclude_prefixes):
-                    continue
-                if is_diagnostic_file(file_path.name) or is_dependency_path(str(file_path)):
-                    continue
-                if not is_indexable(file_path):
-                    continue
-                if not include_code and is_code_path(file_path):
-                    continue
-                indexable_count += 1
-
-            return SourceScanResult(
-                source_slug=source_slug,
-                kind="git",
-                root=root,
-                item_count=indexable_count,
-                item_type="files",
-                details={
-                    "tracked_files": tracked_count,
-                    "indexable_files": indexable_count,
-                    "is_git_repo": True,
-                },
-                duration_seconds=time.perf_counter() - start_time,
-            )
-    except Exception as exc:
-        log.debug("git ls-files failed on %s (%s); falling back to filesystem walk", root, exc)
-
-    # Fallback to filesystem scanner
-    res = scan_filesystem(
-        root,
-        source_slug=source_slug,
-        include_code=include_code,
-        exclude_prefixes=exclude_prefixes,
-    )
-    res.kind = "git"
-    return res
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("git ls-files failed on %s: %s", root, exc)
+        return None
+    if proc.returncode != 0:
+        return None
+    return sum(1 for entry in proc.stdout.split(b"\x00") if entry)
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +261,7 @@ def _count_sqlite_database_rows(db_path: Path) -> tuple[int, dict[str, int], boo
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
             tables = [row[0] for row in cursor.fetchall()]
             for table in tables:
                 try:
@@ -370,6 +344,7 @@ def scan_sqlite(
 # 4. Maildir scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_maildir(
     root: Path,
     *,
@@ -417,6 +392,7 @@ def scan_maildir(
 # ---------------------------------------------------------------------------
 # 5. Feed scanner
 # ---------------------------------------------------------------------------
+
 
 def _count_feed_items(file_path: Path) -> int:
     """Count items/entries in an XML or JSON feed file."""
@@ -508,6 +484,7 @@ def scan_feed(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+
 def scan_source(
     source: Source | Any,
     *,
@@ -518,11 +495,10 @@ def scan_source(
     kind = getattr(source, "kind", "filesystem")
     root_val = getattr(source, "root", source)
     root = Path(root_val).expanduser() if not isinstance(root_val, Path) else root_val
-    default_class = getattr(source, "default_class", CorpusClass.DOCUMENT)
 
     log.info("Scanning source %r (kind=%s, root=%s, include_code=%s)", slug, kind, root, include_code)
 
-    prefixes = default_exclude_prefixes(default_class, root) if root.exists() else ()
+    prefixes = default_exclude_prefixes(root) if root.exists() else ()
 
     match kind:
         case "git":
@@ -571,10 +547,6 @@ def persist_scan_result(session: Any, scan_result: SourceScanResult) -> None:
     source = session.query(Source).filter_by(slug=scan_result.source_slug).one_or_none()
     if source is not None:
         source.expected_elements = scan_result.item_count
-        source.expected_items = scan_result.item_count
-        cfg = dict(source.config or {})
-        cfg["expected_items"] = scan_result.item_count
-        cfg["item_type"] = scan_result.item_type
-        cfg["scan_details"] = scan_result.details
-        cfg["scanned_at"] = time.time()
-        source.config = cfg
+        source.scan_item_type = scan_result.item_type
+        source.scan_details = dict(scan_result.details or {})
+        source.scanned_at = datetime.now(UTC)

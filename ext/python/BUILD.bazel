@@ -2,7 +2,8 @@ load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:codesign.bzl", "codesign")
+load("//bazel:codesign.bzl", "EXPECTED_SIGNING_IDENTITY", "HARDENED_RUNTIME_EXPECTED", "STORE_EXPECTED", "codesign", "codesign_test")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 configure_make(
     name = "python_3_13",
@@ -14,7 +15,6 @@ configure_make(
         "--enable-framework=$$INSTALLDIR$$/",
         "--without-ensurepip",
         "--with-static-libpython",
-        "--with-universal-archs",
         "--with-openssl=$$EXT_BUILD_DEPS/openssl",
         "--with-readline=readline",
     ],
@@ -28,7 +28,7 @@ configure_make(
         "LIBREADLINE_LIBS": "-lreadline -lncurses",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
     },
-    lib_source = "@python_3_13_framework//:python_source",
+    lib_source = "@python_source//:python_source",
     out_binaries = [
         "python3",
         "python3-config",
@@ -57,51 +57,6 @@ done
     ],
 )
 
-configure_make(
-    name = "python_3_13_static",
-    args = [
-        "-e",
-    ],
-    configure_in_place = True,
-    configure_options = [
-        "--without-ensurepip",
-        "--with-static-libpython",
-        "--with-universal-archs",
-        "--with-openssl=$$EXT_BUILD_DEPS/openssl",
-        "--with-readline=readline",
-    ],
-    copts = [
-        "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
-        "-DTIME=\\\"\\\\\\\"00:00:00\\\\\\\"\\\"",
-    ],
-    env = {
-        "AR": "/usr/bin/ar",
-        "ARFLAGS": "crs",
-        "LIBREADLINE_LIBS": "-lreadline -lncurses",
-    },
-    lib_source = "@python_3_13_framework//:python_source",
-    out_binaries = [
-        "python3",
-        "python3-config",
-    ],
-    out_include_dir = "include/python3.13",
-    out_static_libs = [
-        "libpython3.13.a",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//ext:libreadline",
-        "//ext:libzlib",
-        "//ext:openssl",
-    ],
-)
-
-alias(
-    name = "python_3_13_framework",
-    actual = ":python_3_13",
-    visibility = ["//visibility:public"],
-)
-
 # Raw install tree of the framework build (Python.framework/, bin/, include/).
 filegroup(
     name = "python_3_13_install_dir",
@@ -117,12 +72,6 @@ cc_library(
     name = "python_headers",
     hdrs = [":python_3_13_install_dir"],
     includes = ["copy_python_3_13/python_3_13/Python.framework/Versions/3.13/include/python3.13"],
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "python_3_14_framework",
-    actual = ":python_3_13",
     visibility = ["//visibility:public"],
 )
 
@@ -166,8 +115,9 @@ codesign(
     out = "Python.framework",
     is_framework = True,
     signing_identity = select({
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )
@@ -182,4 +132,12 @@ alias(
     name = "python_framework_import",
     actual = ":Python",
     visibility = ["//visibility:public"],
+)
+
+codesign_test(
+    name = "python_framework_codesign_test",
+    src = ":python_framework",
+    hardened_runtime = HARDENED_RUNTIME_EXPECTED,
+    is_store = STORE_EXPECTED,
+    signing_identity = EXPECTED_SIGNING_IDENTITY,
 )

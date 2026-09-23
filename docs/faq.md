@@ -128,6 +128,8 @@ description: Frequently asked questions about Garage local RAG, privacy guarante
       <li><code>rag_stats</code>: Overview of indexed document counts, chunk counts, and active models.</li>
       <li><code>rag_list_sources</code>: List all configured knowledge sources and their sync status.</li>
       <li><code>rag_list_models</code>: Inspect registered embedding models and vector dimensions.</li>
+      <li><code>rag_ask</code>: Answer a question from retrieved excerpts with a local model (<code>facts.provider</code> / <code>facts.model</code>), citing them as <code>[n]</code>. Nothing leaves the machine.</li>
+      <li><code>rag_generate</code>: Send a raw prompt to the same local model, with no retrieval.</li>
     </ul>
   </div>
 </details>

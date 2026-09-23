@@ -2,7 +2,7 @@
 
 Extractors are imported lazily. A corpus walk touches tens of thousands of files
 but usually only a handful of types, and importing pdfplumber/openpyxl/pytesseract
-eagerly in every one of ten worker processes is pure startup cost.
+up front for a run that never meets a PDF or a spreadsheet is pure startup cost.
 """
 
 from __future__ import annotations
@@ -33,9 +33,12 @@ PLAINTEXT_EXTENSIONS = frozenset(
         ".srt",
         ".vtt",
         ".eml",
-        ".msg",
     }
 )
+
+# Binary containers that look like text formats by name. Outlook ``.msg`` is an
+# OLE compound file, not RFC 822 text; reading it as plaintext yields mojibake.
+UNSUPPORTED_BINARY_EXTENSIONS = frozenset({".msg"})
 
 CODE_EXTENSIONS = frozenset(
     {
@@ -129,9 +132,7 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
-IMAGE_EXTENSIONS = frozenset(
-    {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif"}
-)
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif"})
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 DOCX_EXTENSIONS = frozenset({".docx", ".docm"})
@@ -241,9 +242,9 @@ def extractor_for(path: Path) -> Extractor:
     if not suffix and name in NAMED_CODE_FILES:
         return _code
     if suffix in LEGACY_OFFICE_EXTENSIONS:
-        raise UnsupportedFile(
-            f"legacy binary format {suffix} needs LibreOffice conversion: {path.name}"
-        )
+        raise UnsupportedFile(f"legacy binary format {suffix} needs LibreOffice conversion: {path.name}")
+    if suffix in UNSUPPORTED_BINARY_EXTENSIONS:
+        raise UnsupportedFile(f"binary container {suffix} has no extractor: {path.name}")
 
     raise UnsupportedFile(f"no extractor for {suffix or name!r}")
 
@@ -278,9 +279,7 @@ def extract(path: Path, *, source_allows_cloud: bool = False) -> ExtractResult:
     if size == 0:
         raise ExtractionError(f"empty file: {path}")
     if size > settings.max_file_bytes:
-        raise ExtractionError(
-            f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}"
-        )
+        raise ExtractionError(f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}")
 
     extractor = extractor_for(path)
     result = _image(path, source_allows_cloud=source_allows_cloud) if extractor is _image else extractor(path)

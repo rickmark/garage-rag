@@ -1,19 +1,15 @@
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 load("//bazel:version.bzl", "macapp_version")
 
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["**/*.swift"]),
+    # rules_apple already gives the app and its test bundles @executable_path/../Frameworks
+    # and @loader_path/../Frameworks (repeating them made ld warn "duplicate -rpath");
+    # only the Python.framework directories are added here.
     linkopts = [
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
         "-Xlinker",
         "-rpath",
         "-Xlinker",
@@ -45,6 +41,7 @@ macos_application(
     name = "GarageApp",
     additional_contents = {
         "//macapp/Sources/GarageCLI:garage": "MacOS",
+        "//macapp/Sources/GarageMCPCLI:garage-mcp": "MacOS",
         "//macapp/externals:libpq": "Frameworks",
         "//macapp/externals:postgres_output": "Resources/postgres",
         "//macapp/externals:schema_output": "Resources/schema",
@@ -56,11 +53,10 @@ macos_application(
     app_icons = ["//macapp:GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",
     bundle_name = "Garage",
-    codesignopts = [
-        "--options=runtime",  # This enables the Hardened Runtime flag
-    ],
+    codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
     entitlements = select({
         "//bazel:is_store": ":Garage.entitlements",
+        "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",
         "//conditions:default": None,
     }),
     executable_name = "GarageApp",
@@ -69,8 +65,10 @@ macos_application(
     ],
     infoplists = [":Info.plist"],
     minimum_os_version = "14.0",
+    # Store builds sign with Apple Development and this development profile, so they run on
+    # registered Macs; Xcode re-signs with Apple Distribution (GarageMacAppConnect) on upload.
     provisioning_profile = select({
-        "//bazel:is_store": "//macapp:GarageSplatAppStore.provisionprofile",
+        "//bazel:is_store": "//macapp:GarageRAGDevelopmentApp.provisionprofile",
         "//conditions:default": None,
     }),
     version = ":GarageAppVersion",

@@ -20,27 +20,40 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
 
 from pgvector import HalfVector
-from pgvector.sqlalchemy import VECTOR
+from pgvector.sqlalchemy import HALFVEC, VECTOR
 from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
 from garage_rag.db.emb_tables import assert_safe_table, get_model
 from garage_rag.db.engine import apply_search_tuning
-from garage_rag.db.registry import StoragePlan, truncate_vector
+from garage_rag.db.registry import StoragePlan, distance_operator, truncate_vector
 from garage_rag.embed.factory import get_embedder
+from garage_rag.search import SearchMode
 
 log = logging.getLogger(__name__)
 
-SearchMode = Literal["hybrid", "vector", "fts"]
+__all__ = ["SearchHit", "SearchMode", "corpus_overview", "search", "tsquery_expr"]
 
 # RRF constant from Cormack et al. Damps the influence of any single top rank.
 RRF_K = 60
 # Candidates drawn from each engine before fusion. Deeper than the final limit so
 # a result ranked mid-pack by one engine can still win on consensus.
 CANDIDATE_DEPTH = 200
+
+# Binary-quantized models (index_kind hnsw_bq): how many Hamming-nearest rows the
+# first stage fetches for the exact-cosine re-rank to choose CANDIDATE_DEPTH from.
+# A 1-bit-per-dimension sketch ranks coarsely, hence the generous over-fetch.
+BQ_OVERFETCH = 4
+
+
+SNIPPET_CHARS = 300
+
+
+def snippet(text: str, chars: int = SNIPPET_CHARS) -> str:
+    """One-line preview of a hit for listings; ``SearchHit.text`` keeps the whole excerpt."""
+    return text[:chars].replace("\n", " ")
 
 
 @dataclass
@@ -118,6 +131,12 @@ def _filter_clause(
 
 
 def _embed_query(model, query: str) -> tuple[object, StoragePlan]:
+    """Embed ``query`` the way ``model``'s table stores vectors.
+
+    The plan comes back with the value because the bind parameter must be typed
+    to match: a ``HalfVector`` bound as ``VECTOR`` is rejected by pgvector's
+    bind processor, so every search on a halfvec model would fail.
+    """
     plan = StoragePlan(
         stored_dims=model.stored_dims,
         storage_kind=model.storage_kind,
@@ -148,8 +167,11 @@ def search(
         return []
 
     apply_search_tuning(session)
-    model = get_model(session, model_slug)
-    table = assert_safe_table(model.table_name)
+    need_vector = mode in ("hybrid", "vector")
+    # Only the vector engine needs a model: `--mode fts` must work on a corpus
+    # that has none registered yet.
+    model = get_model(session, model_slug) if need_vector else None
+    table = assert_safe_table(model.table_name) if model is not None else None
     where = _filter_clause(
         corpus_classes=corpus_classes,
         trust_tiers=trust_tiers,
@@ -173,20 +195,52 @@ def search(
     if author:
         params["author"] = f"%{author}%"
 
-    need_vector = mode in ("hybrid", "vector")
-
     # Each CTE is included only when its engine is in play, so `--mode fts`
     # never loads an embedding model and `--mode vector` never parses a tsquery.
-    vector_cte = f"""
-        vec AS (
-            SELECT c.id AS chunk_id,
-                   row_number() OVER (ORDER BY e.embedding <=> :qv) AS rnk
+    # The model's distance picks the operator, matching its index's operator class.
+    op = distance_operator(model.distance) if model is not None else "<=>"
+    if model is not None and model.index_kind == "hnsw_bq":
+        # The full-width column is unindexed; its HNSW index is on the binary
+        # quantization (registry.py). Stage one walks that index on Hamming
+        # distance, with the filters in the same scan; stage two re-ranks the
+        # over-fetched rows on the model's exact distance. The ORDER BY expression
+        # must match the index expression, width included, for the planner to use it.
+        bits = int(model.stored_dims)
+        # binary_quantize() exists for both vector and halfvec, so the bound query
+        # vector (an untyped literal on the wire) must be cast to the column's type.
+        column_type = f"{model.storage_kind}({bits})"
+        params["bq_depth"] = CANDIDATE_DEPTH * BQ_OVERFETCH
+        vector_cte = f"""
+        vec_bq AS (
+            SELECT e.chunk_id, e.embedding
             FROM {table} e
             JOIN chunks c    ON c.id = e.chunk_id
             JOIN documents d ON d.id = c.document_id
             JOIN sources s   ON s.id = d.source_id
             WHERE {where}
-            ORDER BY e.embedding <=> :qv
+            ORDER BY binary_quantize(e.embedding)::bit({bits})
+                     <~> binary_quantize(CAST(:qv AS {column_type}))::bit({bits})
+            LIMIT :bq_depth
+        ),
+        vec AS (
+            SELECT b.chunk_id,
+                   row_number() OVER (ORDER BY b.embedding {op} :qv) AS rnk
+            FROM vec_bq b
+            ORDER BY b.embedding {op} :qv
+            LIMIT :depth
+        )
+    """
+    else:
+        vector_cte = f"""
+        vec AS (
+            SELECT c.id AS chunk_id,
+                   row_number() OVER (ORDER BY e.embedding {op} :qv) AS rnk
+            FROM {table} e
+            JOIN chunks c    ON c.id = e.chunk_id
+            JOIN documents d ON d.id = c.document_id
+            JOIN sources s   ON s.id = d.source_id
+            WHERE {where}
+            ORDER BY e.embedding {op} :qv
             LIMIT :depth
         )
     """
@@ -202,6 +256,7 @@ def search(
             JOIN sources s   ON s.id = d.source_id
             WHERE c.tsv @@ {tsq}
               AND {where}
+            ORDER BY rnk
             LIMIT :depth
         )
     """
@@ -212,19 +267,19 @@ def search(
             LEFT JOIN vec ON vec.chunk_id = c.id
             LEFT JOIN fts ON fts.chunk_id = c.id
         """
-        having = "WHERE vec.chunk_id IS NOT NULL OR fts.chunk_id IS NOT NULL"
+        matched = "WHERE vec.chunk_id IS NOT NULL OR fts.chunk_id IS NOT NULL"
         score = "COALESCE(1.0/(:k + vec.rnk), 0) + COALESCE(1.0/(:k + fts.rnk), 0)"
         vrank, frank = "vec.rnk", "fts.rnk"
     elif mode == "vector":
         ctes = f"WITH {vector_cte}"
         join = "JOIN vec ON vec.chunk_id = c.id"
-        having = ""
+        matched = ""
         score = "1.0/(:k + vec.rnk)"
         vrank, frank = "vec.rnk", "NULL::bigint"
     else:
         ctes = f"WITH {fts_cte}"
         join = "JOIN fts ON fts.chunk_id = c.id"
-        having = ""
+        matched = ""
         score = "1.0/(:k + fts.rnk)"
         vrank, frank = "NULL::bigint", "fts.rnk"
 
@@ -253,15 +308,15 @@ def search(
         JOIN documents d ON d.id = c.document_id
         JOIN sources s   ON s.id = d.source_id
         {join}
-        {having}
+        {matched}
         ORDER BY score DESC, c.id
         LIMIT :limit
         """
     )
 
-    if need_vector:
-        params["qv"], _plan = _embed_query(model, query)
-        sql = sql.bindparams(bindparam("qv", type_=VECTOR))
+    if model is not None:
+        params["qv"], plan = _embed_query(model, query)
+        sql = sql.bindparams(bindparam("qv", type_=HALFVEC if plan.storage_kind == "halfvec" else VECTOR))
 
     rows = session.execute(sql, params).mappings().all()
     return [

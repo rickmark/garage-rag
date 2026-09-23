@@ -75,24 +75,6 @@ final class GarageViewTests: XCTestCase {
     }
 
     @MainActor
-    func testEmbeddingModelsViewHosting() {
-        let appState = AppState()
-        let embeddingModelsView = EmbeddingModelsView()
-            .environmentObject(appState)
-        let hostingController = NSHostingController(rootView: embeddingModelsView)
-        XCTAssertNotNil(hostingController.view)
-    }
-
-    @MainActor
-    func testLlamaModelsViewHosting() {
-        let appState = AppState()
-        let llamaModelsView = ModelsView()
-            .environmentObject(appState)
-        let hostingController = NSHostingController(rootView: llamaModelsView)
-        XCTAssertNotNil(hostingController.view)
-    }
-
-    @MainActor
     func testMCPServerViewHosting() {
         let appState = AppState()
         let mcpServerView = MCPServerView()
@@ -131,11 +113,6 @@ final class GarageViewTests: XCTestCase {
     func testLogSourceCases() {
         let cases = LogsView.LogSource.allCases
         XCTAssertEqual(cases.count, 9)
-        XCTAssertEqual(cases.map(\.rawValue), ["Unified Log", "Postgres", "garage CLI", "Ingest", "Embed", "MCP Server", "gRPC Server", "Llama Service", "Model Downloader"])
-        XCTAssertNotNil(LogsView.LogSource.ingest.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.grpc.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.unifiedLog.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.postgres.osLogPredicate)
-        XCTAssertNotNil(LogsView.LogSource.garage.osLogPredicate)
+        XCTAssertEqual(cases.map(\.rawValue), ["Unified Log", "Postgres", "App", "Ingest", "Embed", "MCP Server", "gRPC Server", "LLaMa", "Downloader"])
     }
 }

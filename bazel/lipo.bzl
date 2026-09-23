@@ -1,10 +1,13 @@
-"""Rules for extracting single-architecture (thinned) macOS applications via lipo and codesigning."""
+"""Rules for staging a macOS application for distribution: prune, thin via lipo, codesign."""
+
+load("//bazel:macos_application.bzl", "developer_id_transition")
 
 def _macos_lipo_app_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
         fail("{} only supports macOS targets".format(ctx.label))
 
-    app_target = ctx.attr.app
+    # A list: `app` is built through the Developer ID transition.
+    app_target = ctx.attr.app[0]
     app_files = app_target[DefaultInfo].files.to_list()
     if not app_files:
         fail("{}: 'app' target did not produce any files".format(ctx.label))
@@ -83,6 +86,7 @@ fi
 
 /usr/bin/python3 - "$app_bundle" "$target_arch" "$signing_identity" "$options" << 'PYEOF'
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -182,27 +186,38 @@ for root, dirs, files in os.walk(app_bundle):
             if not os.path.islink(p):
                 nested_bundles.append(p)
 
-nested_bundles_sorted = sorted(nested_bundles, key=lambda x: len(x.split("/")), reverse=True)
-for b in nested_bundles_sorted:
-    cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg + [b]
+# Signing a bundle re-signs its main executable, so a bundle is signed with that executable's
+# entitlements; without them codesign drops what step 3 applied. The executable comes from
+# CFBundleExecutable, not the bundle's name (Garage.app's is GarageApp).
+entitlements_by_realpath = {os.path.realpath(k): v for k, v in entitlements.items()}
+
+def bundle_entitlements(bundle):
+    for info in ("Contents/Info.plist", "Versions/Current/Resources/Info.plist", "Resources/Info.plist"):
+        info_path = os.path.join(bundle, info)
+        if not os.path.exists(info_path):
+            continue
+        with open(info_path, "rb") as fp:
+            executable = plistlib.load(fp).get("CFBundleExecutable")
+        if not executable:
+            return None
+        exec_dir = os.path.join(bundle, "Contents/MacOS") if info.startswith("Contents/") else bundle
+        return entitlements_by_realpath.get(os.path.realpath(os.path.join(exec_dir, executable)))
+    return None
+
+def sign_bundle(bundle):
+    cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg
+    ent = bundle_entitlements(bundle)
+    if ent:
+        cmd.extend(["--entitlements", ent])
+    cmd.append(bundle)
     subprocess.run(cmd, check=True, capture_output=True)
 
-# 5. Codesign top-level app bundle
-main_exec = os.path.join(app_bundle, "Contents/MacOS", os.path.splitext(os.path.basename(app_bundle))[0])
-if not os.path.exists(main_exec):
-    # Try finding any executable in Contents/MacOS
-    macos_dir = os.path.join(app_bundle, "Contents/MacOS")
-    if os.path.exists(macos_dir):
-        execs = [os.path.join(macos_dir, f) for f in os.listdir(macos_dir) if os.path.isfile(os.path.join(macos_dir, f))]
-        if execs:
-            main_exec = execs[0]
+nested_bundles_sorted = sorted(nested_bundles, key=lambda x: len(x.split("/")), reverse=True)
+for b in nested_bundles_sorted:
+    sign_bundle(b)
 
-app_ent = entitlements.get(main_exec)
-cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg
-if app_ent:
-    cmd.extend(["--entitlements", app_ent])
-cmd.append(app_bundle)
-subprocess.run(cmd, check=True, capture_output=True)
+# 5. Codesign top-level app bundle
+sign_bundle(app_bundle)
 
 # 6. Verify signature
 verify = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app_bundle], capture_output=True, text=True)
@@ -233,16 +248,20 @@ app_name="$(basename "$app_bundle")"
 
 macos_lipo_app = rule(
     implementation = _macos_lipo_app_impl,
-    doc = "Extracts a single-architecture macOS application bundle from a universal binary app and re-signs it.",
+    doc = "Stages a macOS application bundle for distribution: prunes it, thins every Mach-O to `arch`, and re-signs it.",
     attrs = {
         "app": attr.label(
             mandatory = True,
+            # The app (and everything it signs, like site-packages) must be built for
+            # the Developer ID platform, not whatever the command line selected; without
+            # this it was signed under the default local identity.
+            cfg = developer_id_transition,
             doc = "The application target (.zip or .app) providing universal binary.",
         ),
         "arch": attr.string(
             mandatory = True,
-            values = ["arm64", "x86_64"],
-            doc = "Target architecture to thin to (arm64 or x86_64).",
+            values = ["arm64"],
+            doc = "Target architecture to thin to. Garage ships Apple Silicon only, so arm64.",
         ),
         "options": attr.string_list(
             default = ["runtime"],
@@ -254,6 +273,9 @@ macos_lipo_app = rule(
         "signing_identity": attr.string(
             default = "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
             doc = "Codesigning identity Common Name for Developer ID signing.",
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
         "_macos_constraint": attr.label(
             default = Label("@platforms//os:macos"),

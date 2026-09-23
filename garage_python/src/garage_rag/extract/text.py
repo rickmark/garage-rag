@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import logging
 from pathlib import Path
 
@@ -19,21 +20,42 @@ log = logging.getLogger(__name__)
 
 VERSION = "1"
 
-# Encodings to try in order. Personal corpora accumulate legacy files, and
-# failing a document over one bad byte loses the whole thing.
-_ENCODINGS = ("utf-8", "utf-8-sig", "utf-16", "latin-1")
+_UTF16_BOMS = (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 
 
 def read_text_file(path: Path) -> tuple[str, str]:
-    """Read a text file, returning ``(text, encoding_used)``."""
+    """Read a text file, returning ``(text, encoding_used)``.
+
+    Order matters. ``utf-8-sig`` goes first so a UTF-8 BOM is stripped rather
+    than surviving as ``\\ufeff`` in front of Markdown frontmatter. UTF-16 is
+    only attempted when the file announces itself with a BOM: Python's
+    ``utf-16`` codec accepts almost any even-length byte string without one,
+    so trying it blind turns a plain latin-1 file into CJK noise.
+    """
     data = path.read_bytes()
-    for encoding in _ENCODINGS:
+
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    else:
+        return text, "utf-8-sig" if data.startswith(codecs.BOM_UTF8) else "utf-8"
+
+    if data[:2] in _UTF16_BOMS:
         try:
-            return data.decode(encoding), encoding
-        except (UnicodeDecodeError, LookupError):
-            continue
-    # Last resort: never lose a document to a single undecodable byte.
-    return data.decode("utf-8", errors="replace"), "utf-8/replace"
+            return data.decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            log.debug("%s has a UTF-16 BOM but does not decode as UTF-16", path)
+
+    # Single-byte fallbacks. Personal corpora accumulate legacy files, and
+    # failing a document over one bad byte loses the whole thing. cp1252 is
+    # what most Western legacy text was actually written in (it rejects a few
+    # bytes, 0x81/0x8D/0x8F/0x90/0x9D); latin-1 accepts every byte, so it is
+    # the terminal fallback rather than a step that can fail.
+    try:
+        return data.decode("cp1252"), "cp1252"
+    except UnicodeDecodeError:
+        return data.decode("latin-1"), "latin-1"
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:
@@ -93,9 +115,7 @@ def extract_markdown(path: Path) -> ExtractResult:
     meta: dict = {"encoding": encoding}
     if front:
         # Keep only JSON-safe scalars; frontmatter can hold arbitrary YAML.
-        meta["frontmatter"] = {
-            k: v for k, v in front.items() if isinstance(v, (str, int, float, bool))
-        }
+        meta["frontmatter"] = {k: v for k, v in front.items() if isinstance(v, (str, int, float, bool))}
 
     return ExtractResult(
         text=text,

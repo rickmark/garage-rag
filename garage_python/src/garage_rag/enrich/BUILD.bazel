@@ -6,6 +6,7 @@ py_library(
         "__init__.py",
         "egress.py",
         "facts.py",
+        "generation.py",
         "llama_xpc_provider.py",
     ],
     imports = ["../.."],
@@ -16,6 +17,7 @@ py_library(
         "//garage_python/src/garage_rag/xpc",
         "@pypi//anthropic",
         "@pypi//langextract",
+        "@pypi//ollama",
         "@pypi//sqlalchemy",
     ],
 )

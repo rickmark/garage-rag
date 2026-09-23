@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import Security
 import AppKit
+import PythonXPCService
 
 public struct RegisteredModel: Identifiable, Hashable, Sendable {
     public var id: String { slug }
@@ -52,6 +53,9 @@ public struct CorpusStats: Equatable, Sendable {
     public var totalIndexedFiles: Int
     public var totalExpectedElements: Int
     public var modelStats: [ModelEmbeddingStats]
+    /// Documents per source slug, carried here because the same stats query
+    /// already has to visit `documents` — see `PostgresService.fetchCorpusStats`.
+    public var sourceDocumentCounts: [String: Int]
     public var lastUpdated: Date?
 
     public init(
@@ -65,6 +69,7 @@ public struct CorpusStats: Equatable, Sendable {
         totalIndexedFiles: Int = 0,
         totalExpectedElements: Int = 0,
         modelStats: [ModelEmbeddingStats] = [],
+        sourceDocumentCounts: [String: Int] = [:],
         lastUpdated: Date? = nil
     ) {
         self.sourcesCount = sourcesCount
@@ -77,6 +82,7 @@ public struct CorpusStats: Equatable, Sendable {
         self.totalIndexedFiles = totalIndexedFiles
         self.totalExpectedElements = totalExpectedElements
         self.modelStats = modelStats
+        self.sourceDocumentCounts = sourceDocumentCounts
         self.lastUpdated = lastUpdated
     }
 
@@ -145,6 +151,91 @@ public struct CorpusStats: Equatable, Sendable {
     }
 }
 
+/// Dedicated queue for the blocking Postgres client tools. Serial on purpose:
+/// the cluster runs with max_connections=5, so there is nothing to win by
+/// overlapping these, and serializing keeps a backup from racing a stats refresh.
+private let postgresCLIQueue = DispatchQueue(
+    label: "me.rickmark.garage-rag.postgres-cli",
+    qos: .userInitiated
+)
+
+/// psql and the rest of the Postgres CLIs block their calling thread for the
+/// whole invocation, and `PostgresService` is `@MainActor` — running them inline
+/// froze the UI for the length of every query. Each invocation goes through this
+/// Sendable value instead, which hops to `postgresCLIQueue` rather than the
+/// cooperative pool (which must never be blocked). Callers `await` it, so the
+/// main actor is free while the tool runs.
+struct PostgresCommandRunner: Sendable {
+    let port: Int
+    let databaseName: String
+    let user: String
+    let environment: [String: String]
+
+    /// Runs a bundled Postgres tool to completion off the caller's actor.
+    /// Static because initdb and pg_isready run before there is a database to
+    /// connect to.
+    static func run(
+        tool: String,
+        arguments: [String],
+        environment: [String: String]? = nil
+    ) async -> (status: Int32, output: String) {
+        let executable = Paths.postgresTool(tool)
+        return await withCheckedContinuation { continuation in
+            postgresCLIQueue.async {
+                continuation.resume(returning: ProcessRunner.runSync(
+                    executable: executable,
+                    arguments: arguments,
+                    environment: environment
+                ))
+            }
+        }
+    }
+
+    /// Host/port/user flags every client tool in this cluster needs.
+    var connectionArguments: [String] {
+        ["-h", "localhost", "-p", String(port), "-U", user]
+    }
+
+    func run(_ tool: String, arguments: [String]) async -> (status: Int32, output: String) {
+        await Self.run(tool: tool, arguments: connectionArguments + arguments, environment: environment)
+    }
+
+    /// Runs `psql` against the app's own database.
+    func psql(_ arguments: [String]) async -> (status: Int32, output: String) {
+        await run("psql", arguments: ["-d", databaseName] + arguments)
+    }
+
+    /// Runs one statement and returns its rows split on the tab field separator
+    /// `-tAF` installs (tuples only, unaligned, no header). Trailing empty
+    /// fields are trimmed away with the newline, so rows can be shorter than the
+    /// select list — check `count` before indexing.
+    func query(
+        _ sql: String,
+        failureMessage: String = "psql query failed"
+    ) async throws -> [[String]] {
+        let (status, output) = await psql(["-tAF\t", "-c", sql])
+        guard status == 0 else {
+            throw PostgresError.other("\(failureMessage): \(output)")
+        }
+        return output.split(separator: "\n").compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed.components(separatedBy: "\t")
+        }
+    }
+
+    /// Runs one statement expected to yield a single value.
+    func scalar(
+        _ sql: String,
+        failureMessage: String = "psql query failed"
+    ) async throws -> String {
+        let (status, output) = await psql(["-tAc", sql])
+        guard status == 0 else {
+            throw PostgresError.other("\(failureMessage): \(output)")
+        }
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 enum PostgresStatus: Equatable {
     case stopped
     case starting
@@ -164,8 +255,8 @@ final class PostgresService: ObservableObject {
     @Published private(set) var pendingMigrations: [String] = []
 
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
-    let port = 14824
-    let databaseName = "garage-rag"
+    let port = GaragePostgresEndpoint.port
+    let databaseName = GaragePostgresEndpoint.databaseName
 
     private let runner = ProcessRunner()
     private let maxLogLines = 2000
@@ -205,6 +296,17 @@ final class PostgresService: ObservableObject {
         return NSWorkspace.shared.open(url)
     }
 
+    /// A Sendable snapshot of the connection parameters, built on the main
+    /// actor (where the Keychain-backed password lives) and used off it.
+    private func commandRunner() throws -> PostgresCommandRunner {
+        PostgresCommandRunner(
+            port: port,
+            databaseName: databaseName,
+            user: NSUserName(),
+            environment: runtimeEnvironment(password: try postgresPassword())
+        )
+    }
+
     private func appendLog(_ line: LogLine) {
         logs.append(line)
         if logs.count > maxLogLines {
@@ -221,8 +323,18 @@ final class PostgresService: ObservableObject {
     }
 
     /// Runs initdb into Paths.pgDataDir if it hasn't been created yet.
-    func ensureInitialized() throws {
+    func ensureInitialized() async throws {
         guard !isInitialized else { return }
+        // The corpus is still in the pre-App-Group folder (GarageDataMigration could not move it,
+        // usually because a postgres was still running from it). A new, empty cluster here would
+        // hide it, so refuse and let the next launch finish the move.
+        if !isRunningInTestEnvironment, GarageDataMigration.hasUnmigratedCluster() {
+            throw PostgresError.other(
+                "The database is still in \(GarageAppGroup.legacyDataDirectory.path) and could not be moved "
+                    + "into the shared folder \(Paths.appSupportDir.path). Quit every copy of Garage, "
+                    + "then open it again."
+            )
+        }
         try FileManager.default.createDirectory(at: Paths.pgDataDir, withIntermediateDirectories: true)
         let password = try postgresPassword()
         let passwordFile = Paths.appSupportDir
@@ -250,8 +362,8 @@ final class PostgresService: ObservableObject {
             initdbArguments.append(contentsOf: ["-L", Paths.postgresShareDir.path])
         }
 
-        let (status, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("initdb"),
+        let (status, output) = await PostgresCommandRunner.run(
+            tool: "initdb",
             arguments: initdbArguments,
             environment: runtimeEnvironment(password: password)
         )
@@ -284,12 +396,16 @@ final class PostgresService: ObservableObject {
         // now-replaced app bundle -- instead of starting a fresh one from
         // the current bundle. Always clear it first; this is a no-op when
         // nothing is running.
-        Self.stopAnyRunningInstance()
+        await Self.stopAnyRunningInstance()
 
         do {
-            try ensureInitialized()
+            try await ensureInitialized()
+            // Read the password before launching anything, so a Keychain problem shows
+            // up as the reason the database is down rather than as an authentication
+            // failure from the first connection.
+            _ = try postgresPassword()
         } catch {
-            status = .failed("\(error)")
+            status = .failed(error.localizedDescription)
             throw error
         }
 
@@ -327,12 +443,17 @@ final class PostgresService: ObservableObject {
 
         let ready = await waitUntilReady(timeout: 30)
         guard ready else {
-            status = .failed("postgres did not become ready within 20s")
+            status = .failed("postgres did not become ready within 30s")
             throw PostgresError.startupTimeout
         }
 
-        try await ensureDatabaseExists(password: try postgresPassword())
-        let pending = (try? fetchPendingMigrations()) ?? []
+        do {
+            try await ensureDatabaseExists(runner: try commandRunner())
+        } catch {
+            status = .failed(error.localizedDescription)
+            throw error
+        }
+        let pending = (try? await fetchPendingMigrations()) ?? []
         self.pendingMigrations = pending
         if !pending.isEmpty {
             status = .needsMigration
@@ -341,35 +462,53 @@ final class PostgresService: ObservableObject {
         }
     }
 
-    /// Fire-and-forget SIGTERM for app-quit paths that can't await cleanup
+    /// Fire-and-forget fast shutdown (SIGINT) for app-quit paths that can't await cleanup
     /// (see AppDelegate.applicationWillTerminate). Prefer stop() elsewhere.
     func terminateImmediately() {
-        runner.terminate()
-        Self.stopAnyRunningInstance()
+        runner.interrupt()
+        Self.stopAnyRunningInstanceSync()
     }
 
     func stop() async {
         guard status == .running || status == .needsMigration || status == .starting || runner.isRunning else {
-            Self.stopAnyRunningInstance()
+            await Self.stopAnyRunningInstance()
             return
         }
         status = .stopping
-        runner.terminate()
-        // Poll briefly for the process to actually exit rather than assuming.
-        for _ in 0..<50 where runner.isRunning {
+        // A fast shutdown (SIGINT), not SIGTERM's smart one: the XPC services keep pooled connections
+        // open, and a smart shutdown waits for them until the grace period ends in SIGKILL, which
+        // leaves the cluster without a shutdown checkpoint to crash-recover on the next start.
+        runner.interrupt()
+        // Poll for the process to actually exit rather than assuming; the shutdown checkpoint of a
+        // busy cluster can take a few seconds.
+        for _ in 0..<100 where runner.isRunning {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         if runner.isRunning {
             runner.forceKill()
         }
-        Self.stopAnyRunningInstance()
+        await Self.stopAnyRunningInstance()
         pendingMigrations = []
         status = .stopped
     }
 
-    /// Stops any active Postgres server running against the app's pgdata directory,
-    /// even if started by an earlier app instance or process.
-    static func stopAnyRunningInstance() {
+    /// Stops any active Postgres server running against the app's pgdata
+    /// directory, even if started by an earlier app instance or process.
+    static func stopAnyRunningInstance() async {
+        await withCheckedContinuation { continuation in
+            postgresCLIQueue.async {
+                stopAnyRunningInstanceSync()
+                continuation.resume()
+            }
+        }
+    }
+
+    /// The blocking form. `applicationWillTerminate` has no way to await, so it
+    /// pays the pg_ctl + SIGINT grace period on the calling thread; everywhere
+    /// else should use `stopAnyRunningInstance()`.
+    nonisolated static func stopAnyRunningInstanceSync() {
+        // Paths.pgDataDir is the developer's live cluster; unit tests must never signal or kill it.
+        guard !isRunningInTestEnvironment else { return }
         let pidFile = Paths.pgDataDir.appendingPathComponent("postmaster.pid")
         guard FileManager.default.fileExists(atPath: pidFile.path) else { return }
 
@@ -390,7 +529,8 @@ final class PostgresService: ObservableObject {
         }
 
         if kill(pid, 0) == 0 {
-            kill(pid, SIGTERM)
+            // Fast shutdown, as in stop(); SIGTERM would wait for connected clients.
+            kill(pid, SIGINT)
             var exited = false
             for _ in 0..<20 {
                 usleep(50_000)
@@ -411,53 +551,40 @@ final class PostgresService: ObservableObject {
         try? FileManager.default.removeItem(at: pidFile)
     }
 
-    /// Drops and recreates the app's private database when running, or
-    /// re-initializes the database cluster from scratch if stopped or failed.
-    /// Preserves the Keychain-managed superuser credential.
-    func resetDatabase() async throws {
-        if status == .running || status == .needsMigration {
-            let password = try postgresPassword()
-            try dropDatabase(password: password)
-            try createDatabase(password: password)
-            appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
-            let pending = (try? fetchPendingMigrations()) ?? []
-            self.pendingMigrations = pending
-            if !pending.isEmpty {
-                status = .needsMigration
-            } else {
-                status = .running
-            }
-        } else {
-            runner.terminate()
-            for _ in 0..<20 where runner.isRunning {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-            if FileManager.default.fileExists(atPath: Paths.pgDataDir.path) {
-                try FileManager.default.removeItem(at: Paths.pgDataDir)
-            }
-            status = .stopped
-            try await start()
-            appendLog(LogLine(stream: .stdout, text: "re-initialized and reset database cluster \(databaseName)", source: "postgres"))
+    /// Deletes the cluster directory for "Reset Database". Postgres must already be stopped: while a
+    /// postmaster still runs from it, nothing is deleted. The Keychain password stays, so the next
+    /// `start()` initializes a new cluster with the same credential.
+    func deleteClusterForReset() async throws {
+        // Paths.pgDataDir is the developer's live cluster; unit tests must never delete it.
+        guard !isRunningInTestEnvironment else { return }
+        let pgdata = Paths.pgDataDir
+        if let pid = GarageDataMigration.runningPostmaster(in: pgdata) {
+            throw PostgresError.other("Postgres (pid \(pid)) is still running from \(pgdata.path); nothing was deleted.")
         }
+        if FileManager.default.fileExists(atPath: pgdata.path) {
+            // Off the main actor: a large cluster is many thousands of files.
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.removeItem(at: pgdata)
+            }.value
+        }
+        pendingMigrations = []
+        status = .stopped
+        appendLog(LogLine(stream: .stdout, text: "deleted database cluster \(pgdata.path) for a reset", source: "postgres"))
     }
 
     /// Writes a portable PostgreSQL custom-format dump of the app's database.
-    func backupDatabase(to destination: URL) throws {
+    func backupDatabase(to destination: URL) async throws {
         try requireRunning()
+        let runner = try commandRunner()
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
 
-        let (dumpStatus, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("pg_dump"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
-                "--format=custom", "--no-owner", "--no-privileges",
-                "--file", destination.path, databaseName,
-            ],
-            environment: runtimeEnvironment(password: try postgresPassword())
-        )
+        let (dumpStatus, output) = await runner.run("pg_dump", arguments: [
+            "--format=custom", "--no-owner", "--no-privileges",
+            "--file", destination.path, databaseName,
+        ])
         guard dumpStatus == 0 else {
             try? FileManager.default.removeItem(at: destination)
             throw PostgresError.other("pg_dump failed: \(output)")
@@ -466,51 +593,43 @@ final class PostgresService: ObservableObject {
     }
 
     /// Replaces the app's database with a PostgreSQL custom-format dump.
-    func restoreDatabase(from source: URL) throws {
+    func restoreDatabase(from source: URL) async throws {
         try requireRunning()
         guard FileManager.default.fileExists(atPath: source.path) else {
             throw PostgresError.other("backup file does not exist: \(source.path)")
         }
 
-        let password = try postgresPassword()
-        try dropDatabase(password: password)
-        try createDatabase(password: password)
-        let (restoreStatus, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("pg_restore"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
-                "--no-owner", "--no-privileges", "--exit-on-error",
-                "--dbname", databaseName, source.path,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
+        let runner = try commandRunner()
+        try await dropDatabase(runner: runner)
+        try await createDatabase(runner: runner)
+        let (restoreStatus, output) = await runner.run("pg_restore", arguments: [
+            "--no-owner", "--no-privileges", "--exit-on-error",
+            "--dbname", databaseName, source.path,
+        ])
         guard restoreStatus == 0 else {
             throw PostgresError.other("pg_restore failed: \(output)")
         }
         appendLog(LogLine(stream: .stdout, text: "restored database from \(source.path)", source: "pg_restore"))
     }
 
-    /// Fetches all registered embedding models directly from the backing database.
-    func listRegisteredModels() throws -> [RegisteredModel] {
-        try requireRunning()
-        let password = try postgresPassword()
-        let sql = "SELECT slug, provider, model_ref, dims, stored_dims, storage_kind, index_kind, table_name, is_default, coalesce(model_id, '') FROM embedding_models ORDER BY id;"
-        let (status, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAF\t", "-c", sql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
-        guard status == 0 else {
-            throw PostgresError.other("psql query failed: \(output)")
+    /// `url` for display: the password, when there is one, replaced by bullets. Copy and the
+    /// registered handler still get the real URL; the screen (and the accessibility API) never does.
+    nonisolated static func redactedConnectionString(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let password = components.percentEncodedPassword, !password.isEmpty else {
+            return url.absoluteString
         }
+        components.percentEncodedPassword = "REDACTED"
+        return (components.string ?? url.absoluteString).replacingOccurrences(of: ":REDACTED@", with: ":••••••@")
+    }
+
+    /// Fetches all registered embedding models directly from the backing database.
+    func listRegisteredModels() async throws -> [RegisteredModel] {
+        try requireRunning()
+        let sql = "SELECT slug, provider, model_ref, dims, stored_dims, storage_kind, index_kind, table_name, is_default, coalesce(model_id, '') FROM embedding_models ORDER BY id;"
+        let rows = try await commandRunner().query(sql)
         var models: [RegisteredModel] = []
-        for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.components(separatedBy: "\t")
+        for parts in rows {
             guard parts.count >= 9 else { continue }
             let slug = parts[0]
             let provider = parts[1]
@@ -539,9 +658,8 @@ final class PostgresService: ObservableObject {
     }
 
     /// Fetches all registered ingest sources directly from the backing database along with their document counts.
-    func listRegisteredSources() throws -> [RegisteredSource] {
+    func listRegisteredSources() async throws -> [RegisteredSource] {
         try requireRunning()
-        let password = try postgresPassword()
         let sql = """
         SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.allow_cloud_enrichment, s.enabled, count(d.id), coalesce(s.expected_elements, 0)
         FROM sources s
@@ -549,22 +667,9 @@ final class PostgresService: ObservableObject {
         GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.allow_cloud_enrichment, s.enabled, s.expected_elements
         ORDER BY s.id;
         """
-        let (status, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAF\t", "-c", sql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
-        guard status == 0 else {
-            throw PostgresError.other("psql query failed: \(output)")
-        }
+        let rows = try await commandRunner().query(sql)
         var sources: [RegisteredSource] = []
-        for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.components(separatedBy: "\t")
+        for parts in rows {
             guard parts.count >= 7 else { continue }
             let slug = parts[0]
             let kind = parts[1]
@@ -593,8 +698,8 @@ final class PostgresService: ObservableObject {
     }
 
     /// Returns the list of unapplied migration SQL file names from Paths.schemaDir.
-    func fetchPendingMigrations() throws -> [String] {
-        let password = try postgresPassword()
+    func fetchPendingMigrations() async throws -> [String] {
+        let runner = try commandRunner()
         let schemaDir = Paths.schemaDir
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
             return []
@@ -610,36 +715,18 @@ final class PostgresService: ObservableObject {
             WHERE table_schema = 'public' AND table_name = 'schema_migrations'
         );
         """
-        let (checkStatus, checkOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAc", sql,
-            ],
-            environment: runtimeEnvironment(password: password)
+        let tableExists = try await runner.scalar(
+            sql,
+            failureMessage: "failed to check schema_migrations table"
         )
-        guard checkStatus == 0 else {
-            throw PostgresError.other("failed to check schema_migrations table: \(checkOutput)")
-        }
-
-        let trimmedCheck = checkOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedCheck != "t" && trimmedCheck != "true" {
+        if tableExists != "t" && tableExists != "true" {
             return sqlFiles
         }
 
-        let appliedSql = "SELECT version FROM schema_migrations;"
-        let (appliedStatus, appliedOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAc", appliedSql,
-            ],
-            environment: runtimeEnvironment(password: password)
+        let appliedOutput = try await runner.scalar(
+            "SELECT version FROM schema_migrations;",
+            failureMessage: "failed to query applied migrations"
         )
-        guard appliedStatus == 0 else {
-            throw PostgresError.other("failed to query applied migrations: \(appliedOutput)")
-        }
-
         let appliedVersions = Set(
             appliedOutput
                 .split(separator: "\n")
@@ -652,19 +739,14 @@ final class PostgresService: ObservableObject {
         }
     }
 
-    /// Checks if there are unapplied migration SQL files in the schema directory.
-    func hasPendingMigrations() throws -> Bool {
-        return try !fetchPendingMigrations().isEmpty
-    }
-
     /// Refreshes the pendingMigrations list and returns it.
     @discardableResult
-    func refreshPendingMigrations() -> [String] {
+    func refreshPendingMigrations() async -> [String] {
         guard status == .running || status == .needsMigration else {
             pendingMigrations = []
             return []
         }
-        let list = (try? fetchPendingMigrations()) ?? []
+        let list = (try? await fetchPendingMigrations()) ?? []
         self.pendingMigrations = list
         if !list.isEmpty {
             status = .needsMigration
@@ -685,7 +767,7 @@ final class PostgresService: ObservableObject {
         guard status == .running || status == .needsMigration else {
             throw PostgresError.other("Postgres is not running")
         }
-        let password = try postgresPassword()
+        let runner = try commandRunner()
         let schemaDir = Paths.schemaDir
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: schemaDir.path) else {
             throw PostgresError.other("Schema directory not found at \(schemaDir.path)")
@@ -698,27 +780,12 @@ final class PostgresService: ObservableObject {
             applied_at timestamptz NOT NULL DEFAULT now()
         );
         """
-        let (initTableStatus, initTableOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-c", createTableSql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
+        let (initTableStatus, initTableOutput) = await runner.psql(["-c", createTableSql])
         guard initTableStatus == 0 else {
             throw PostgresError.other("Failed to initialize schema_migrations table: \(initTableOutput)")
         }
 
-        let appliedSql = "SELECT version FROM schema_migrations;"
-        let (_, appliedOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAc", appliedSql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
+        let (_, appliedOutput) = await runner.psql(["-tAc", "SELECT version FROM schema_migrations;"])
         let appliedVersions = Set(
             appliedOutput
                 .split(separator: "\n")
@@ -731,31 +798,17 @@ final class PostgresService: ObservableObject {
                 continue
             }
             let filePath = schemaDir.appendingPathComponent(file).path
-            let (migStatus, migOutput) = ProcessRunner.runSync(
-                executable: Paths.postgresTool("psql"),
-                arguments: [
-                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                    "-f", filePath,
-                ],
-                environment: runtimeEnvironment(password: password)
-            )
+            let (migStatus, migOutput) = await runner.psql(["-f", filePath])
             guard migStatus == 0 else {
                 throw PostgresError.other("Migration \(file) failed: \(migOutput)")
             }
 
             let recordSql = "INSERT INTO schema_migrations (version) VALUES ('\(version)') ON CONFLICT (version) DO NOTHING;"
-            _ = ProcessRunner.runSync(
-                executable: Paths.postgresTool("psql"),
-                arguments: [
-                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                    "-c", recordSql,
-                ],
-                environment: runtimeEnvironment(password: password)
-            )
+            _ = await runner.psql(["-c", recordSql])
             appendLog(LogLine(stream: .stdout, text: "applied migration: \(file)", source: "migrate"))
         }
 
-        let pending = (try? fetchPendingMigrations()) ?? []
+        let pending = (try? await fetchPendingMigrations()) ?? []
         self.pendingMigrations = pending
         if !pending.isEmpty {
             status = .needsMigration
@@ -764,123 +817,146 @@ final class PostgresService: ObservableObject {
         }
     }
 
-    /// Fetches document counts mapped by source slug.
-    func fetchSourceDocumentCounts() throws -> [String: Int] {
-        try requireRunning()
-        let password = try postgresPassword()
-        let sql = "SELECT s.slug, count(d.id) FROM sources s LEFT JOIN documents d ON d.source_id = s.id GROUP BY s.slug;"
-        let (status, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAF\t", "-c", sql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
-        guard status == 0 else {
-            throw PostgresError.other("psql query failed: \(output)")
-        }
-        var counts: [String: Int] = [:]
-        for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.components(separatedBy: "\t")
-            guard parts.count >= 2 else { continue }
-            let slug = parts[0]
-            let count = Int(parts[1]) ?? 0
-            counts[slug] = count
-        }
-        return counts
-    }
+    /// The whole dashboard in one round trip: overall corpus counts, the
+    /// per-model embedded-chunk counts, and documents per source.
+    ///
+    /// The `emb_*` table names are only known at runtime (one table per
+    /// registered model), which is why the per-model counts go through
+    /// `query_to_xml` — it is the one way to count a dynamically named table
+    /// from plain SQL. `embedding_models` itself is read the same way so that a
+    /// database with the core schema but not the registry still reports its
+    /// core counts instead of failing outright. `format(%I)` plus the
+    /// `^emb_[a-z0-9_]+$` filter keep a hostile `table_name` from becoming
+    /// injected SQL.
+    private static let corpusStatsSQL = """
+    WITH latest_runs AS (
+        SELECT DISTINCT ON (source_id) seen_count, indexed_count
+        FROM ingest_runs
+        ORDER BY source_id, started_at DESC
+    ),
+    core AS (
+        SELECT
+            (SELECT count(*) FROM sources) AS sources_count,
+            (SELECT count(*) FROM documents) AS documents_count,
+            (SELECT count(*) FROM documents WHERE state = 'ok') AS documents_ok,
+            (SELECT count(*) FROM documents WHERE state <> 'ok') AS documents_failed,
+            (SELECT count(*) FROM chunks) AS chunks_count,
+            (SELECT coalesce(sum(seen_count), 0) FROM latest_runs) AS seen_count,
+            (SELECT coalesce(sum(indexed_count), 0) FROM latest_runs) AS indexed_count,
+            (SELECT coalesce(sum(expected_elements), 0) FROM sources) AS expected_elements
+    ),
+    per_source AS (
+        SELECT s.id AS ord, s.slug, count(d.id) AS document_count
+        FROM sources s
+        LEFT JOIN documents d ON d.source_id = s.id
+        GROUP BY s.id, s.slug
+    ),
+    registry AS (
+        SELECT x.ord, x.slug, x.table_name, x.is_default
+        FROM xmltable(
+            '/table/row'
+            PASSING (
+                CASE WHEN to_regclass('public.embedding_models') IS NULL THEN NULL
+                     ELSE query_to_xml(
+                         'SELECT id, slug, table_name, is_default FROM embedding_models',
+                         false, false, ''
+                     )
+                END
+            )
+            COLUMNS ord int PATH 'id',
+                    slug text PATH 'slug',
+                    table_name text PATH 'table_name',
+                    is_default boolean PATH 'is_default'
+        ) x
+    ),
+    models AS (
+        SELECT
+            r.ord,
+            r.slug,
+            r.table_name,
+            r.is_default,
+            coalesce(
+                (xpath(
+                    '/row/c/text()',
+                    query_to_xml(format('SELECT count(*) AS c FROM public.%I', r.table_name), false, true, '')
+                ))[1]::text::bigint,
+                0
+            ) AS embedded_count
+        FROM registry r
+        WHERE r.table_name ~ '^emb_[a-z0-9_]+$'
+          AND to_regclass(format('public.%I', r.table_name)) IS NOT NULL
+    )
+    SELECT tag, c1, c2, c3, c4, c5, c6, c7, c8
+    FROM (
+        SELECT 0 AS section, 0 AS ord, 'core' AS tag,
+               sources_count::text AS c1,
+               documents_count::text AS c2,
+               documents_ok::text AS c3,
+               documents_failed::text AS c4,
+               chunks_count::text AS c5,
+               seen_count::text AS c6,
+               indexed_count::text AS c7,
+               expected_elements::text AS c8
+        FROM core
+        UNION ALL
+        SELECT 1, ord, 'model', slug, table_name, is_default::text, embedded_count::text, '', '', '', ''
+        FROM models
+        UNION ALL
+        SELECT 2, ord, 'source', slug, document_count::text, '', '', '', '', '', ''
+        FROM per_source
+    ) stat_rows
+    ORDER BY section, ord;
+    """
 
     /// Queries the Postgres database for overall corpus, ingestion, and embedding statistics.
-    func fetchCorpusStats() throws -> CorpusStats {
+    func fetchCorpusStats() async throws -> CorpusStats {
         try requireRunning()
-        let password = try postgresPassword()
+        let rows = try await commandRunner().query(Self.corpusStatsSQL)
 
-        let coreSql = """
-        SELECT
-            (SELECT count(*) FROM sources),
-            (SELECT count(*) FROM documents),
-            (SELECT count(*) FROM documents WHERE state = 'ok'),
-            (SELECT count(*) FROM documents WHERE state <> 'ok'),
-            (SELECT count(*) FROM chunks),
-            (SELECT coalesce(sum(seen_count), 0) FROM (SELECT DISTINCT ON (source_id) seen_count FROM ingest_runs ORDER BY source_id, started_at DESC) r),
-            (SELECT coalesce(sum(indexed_count), 0) FROM (SELECT DISTINCT ON (source_id) indexed_count FROM ingest_runs ORDER BY source_id, started_at DESC) r),
-            (SELECT coalesce(sum(expected_elements), 0) FROM sources);
-        """
-
-        let (status, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                "-tAF\t", "-c", coreSql,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
-        guard status == 0 else {
-            throw PostgresError.other("psql query failed: \(output)")
-        }
-
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = trimmed.components(separatedBy: "\t")
-        guard parts.count >= 7 else {
-            throw PostgresError.other("unexpected stats output: \(output)")
-        }
-
-        let sourcesCount = Int(parts[0]) ?? 0
-        let docsCount = Int(parts[1]) ?? 0
-        let docsOkCount = Int(parts[2]) ?? 0
-        let docsFailedCount = Int(parts[3]) ?? 0
-        let chunksCount = Int(parts[4]) ?? 0
-        let seenCount = Int(parts[5]) ?? 0
-        let indexedCount = Int(parts[6]) ?? 0
-        let totalExpected = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
-
-        let models = (try? listRegisteredModels()) ?? []
+        var core: [String] = []
         var modelStats: [CorpusStats.ModelEmbeddingStats] = []
-        var totalEmbedded = 0
-        var foundDefault = false
+        var sourceDocumentCounts: [String: Int] = [:]
 
-        for model in models {
-            guard model.tableName.range(of: "^emb_[a-z0-9_]+$", options: .regularExpression) != nil else { continue }
-            let countSql = "SELECT count(*) FROM \(model.tableName);"
-            let (mStatus, mOutput) = ProcessRunner.runSync(
-                executable: Paths.postgresTool("psql"),
-                arguments: [
-                    "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", databaseName,
-                    "-tAF\t", "-c", countSql,
-                ],
-                environment: runtimeEnvironment(password: password)
-            )
-            let count = (mStatus == 0) ? (Int(mOutput.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) : 0
-            modelStats.append(CorpusStats.ModelEmbeddingStats(
-                slug: model.slug,
-                tableName: model.tableName,
-                isDefault: model.isDefault,
-                embeddedCount: count
-            ))
-            if model.isDefault {
-                totalEmbedded = count
-                foundDefault = true
+        for row in rows {
+            switch row.first {
+            case "core":
+                core = Array(row.dropFirst())
+            case "model" where row.count >= 5:
+                modelStats.append(CorpusStats.ModelEmbeddingStats(
+                    slug: row[1],
+                    tableName: row[2],
+                    isDefault: row[3] == "t" || row[3] == "true",
+                    embeddedCount: Int(row[4]) ?? 0
+                ))
+            case "source" where row.count >= 3:
+                sourceDocumentCounts[row[1]] = Int(row[2]) ?? 0
+            default:
+                continue
             }
         }
 
-        if !foundDefault, let first = modelStats.first {
-            totalEmbedded = first.embeddedCount
+        guard core.count >= 8 else {
+            throw PostgresError.other("unexpected stats output: \(rows)")
         }
 
+        // The headline "embedded" number is the default model's, so the
+        // progress bar tracks the model search actually uses.
+        let embeddedChunks = modelStats.first(where: \.isDefault)?.embeddedCount
+            ?? modelStats.first?.embeddedCount
+            ?? 0
+
         return CorpusStats(
-            sourcesCount: sourcesCount,
-            documentsCount: docsCount,
-            documentsOkCount: docsOkCount,
-            documentsFailedCount: docsFailedCount,
-            totalChunks: chunksCount,
-            embeddedChunks: totalEmbedded,
-            totalSeenFiles: seenCount,
-            totalIndexedFiles: indexedCount,
-            totalExpectedElements: totalExpected,
+            sourcesCount: Int(core[0]) ?? 0,
+            documentsCount: Int(core[1]) ?? 0,
+            documentsOkCount: Int(core[2]) ?? 0,
+            documentsFailedCount: Int(core[3]) ?? 0,
+            totalChunks: Int(core[4]) ?? 0,
+            embeddedChunks: embeddedChunks,
+            totalSeenFiles: Int(core[5]) ?? 0,
+            totalIndexedFiles: Int(core[6]) ?? 0,
+            totalExpectedElements: Int(core[7]) ?? 0,
             modelStats: modelStats,
+            sourceDocumentCounts: sourceDocumentCounts,
             lastUpdated: Date()
         )
     }
@@ -899,8 +975,8 @@ final class PostgresService: ObservableObject {
     private func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let (code, messages) = ProcessRunner.runSync(
-                executable: Paths.postgresTool("pg_isready"),
+            let (code, messages) = await PostgresCommandRunner.run(
+                tool: "pg_isready",
                 arguments: ["-h", "localhost", "-p", String(port)]
             )
             if code == 0 { return true }
@@ -910,45 +986,32 @@ final class PostgresService: ObservableObject {
         return false
     }
 
-    private func ensureDatabaseExists(password: String) async throws {
-        let (checkStatus, output) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("psql"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(), "-d", "postgres",
-                "-tAc", "SELECT 1 FROM pg_database WHERE datname = '\(databaseName)'",
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
+    private func ensureDatabaseExists(runner: PostgresCommandRunner) async throws {
+        // Connects to the always-present `postgres` database, since the app's
+        // own one is what we are checking for.
+        let (checkStatus, output) = await runner.run("psql", arguments: [
+            "-d", "postgres",
+            "-tAc", "SELECT 1 FROM pg_database WHERE datname = '\(databaseName)'",
+        ])
         guard checkStatus == 0 else {
             throw PostgresError.other("could not query pg_database: \(output)")
         }
         if output.trimmingCharacters(in: .whitespacesAndNewlines) == "1" {
             return
         }
-        try createDatabase(password: password)
+        try await createDatabase(runner: runner)
     }
 
-    private func createDatabase(password: String) throws {
-        let (createStatus, createOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("createdb"),
-            arguments: ["-h", "localhost", "-p", String(port), "-U", NSUserName(), databaseName],
-            environment: runtimeEnvironment(password: password)
-        )
+    private func createDatabase(runner: PostgresCommandRunner) async throws {
+        let (createStatus, createOutput) = await runner.run("createdb", arguments: [databaseName])
         guard createStatus == 0 else {
             throw PostgresError.other("createdb failed: \(createOutput)")
         }
         appendLog(LogLine(stream: .stdout, text: "created database \(databaseName)", source: "postgres"))
     }
 
-    private func dropDatabase(password: String) throws {
-        let (dropStatus, dropOutput) = ProcessRunner.runSync(
-            executable: Paths.postgresTool("dropdb"),
-            arguments: [
-                "-h", "localhost", "-p", String(port), "-U", NSUserName(),
-                "--force", databaseName,
-            ],
-            environment: runtimeEnvironment(password: password)
-        )
+    private func dropDatabase(runner: PostgresCommandRunner) async throws {
+        let (dropStatus, dropOutput) = await runner.run("dropdb", arguments: ["--force", databaseName])
         guard dropStatus == 0 else {
             throw PostgresError.other("dropdb failed: \(dropOutput)")
         }
@@ -975,27 +1038,26 @@ final class PostgresService: ObservableObject {
         if let cachedPassword {
             return cachedPassword
         }
-        do {
-            if let storedPassword = try KeychainPostgresPassword.load() {
-                cachedPassword = storedPassword
-                return storedPassword
-            }
-        } catch {
-            // In headless/test environments without keychain access, fall through to in-memory generation
+        // A failed read is not "no password yet". Generating one here would overwrite
+        // the cluster's real password in the Keychain (save updates the existing item)
+        // and lock the app out of its own database, so read and save errors surface
+        // as they are. Tests never reach the Keychain: load/save keep it in memory.
+        if let storedPassword = try KeychainPostgresPassword.load() {
+            cachedPassword = storedPassword
+            return storedPassword
         }
-
+        // A cluster without a password this build can read was made by another build (the App
+        // Store and Developer ID builds share the data folder, not necessarily the Keychain item).
+        // A new password would not open it and would hide the real problem.
+        if !isRunningInTestEnvironment, isInitialized {
+            throw PostgresError.other(
+                "The database in \(Paths.pgDataDir.path) exists, but its password is not in this "
+                    + "build's Keychain (service \(GaragePostgresEndpoint.keychainService)). It was "
+                    + "probably created by the other Garage build."
+            )
+        }
         let generatedPassword = try KeychainPostgresPassword.generate()
-        do {
-            try KeychainPostgresPassword.save(generatedPassword)
-        } catch {
-            if let storedPassword = try? KeychainPostgresPassword.load() {
-                cachedPassword = storedPassword
-                return storedPassword
-            }
-            // In headless/test environments without keychain access, keep in-memory
-            cachedPassword = generatedPassword
-            return generatedPassword
-        }
+        try KeychainPostgresPassword.save(generatedPassword)
         cachedPassword = generatedPassword
         return generatedPassword
     }
@@ -1010,8 +1072,9 @@ final class PostgresService: ObservableObject {
 }
 
 private enum KeychainPostgresPassword {
-    private static let service = "com.rickmark.garage.postgres"
-    private static var account: String { NSUserName() }
+    // Shared with the bundled launchers, which read the same item to connect.
+    private static let service = GaragePostgresEndpoint.keychainService
+    private static var account: String { GaragePostgresEndpoint.keychainAccount }
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
     private static var inMemoryPassword: String?
@@ -1020,22 +1083,8 @@ private enum KeychainPostgresPassword {
         if isRunningInTestEnvironment {
             return inMemoryPassword
         }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound {
-            return nil
-        }
-        guard status == errSecSuccess, let data = result as? Data, let password = String(data: data, encoding: .utf8) else {
-            throw PostgresError.other("could not read Postgres password from Keychain (OSStatus \(status))")
-        }
-        return password
+        // The same read the bundled launchers do.
+        return try GaragePostgresEndpoint.readPassword()
     }
 
     static func save(_ password: String) throws {

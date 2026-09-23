@@ -14,26 +14,11 @@ public final class IngestEngine: @unchecked Sendable {
 
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
-    public private(set) var isCancelled = false
 
     public init() {}
 
     deinit {
         revokeAccess()
-    }
-
-    public func cancel() {
-        lock.lock()
-        defer { lock.unlock() }
-        logger.info("IngestEngine cancel() called")
-        isCancelled = true
-    }
-
-    public func resetCancel() {
-        lock.lock()
-        defer { lock.unlock() }
-        logger.info("IngestEngine resetCancel() called")
-        isCancelled = false
     }
 
     // MARK: - JSON Helpers

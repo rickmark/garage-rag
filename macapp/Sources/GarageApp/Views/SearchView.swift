@@ -28,8 +28,8 @@ public struct SearchView: View {
         ("fts", "Full-Text (FTS)")
     ]
 
-    private let corpusClasses = ["all", "document", "communication", "code", "reference", "note"]
-    private let trustTiers = ["all", "authored", "trusted", "community", "unverified"]
+    private let corpusClasses = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.corpusClasses)
+    private let trustTiers = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.trustTiers)
 
     public init() {}
 
@@ -76,6 +76,7 @@ public struct SearchView: View {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
                         }
+                        .accessibilityLabel("Clear search")
                         .buttonStyle(.plain)
                     }
                 }
@@ -115,6 +116,7 @@ public struct SearchView: View {
                 Button(action: { showAdvancedFilters.toggle() }) {
                     Image(systemName: showAdvancedFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Advanced filters")
                 .help("Toggle Advanced Filters")
 
                 Button(action: { runSearch() }) {
@@ -336,16 +338,16 @@ public struct SearchView: View {
         .contextMenu(forSelectionType: String.self) { selectedIDs in
             if let firstID = selectedIDs.first, let item = results.first(where: { $0.id == firstID }) {
                 Button("Copy Title") {
-                    copyToPasteboard(item.displayTitle)
+                    NSPasteboard.general.copy(item.displayTitle)
                 }
                 Button("Copy URI") {
-                    copyToPasteboard(item.uri)
+                    NSPasteboard.general.copy(item.uri)
                 }
                 Button("Copy Snippet") {
-                    copyToPasteboard(item.snippet)
+                    NSPasteboard.general.copy(item.snippet)
                 }
                 Button("Copy Text") {
-                    copyToPasteboard(item.text)
+                    NSPasteboard.general.copy(item.text)
                 }
                 Divider()
                 if let url = URL(string: item.uri), url.isFileURL {
@@ -383,6 +385,7 @@ public struct SearchView: View {
                     Button(action: { selectedResultID = nil }) {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close result details")
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -391,12 +394,7 @@ public struct SearchView: View {
                 HStack(spacing: 6) {
                     CorpusClassBadge(corpusClass: item.corpusClass)
                     TrustTierBadge(tier: item.trustTier)
-                    Text("Matched: \(item.matchedBy)")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    TagBadge("Matched: \(item.matchedBy)")
                 }
 
                 if !item.headingPath.isEmpty {
@@ -434,7 +432,7 @@ public struct SearchView: View {
                                 .truncationMode(.middle)
                             Spacer()
                             Button("Copy") {
-                                copyToPasteboard(item.uri)
+                                NSPasteboard.general.copy(item.uri)
                             }
                             .controlSize(.mini)
                             if let url = URL(string: item.uri), url.isFileURL {
@@ -462,7 +460,7 @@ public struct SearchView: View {
                                     .font(.caption.bold())
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Copy") { copyToPasteboard(item.snippet) }
+                                Button("Copy") { NSPasteboard.general.copy(item.snippet) }
                                     .controlSize(.mini)
                             }
                             Text(item.snippet)
@@ -481,7 +479,7 @@ public struct SearchView: View {
                                 .font(.caption.bold())
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Button("Copy All") { copyToPasteboard(item.text) }
+                            Button("Copy All") { NSPasteboard.general.copy(item.text) }
                                 .controlSize(.mini)
                         }
                         Text(item.text.isEmpty ? item.snippet : item.text)
@@ -583,89 +581,6 @@ public struct SearchView: View {
                     self.lastSearchedQuery = trimmed
                 }
             }
-        }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-// MARK: - Visual Badges
-
-public struct CorpusClassBadge: View {
-    public let corpusClass: String
-
-    public init(corpusClass: String) {
-        self.corpusClass = corpusClass
-    }
-
-    public var body: some View {
-        Text(corpusClass.capitalized)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(backgroundColor)
-            .foregroundStyle(foregroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var backgroundColor: Color {
-        switch corpusClass.lowercased() {
-        case "code": return Color.purple.opacity(0.15)
-        case "communication": return Color.green.opacity(0.15)
-        case "reference": return Color.indigo.opacity(0.15)
-        case "note": return Color.yellow.opacity(0.18)
-        default: return Color.blue.opacity(0.15)
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch corpusClass.lowercased() {
-        case "code": return .purple
-        case "communication": return .green
-        case "reference": return .indigo
-        case "note": return .orange
-        default: return .blue
-        }
-    }
-}
-
-public struct TrustTierBadge: View {
-    public let tier: String
-
-    public init(tier: String) {
-        self.tier = tier
-    }
-
-    public var body: some View {
-        Text(tier.capitalized)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(backgroundColor)
-            .foregroundStyle(foregroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var backgroundColor: Color {
-        switch tier.lowercased() {
-        case "authored": return Color.teal.opacity(0.15)
-        case "trusted": return Color.green.opacity(0.15)
-        case "community": return Color.orange.opacity(0.15)
-        case "unverified": return Color.red.opacity(0.15)
-        default: return Color.secondary.opacity(0.12)
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch tier.lowercased() {
-        case "authored": return .teal
-        case "trusted": return .green
-        case "community": return .orange
-        case "unverified": return .red
-        default: return .secondary
         }
     }
 }

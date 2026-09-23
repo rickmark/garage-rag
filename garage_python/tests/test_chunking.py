@@ -13,7 +13,6 @@ from garage_rag.ingest.chunking import (
     chunk_prose,
     chunk_tabular,
     chunk_text,
-    renumber,
 )
 
 MARKDOWN = """# Boot Security
@@ -118,14 +117,14 @@ class Gamma:
 class TestTabular:
     def test_splits_on_sheet_headings(self) -> None:
         text = "## Sheet1\na | b | c\n1 | 2 | 3\n\n## Sheet2\nx | y\n9 | 8\n"
-        chunks = chunk_tabular(text, size=200, overlap=0)
+        chunks = chunk_tabular(text, size=200)
         headings = [c.heading_path for c in chunks]
         assert any(h == "Sheet1" for h in headings)
 
     def test_no_overlap_between_chunks(self) -> None:
         """Repeating rows across chunks adds retrieval noise."""
         text = "## S\n" + "\n".join(f"row {i} | value {i}" for i in range(400))
-        chunks = chunk_tabular(text, size=200, overlap=0)
+        chunks = chunk_tabular(text, size=200)
         assert len(chunks) > 1
         first_lines = set(chunks[0].text.split("\n"))
         second_lines = set(chunks[1].text.split("\n"))
@@ -168,10 +167,6 @@ class TestChunkMetadata:
     def test_token_estimate_is_positive(self) -> None:
         assert TextChunk(ord=0, text="a", chunker="x").token_estimate >= 1
 
-    def test_renumber_fixes_ordinals(self) -> None:
-        chunks = [TextChunk(ord=9, text="a", chunker="x"), TextChunk(ord=3, text="b", chunker="x")]
-        assert [c.ord for c in renumber(chunks)] == [0, 1]
-
 
 class TestNormalizeText:
     def test_nfc_normalization(self) -> None:
@@ -213,3 +208,44 @@ def test_frontmatter_parsing(raw: str, has_front: bool) -> None:
     assert bool(front) is has_front
     # The body must survive regardless of frontmatter validity.
     assert "Body" in body or not has_front
+
+
+class TestOffsets:
+    """chunk_text records where each chunk sits in the text it was cut from."""
+
+    @staticmethod
+    def _assert_slices(source: str, chunks: list[TextChunk]) -> None:
+        for chunk in chunks:
+            if chunk.char_start is not None:
+                assert chunk.char_end is not None
+                assert source[chunk.char_start : chunk.char_end] == chunk.text
+
+    def test_prose_chunks_are_located_even_when_they_overlap(self) -> None:
+        source = " ".join(f"Sentence number {i} about the boot chain." for i in range(80))
+        chunks = chunk_text(source, ContentKind.PROSE, size=200, overlap=50)
+        assert len(chunks) > 3
+        assert all(c.char_start is not None for c in chunks)
+        assert chunks[0].char_start == 0
+        starts = [c.char_start for c in chunks]
+        assert starts == sorted(starts)
+        self._assert_slices(source, chunks)
+
+    def test_code_chunks_are_located(self) -> None:
+        source = "\n\n".join(f"def f{i}(x):\n    return x + {i}\n" for i in range(40))
+        chunks = chunk_text(source, ContentKind.CODE, extension=".py", size=120, overlap=0)
+        assert all(c.char_start is not None for c in chunks)
+        self._assert_slices(source, chunks)
+
+    def test_markdown_spans_cover_each_chunk(self) -> None:
+        """The header splitter drops blank lines, so a markdown chunk is rarely a
+        verbatim slice; its span runs from its first line to its last."""
+        chunks = chunk_text(MARKDOWN, ContentKind.MARKDOWN, size=80, overlap=0)
+        assert all(c.char_start is not None for c in chunks)
+        for chunk in chunks:
+            span = MARKDOWN[chunk.char_start : chunk.char_end]
+            lines = [line.strip() for line in chunk.text.splitlines() if line.strip()]
+            assert span.startswith(lines[0])
+            assert span.endswith(lines[-1])
+            position = 0
+            for line in lines:
+                position = span.index(line, position)

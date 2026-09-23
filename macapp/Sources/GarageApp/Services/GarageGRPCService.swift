@@ -3,6 +3,7 @@ import GRPC
 import NIO
 import SwiftProtobuf
 import IngestClient
+import PythonXPCService
 import proto_garage_proto_swift
 
 public enum GarageGRPCStatus: Equatable {
@@ -20,6 +21,7 @@ public enum GarageGRPCError: LocalizedError {
     case launchFailed(String)
     case serverNotRunning
     case searchFailed(String)
+    case rpcFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -35,6 +37,8 @@ public enum GarageGRPCError: LocalizedError {
             return "gRPC server is not running."
         case .searchFailed(let message):
             return "Search request failed: \(message)"
+        case .rpcFailed(let message):
+            return message
         }
     }
 }
@@ -50,7 +54,6 @@ final class GarageGRPCService: ObservableObject {
     private let client: GarageXPCClient
     private var group: EventLoopGroup?
     private var channel: GRPCChannel?
-    private var isStopping = false
     private let maxLogLines = 4000
     private var logPollTask: Task<Void, Never>?
 
@@ -82,8 +85,19 @@ final class GarageGRPCService: ObservableObject {
     private func environment() throws -> [String: String] {
         var env: [String: String] = [:]
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
+        env[GarageXPCConfigurationKey.workingDirectory] = Paths.garageWorkingDirectory.path
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
+        }
+        // McpInstall / McpStatus name the command MCP clients spawn, `garage-mcp`; without
+        // this the server would name its own embedded interpreter, which clients cannot run.
+        if FileManager.default.isExecutableFile(atPath: Paths.garageMCP.path) {
+            env["GARAGE_MCP_EXECUTABLE"] = Paths.garageMCP.resolvingSymlinksInPath().path
+        }
+        // The model catalog RegisterModel reads widths and distance metrics from:
+        // the app's own models.json, so the presets and the pipeline agree.
+        if FileManager.default.fileExists(atPath: Paths.modelsJSON.path) {
+            env["GARAGE_MODEL_MANIFEST"] = Paths.modelsJSON.path
         }
         return env
     }
@@ -140,7 +154,6 @@ final class GarageGRPCService: ObservableObject {
             let currentPort = port
             triedPorts.insert(currentPort)
             status = .starting
-            isStopping = false
 
             do {
                 let options = try environment()
@@ -187,7 +200,6 @@ final class GarageGRPCService: ObservableObject {
     func stop() async {
         guard status == .running || status == .starting else { return }
         status = .stopping
-        isStopping = true
         stopLogPolling()
         cleanupChannel()
         _ = try? await client.stopServer()
@@ -197,7 +209,6 @@ final class GarageGRPCService: ObservableObject {
     /// Fire-and-forget termination for application quit paths.
     func terminateImmediately() {
         status = .stopping
-        isStopping = true
         stopLogPolling()
         cleanupChannel()
         Task { [client] in
@@ -229,7 +240,7 @@ final class GarageGRPCService: ObservableObject {
         return port
     }
 
-    private func getOrCreateChannel() -> GRPCChannel {
+    func getOrCreateChannel() -> GRPCChannel {
         if let channel = self.channel {
             return channel
         }

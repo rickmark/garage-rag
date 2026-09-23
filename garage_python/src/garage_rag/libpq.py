@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ctypes.util
 import os
+from collections.abc import Callable
 
 ENV_VAR = "GARAGE_LIBPQ_PATH"
 _LIBPQ_NAMES = frozenset({"pq", "libpq", "libpq.dylib", "libpq.5.dylib", "libpq.5"})
@@ -38,14 +39,19 @@ def configure() -> str | None:
     if getattr(ctypes.util, "_garage_libpq_path", None) == path:
         return path
 
-    original = getattr(ctypes.util, "_garage_original_find_library", ctypes.util.find_library)
+    original: Callable[[str], str | None] = getattr(
+        ctypes.util, "_garage_original_find_library", ctypes.util.find_library
+    )
 
-    def find_library(name: str, _original=original, _path=path):  # type: ignore[no-untyped-def]
+    def find_library(name: str) -> str | None:
         if name in _LIBPQ_NAMES:
-            return _path
-        return _original(name)
+            return path
+        return original(name)
 
-    ctypes.util._garage_original_find_library = original  # type: ignore[attr-defined]
-    ctypes.util._garage_libpq_path = path  # type: ignore[attr-defined]
-    ctypes.util.find_library = find_library
+    # Monkey-patching ctypes.util is the whole point of this module, so each of
+    # these three writes is deliberate: two private stash slots this module
+    # invents (read back by the getattr calls above) and the shim itself.
+    ctypes.util._garage_original_find_library = original  # ty: ignore[unresolved-attribute]
+    ctypes.util._garage_libpq_path = path  # ty: ignore[unresolved-attribute]
+    ctypes.util.find_library = find_library  # ty: ignore[invalid-assignment]
     return path

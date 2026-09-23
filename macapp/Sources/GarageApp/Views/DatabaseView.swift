@@ -26,14 +26,14 @@ struct DatabaseView: View {
                             Button("Stop") { Task { await appState.stopPostgres() } }
                                 .disabled(!isPostgresActive)
                         }
-                        LabeledContent("Data directory", value: Paths.pgDataDir.path)
+                        LabeledContent("Data directory", value: Paths.displayPath(of: Paths.pgDataDir))
                         LabeledContent("Port", value: String(appState.postgres.port))
                         LabeledContent("Database", value: appState.postgres.databaseName)
                         LabeledContent("Bundled binaries", value: Paths.isPackaged ? "yes (vendored)" : "no (using Homebrew install for development)")
                         LabeledContent("Connection URL") {
                             HStack(spacing: 8) {
                                 if let url = try? appState.postgres.standardConnectionURL() {
-                                    Text(url.absoluteString)
+                                    Text(PostgresService.redactedConnectionString(url))
                                         .font(.system(.caption, design: .monospaced))
                                         .lineLimit(1)
                                         .truncationMode(.middle)
@@ -118,13 +118,7 @@ struct DatabaseView: View {
                                                 .font(.system(.caption, design: .monospaced))
                                                 .fontWeight(.medium)
                                             Spacer()
-                                            Text("Missing")
-                                                .font(.caption2.bold())
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.orange.opacity(0.15))
-                                                .foregroundStyle(.orange)
-                                                .clipShape(Capsule())
+                                            StatusBadge("MISSING", tint: .orange)
                                         }
                                         .padding(.vertical, 4)
                                         .padding(.horizontal, 8)
@@ -145,21 +139,21 @@ struct DatabaseView: View {
                         Divider()
 
                         HStack {
-                            Button("Initialize schema (garage init-db)") {
+                            Button("Initialize schema") {
                                 Task {
                                     initRunning = true
-                                    await appState.runGarage(
-                                        ["init-db", "--schema-dir", Paths.schemaDir.path]
-                                    )
+                                    await appState.runOperation {
+                                        try await $0.initDatabase(schemaDir: Paths.schemaDir.path).message
+                                    }
                                     initRunning = false
                                 }
                             }
                             .disabled(appState.postgres.status != .running || initRunning)
 
-                            Button("Show stats (garage stats)") {
+                            Button("Show stats") {
                                 Task {
                                     statsRunning = true
-                                    await appState.runGarage(["stats"])
+                                    await appState.runOperation { try await $0.stats().summary }
                                     statsRunning = false
                                 }
                             }
@@ -181,28 +175,27 @@ struct DatabaseView: View {
                         HStack {
                             Button("Back Up…") { chooseBackupDestination() }
                                 .disabled(!isPostgresActive)
+                                .accessibilityIdentifier("database.backup")
                             Button("Restore…") { chooseBackupSource() }
                                 .disabled(!isPostgresActive)
+                                .accessibilityIdentifier("database.restore")
                             Button("Reset Database…") { showResetConfirmation = true }
                                 .tint(.red)
-                                .disabled(appState.postgres.status == .starting || appState.postgres.status == .stopping)
+                                .accessibilityIdentifier("database.reset")
+                                .disabled(
+                                    appState.isResettingDatabase
+                                        || appState.postgres.status == .starting
+                                        || appState.postgres.status == .stopping
+                                )
+                            if appState.isResettingDatabase {
+                                ProgressView().controlSize(.small)
+                            }
                         }
                     }
                     .padding(8)
                 }
 
-                if !appState.lastCommandOutput.isEmpty {
-                    GroupBox("Last command output") {
-                        ScrollView {
-                            Text(appState.lastCommandOutput)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 260)
-                        .padding(8)
-                    }
-                }
+                LastCommandOutputBox(text: appState.lastCommandOutput, maxHeight: 260)
             }
             .padding(20)
         }
@@ -210,24 +203,17 @@ struct DatabaseView: View {
         .onAppear {
             appState.checkPendingMigrations()
         }
-        .alert("Reset Garage database?", isPresented: $showResetConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset Database", role: .destructive) {
-                Task {
-                    await appState.resetDatabase()
-                }
-            }
-        } message: {
-            Text("This permanently deletes all Garage schemas, sources, and indexed data. The Postgres cluster and its Keychain password are kept.")
+        .onReceive(NotificationCenter.default.publisher(for: .garageWillQuit)) { _ in
+            showResetConfirmation = false
+        }
+        .sheet(isPresented: $showResetConfirmation) {
+            DatabaseResetSheet()
+                .environmentObject(appState)
         }
     }
 
     private func chooseBackupDestination() {
-        let panel = NSSavePanel()
-        panel.title = "Back Up Garage Database"
-        panel.nameFieldStringValue = "garage-rag-\(backupTimestamp()).dump"
-        panel.allowedContentTypes = [.data]
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        guard let destination = DatabaseBackupPanel.chooseDestination() else { return }
         appState.backupDatabase(to: destination)
     }
 
@@ -241,8 +227,21 @@ struct DatabaseView: View {
         guard panel.runModal() == .OK, let source = panel.url else { return }
         appState.restoreDatabase(from: source)
     }
+}
 
-    private func backupTimestamp() -> String {
+/// The save panel for a database backup, shared by Back Up… and the reset sheet's Back Up First….
+@MainActor
+enum DatabaseBackupPanel {
+    static func chooseDestination() -> URL? {
+        let panel = NSSavePanel()
+        panel.title = "Back Up Garage Database"
+        panel.nameFieldStringValue = "garage-rag-\(timestamp()).dump"
+        panel.allowedContentTypes = [.data]
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    private static func timestamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: Date())

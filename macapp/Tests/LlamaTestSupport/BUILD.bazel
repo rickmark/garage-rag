@@ -1,0 +1,15 @@
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+# Test double for the llama engine. `LlamaClient(inProcessEngine:)` and `LlamaService` tests drive
+# the client against it without a helper process; it is testonly so no production target can link
+# a fake engine.
+swift_library(
+    name = "LlamaTestSupport",
+    testonly = True,
+    srcs = glob(["*.swift"]),
+    module_name = "LlamaTestSupport",
+    visibility = ["//macapp/Tests:__subpackages__"],
+    deps = [
+        "//macapp/Sources/LlamaClient",
+    ],
+)

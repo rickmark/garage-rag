@@ -1,26 +1,13 @@
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
-# Protocol definitions for IngestClient
-swift_library(
-    name = "IngestClient_protocol",
-    srcs = [
-        "IngestXPCProtocol.swift",
-    ],
-    module_name = "IngestClient_protocol",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//macapp/Sources/PythonXPCService",
-    ],
-)
-
-# Implementation library for IngestClient
+# IngestClient: the ingest/embed/core-backend XPC protocols, their Swift clients and shared models.
+# The @objc protocols live in the same module as the clients so each protocol is registered once.
 swift_library(
     name = "IngestClient",
     srcs = glob(["**/*.swift"]),
     module_name = "IngestClient",
     visibility = ["//visibility:public"],
     deps = [
-        ":IngestClient_protocol",
         "//macapp/Sources/PythonXPCService",
     ],
 )

@@ -54,7 +54,6 @@ final class IngestClientTests: XCTestCase {
             force: true,
             grpcHost: "127.0.0.1",
             grpcPort: 50051,
-            extraArguments: ["--custom-flag", "custom_val", "--verbose"],
             databaseUrl: "postgresql://localhost:5432/testdb",
             lmStudioApiToken: "test-token-123"
         )
@@ -70,27 +69,8 @@ final class IngestClientTests: XCTestCase {
         XCTAssertTrue(decoded.force)
         XCTAssertEqual(decoded.grpcHost, "127.0.0.1")
         XCTAssertEqual(decoded.grpcPort, 50051)
-        XCTAssertEqual(decoded.extraArguments, ["--custom-flag", "custom_val", "--verbose"])
         XCTAssertEqual(decoded.databaseUrl, "postgresql://localhost:5432/testdb")
         XCTAssertEqual(decoded.lmStudioApiToken, "test-token-123")
-    }
-
-    func testCommandLineParser() {
-        // Empty string
-        XCTAssertEqual(CommandLineParser.splitArguments(""), [])
-        XCTAssertEqual(CommandLineParser.splitArguments("   "), [])
-
-        // Basic flags and values
-        let args1 = CommandLineParser.splitArguments("--source apple-sms --limit 10 --force")
-        XCTAssertEqual(args1, ["--source", "apple-sms", "--limit", "10", "--force"])
-
-        // Quotes handling
-        let args2 = CommandLineParser.splitArguments("--source \"My Documents\" --option 'single quoted value' --flag")
-        XCTAssertEqual(args2, ["--source", "My Documents", "--option", "single quoted value", "--flag"])
-
-        // Escaped whitespace
-        let args3 = CommandLineParser.splitArguments("--path /Library/Application\\ Support/Garage --flag")
-        XCTAssertEqual(args3, ["--path", "/Library/Application Support/Garage", "--flag"])
     }
 
     func testIngestExecutionModeEnumCases() {
@@ -231,10 +211,8 @@ final class IngestClientTests: XCTestCase {
     }
 
     @MainActor
-    func testIngestServiceOSLogStoreDrainingAndFetch() {
+    func testIngestServiceLogsAppendAndClear() {
         let service = IngestService()
-        // Ensure fetchRecentLogsFromOSLogStore executes without crashing
-        service.fetchRecentLogsFromOSLogStore(timeWindow: 60)
         // Verify logs can be appended and cleared
         service.appendLog("Sample ingest line", stream: .stdout)
         XCTAssertFalse(service.logs.isEmpty)

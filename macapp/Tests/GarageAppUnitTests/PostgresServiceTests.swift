@@ -118,15 +118,29 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testResetDatabaseWhenStoppedOrFailedDoesNotCrash() async {
+    func testConnectionURLIsShownWithoutThePassword() throws {
+        let url = try XCTUnwrap(URL(string: "postgresql://garage:s3cr%40t@localhost:14824/garage"))
+
+        let shown = PostgresService.redactedConnectionString(url)
+
+        XCTAssertEqual(shown, "postgresql://garage:••••••@localhost:14824/garage")
+        XCTAssertFalse(shown.contains("s3cr"))
+    }
+
+    func testConnectionURLWithoutAPasswordIsShownAsIs() throws {
+        let url = try XCTUnwrap(URL(string: "postgresql://garage@localhost:14824/garage"))
+
+        XCTAssertEqual(PostgresService.redactedConnectionString(url), url.absoluteString)
+    }
+
+    @MainActor
+    func testDeleteClusterForResetIsANoOpInTests() async throws {
+        // deleteClusterForReset() removes the live pgdata directory; under XCTest it must not touch it.
         let service = PostgresService()
         XCTAssertEqual(service.status, .stopped)
-        do {
-            try await service.resetDatabase()
-        } catch {
-            // In test environment without postgres installed, catch is expected
-            XCTAssertNotNil(error)
-        }
+        try await service.deleteClusterForReset()
+        XCTAssertEqual(service.status, .stopped)
+        XCTAssertTrue(service.pendingMigrations.isEmpty)
     }
 
     @MainActor
@@ -143,9 +157,9 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testRefreshPendingMigrationsWhenStoppedReturnsEmpty() {
+    func testRefreshPendingMigrationsWhenStoppedReturnsEmpty() async {
         let service = PostgresService()
-        let result = service.refreshPendingMigrations()
+        let result = await service.refreshPendingMigrations()
         XCTAssertTrue(result.isEmpty)
         XCTAssertTrue(service.pendingMigrations.isEmpty)
     }

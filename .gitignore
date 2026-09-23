@@ -3,11 +3,7 @@
 .env
 *.db
 .build
-src/macapp/build/
-src/macapp/.build/
-src/macapp/Resources/postgres
-src/macapp/Resources/python-dist
-src/macapp/dist
+macapp/build/
 # Credentials referenced by cloud.api_key_file
 *.key
 anthropic.key
@@ -25,3 +21,13 @@ bazel-*
 *.xcodeproj
 .output.txt
 build/
+# IDE data-source definitions embed the local database password
+.idea/dataSources.xml
+.idea/dataSources.local.xml
+
+# Local Bazel overrides (see .bazelrc)
+user.bazelrc
+
+.ruff_cache/
+.mypy_cache/
+garage_python/dist/

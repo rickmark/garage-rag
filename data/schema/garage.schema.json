@@ -57,6 +57,11 @@
           "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1).",
           "default": "http://localhost:1234/v1"
         },
+        "llama_host": {
+          "type": "string",
+          "description": "Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService (loopback only).",
+          "default": "http://127.0.0.1:8790"
+        },
         "lmstudio_api_token_file": {
           "type": [
             "string",
@@ -73,11 +78,6 @@
           "type": "integer",
           "description": "Chunks per embedding request.",
           "default": 64
-        },
-        "max_inflight": {
-          "type": "integer",
-          "description": "Concurrent embedding requests. Ollama serializes model execution, so more than one adds contention rather than throughput.",
-          "default": 1
         }
       }
     },
@@ -104,16 +104,6 @@
           "type": "integer",
           "description": "Characters repeated between adjacent code chunks.",
           "default": 100
-        },
-        "comms_window_minutes": {
-          "type": "integer",
-          "description": "Group consecutive messages within this many minutes into one chunk. Individual messages are too short to embed usefully.",
-          "default": 30
-        },
-        "comms_window_messages": {
-          "type": "integer",
-          "description": "Also close a conversation window after this many messages.",
-          "default": 20
         }
       }
     },
@@ -182,11 +172,6 @@
           "type": "integer",
           "description": "Below this many characters an image is treated as having no text. Most images in a source tree are icons.",
           "default": 16
-        },
-        "workers": {
-          "type": "integer",
-          "description": "Extraction worker processes. Leave headroom for Postgres and Ollama.",
-          "default": 10
         }
       }
     },
@@ -225,17 +210,32 @@
           "description": "Model used for the vision OCR fallback.",
           "default": "claude-opus-4-8"
         },
-        "max_images": {
-          "type": "integer",
-          "description": "Cap on images escalated to the cloud per run.",
-          "default": 500
-        },
         "api_key_file": {
           "type": [
             "string",
             "null"
           ],
           "description": "Path to a file containing the Anthropic API key. Kept out of this file so the config itself holds no secrets."
+        }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Slug or alias of the local model used for fact distillation ('garage enrich-facts') and for the rag_ask / rag_generate MCP tools. For llama_xpc this is the alias the app loaded the model under (the 'fact_distil' preset slug); for ollama it is the Ollama model name.",
+          "default": "gemma2-2b"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "llama_xpc",
+            "ollama"
+          ],
+          "description": "Which local inference server runs fact distillation and rag_ask. Both stay on this machine: 'llama_xpc' is the app's LlamaXPCService (llama.cpp on embedding.llama_host, loopback only); 'ollama' is a local Ollama server on embedding.ollama_host.",
+          "default": "llama_xpc"
         }
       }
     },

@@ -55,9 +55,51 @@ erroring mid-run.
 
 ## What can leave, when enabled
 
-Only image bytes, only for OCR, only from sources explicitly opted in, and only
-when Tesseract's confidence falls below `extraction.ocr_min_confidence`. Document
-text, code, and communications are never sent.
+To a **cloud API**: only image bytes, only for OCR, only from sources explicitly
+opted in, and only when Tesseract's confidence falls below
+`extraction.ocr_min_confidence`. Document text, code, and communications are
+never sent to a cloud API. The only cloud client in the codebase is Anthropic's,
+constructed in `enrich/egress.py`.
+
+## Local inference endpoints
+
+Two features post document text over HTTP to a **configured local server**,
+which is assumed to be this machine:
+
+- **Embeddings** — chunk text goes to `ollama_host` (default
+  `http://localhost:11434`), `lmstudio_host` (default `http://localhost:1234/v1`)
+  or `llama_host` (default `http://127.0.0.1:8790`, the llama.cpp API served by
+  the app's own `LlamaXPCService`), depending on the registered model's provider.
+- **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
+  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. The LangExtract
+  provider is **pinned to Ollama** by an explicit
+  `ModelConfig(provider="OllamaLanguageModel")`; without that pin LangExtract
+  chooses its backend by regex on the model name, and a `gemini-*` or `gpt-*`
+  model id would have been sent to Google or OpenAI with an API key from the
+  environment. `test_egress_block.py` asserts the pin structurally.
+
+- **Answers** (`rag_ask` / `rag_generate` MCP tools, `garage ask`) — retrieved
+  excerpts and the question go to the model named by `facts.model` on
+  `facts.provider`: `llama_host` for `llama_xpc` (the default) or `ollama_host`
+  for `ollama`. Both are local inference servers; there is no cloud generation
+  path. Retrieved **communications can appear in that prompt**, exactly as they
+  are embedded locally, and never leave the machine: `llama_host` is loopback by
+  construction, and if `ollama_host` has been pointed off-box `rag_ask` runs
+  every retrieved chunk's class through `assert_egress_allowed` before building
+  the prompt, so a communication in the results aborts the call.
+
+These hosts are not egress-guarded the way the cloud path is, because they are
+loopback by default and the guard would otherwise block local inference on your
+own messages. If you point `ollama_host` at another machine, fact extraction
+runs each document's class through `assert_egress_allowed` first, so
+communications are still never posted off-box. Embeddings are held to the same
+rule: when the model's provider is not on this machine (`ollama_host` or
+`lmstudio_host` pointed elsewhere), backfill, in-process or through the embed
+worker, leaves chunks of communication documents out. They stay unembedded for
+that model, and the backfill summary counts them as withheld. `llama_host` is different: it exists only for on-device
+inference, so `LlamaXPCClient` refuses to construct at all unless the host is
+loopback (`127.0.0.1`, `localhost` or `::1`) and never routes through an HTTP
+proxy, whatever `http_proxy` says.
 
 ## macOS permissions (TCC)
 

@@ -1,3 +1,0 @@
-[console_scripts]
-pex = pex.bin.pex:main
-pex3 = pex.cli.pex:main

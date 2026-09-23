@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from mcp.server import MCPServer
 from pydantic import BeforeValidator, Field
@@ -30,16 +30,20 @@ from sqlalchemy import func
 from garage_rag.config import get_settings
 from garage_rag.db.emb_tables import count_vectors, list_models
 from garage_rag.db.engine import session_scope
+from garage_rag.db.migrate import redact_url
 from garage_rag.db.models import (
     Author,
     AuthorIdentity,
     Chunk,
+    CorpusClass,
     Document,
     DocumentAuthor,
     IngestState,
     Source,
 )
-from garage_rag.search.hybrid import corpus_overview
+from garage_rag.enrich.egress import assert_egress_allowed
+from garage_rag.enrich.generation import LocalChatModel
+from garage_rag.search.hybrid import SearchHit, corpus_overview
 from garage_rag.search.hybrid import search as run_search
 
 # stderr only: anything on stdout corrupts the JSON-RPC stream.
@@ -61,6 +65,13 @@ def _tidy(uri: str) -> str:
     return uri.replace(_HOME, "~") if uri.startswith(_HOME) else uri
 
 
+def _untidy(location: str) -> str:
+    """Inverse of :func:`_tidy`: expand only a leading ``~``."""
+    if location == "~" or location.startswith("~/"):
+        return _HOME + location[1:]
+    return location
+
+
 def _as_list(value: object) -> object:
     """Accept a single value where a list is expected.
 
@@ -78,15 +89,11 @@ def _as_list(value: object) -> object:
 # Filter parameters accept either one value or several. The union is what puts
 # both shapes in the published input schema; the validator normalizes them.
 ClassFilter = Annotated[
-    list[Literal["document", "code", "communication"]]
-    | Literal["document", "code", "communication"]
-    | None,
+    list[Literal["document", "code", "communication"]] | Literal["document", "code", "communication"] | None,
     BeforeValidator(_as_list),
 ]
 TrustFilter = Annotated[
-    list[Literal["authored", "reference", "received"]]
-    | Literal["authored", "reference", "received"]
-    | None,
+    list[Literal["authored", "reference", "received"]] | Literal["authored", "reference", "received"] | None,
     BeforeValidator(_as_list),
 ]
 SourceFilter = Annotated[list[str] | str | None, BeforeValidator(_as_list)]
@@ -189,14 +196,80 @@ class CorpusStats:
     models: list[ModelInfo] = field(default_factory=list)
 
 
+@dataclass
+class Citation:
+    """One excerpt the answer may cite as ``[n]``."""
+
+    n: int
+    document_id: int
+    title: str | None
+    location: str
+    snippet: str
+    score: float
+
+
+@dataclass
+class AskResult:
+    answer: str
+    model: str
+    provider: str
+    question: str
+    citations: list[Citation] = field(default_factory=list)
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass
+class GenerateResult:
+    text: str
+    model: str
+    provider: str
+
+
+# ---------------------------------------------------------------------------
+# retrieval shared by rag_search and rag_ask
+# ---------------------------------------------------------------------------
+def _retrieve(
+    query: str,
+    *,
+    limit: int,
+    mode: str,
+    corpus_class: object = None,
+    trust: object = None,
+    source: object = None,
+    author: str | None = None,
+) -> tuple[list[SearchHit], str]:
+    """Run the hybrid search; returns the hits and the embedding model's slug."""
+    # The BeforeValidator only runs when the call comes through the MCP layer; a
+    # direct Python call still needs a bare string turned into a one-item list,
+    # or list("document") would filter on the letters d, o, c, ...
+    # `_as_list` is typed object -> object because pydantic hands it whatever the
+    # caller sent; what comes back out is always a list or None.
+    classes = cast("list[str] | None", _as_list(corpus_class))
+    tiers = cast("list[str] | None", _as_list(trust))
+    slugs = cast("list[str] | None", _as_list(source))
+    with session_scope() as session:
+        hits = run_search(
+            session,
+            query,
+            limit=limit,
+            mode=mode,
+            corpus_classes=list(classes) if classes else None,
+            trust_tiers=list(tiers) if tiers else None,
+            sources=list(slugs) if slugs else None,
+            author=author,
+        )
+        models = list_models(session)
+        default = next((m.slug for m in models if m.is_default), "none")
+    return hits, default if mode != "fts" else "n/a"
+
+
 # ---------------------------------------------------------------------------
 # tools
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def rag_search(
-    query: Annotated[
-        str, Field(description="Natural-language question or keywords to search for.")
-    ],
+    query: Annotated[str, Field(description="Natural-language question or keywords to search for.")],
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum hits to return.")] = 10,
     mode: Annotated[
         Literal["hybrid", "vector", "fts"],
@@ -233,33 +306,21 @@ def rag_search(
         SourceFilter,
         Field(description="Restrict to these source slugs. Accepts one value or a list."),
     ] = None,
-    author: Annotated[
-        str | None, Field(description="Restrict to documents by this author (substring match).")
-    ] = None,
+    author: Annotated[str | None, Field(description="Restrict to documents by this author (substring match).")] = None,
 ) -> SearchResult:
     """Search the personal corpus with hybrid semantic + keyword retrieval.
 
     Filter by trust to separate the owner's own writing from reference material,
     and by corpus_class to keep source code out of prose answers.
     """
-    with session_scope() as session:
-        hits = run_search(
-            session,
-            query,
-            limit=limit,
-            mode=mode,
-            corpus_classes=list(corpus_class) if corpus_class else None,
-            trust_tiers=list(trust) if trust else None,
-            sources=list(source) if source else None,
-            author=author,
-        )
-        models = list_models(session)
-        default = next((m.slug for m in models if m.is_default), "none")
+    hits, embedding_model = _retrieve(
+        query, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source, author=author
+    )
 
     return SearchResult(
         query=query,
         mode=mode,
-        model=default if mode != "fts" else "n/a",
+        model=embedding_model,
         count=len(hits),
         hits=[
             Hit(
@@ -282,16 +343,12 @@ def rag_search(
 
 @mcp.tool()
 def rag_get_document(
-    document_id: Annotated[
-        int | None, Field(description="Document id, as returned by rag_search.")
-    ] = None,
+    document_id: Annotated[int | None, Field(description="Document id, as returned by rag_search.")] = None,
     location: Annotated[
         str | None,
         Field(description="Path of the document; '~' is accepted. Used when no id is given."),
     ] = None,
-    max_chars: Annotated[
-        int, Field(ge=500, le=200_000, description="Truncate content beyond this length.")
-    ] = 20_000,
+    max_chars: Annotated[int, Field(ge=500, le=200_000, description="Truncate content beyond this length.")] = 20_000,
 ) -> DocumentResult:
     """Fetch a document's full extracted text, to read past a search snippet."""
     if document_id is None and not location:
@@ -301,7 +358,7 @@ def rag_get_document(
         if document_id is not None:
             doc = session.query(Document).filter(Document.id == document_id).one_or_none()
         else:
-            expanded = (location or "").replace("~", _HOME)
+            expanded = _untidy(location or "")
             doc = session.query(Document).filter(Document.uri == expanded).one_or_none()
 
         if doc is None:
@@ -317,12 +374,7 @@ def rag_get_document(
                 .all()
             )
         ]
-        chunk_count = (
-            session.query(func.count(Chunk.id))
-            .filter(Chunk.document_id == doc.id)
-            .scalar()
-            or 0
-        )
+        chunk_count = session.query(func.count(Chunk.id)).filter(Chunk.document_id == doc.id).scalar() or 0
 
     content = doc.content or ""
     truncated = len(content) > max_chars
@@ -399,9 +451,7 @@ def rag_list_authors(
                 Author.display_name,
                 Author.is_self,
                 func.count(func.distinct(DocumentAuthor.document_id)).label("documents"),
-                func.array_agg(func.distinct(identity_expr))
-                .filter(AuthorIdentity.id.is_not(None))
-                .label("identities"),
+                func.array_agg(func.distinct(identity_expr)).filter(AuthorIdentity.id.is_not(None)).label("identities"),
             )
             .outerjoin(DocumentAuthor, DocumentAuthor.author_id == Author.id)
             .outerjoin(AuthorIdentity, AuthorIdentity.author_id == Author.id)
@@ -434,19 +484,11 @@ def rag_stats() -> CorpusStats:
     content, and whether embeddings are complete enough for semantic search.
     """
     with session_scope() as session:
-        documents = int(
-            session.query(func.count(Document.id))
-            .filter(Document.state == IngestState.OK)
-            .scalar()
-            or 0
-        )
+        documents = int(session.query(func.count(Document.id)).filter(Document.state == IngestState.OK).scalar() or 0)
         chunks = int(session.query(func.count(Chunk.id)).scalar() or 0)
         authors = int(session.query(func.count(Author.id)).scalar() or 0)
         pending = int(
-            session.query(func.count(Document.id))
-            .filter(Document.state == IngestState.PLACEHOLDER)
-            .scalar()
-            or 0
+            session.query(func.count(Document.id)).filter(Document.state == IngestState.PLACEHOLDER).scalar() or 0
         )
         overview = corpus_overview(session)
 
@@ -476,7 +518,137 @@ def rag_stats() -> CorpusStats:
     )
 
 
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "127.0.0.0/8"})
+# ---------------------------------------------------------------------------
+# local generation: rag_ask / rag_generate
+# ---------------------------------------------------------------------------
+# Both tools run on the local model named by facts.provider / facts.model (the
+# app's LlamaXPCService, or a local Ollama server). Retrieved chunks are
+# placed in the prompt verbatim; that is local inference, so communications
+# may appear there just as they are embedded locally -- the egress check below
+# only fires if ollama_host has been pointed at another machine.
+
+ASK_SYSTEM_PROMPT = (
+    "You answer questions about the user's personal corpus using only the numbered "
+    "excerpts provided. Cite the excerpts you rely on inline as [n]. If the excerpts "
+    "do not contain the answer, say so plainly instead of guessing."
+)
+# Each excerpt is trimmed to this many characters before it goes in the prompt.
+EXCERPT_CHARS = 1200
+# Citations carry a shorter snippet so the result stays readable.
+SNIPPET_CHARS = 240
+
+
+def _trim(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
+def build_ask_messages(question: str, hits: list[SearchHit], *, excerpt_chars: int = EXCERPT_CHARS) -> list[dict]:
+    """The chat messages ``rag_ask`` sends: system instruction, numbered excerpts, question."""
+    if not hits:
+        excerpts = "(no excerpts were retrieved)"
+    else:
+        blocks = []
+        for n, hit in enumerate(hits, start=1):
+            header = f"[{n}] {hit.title or '(untitled)'} \u2014 {_tidy(hit.uri)}"
+            if hit.heading_path:
+                header += f" \u00a7 {hit.heading_path}"
+            blocks.append(f"{header}\n{_trim(hit.text, excerpt_chars)}")
+        excerpts = "\n\n".join(blocks)
+    user = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
+    return [
+        {"role": "system", "content": ASK_SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
+
+
+def _citations(hits: list[SearchHit]) -> list[Citation]:
+    return [
+        Citation(
+            n=n,
+            document_id=hit.document_id,
+            title=hit.title,
+            location=_tidy(hit.uri),
+            snippet=_trim(hit.text, SNIPPET_CHARS),
+            score=round(hit.score, 6),
+        )
+        for n, hit in enumerate(hits, start=1)
+    ]
+
+
+@mcp.tool()
+def rag_ask(
+    question: Annotated[str, Field(description="Natural-language question to answer from the corpus.")],
+    limit: Annotated[int, Field(ge=1, le=20, description="Excerpts to retrieve and offer the model.")] = 6,
+    mode: Annotated[
+        Literal["hybrid", "vector", "fts"],
+        Field(description="Retrieval mode, as for rag_search."),
+    ] = "hybrid",
+    corpus_class: Annotated[
+        ClassFilter,
+        Field(description="Restrict by what the resource is; see rag_search. Accepts one value or a list."),
+    ] = None,
+    trust: Annotated[
+        TrustFilter,
+        Field(description="Restrict by provenance; see rag_search. Accepts one value or a list."),
+    ] = None,
+    source: Annotated[
+        SourceFilter,
+        Field(description="Restrict to these source slugs. Accepts one value or a list."),
+    ] = None,
+    max_tokens: Annotated[int, Field(ge=16, le=4096, description="Cap on the generated answer.")] = 512,
+    temperature: Annotated[float, Field(ge=0.0, le=2.0, description="Sampling temperature.")] = 0.2,
+) -> AskResult:
+    """Answer a question from the corpus with the local model, citing excerpts as [n].
+
+    Retrieval is exactly rag_search; the excerpts then go to the model named by
+    facts.model on facts.provider (the app's LlamaXPCService or a local Ollama
+    server), so nothing leaves the machine. Use rag_search instead when you want
+    to read the excerpts yourself.
+    """
+    hits, _ = _retrieve(question, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source)
+    model = LocalChatModel()
+    if not model.is_local:
+        # Only reachable by pointing ollama_host off-box: then communications
+        # must not be put in a prompt that leaves the machine.
+        for hit in hits:
+            assert_egress_allowed(CorpusClass(hit.corpus_class))
+    reply = model.complete(build_ask_messages(question, hits), max_tokens=max_tokens, temperature=temperature)
+    return AskResult(
+        answer=reply.text,
+        model=model.model_ref,
+        provider=model.provider,
+        question=question,
+        citations=_citations(hits),
+        prompt_tokens=reply.prompt_tokens,
+        completion_tokens=reply.completion_tokens,
+    )
+
+
+@mcp.tool()
+def rag_generate(
+    prompt: Annotated[str, Field(description="Text to send to the local model as the user turn.")],
+    system: Annotated[str | None, Field(description="Optional system instruction.")] = None,
+    max_tokens: Annotated[int, Field(ge=1, le=4096, description="Cap on the generated text.")] = 256,
+    temperature: Annotated[float, Field(ge=0.0, le=2.0, description="Sampling temperature.")] = 0.7,
+) -> GenerateResult:
+    """Run a raw prompt through the local model, with no retrieval.
+
+    The same facts.model / facts.provider as rag_ask; useful to check the model
+    is loaded and responding, or for demos that do not need the corpus.
+    """
+    model = LocalChatModel()
+    messages: list[dict] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    text = model.chat(messages, max_tokens=max_tokens, temperature=temperature)
+    return GenerateResult(text=text, model=model.model_ref, provider=model.provider)
+
+
+# Names that ``ipaddress`` cannot classify; every 127.x.x.x literal is handled
+# by the ``is_loopback`` check below.
+LOOPBACK_HOSTS = frozenset({"localhost", "::1", "127.0.0.1"})
 
 
 def is_loopback(host: str) -> bool:
@@ -493,27 +665,66 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def _log_startup() -> None:
+def _log_startup(*, query_database: bool = True) -> None:
+    """Log the database the tools read and, if asked, how many sources it holds.
+
+    Never fatal: the database may still be starting (the bundled ``garage-mcp``
+    opens Garage.app without waiting for it), and each tool reports its own
+    connection error when called.
+    """
     settings = get_settings()
-    log.info("database connection: %s", settings.database_url)
-    with session_scope() as session:
-        count = session.query(Source).count()
+    log.info("database connection: %s", redact_url(settings.database_url))
+    if not query_database:
+        return
+    try:
+        with session_scope() as session:
+            count = session.query(Source).count()
+    except Exception as exc:
+        log.warning("could not query the database during start-up: %s", exc)
+        return
     log.info("%d sources registered", count)
 
 
-def _http_security(bind_host: str, bind_port: int, allowed_origins: list[str] | None):
-    """DNS-rebinding protection shared by every HTTP transport."""
+def _host_header(host: str, port: int) -> str:
+    """The ``Host`` header value a client uses to reach ``host:port``."""
+    authority = f"[{host}]" if ":" in host else host
+    return f"{authority}:{port}"
+
+
+def _http_security(
+    bind_host: str,
+    bind_port: int,
+    allowed_origins: list[str] | None,
+    allowed_hosts: list[str] | None = None,
+):
+    """DNS-rebinding protection shared by every HTTP transport.
+
+    The SDK matches the ``Host`` header exactly (or against a ``name:*``
+    pattern), so the allowlist must hold the names clients actually use. On a
+    loopback bind those are known. On a remote bind (``0.0.0.0``, a LAN
+    address) they are not: the caller either names them through
+    ``allowed_hosts`` or, when none are given, the check is switched off with a
+    warning -- refusing every request with "Invalid Host header" protects
+    nothing and is what an operator who opted into remote access would hit.
+    """
     from mcp.server.transport_security import TransportSecuritySettings
 
-    # Host header allowlist: the addresses a client may legitimately use.
-    allowed_hosts = [
-        f"{bind_host}:{bind_port}",
+    hosts = {
+        _host_header(bind_host, bind_port),
         f"localhost:{bind_port}",
         f"127.0.0.1:{bind_port}",
-    ]
+        *(allowed_hosts or []),
+    }
+    protect = is_loopback(bind_host) or bool(allowed_hosts)
+    if not protect:
+        log.warning(
+            "bound to %s with no allowed hosts: the Host header is not checked, so "
+            "DNS-rebinding protection is off; pass --allow-host to restore it",
+            bind_host,
+        )
     return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=sorted(set(allowed_hosts)),
+        enable_dns_rebinding_protection=protect,
+        allowed_hosts=sorted(hosts),
         allowed_origins=sorted(set(allowed_origins or [])),
     )
 
@@ -536,6 +747,7 @@ def serve(
     port: int | None = None,
     path: str | None = None,
     allowed_origins: list[str] | None = None,
+    allowed_hosts: list[str] | None = None,
     json_response: bool = False,
     stateless: bool = False,
 ) -> None:
@@ -545,11 +757,14 @@ def serve(
     it a page in your browser could reach a loopback-bound server via a
     rebound hostname, and this server answers questions about your private
     corpus — so the ``Host`` and ``Origin`` allowlists are the only thing
-    standing between "local only" and "any website you visit".
+    standing between "local only" and "any website you visit". ``allowed_hosts``
+    names the extra ``Host`` values a remote bind should accept.
     """
     settings = get_settings()
     log.info("garage-rag MCP server starting (transport=%s)", transport)
-    _log_startup()
+    # On stdio the client waits for `initialize`; a connection attempt to a
+    # Postgres that is still starting must not sit in front of it.
+    _log_startup(query_database=transport != "stdio")
 
     if transport == "stdio":
         # stdio is the default and the call blocks.
@@ -562,7 +777,7 @@ def serve(
     bind_host = host or settings.mcp_host
     bind_port = port or settings.mcp_port
     http_path = path or settings.mcp_http_path
-    security = _http_security(bind_host, bind_port, allowed_origins)
+    security = _http_security(bind_host, bind_port, allowed_origins, allowed_hosts)
     _warn_if_not_loopback(bind_host)
 
     log.info("listening on http://%s:%d%s", bind_host, bind_port, http_path)
@@ -588,8 +803,24 @@ def serve(
     )
 
 
-def main() -> None:
-    """Console-script entry point: stdio, which is what MCP clients spawn."""
+def main(argv: list[str] | None = None) -> None:
+    """Console-script entry point: stdio, which is what MCP clients spawn.
+
+    ``garage-mcp [--config PATH]``. A client spawns it from an arbitrary working
+    directory, so a registration passes the config file explicitly.
+    """
+    import argparse
+
+    from garage_rag.config import ConfigError, load_config, set_settings
+
+    parser = argparse.ArgumentParser(prog="garage-mcp", description="Serve the Garage corpus over MCP on stdio.")
+    parser.add_argument("--config", "-c", type=Path, help="Config file. Default: ./garage.json, then ~/.garage.json.")
+    options = parser.parse_args(argv)
+    try:
+        set_settings(load_config(options.config))
+    except ConfigError as exc:
+        # stdout is the protocol channel; errors go to stderr only.
+        parser.exit(2, f"garage-mcp: config error: {exc}\n")
     serve("stdio")
 
 
@@ -619,6 +850,7 @@ def start_background_server(
     allowed_origins: list[str] | None = None,
     json_response: bool = False,
     stateless: bool = False,
+    allowed_hosts: list[str] | None = None,
 ) -> bool:
     """Start the MCP streamable-HTTP server in a daemon background thread.
 
@@ -636,12 +868,9 @@ def start_background_server(
 
         _active_server_error = None
         log.info("garage-rag MCP server starting (transport=streamable-http, embedded)")
-        try:
-            _log_startup()
-        except Exception as exc:  # the database may not be reachable yet; not fatal
-            log.warning("could not query the database during start-up: %s", exc)
+        _log_startup()
 
-        security = _http_security(host, port, allowed_origins)
+        security = _http_security(host, port, allowed_origins, allowed_hosts)
         _warn_if_not_loopback(host)
 
         app = mcp.streamable_http_app(
@@ -686,8 +915,7 @@ def start_background_server(
                 server.should_exit = True
                 thread.join(timeout=2.0)
                 _active_server_error = _active_server_error or (
-                    f"MCP server did not start listening on {host}:{port} "
-                    f"within {STARTUP_WAIT_SECONDS:.0f}s"
+                    f"MCP server did not start listening on {host}:{port} within {STARTUP_WAIT_SECONDS:.0f}s"
                 )
             else:
                 _active_server_error = _active_server_error or (

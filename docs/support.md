@@ -33,7 +33,7 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 <h2 id="system-requirements">1. System Requirements</h2>
 
 - **Operating System**: macOS 14.0 (Sonoma) or macOS 15.0+ (Sequoia)
-- **Architecture**: Apple Silicon (M1/M2/M3/M4) recommended; Intel x86_64 supported
+- **Architecture**: Apple Silicon (M1/M2/M3/M4) only; Intel Macs are not supported
 - **Memory**: 8 GB RAM minimum (16 GB+ recommended when running local embedding models)
 - **Disk Space**: ~500 MB for Garage application and embedded PostgreSQL; database size depends on ingested document corpus
 - **Embedding Backend**: [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) running locally
@@ -46,7 +46,7 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 `GarageApp` provides a menu bar utility and management window that bundles an embedded, relocatable instance of PostgreSQL 18 with `pgvector`:
 
-1. **Launch GarageApp**: The app initializes its private database in `~/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
+1. **Launch GarageApp**: The app initializes its private database in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
 2. **Menu Bar Status**: Look for the Garage icon in your macOS menu bar. A green status indicator confirms that PostgreSQL and the local MCP HTTP service are active.
 3. **Open Management Window**: Click the menu bar icon and select **Open Garage** to view Sources, Models, Logs, and Search.
 
@@ -114,8 +114,8 @@ Garage supports multiple embedding models simultaneously without re-parsing raw 
    ```
 2. Register and set `bge-m3` as the default model:
    ```bash
-   garage register-model bge-m3 --provider ollama --dimensions 1024
-   garage default-model bge-m3
+   garage register-model bge-m3 --provider ollama --dims 1024
+   garage set-default-model bge-m3
    ```
 3. Generate vector embeddings for all indexed chunks:
    ```bash
@@ -128,7 +128,7 @@ Garage supports multiple embedding models simultaneously without re-parsing raw 
 2. In `GarageApp` under the **Models** tab, select LM Studio as the provider and optionally store your LM Studio API token in the macOS Keychain.
 3. Via CLI:
    ```bash
-   garage register-model nomic-embed-text --provider lmstudio --dimensions 768
+   garage register-model nomic-embed-text --provider lmstudio --dims 768
    garage backfill
    ```
 
@@ -143,7 +143,7 @@ Garage implements the **Model Context Protocol (MCP) 2.0**, allowing AI assistan
 Install the Garage MCP tool directly into your Claude Desktop configuration:
 
 ```bash
-garage mcp-install claude-desktop
+garage mcp-install --target claude-desktop
 ```
 
 This updates `~/Library/Application Support/Claude/claude_desktop_config.json` with the required command and database connection environment. Restart Claude Desktop to start searching your notes and code directly from Claude!
@@ -153,7 +153,7 @@ This updates `~/Library/Application Support/Claude/claude_desktop_config.json` w
 Register Garage with Claude Code:
 
 ```bash
-garage mcp-install claude-code
+garage mcp-install --target claude-code-user
 ```
 
 ### HTTP MCP Endpoint
@@ -191,8 +191,9 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
   # Backup
   pg_dump -Fc -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -f ~/Desktop/garage_backup.dump
 
-  # Reset
-  garage init-db --reset
+  # Reset: there is no reset flag. Drop the schema, then re-apply it.
+  psql -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+  garage init-db
   ```
 
 ---

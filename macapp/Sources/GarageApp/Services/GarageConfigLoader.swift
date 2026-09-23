@@ -205,8 +205,16 @@ public struct GarageConfigFile: Codable {
         }
     }
 
+    /// The `facts` section: which generative model (and provider) `garage enrich-facts`
+    /// and the MCP `rag_ask` / `rag_generate` tools run on.
+    public struct FactsEntry: Codable {
+        public let model: String?
+        public let provider: String?
+    }
+
     public let sources: [SourceEntry]?
     public let models: [ModelPresetEntry]?
+    public let facts: FactsEntry?
 }
 
 /// The on-disk shape of `models.json`: presets grouped by what they're used for,
@@ -228,7 +236,7 @@ public enum GarageConfigLoader {
     public static var candidateConfigFiles: [URL] {
         var paths: [URL] = []
 
-        // 1. Current working directory for garage CLI
+        // 1. The garage working directory (Application Support) the app runs the CLI in
         let workDir = Paths.garageWorkingDirectory.appendingPathComponent("garage.json")
         paths.append(workDir)
 
@@ -238,32 +246,11 @@ public enum GarageConfigLoader {
             paths.append(cwd)
         }
 
-        // 3. User home directory ~/.garage.json
+        // 3. User home directory ~/.garage.json (the Python side searches only ./garage.json and ~/.garage.json)
         let homeDotfile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".garage.json")
         paths.append(homeDotfile)
 
-        // 4. ~/.config/garage/garage.json
-        let homeXDG = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config")
-            .appendingPathComponent("garage")
-            .appendingPathComponent("garage.json")
-        paths.append(homeXDG)
-
-        // 5. Application Support directory
-        let appSupport = Paths.appSupportDir.appendingPathComponent("garage.json")
-        paths.append(appSupport)
-
         return paths
-    }
-
-    /// Finds the first existing configuration file path.
-    public static func findExistingConfigFile() -> URL? {
-        for url in candidateConfigFiles {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-        return nil
     }
 
     /// Built-in fallback presets catalog.
@@ -547,6 +534,33 @@ public enum GarageConfigLoader {
         }
 
         return nil
+    }
+
+    /// Defaults the Python side applies when garage.json has no `facts` section.
+    public static let defaultFactsModel = "gemma2-2b"
+    public static let defaultFactsProvider = "llama_xpc"
+
+    /// Reads the `facts` section of garage.json (`{"facts": {"model": ..., "provider": ...}}`).
+    /// The first candidate file that parses wins, because that is the file the CLI itself
+    /// reads; a missing section or missing keys fall back to the Python defaults.
+    public static func loadFactsSettings(fileURL: URL? = nil) -> (model: String, provider: String) {
+        let targets = fileURL.map { [$0] } ?? candidateConfigFiles
+
+        for url in targets {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            guard let data = try? Data(contentsOf: url),
+                  let config = try? JSONDecoder().decode(GarageConfigFile.self, from: data) else {
+                continue
+            }
+            let model = config.facts?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let provider = config.facts?.provider?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (
+                (model?.isEmpty == false) ? model! : defaultFactsModel,
+                (provider?.isEmpty == false) ? provider! : defaultFactsProvider
+            )
+        }
+
+        return (defaultFactsModel, defaultFactsProvider)
     }
 
     /// Parses sources declared in configuration files.

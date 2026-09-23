@@ -14,11 +14,22 @@ swift_library(
 
 macos_unit_test(
     name = "GarageAppUITests",
+    additional_linker_inputs = [
+        "//ext/python:python_framework",
+    ],
     bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
     bundle_name = "GarageAppUITests",
+    # GarageApp_lib -> PythonXPCService -> GaragePythonEmbed calls the CPython C
+    # API, so the test bundle has to link the interpreter like the app does.
+    linkopts = [
+        "-F$(location //ext/python:python_framework)/..",
+        "-framework",
+        "Python",
+    ],
     minimum_os_version = "14.0",
     visibility = ["//visibility:public"],
     deps = [
         ":GarageAppUITests_lib",
+        "//ext/python:python_framework",
     ],
 )

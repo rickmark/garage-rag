@@ -7,5 +7,6 @@ py_library(
         "llama_xpc.py",
     ],
     imports = ["../.."],
-    visibility = ["//garage_python/src:__subpackages__"],
+    visibility = ["//visibility:public"],
+    deps = ["//garage_python/src/garage_rag/config"],
 )

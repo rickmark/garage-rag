@@ -1,0 +1,283 @@
+"""Registering, removing, scanning and syncing sources."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from sqlalchemy import func
+
+from garage_rag.config import CONFIG_FILENAME, Settings, get_settings, save_config
+from garage_rag.db.engine import session_scope
+from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
+from garage_rag.ingest.scanner import SourceScanResult, persist_scan_result, scan_source
+
+
+class SourceArgumentError(ValueError):
+    """A rejected argument, naming the parameter so the CLI can point at it."""
+
+    def __init__(self, message: str, param_hint: str) -> None:
+        super().__init__(message)
+        self.param_hint = param_hint
+
+
+def _check_egress(slug: str, corpus_class: CorpusClass, allow_cloud_enrichment: bool) -> None:
+    # Egress guard, level 3: keyed on the class, since "is this a private
+    # conversation" is a property of what the content is, not how trusted it is.
+    if corpus_class is CorpusClass.COMMUNICATION and allow_cloud_enrichment:
+        raise SourceArgumentError(
+            f"{slug}: communication sources may never enable cloud enrichment",
+            "--allow-cloud-enrichment",
+        )
+
+
+@dataclass
+class AddSourceResult:
+    slug: str
+    root: Path
+    corpus_class: CorpusClass
+    trust: TrustTier
+    created: bool
+
+    @property
+    def message(self) -> str:
+        if self.created:
+            return f"added source {self.slug} -> {self.root} ({self.corpus_class}/{self.trust})"
+        return f"updated source {self.slug} -> {self.root}"
+
+
+def add_source(
+    slug: str,
+    root: str | Path,
+    *,
+    kind: str = "filesystem",
+    corpus_class: str = "document",
+    trust: str = "authored",
+    allow_cloud_enrichment: bool = False,
+) -> AddSourceResult:
+    """Register a source root, or update the one already registered under ``slug``."""
+    tier = TrustTier(trust)
+    klass = CorpusClass(corpus_class)
+    _check_egress(slug, klass, allow_cloud_enrichment)
+
+    expanded = Path(root).expanduser()
+    if not expanded.exists():
+        raise SourceArgumentError(f"{expanded} does not exist", "ROOT")
+
+    with session_scope() as session:
+        existing = session.query(Source).filter_by(slug=slug).one_or_none()
+        if existing is not None:
+            existing.root = str(expanded)
+            existing.kind = kind
+            existing.default_trust = tier
+            existing.default_class = klass
+            existing.allow_cloud_enrichment = allow_cloud_enrichment
+        else:
+            session.add(
+                Source(
+                    slug=slug,
+                    kind=kind,
+                    root=str(expanded),
+                    default_trust=tier,
+                    default_class=klass,
+                    allow_cloud_enrichment=allow_cloud_enrichment,
+                )
+            )
+    return AddSourceResult(slug=slug, root=expanded, corpus_class=klass, trust=tier, created=existing is None)
+
+
+def document_count(slug: str) -> int:
+    """How many documents removing ``slug`` would delete."""
+    with session_scope() as session:
+        source = session.query(Source).filter_by(slug=slug).one_or_none()
+        if source is None:
+            raise LookupError(f"no such source: {slug}")
+        return session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
+
+
+@dataclass
+class RemoveSourceResult:
+    slug: str
+    deleted_documents: int
+
+    @property
+    def message(self) -> str:
+        return f"removed {self.slug} ({self.deleted_documents:,} documents)"
+
+
+def remove_source(slug: str) -> RemoveSourceResult:
+    """Deregister a source; its documents, chunks and vectors cascade away with it."""
+    with session_scope() as session:
+        source = session.query(Source).filter_by(slug=slug).one_or_none()
+        if source is None:
+            raise LookupError(f"no such source: {slug}")
+        count = session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
+        session.delete(source)
+    return RemoveSourceResult(slug=slug, deleted_documents=int(count))
+
+
+def scan_sources(source: str = "*", *, include_code: bool = False) -> list[SourceScanResult]:
+    """Count items per source and record the expected totals.
+
+    ``*`` means every *enabled* source; a disabled one must be named to be scanned.
+    """
+    with session_scope() as session:
+        if source == "*":
+            sources = list(session.query(Source).filter_by(enabled=True).order_by(Source.id).all())
+        else:
+            row = session.query(Source).filter_by(slug=source).one_or_none()
+            if row is None:
+                raise LookupError(f"no such source: {source}")
+            sources = [row]
+        session.expunge_all()
+
+    results: list[SourceScanResult] = []
+    with session_scope() as session:
+        for src in sources:
+            result = scan_source(src, include_code=include_code)
+            results.append(result)
+            persist_scan_result(session, result)
+    return results
+
+
+@dataclass
+class SyncResult:
+    config_path: Path | None
+    declared: int
+    applied: bool
+    created: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
+    undeclared: list[tuple[str, int]] = field(default_factory=list)
+
+    @property
+    def lines(self) -> list[str]:
+        if not self.declared:
+            return [f"no sources declared in {self.config_path or 'the config file'}"]
+        verb = "" if self.applied else "would "
+        out: list[str] = []
+        if self.created:
+            out.append(f"{verb}create: {', '.join(self.created)}")
+        if self.updated:
+            out.append(f"{verb}update: {', '.join(self.updated)}")
+        if not self.created and not self.updated:
+            out.append("database already matches the config")
+        if self.undeclared:
+            out.append("in the database but not declared (left untouched):")
+            out.extend(f"  {slug} ({count:,} documents)" for slug, count in self.undeclared)
+        return out
+
+
+def sync_sources(*, apply: bool = True, settings: Settings | None = None) -> SyncResult:
+    """Apply the sources declared in the config file to the database.
+
+    Declared sources win: each is created or updated to match the file. Sources
+    that exist only in the database are reported, never deleted, since that
+    would discard indexed documents on the strength of an edit.
+    """
+    settings = settings or get_settings()
+    result = SyncResult(config_path=settings.config_path, declared=len(settings.sources), applied=apply)
+    if not settings.sources:
+        return result
+
+    for spec in settings.sources:
+        _check_egress(spec.slug, CorpusClass(spec.corpus_class), spec.allow_cloud_enrichment)
+
+    with session_scope() as session:
+        declared = {spec.slug for spec in settings.sources}
+        for spec in settings.sources:
+            klass = CorpusClass(spec.corpus_class)
+            tier = TrustTier(spec.trust)
+            row = session.query(Source).filter_by(slug=spec.slug).one_or_none()
+            if row is None:
+                if apply:
+                    session.add(
+                        Source(
+                            slug=spec.slug,
+                            kind=spec.kind,
+                            root=str(spec.expanded_root),
+                            default_class=klass,
+                            default_trust=tier,
+                            allow_cloud_enrichment=spec.allow_cloud_enrichment,
+                            enabled=spec.enabled,
+                            config={"include_code": spec.include_code},
+                        )
+                    )
+                result.created.append(spec.slug)
+                continue
+
+            changed = (
+                row.kind != spec.kind
+                or row.root != str(spec.expanded_root)
+                or row.default_class != klass
+                or row.default_trust != tier
+                or row.allow_cloud_enrichment != spec.allow_cloud_enrichment
+                or row.enabled != spec.enabled
+                or bool((row.config or {}).get("include_code", False)) != spec.include_code
+            )
+            if changed:
+                if apply:
+                    row.kind = spec.kind
+                    row.root = str(spec.expanded_root)
+                    row.default_class = klass
+                    row.default_trust = tier
+                    row.allow_cloud_enrichment = spec.allow_cloud_enrichment
+                    row.enabled = spec.enabled
+                    row.config = {**(row.config or {}), "include_code": spec.include_code}
+                result.updated.append(spec.slug)
+
+        result.undeclared = [
+            (slug, int(count))
+            for slug, count in (
+                session.query(Source.slug, func.count(Document.id))
+                .outerjoin(Document, Document.source_id == Source.id)
+                .group_by(Source.slug)
+                .all()
+            )
+            if slug not in declared
+        ]
+    return result
+
+
+@dataclass
+class ImportSourcesResult:
+    path: Path
+    added: list[str]
+
+    @property
+    def message(self) -> str:
+        if not self.added:
+            return "config already lists every database source"
+        return f"added {len(self.added)} sources to {self.path}: {', '.join(self.added)}"
+
+
+def import_sources_into_config(path: Path | None = None) -> ImportSourcesResult:
+    """Copy the database's sources into the config file, so it becomes the source of truth."""
+    from garage_rag.config import SourceSpec
+
+    settings = get_settings()
+    target = (path or settings.config_path or (Path.cwd() / CONFIG_FILENAME)).expanduser()
+
+    with session_scope() as session:
+        rows = session.query(Source).order_by(Source.slug).all()
+        existing = {spec.slug for spec in settings.sources}
+        added: list[str] = []
+        for row in rows:
+            if row.slug in existing:
+                continue
+            settings.sources.append(
+                SourceSpec(
+                    slug=row.slug,
+                    root=str(row.root),
+                    kind=row.kind,
+                    **{"class": str(row.default_class)},
+                    trust=str(row.default_trust),
+                    include_code=bool((row.config or {}).get("include_code", False)),
+                    allow_cloud_enrichment=bool(row.allow_cloud_enrichment),
+                    enabled=bool(row.enabled),
+                )
+            )
+            added.append(row.slug)
+
+    if added:
+        save_config(settings, target)
+    return ImportSourcesResult(path=target, added=added)

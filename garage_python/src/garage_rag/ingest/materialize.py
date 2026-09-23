@@ -15,15 +15,54 @@ passes instead of one unbounded one.
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from garage_rag.config import get_settings
 from garage_rag.extract.placeholder import PlaceholderFile, is_placeholder
 
 log = logging.getLogger(__name__)
+
+# Reads that outlived their timeout are left running (a blocking read on a stalled provider cannot be
+# cancelled). They are daemon threads, so interpreter shutdown does not wait for them, and at most
+# this many may be outstanding: past that, placeholders are deferred instead of starting another.
+MAX_STALLED_READS = 4
+_stalled_reads: set[threading.Thread] = set()
+_stalled_lock = threading.Lock()
+
+
+def _stalled_count() -> int:
+    with _stalled_lock:
+        _stalled_reads.difference_update([t for t in _stalled_reads if not t.is_alive()])
+        return len(_stalled_reads)
+
+
+def _read_with_timeout(path: Path, timeout: float) -> int | None:
+    """``_force_read(path)`` on a daemon thread; None when it has not finished within ``timeout``.
+
+    An ``OSError`` from the read is re-raised here.
+    """
+    outcome: dict[str, int | OSError] = {}
+
+    def run() -> None:
+        try:
+            outcome["size"] = _force_read(path)
+        except OSError as exc:
+            outcome["error"] = exc
+
+    reader = threading.Thread(target=run, name=f"materialize:{path.name}", daemon=True)
+    reader.start()
+    reader.join(timeout)
+    if reader.is_alive():
+        with _stalled_lock:
+            _stalled_reads.add(reader)
+        return None
+    error = outcome.get("error")
+    if isinstance(error, OSError):
+        raise error
+    size = outcome.get("size", 0)
+    return size if isinstance(size, int) else 0
 
 
 @dataclass
@@ -39,8 +78,6 @@ class MaterializationBudget:
     bytes_done: int = 0
     deferred: int = 0
     failed: int = 0
-    # Sample of deferred paths, for the run report.
-    deferred_samples: list[str] = field(default_factory=list)
 
     @classmethod
     def from_settings(cls) -> MaterializationBudget:
@@ -57,11 +94,6 @@ class MaterializationBudget:
         if self.max_files and self.files_done >= self.max_files:
             return True
         return bool(self.max_bytes and self.bytes_done >= self.max_bytes)
-
-    def note_deferred(self, path: Path) -> None:
-        self.deferred += 1
-        if len(self.deferred_samples) < 20:
-            self.deferred_samples.append(str(path))
 
     def summary(self) -> str:
         gib = self.bytes_done / 1024**3
@@ -92,40 +124,36 @@ def materialize(path: Path, budget: MaterializationBudget) -> bool:
     Returns True when the file is now local. Respects the budget and never
     raises; the caller treats False as "still a placeholder".
     """
-    if not budget.enabled:
-        budget.note_deferred(path)
+    if not budget.enabled or budget.exhausted:
+        budget.deferred += 1
         return False
 
-    if budget.exhausted:
-        budget.note_deferred(path)
+    stalled = _stalled_count()
+    if stalled >= MAX_STALLED_READS:
+        log.warning("%d earlier downloads are still stalled; deferring %s", stalled, path)
+        budget.deferred += 1
         return False
 
-    # A blocking read on a stalled provider cannot be cancelled, so it is run on
-    # a worker thread with a timeout. A timed-out thread may keep running (and
-    # may even finish the download, benefiting a later run), but it stops
-    # blocking this one.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_force_read, path)
-        try:
-            size = future.result(timeout=budget.timeout_seconds)
-        except FutureTimeout:
-            log.warning("materialization timed out after %.0fs: %s", budget.timeout_seconds, path)
-            budget.failed += 1
-            return False
-        except OSError as exc:
-            log.warning("materialization failed for %s: %s", path, exc)
-            budget.failed += 1
-            return False
+    try:
+        size = _read_with_timeout(path, budget.timeout_seconds)
+    except OSError as exc:
+        log.warning("materialization failed for %s: %s", path, exc)
+        budget.failed += 1
+        return False
+    if size is None:
+        log.warning("materialization timed out after %.0fs: %s", budget.timeout_seconds, path)
+        budget.failed += 1
+        return False
 
-    budget.files_done += 1
-    budget.bytes_done += size
-
-    # The provider may hand back an empty file rather than an error.
+    # The provider may hand back an empty file rather than an error; that is
+    # neither a successful materialization nor a charge against the budget.
     if size == 0 or is_placeholder(path):
         log.debug("still a placeholder after read: %s", path)
         budget.failed += 1
         return False
 
+    budget.files_done += 1
+    budget.bytes_done += size
     log.debug("materialized %s (%d bytes)", path.name, size)
     return True
 

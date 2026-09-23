@@ -1,5 +1,6 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//bazel:codesign.bzl", "codesign")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 exports_files(
     glob(["*"]),
@@ -41,8 +42,9 @@ codesign(
     options = ["runtime"],
     parent_dir = "postgres",
     signing_identity = select({
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )
@@ -56,8 +58,9 @@ codesign(
     out = "libpq.dylib",
     options = ["runtime"],
     signing_identity = select({
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )
@@ -82,6 +85,10 @@ copy_to_directory(
     exclude_srcs_patterns = [
         "**/test/**",
         "**/test",
+        # Build-time only (Makefile, libpython3.13.a, python.o): never loaded by the embedded
+        # interpreter, and the static library alone is dead weight in the bundle.
+        "**/config-3.13-darwin/**",
+        "**/config-3.13-darwin",
     ],
     include_srcs_patterns = [
         "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13/**",
@@ -111,8 +118,9 @@ codesign(
     out = "site-python",
     options = ["runtime"],
     signing_identity = select({
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )

@@ -69,8 +69,7 @@ class PlaceholderFile(Exception):
         self.path = path
         self.provider = provider
         super().__init__(
-            f"{path} is a non-materialized {provider} placeholder "
-            "(no local content); download it to index its contents"
+            f"{path} is a non-materialized {provider} placeholder (no local content); download it to index its contents"
         )
 
 
@@ -115,11 +114,7 @@ def list_xattrs(path: Path) -> tuple[str, ...]:
     if written <= 0:
         return ()
     # The result is a packed sequence of NUL-terminated names.
-    return tuple(
-        name.decode("utf-8", errors="replace")
-        for name in buffer.raw[:written].split(b"\x00")
-        if name
-    )
+    return tuple(name.decode("utf-8", errors="replace") for name in buffer.raw[:written].split(b"\x00") if name)
 
 
 def provider_from_xattrs(attrs: tuple[str, ...]) -> str | None:
@@ -140,9 +135,7 @@ def _has_placeholder_xattr(attrs: tuple[str, ...]) -> bool:
     )
 
 
-def check_materialized(
-    path: Path, *, size: int | None = None, st: os.stat_result | None = None
-) -> None:
+def check_materialized(path: Path, *, size: int | None = None, st: os.stat_result | None = None) -> None:
     """Raise :class:`PlaceholderFile` if ``path`` is an unmaterialized stub.
 
     Pass ``st`` (or ``size``) to reuse a ``stat`` the caller already performed;
@@ -173,39 +166,10 @@ def check_materialized(
         raise PlaceholderFile(path, provider_from_xattrs(attrs) or "cloud")
 
 
-def is_placeholder(
-    path: Path, *, size: int | None = None, st: os.stat_result | None = None
-) -> bool:
+def is_placeholder(path: Path, *, size: int | None = None, st: os.stat_result | None = None) -> bool:
     """Non-raising form of :func:`check_materialized`."""
     try:
         check_materialized(path, size=size, st=st)
     except PlaceholderFile:
         return True
     return False
-
-
-def summarize_tree(root: Path, *, limit: int | None = None) -> dict[str, int]:
-    """Count materialized vs placeholder files under ``root``.
-
-    Used by ``garage check-source`` so the scale of an online-only folder is
-    visible *before* an ingest starts materializing it.
-    """
-    counts = {"files": 0, "local": 0, "placeholder": 0, "empty": 0, "unreadable": 0}
-    for dirpath, _dirnames, filenames in os.walk(root, onerror=lambda _e: None):
-        for name in filenames:
-            if limit is not None and counts["files"] >= limit:
-                return counts
-            path = Path(dirpath) / name
-            counts["files"] += 1
-            try:
-                st = path.stat()
-            except OSError:
-                counts["unreadable"] += 1
-                continue
-            if is_placeholder(path, st=st):
-                counts["placeholder"] += 1
-            elif st.st_size > 0:
-                counts["local"] += 1
-            else:
-                counts["empty"] += 1
-    return counts

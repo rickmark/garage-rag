@@ -16,14 +16,17 @@ from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.mcp_server.install import (
+    MCP_EXECUTABLE_ENV,
+    MULTI_TARGETS,
     ClientTarget,
     client_targets,
     find_existing_configs,
     install,
-    install_all,
     installed_in,
+    plan_targets,
     server_command,
     server_entry,
+    target_keys,
     uninstall,
 )
 
@@ -40,9 +43,7 @@ def _read(path: Path) -> dict:
 class TestCliInstall:
     def test_cli_defaults_to_http_url(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--yes"])
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert entry["type"] == "http"
@@ -50,35 +51,47 @@ class TestCliInstall:
 
     def test_cli_stdio_flag(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert "command" in entry
 
     def test_cli_conflicting_flags(self, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--http", "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--http", "--stdio", "--yes"])
         assert result.exit_code != 0
         assert "choose either --http or --stdio" in result.output
 
-    def test_passes_database_url_to_spawned_mcp_server(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_passes_database_url_to_spawned_mcp_server(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         target_path = tmp_path / "mcp.json"
         database_url = "postgresql+psycopg://user:password@localhost:14824/garage-rag"
         monkeypatch.setenv("GARAGE_DATABASE_URL", database_url)
 
-        result = CliRunner().invoke(
-            app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"]
-        )
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
 
         assert result.exit_code == 0, result.output
         entry = _read(target_path)["mcpServers"]["garage-rag"]
         assert entry["env"]["GARAGE_DATABASE_URL"] == database_url
+
+    def test_app_launcher_registration_carries_no_database_url(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The app's launchers read the password from the Keychain; the URL (password
+        included) must not be copied into a client's config file."""
+        launcher = tmp_path / "garage-mcp"
+        launcher.write_text("#!/bin/sh\n")
+        launcher.chmod(0o755)
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg://user:secret@localhost:14824/garage-rag")
+        target_path = tmp_path / "mcp.json"
+
+        result = CliRunner().invoke(app, ["mcp-install", "--path", str(target_path), "--stdio", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        entry = _read(target_path)["mcpServers"]["garage-rag"]
+        assert entry["command"] == str(launcher)
+        assert "env" not in entry
+        assert "secret" not in target_path.read_text()
 
 
 class TestServerCommand:
@@ -98,27 +111,44 @@ class TestServerCommand:
         command, _ = server_command()
         assert Path(command).is_absolute()
 
-    def test_command_invokes_mcp_serve(self) -> None:
-        """Whichever entry point is chosen, it must end up serving on stdio."""
+    def test_command_is_the_stdio_entry_point(self) -> None:
+        """`garage-mcp` is the one stdio entry point, never the `garage` CLI."""
         command, args = server_command()
-        if args:
-            assert "mcp-serve" in args
-            assert "--stdio" in args
+        if Path(command).name == "garage-mcp":
+            assert args == []
         else:
-            assert Path(command).name == "garage-mcp"
+            assert args == ["-m", "garage_rag.mcp_server.server"]
+        assert "mcp-serve" not in args
 
     def test_config_path_is_passed_absolutely(self, tmp_path: Path) -> None:
         """A client launches from an arbitrary cwd, where the config search
         order would find nothing -- so the path must be explicit and absolute."""
         cfg = tmp_path / "garage.json"
         cfg.write_text("{}")
+        _command, args = server_command(cfg)
+        assert args[-2:] == ["--config", str(cfg.resolve())]
+        assert Path(args[-1]).is_absolute()
+
+    def test_bundled_garage_mcp_wins_when_exported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """In the app, sys.executable is an interpreter the bundle does not ship;
+        the Swift launcher exports the bundled `garage-mcp`, which clients must run."""
+        launcher = tmp_path / "garage-mcp"
+        launcher.write_text("#!/bin/sh\n")
+        launcher.chmod(0o755)
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
+        cfg = tmp_path / "garage.json"
+        cfg.write_text("{}")
         command, args = server_command(cfg)
-        assert "--config" in args
-        supplied = Path(args[args.index("--config") + 1])
-        assert supplied.is_absolute()
-        assert supplied == cfg.resolve()
-        # The `garage` entry point is required, since garage-mcp takes no flags.
-        assert Path(command).name in {"garage", Path(sys.executable).name}
+        assert command == str(launcher)
+        assert args == ["--config", str(cfg.resolve())]
+
+    def test_non_executable_launcher_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        launcher = tmp_path / "garage-mcp"
+        launcher.write_text("")
+        launcher.chmod(0o644)
+        monkeypatch.setenv(MCP_EXECUTABLE_ENV, str(launcher))
+        command, _ = server_command()
+        assert command != str(launcher)
 
 
 class TestServerEntry:
@@ -154,9 +184,7 @@ class TestInstallMerge:
         assert _read(target.path)["mcpServers"]["garage-rag"]["command"]
 
     def test_preserves_other_servers(self, target: ClientTarget) -> None:
-        target.path.write_text(
-            json.dumps({"mcpServers": {"other": {"command": "/bin/true", "args": []}}})
-        )
+        target.path.write_text(json.dumps({"mcpServers": {"other": {"command": "/bin/true", "args": []}}}))
         install(target)
         servers = _read(target.path)["mcpServers"]
         assert set(servers) == {"other", "garage-rag"}
@@ -164,9 +192,7 @@ class TestInstallMerge:
 
     def test_preserves_unrelated_top_level_keys(self, target: ClientTarget) -> None:
         """Claude Desktop keeps `preferences` in this file; losing it is real damage."""
-        target.path.write_text(
-            json.dumps({"preferences": {"theme": "dark"}, "coworkUserFilesPath": "/x"})
-        )
+        target.path.write_text(json.dumps({"preferences": {"theme": "dark"}, "coworkUserFilesPath": "/x"}))
         install(target)
         data = _read(target.path)
         assert data["preferences"] == {"theme": "dark"}
@@ -179,9 +205,7 @@ class TestInstallMerge:
             install(target)
 
     def test_force_overwrites_and_backs_up(self, target: ClientTarget) -> None:
-        target.path.write_text(
-            json.dumps({"mcpServers": {"garage-rag": {"command": "stale", "args": []}}})
-        )
+        target.path.write_text(json.dumps({"mcpServers": {"garage-rag": {"command": "stale", "args": []}}}))
         result = install(target, force=True)
         assert result.replaced_entry
         assert result.backup is not None and result.backup.is_file()
@@ -348,20 +372,7 @@ class TestLoopbackDetection:
         assert not is_loopback("some-host.local")
 
 
-class TestArgumentOrder:
-    def test_config_precedes_the_subcommand(self, tmp_path: Path) -> None:
-        """Regression: `--config` is a global Typer option.
-
-        Placed after `mcp-serve` the CLI rejects it with "No such option:
-        --config", so the client would spawn a server that dies immediately.
-        """
-        cfg = tmp_path / "garage.json"
-        cfg.write_text("{}")
-        _command, args = server_command(cfg)
-        assert args.index("--config") < args.index("mcp-serve")
-
-
-class TestFindExistingConfigsAndInstallAll:
+class TestPlanTargets:
     def test_find_existing_configs_filters_existing_files_only(self, tmp_path: Path) -> None:
         proj_mcp = tmp_path / ".mcp.json"
         proj_mcp.write_text("{}")
@@ -369,15 +380,54 @@ class TestFindExistingConfigsAndInstallAll:
         assert "project" in found
         assert found["project"].path == proj_mcp
 
-    def test_install_all_populates_multiple_targets(self, tmp_path: Path) -> None:
-        t1 = ClientTarget(key="t1", label="Target 1", path=tmp_path / "t1" / "mcp.json")
-        t2 = ClientTarget(key="t2", label="Target 2", path=tmp_path / "t2" / "mcp.json")
-        results = install_all(targets=[t1, t2])
-        assert len(results) == 2
-        assert t1.path.is_file()
-        assert t2.path.is_file()
-        assert _read(t1.path)["mcpServers"]["garage-rag"]
-        assert _read(t2.path)["mcpServers"]["garage-rag"]
+    def test_single_target_from_the_table(self, tmp_path: Path) -> None:
+        plan = plan_targets("vscode", project_dir=tmp_path)
+        assert [t.key for t in plan.targets] == ["vscode"]
+        assert plan.targets[0].path == tmp_path / ".vscode" / "mcp.json"
+        assert not plan.multi and not plan.fell_back
+
+    def test_unknown_target_is_a_value_error_naming_the_choices(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="unknown target 'nope'") as info:
+            plan_targets("nope", project_dir=tmp_path)
+        for key in (*target_keys(), *MULTI_TARGETS):
+            assert key in str(info.value)
+
+    def test_explicit_path_wins_over_target(self, tmp_path: Path) -> None:
+        plan = plan_targets("vscode", path=tmp_path / "custom.json", project_dir=tmp_path)
+        assert [t.key for t in plan.targets] == ["custom"]
+        assert plan.targets[0].path == (tmp_path / "custom.json").resolve()
+
+    @pytest.mark.parametrize("alias", MULTI_TARGETS)
+    def test_multi_target_uses_what_exists_on_disk(self, tmp_path: Path, alias: str) -> None:
+        (tmp_path / ".mcp.json").write_text("{}")
+        (tmp_path / ".vscode").mkdir()
+        (tmp_path / ".vscode" / "mcp.json").write_text("{}")
+        plan = plan_targets(alias, project_dir=tmp_path)
+        assert plan.multi and not plan.fell_back
+        assert {t.key for t in plan.targets} >= {"project", "vscode"}
+        assert all(t.path.is_file() for t in plan.targets)
+
+    def test_multi_target_falls_back_when_nothing_exists(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr("garage_rag.mcp_server.install.find_existing_configs", lambda project_dir=None: {})
+        plan = plan_targets("project", all_configs=True, project_dir=tmp_path)
+        assert plan.multi and plan.fell_back
+        assert [t.key for t in plan.targets] == ["project", "claude-desktop"]
+
+    def test_target_keys_match_the_table(self, tmp_path: Path) -> None:
+        assert target_keys() == tuple(client_targets(project_dir=tmp_path))
+
+    def test_cli_help_lists_every_target(self) -> None:
+        """The --target help is derived from the table, so a new client cannot be left out."""
+        result = CliRunner().invoke(app, ["mcp-install", "--help"])
+        assert result.exit_code == 0
+        flat = " ".join(result.output.split())
+        for key in (*target_keys(), *MULTI_TARGETS):
+            assert key in flat, key
+
+    def test_cli_rejects_unknown_target(self) -> None:
+        result = CliRunner().invoke(app, ["mcp-install", "--target", "nope", "--yes"])
+        assert result.exit_code != 0
+        assert "unknown target 'nope'" in result.output
 
     def test_cli_mcp_install_all_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         mcp1 = tmp_path / ".mcp.json"
@@ -414,18 +464,21 @@ class TestCliMcpTest:
         @dataclass
         class DummySources:
             sources: list = None
+
             def __post_init__(self):
                 self.sources = ["docs", "code"]
 
         @dataclass
         class DummyAuthors:
             authors: list = None
+
             def __post_init__(self):
                 self.authors = ["author1"]
 
         @dataclass
         class DummySearch:
             hits: list = None
+
             def __post_init__(self):
                 self.hits = []
 

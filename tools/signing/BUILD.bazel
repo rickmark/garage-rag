@@ -1,0 +1,20 @@
+"""The local code-signing identity: see local_identity.sh for what it is for."""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//bazel:signing.bzl", "LOCAL_SIGNING_IDENTITY")
+
+# gazelle:exclude local_identity.sh
+
+# `bazel run //tools/signing:local_identity` creates the certificate; the
+# subcommands (show, export, remove) come after `--`. The identity name is
+# passed rather than duplicated in the script so //bazel:signing.bzl stays the
+# single source of it.
+sh_binary(
+    name = "local_identity",
+    srcs = ["local_identity.sh"],
+    args = [
+        "--identity",
+        "'{}'".format(LOCAL_SIGNING_IDENTITY),
+    ],
+    visibility = ["//visibility:public"],
+)

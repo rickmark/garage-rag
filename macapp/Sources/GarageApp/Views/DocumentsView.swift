@@ -21,8 +21,8 @@ public struct DocumentsView: View {
     @State private var hasLoaded = false
     @State private var isGleaningFacts = false
 
-    private let corpusClasses = ["all", "document", "communication", "code", "reference", "note"]
-    private let trustTiers = ["all", "authored", "trusted", "community", "unverified"]
+    private let corpusClasses = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.corpusClasses)
+    private let trustTiers = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.trustTiers)
 
     public init() {}
 
@@ -56,6 +56,7 @@ public struct DocumentsView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityLabel("Clear search")
                     .buttonStyle(.plain)
                 }
             }
@@ -98,6 +99,7 @@ public struct DocumentsView: View {
                         .frame(width: 20)
                 }
             }
+            .accessibilityLabel("Refresh document list")
             .disabled(isLoadingList || appState.postgres.status != .running)
             .help("Refresh document list")
         }
@@ -212,12 +214,7 @@ public struct DocumentsView: View {
             HStack(spacing: 6) {
                 CorpusClassBadge(corpusClass: doc.corpusClass)
                 TrustTierBadge(tier: doc.trustTier)
-                Text(doc.sourceSlug)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                TagBadge(doc.sourceSlug)
                 Spacer()
                 if doc.factCount > 0 {
                     Text("\(doc.factCount) fact\(doc.factCount == 1 ? "" : "s")")
@@ -288,20 +285,9 @@ public struct DocumentsView: View {
                 HStack(spacing: 6) {
                     CorpusClassBadge(corpusClass: detail.corpusClass)
                     TrustTierBadge(tier: detail.trustTier)
-                    Text(detail.sourceSlug)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    TagBadge(detail.sourceSlug)
                     if !detail.state.isEmpty {
-                        Text(detail.state.uppercased())
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background((detail.state == "ok" ? Color.green : Color.red).opacity(0.15))
-                            .foregroundStyle(detail.state == "ok" ? .green : .red)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        StatusBadge(detail.state.uppercased(), tint: detail.state == "ok" ? .green : .red)
                     }
                 }
 
@@ -313,7 +299,7 @@ public struct DocumentsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Button("Copy URI") { copyToPasteboard(detail.uri) }
+                    Button("Copy URI") { NSPasteboard.general.copy(detail.uri) }
                         .controlSize(.mini)
                     if let url = URL(string: detail.uri), url.isFileURL {
                         Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -412,7 +398,7 @@ public struct DocumentsView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Button("Copy") { copyToPasteboard(fact.fact) }
+                Button("Copy") { NSPasteboard.general.copy(fact.fact) }
                     .controlSize(.mini)
             }
             Text(fact.fact)
@@ -443,7 +429,7 @@ public struct DocumentsView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Button("Copy") { copyToPasteboard(chunk.text) }
+                Button("Copy") { NSPasteboard.general.copy(chunk.text) }
                     .controlSize(.mini)
             }
             Text(chunk.text)
@@ -516,7 +502,7 @@ public struct DocumentsView: View {
     private func glean(_ detail: DocumentDetailItem) {
         isGleaningFacts = true
         Task {
-            await appState.runEnrichFacts(["enrich-facts", "--document-id", "\(detail.id)"])
+            await appState.runEnrichFacts(documentID: detail.id)
             if selectedDocumentID == detail.id {
                 let refreshed = try? await appState.getDocument(documentID: detail.id)
                 await MainActor.run {
@@ -527,10 +513,5 @@ public struct DocumentsView: View {
                 await MainActor.run { self.isGleaningFacts = false }
             }
         }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }

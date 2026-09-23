@@ -14,7 +14,6 @@ struct SourcesView: View {
     @State private var corpusClass = "document"
     @State private var trust = "authored"
     @State private var allowCloud = false
-    @State private var includeCodeInSource = false
 
     @State private var busy = false
     @State private var ingestAutoDismissTask: Task<Void, Never>?
@@ -22,25 +21,6 @@ struct SourcesView: View {
     private let kinds = ["filesystem", "git", "sqlite", "maildir", "feed"]
     private let classes = ["document", "code", "communication"]
     private let trusts = ["authored", "reference", "received"]
-
-    private struct SourcePreset: Identifiable {
-        let id: String
-        let title: String
-        let slug: String
-        let root: String
-        let kind: String
-        let corpusClass: String
-        let trust: String
-        let allowCloud: Bool
-    }
-
-    private let commonPresets: [SourcePreset] = [
-        SourcePreset(id: "apple-sms", title: "Messages (apple-sms)", slug: "apple-sms", root: "~/Library/Messages", kind: "sqlite", corpusClass: "communication", trust: "received", allowCloud: false),
-        SourcePreset(id: "apple-mail", title: "Apple Mail (apple-mail)", slug: "apple-mail", root: "~/Library/Mail", kind: "maildir", corpusClass: "communication", trust: "received", allowCloud: false),
-        SourcePreset(id: "documents", title: "Documents", slug: "documents", root: "~/Documents", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false),
-        SourcePreset(id: "downloads", title: "Downloads", slug: "downloads", root: "~/Downloads", kind: "filesystem", corpusClass: "document", trust: "received", allowCloud: false),
-        SourcePreset(id: "desktop", title: "Desktop", slug: "desktop", root: "~/Desktop", kind: "filesystem", corpusClass: "document", trust: "authored", allowCloud: false)
-    ]
 
     var body: some View {
         ScrollView {
@@ -58,6 +38,10 @@ struct SourcesView: View {
         .onAppear {
             refreshSourcesAndTestDisk()
         }
+        .onDisappear {
+            ingestAutoDismissTask?.cancel()
+            ingestAutoDismissTask = nil
+        }
         .onReceive(refreshTimer) { _ in
             if appState.ingestService.isRunning || appState.isScanning {
                 Task {
@@ -74,11 +58,11 @@ struct SourcesView: View {
         GroupBox("App Sandbox & Disk Access") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: volumeStatusIcon)
+                    Image(systemName: appState.volumeAccess.status.symbol)
                         .font(.title2)
-                        .foregroundStyle(volumeStatusColor)
+                        .foregroundStyle(appState.volumeAccess.status.color)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(volumeStatusTitle)
+                        Text(appState.volumeAccess.status.title)
                             .fontWeight(.semibold)
                         Text(appState.volumeAccess.status.displayDescription)
                             .font(.caption)
@@ -176,11 +160,11 @@ struct SourcesView: View {
                                 Text(appState.combinedIngestTitle)
                                     .font(.headline)
 
-                                badgeText(progress.phase.uppercased(), bg: Color.blue.opacity(0.15), fg: .blue)
+                                StatusBadge(progress.phase.uppercased(), tint: .blue)
                                 if let mode = appState.ingestService.activeMode {
-                                    badgeText(mode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge(mode.shortTitle.uppercased(), tint: .purple)
                                 } else {
-                                    badgeText(appState.ingestService.executionMode.shortTitle.uppercased(), bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge(appState.ingestService.executionMode.shortTitle.uppercased(), tint: .purple)
                                 }
 
                                 Spacer()
@@ -202,17 +186,17 @@ struct SourcesView: View {
                                 .progressViewStyle(.linear)
 
                             HStack(spacing: 8) {
-                                badgeText("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", bg: Color.primary.opacity(0.06), fg: .primary)
-                                badgeText("\(appState.combinedIngestIndexedCount) indexed", bg: Color.green.opacity(0.15), fg: .green)
-                                badgeText("\(appState.combinedIngestSkippedCount) skipped", bg: Color.gray.opacity(0.15), fg: .secondary)
+                                StatusBadge("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", tint: .primary)
+                                StatusBadge("\(appState.combinedIngestIndexedCount) indexed", tint: .green)
+                                StatusBadge("\(appState.combinedIngestSkippedCount) skipped", tint: .secondary)
                                 if appState.combinedIngestFailedCount > 0 {
-                                    badgeText("\(appState.combinedIngestFailedCount) failed", bg: Color.red.opacity(0.15), fg: .red)
+                                    StatusBadge("\(appState.combinedIngestFailedCount) failed", tint: .red)
                                 }
                                 if appState.combinedIngestPlaceholdersCount > 0 {
-                                    badgeText("\(appState.combinedIngestPlaceholdersCount) placeholders", bg: Color.orange.opacity(0.15), fg: .orange)
+                                    StatusBadge("\(appState.combinedIngestPlaceholdersCount) placeholders", tint: .orange)
                                 }
                                 if appState.combinedIngestChunksCount > 0 {
-                                    badgeText("\(appState.combinedIngestChunksCount) chunks", bg: Color.purple.opacity(0.15), fg: .purple)
+                                    StatusBadge("\(appState.combinedIngestChunksCount) chunks", tint: .purple)
                                 }
                                 Spacer()
                             }
@@ -252,7 +236,7 @@ struct SourcesView: View {
                     ingestAutoDismissTask = Task {
                         try? await Task.sleep(nanoseconds: 4_000_000_000)
                         guard !Task.isCancelled else { return }
-                        appState.ingestService.clearMessages()
+                        appState.ingestService.clearTransientMessages()
                     }
                 }
             }
@@ -296,12 +280,12 @@ struct SourcesView: View {
                     }
 
                     Button("Sync Config → DB") {
-                        run(["sync"])
+                        run { try await $0.syncSources().message }
                     }
                     .disabled(notReady)
 
                     Button("Import DB → Config") {
-                        run(["config", "import-sources"])
+                        run { try await $0.importSourcesToConfig().message }
                     }
                     .disabled(notReady)
 
@@ -354,39 +338,39 @@ struct SourcesView: View {
                 originBadge(for: source.origin)
 
                 if isCurrentIngest {
-                    badgeText("INGESTING", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("INGESTING", tint: .blue)
                 }
 
                 if source.expectedElements > 0 {
                     if source.documentCount >= source.expectedElements {
-                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", bg: Color.green.opacity(0.15), fg: .green)
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
                     } else {
-                        badgeText("\(source.documentCount)/\(source.expectedElements) DOCS", bg: Color.blue.opacity(0.15), fg: .blue)
-                        badgeText("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", bg: Color.orange.opacity(0.15), fg: .orange)
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
+                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
                     }
                 } else {
-                    badgeText("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
                 }
 
                 if !source.enabled {
-                    badgeText("DISABLED", bg: Color.gray.opacity(0.2), fg: .secondary)
+                    StatusBadge("DISABLED", tint: .secondary)
                 }
 
                 if source.allowCloudEnrichment {
-                    badgeText("CLOUD OCR", bg: Color.blue.opacity(0.15), fg: .blue)
+                    StatusBadge("CLOUD OCR", tint: .blue)
                 }
 
                 if source.includeCode {
-                    badgeText("CODE", bg: Color.purple.opacity(0.15), fg: .purple)
+                    StatusBadge("CODE", tint: .purple)
                 }
 
                 if let access = accessResult {
                     if access.isAccessible {
-                        badgeText("DISK OK", bg: Color.green.opacity(0.15), fg: .green)
+                        StatusBadge("DISK OK", tint: .green)
                     } else if access.requiresTCCPermission || access.tccCategory != nil {
-                        badgeText("PERMISSIONS NEEDED", bg: Color.orange.opacity(0.15), fg: .orange)
+                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
                     } else {
-                        badgeText("DISK INACCESSIBLE", bg: Color.red.opacity(0.15), fg: .red)
+                        StatusBadge("DISK INACCESSIBLE", tint: .red)
                     }
                 }
 
@@ -434,7 +418,7 @@ struct SourcesView: View {
                         .disabled(notReady)
 
                         Button("Reconcile (Dry Run)") {
-                            run(["reconcile", "--source", source.slug])
+                            run { try await $0.reconcile(source: source.slug, apply: false).message }
                         }
                         .disabled(notReady)
 
@@ -444,7 +428,7 @@ struct SourcesView: View {
                         .disabled(notReady || appState.enrichFacts.isRunning)
 
                         Button("Reconcile (Apply Deletions)", role: .destructive) {
-                            run(["reconcile", "--source", source.slug, "--apply"])
+                            run { try await $0.reconcile(source: source.slug, apply: true).message }
                         }
                         .disabled(notReady)
 
@@ -479,6 +463,7 @@ struct SourcesView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
+                    .accessibilityLabel("Source actions")
                     .menuStyle(.borderlessButton)
                     .frame(width: 24)
                 }
@@ -730,23 +715,14 @@ struct SourcesView: View {
     private func originBadge(for origin: RegisteredSource.SourceOrigin) -> some View {
         switch origin {
         case .config:
-            return badgeText("CONFIG", bg: Color.orange.opacity(0.15), fg: .orange)
+            return StatusBadge("CONFIG", tint: .orange)
         case .database:
-            return badgeText("DB", bg: Color.teal.opacity(0.15), fg: .teal)
+            return StatusBadge("DB", tint: .teal)
         case .both:
-            return badgeText("CONFIG & DB", bg: Color.indigo.opacity(0.15), fg: .indigo)
+            return StatusBadge("CONFIG & DB", tint: .indigo)
         }
     }
 
-    private func badgeText(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
 
     // MARK: - Add / Update Source Section
 
@@ -758,7 +734,7 @@ struct SourcesView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Menu("Choose preset…") {
-                        ForEach(commonPresets) { preset in
+                        ForEach(SourcePreset.all) { preset in
                             Button(preset.title) {
                                 applyPreset(preset)
                             }
@@ -878,45 +854,6 @@ struct SourcesView: View {
         appState.postgres.status != .running || busy || appState.isIngesting || appState.isScanning
     }
 
-    private var volumeStatusIcon: String {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return "checkmark.seal.fill"
-        case .staleBookmark:
-            return "exclamationmark.triangle.fill"
-        case .accessDenied:
-            return "xmark.octagon.fill"
-        case .notConfigured:
-            return "lock.trianglebadge.exclamationmark"
-        }
-    }
-
-    private var volumeStatusColor: Color {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return .green
-        case .staleBookmark:
-            return .yellow
-        case .accessDenied:
-            return .red
-        case .notConfigured:
-            return .orange
-        }
-    }
-
-    private var volumeStatusTitle: String {
-        switch appState.volumeAccess.status {
-        case .accessGranted:
-            return "Full Volume Access Granted"
-        case .staleBookmark:
-            return "Root Volume Bookmark Stale"
-        case .accessDenied:
-            return "Full Volume Access Denied"
-        case .notConfigured:
-            return "Root Hard Drive Not Selected"
-        }
-    }
-
     private func chooseRoot() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -928,12 +865,12 @@ struct SourcesView: View {
     }
 
     private func applyPreset(_ preset: SourcePreset) {
-        slug = preset.slug
-        root = preset.root
-        kind = preset.kind
-        corpusClass = preset.corpusClass
-        trust = preset.trust
-        allowCloud = preset.allowCloud
+        slug = preset.spec.slug
+        root = preset.spec.root
+        kind = preset.spec.kind
+        corpusClass = preset.spec.corpusClass
+        trust = preset.spec.trust
+        allowCloud = preset.spec.allowCloudEnrichment
     }
 
     private func populateForm(from source: RegisteredSource) {
@@ -991,12 +928,16 @@ struct SourcesView: View {
         busy = true
         let trimmedSlug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
-        var args = ["add-source", trimmedSlug, trimmedRoot, "--kind", kind, "--class", corpusClass, "--trust", trust]
-        if allowCloud {
-            args.append("--allow-cloud-enrichment")
-        }
+        let spec = SourceSpec(
+            slug: trimmedSlug,
+            root: trimmedRoot,
+            kind: kind,
+            corpusClass: corpusClass,
+            trust: trust,
+            allowCloudEnrichment: allowCloud
+        )
         Task {
-            await appState.runGarage(args)
+            await appState.addSource(spec)
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
@@ -1007,17 +948,17 @@ struct SourcesView: View {
         busy = true
         let trimmed = toRemove.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            await appState.runGarage(["remove-source", trimmed, "--yes"])
+            await appState.runOperation { try await $0.removeSource(slug: trimmed).message }
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
         }
     }
 
-    private func run(_ args: [String]) {
+    private func run(_ operation: @escaping @MainActor (GarageGRPCService) async throws -> String) {
         busy = true
         Task {
-            await appState.runGarage(args)
+            await appState.runOperation(operation)
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
             busy = false
@@ -1026,17 +967,7 @@ struct SourcesView: View {
 
     private func enrichFacts(source: String) {
         Task {
-            await appState.runEnrichFacts(["enrich-facts", "--source", source])
-        }
-    }
-
-    private func runIngest(_ args: [String]) {
-        busy = true
-        Task {
-            await appState.runIngest(args)
-            await appState.fetchRegisteredSources()
-            await appState.fetchCorpusStats()
-            busy = false
+            await appState.runEnrichFacts(source: source)
         }
     }
 

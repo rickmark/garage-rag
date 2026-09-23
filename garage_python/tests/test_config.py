@@ -55,9 +55,7 @@ class TestRoundTrip:
     def test_defaults_round_trip(self) -> None:
         original = Settings()
         restored = Settings(**flatten(nest(original)))
-        assert restored.model_dump(exclude={"config_path"}) == original.model_dump(
-            exclude={"config_path"}
-        )
+        assert restored.model_dump(exclude={"config_path"}) == original.model_dump(exclude={"config_path"})
 
     def test_non_defaults_round_trip(self) -> None:
         original = Settings(
@@ -104,9 +102,7 @@ class TestLoading:
         assert load_config(cfg).chunk_overlap == Settings().chunk_overlap
 
     def test_schema_key_is_ignored(self, tmp_path: Path) -> None:
-        cfg = self._write(
-            tmp_path / CONFIG_FILENAME, {"$schema": "./garage.schema.json", "mcp": {"port": 1}}
-        )
+        cfg = self._write(tmp_path / CONFIG_FILENAME, {"$schema": "./garage.schema.json", "mcp": {"port": 1}})
         assert load_config(cfg).mcp_port == 1
 
     def test_unknown_section_is_an_error(self, tmp_path: Path) -> None:
@@ -249,9 +245,38 @@ class TestSources:
         )
         settings = load_config(cfg)
         assert [s.slug for s in settings.sources] == ["notes", "code"]
-        source_code = settings.source("code")
-        assert source_code is not None and source_code.include_code is True
-        assert settings.source("missing") is None
+        by_slug = {s.slug: s for s in settings.sources}
+        assert by_slug["code"].include_code is True
+        assert "missing" not in by_slug
+
+    def test_retired_keys_are_skipped_with_a_warning(self, tmp_path: Path, caplog) -> None:
+        """Settings that were removed must not break a config written before."""
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(
+            json.dumps(
+                {
+                    "embedding": {"max_inflight": 4, "batch_size": 8},
+                    "chunking": {"comms_window_minutes": 5, "comms_window_messages": 9},
+                    "extraction": {"workers": 3},
+                    "cloud": {"max_images": 12},
+                }
+            )
+        )
+        with caplog.at_level("WARNING", logger="garage_rag.config"):
+            settings = load_config(cfg)
+        assert settings.embed_batch_size == 8
+        for key in ("max_inflight", "comms_window_minutes", "comms_window_messages", "workers", "max_images"):
+            assert key in caplog.text, key
+        # Retired keys are not resurrected as attributes, and are not in the schema.
+        for name in ("embed_max_inflight", "comms_window_minutes", "extract_workers", "cloud_ocr_max_images"):
+            assert name not in Settings.model_fields
+        assert "max_inflight" not in json_schema()["properties"]["embedding"]["properties"]
+
+    def test_retired_key_in_the_wrong_section_is_still_an_error(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"database": {"workers": 3}}))
+        with pytest.raises(ConfigError, match="unknown key 'workers'"):
+            load_config(cfg)
 
     def test_sources_must_be_a_list(self, tmp_path: Path) -> None:
         cfg = tmp_path / CONFIG_FILENAME
@@ -296,18 +321,12 @@ class TestLMStudioApiToken:
         token_file = tmp_path / "lmstudio.token"
         token_file.write_text("from-file")
         monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", "from-environment")
-        assert (
-            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
-            == "from-environment"
-        )
+        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "from-environment"
 
     def test_reads_token_from_file(self, tmp_path: Path) -> None:
         token_file = tmp_path / "lmstudio.token"
         token_file.write_text("lm-token\n")
-        assert (
-            Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token()
-            == "lm-token"
-        )
+        assert Settings(lmstudio_api_token_file=str(token_file)).read_lmstudio_api_token() == "lm-token"
 
     def test_rejects_empty_environment_token(self, monkeypatch) -> None:
         monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", " ")
@@ -328,9 +347,7 @@ class TestIdentityParsing:
         ]
 
     def test_whitespace_tolerated(self) -> None:
-        assert Settings(self_identities=[" email : a@b.c "]).self_identity_pairs() == [
-            ("email", "a@b.c")
-        ]
+        assert Settings(self_identities=[" email : a@b.c "]).self_identity_pairs() == [("email", "a@b.c")]
 
 
 class TestSchema:
@@ -387,7 +404,10 @@ class TestDatabaseEnvironment:
 
         assert ensure_psycopg_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
         assert ensure_psycopg_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
-        assert ensure_psycopg_database_url("postgresql+psycopg://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+        assert (
+            ensure_psycopg_database_url("postgresql+psycopg://user:pass@host/db")
+            == "postgresql+psycopg://user:pass@host/db"
+        )
 
         settings = Settings(database_url="postgresql://user:pass@host/db")
         assert settings.database_url == "postgresql+psycopg://user:pass@host/db"
@@ -422,8 +442,12 @@ class TestSchemaCompleteness:
 
 class TestSchemaReference:
     def test_url_points_at_the_committed_schema(self) -> None:
-        assert SCHEMA_URL.startswith("https://raw.githubusercontent.com/rickmark/garage-rag/")
-        assert SCHEMA_URL.endswith("/garage.schema.json")
+        """The URL's path inside the repo must be exactly where the file is generated."""
+        from garage_rag.config import repo_root, repo_schema_path
+
+        prefix = "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/"
+        assert SCHEMA_URL.startswith(prefix)
+        assert SCHEMA_URL.removeprefix(prefix) == repo_schema_path().relative_to(repo_root()).as_posix()
 
     def test_nest_uses_the_url_by_default(self) -> None:
         assert nest(Settings())["$schema"] == SCHEMA_URL
@@ -439,3 +463,109 @@ class TestSchemaReference:
         path = repo_schema_path()
         assert path.is_file(), f"{path} is missing; run 'garage config schema --publish'"
         assert json.loads(path.read_text()) == json_schema()
+
+
+class TestFactsSection:
+    def test_defaults_point_at_the_app_engine(self) -> None:
+        settings = Settings()
+        assert settings.fact_model == "gemma2-2b"
+        assert settings.fact_provider == "llama_xpc"
+
+    def test_file_keys(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"facts": {"model": "gemma2:2b", "provider": "ollama"}}))
+        settings = load_config(cfg)
+        assert settings.fact_model == "gemma2:2b"
+        assert settings.fact_provider == "ollama"
+        assert nest(settings)["facts"] == {"model": "gemma2:2b", "provider": "ollama"}
+
+    def test_provider_is_restricted_to_local_backends(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"facts": {"provider": "openai"}}))
+        with pytest.raises(ConfigError, match="provider"):
+            load_config(cfg)
+
+    def test_schema_lists_the_provider_choices(self) -> None:
+        entry = json_schema()["properties"]["facts"]["properties"]["provider"]
+        assert entry["type"] == "string"
+        assert entry["enum"] == ["llama_xpc", "ollama"]
+        assert entry["default"] == "llama_xpc"
+
+
+class TestSetGetHelpers:
+    def test_resolve_setting(self) -> None:
+        from garage_rag.config import resolve_setting, setting_names
+
+        assert resolve_setting("facts.model") == ("facts", "model", "fact_model")
+        assert resolve_setting("embedding.default_model") == ("embedding", "default_model", "default_embedding_model")
+        assert "facts.provider" in setting_names()
+
+    @pytest.mark.parametrize("name", ["facts", "nope.model", "facts.nope", ""])
+    def test_resolve_setting_rejects_unknown(self, name: str) -> None:
+        from garage_rag.config import resolve_setting
+
+        with pytest.raises(ConfigError, match="unknown|expected SECTION.KEY"):
+            resolve_setting(name)
+
+    @pytest.mark.parametrize(
+        ("field", "raw", "expected"),
+        [
+            ("materialize_placeholders", "true", True),
+            ("materialize_placeholders", "No", False),
+            ("materialize_placeholders", "1", True),
+            ("materialize_placeholders", "off", False),
+            ("chunk_size", "512", 512),
+            ("ocr_min_confidence", "42.5", 42.5),
+            ("self_identities", "git_email:a@b.c, handle:@me", ["git_email:a@b.c", "handle:@me"]),
+            ("self_identities", "", []),
+            ("api_key_file", "none", None),
+            ("api_key_file", "~/.key", "~/.key"),
+            ("fact_model", "gemma2-2b", "gemma2-2b"),
+        ],
+    )
+    def test_coerce_setting(self, field: str, raw: str, expected) -> None:
+        from garage_rag.config import coerce_setting
+
+        assert coerce_setting(field, raw) == expected
+
+    @pytest.mark.parametrize(("field", "raw"), [("materialize_placeholders", "maybe"), ("chunk_size", "big")])
+    def test_coerce_setting_rejects_garbage(self, field: str, raw: str) -> None:
+        from garage_rag.config import coerce_setting
+
+        with pytest.raises(ConfigError, match="expected"):
+            coerce_setting(field, raw)
+
+    def test_update_config_creates_the_file_from_defaults(self, tmp_path: Path) -> None:
+        from garage_rag.config import update_config
+
+        target = tmp_path / USER_CONFIG_FILENAME
+        settings, stored = update_config(target, "facts.provider", "ollama")
+        assert stored == "ollama"
+        assert settings.fact_provider == "ollama"
+        document = json.loads(target.read_text())
+        assert document["$schema"] == SCHEMA_URL
+        assert document["facts"] == {"model": "gemma2-2b", "provider": "ollama"}
+        # Every other section is written at its default, as `config init` does.
+        assert document["chunking"]["size"] == Settings().chunk_size
+
+    def test_update_config_keeps_existing_values_and_ignores_the_environment(self, tmp_path: Path, monkeypatch) -> None:
+        from garage_rag.config import update_config
+
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql+psycopg:///app-managed")
+        target = tmp_path / CONFIG_FILENAME
+        target.write_text(json.dumps({"chunking": {"size": 321}, "sources": [{"slug": "n", "root": "~/n"}]}))
+        update_config(target, "facts.model", "phi-4-mini")
+        document = json.loads(target.read_text())
+        assert document["chunking"]["size"] == 321
+        assert document["facts"]["model"] == "phi-4-mini"
+        assert [s["slug"] for s in document["sources"]] == ["n"]
+        # The env override is applied at load time, never persisted by `set`.
+        assert document["database"]["url"] == Settings().database_url
+
+    def test_update_config_validates_before_writing(self, tmp_path: Path) -> None:
+        from garage_rag.config import update_config
+
+        target = tmp_path / CONFIG_FILENAME
+        with pytest.raises(ConfigError, match="facts.provider"):
+            update_config(target, "facts.provider", "openai")
+        assert not target.exists()

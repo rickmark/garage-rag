@@ -60,6 +60,20 @@ rm -f ~/Library/Application\ Support/GarageApp/pgdata/postmaster.pid
 
 **Solution**: Ensure `LC_ALL=C` is exported in the environment before launching postgres (handled automatically by `GarageApp`).
 
+### Starting over with an empty database
+
+**Database → Reset Database…** deletes everything Garage built from your files and nothing else:
+- **Deleted:** the search index (documents, chunks and embeddings), facts, the conversation memory
+  imported from Messages and Mail, and the source, model, author and ingest records.
+- **Kept:** your original files, downloaded model files, logs, `garage.json` and the Keychain password.
+
+Garage stops its services, deletes the database folder and relaunches itself to create a new database.
+The sources in `garage.json` are registered again automatically. Register your embedding models on the
+Models page, then run ingest to rebuild the index.
+
+To keep a way back, press **Back Up First…** in the confirmation sheet before resetting. It saves the
+same dump as **Back Up…**, and **Restore…** on the Database page loads it into the new database.
+
 ---
 
 <h2 id="tcc-permissions">2. macOS Permissions (TCC) & Protected Files</h2>
@@ -100,9 +114,11 @@ Inspect your registered model settings:
 ```bash
 garage list-models
 ```
-If registered incorrectly, remove and re-register:
+If registered incorrectly, drop the model (this discards its vectors) and re-register it with the right width, then backfill:
 ```bash
-garage register-model <model-name> --provider ollama --dimensions <correct-dims> --force
+garage drop-model <model-name> --yes
+garage register-model <model-name> --provider ollama --dims <correct-dims>
+garage backfill --model <model-name>
 ```
 
 ---
@@ -113,10 +129,10 @@ garage register-model <model-name> --provider ollama --dimensions <correct-dims>
 
 **Symptom**: Browser or custom client receives `421 Misdirected Request` when connecting to `http://127.0.0.1:8787/mcp`.
 
-**Cause**: The MCP HTTP server includes always-on DNS rebinding protection. Requests must send a valid `Host` header (`127.0.0.1` or `localhost`).
+**Cause**: On a loopback bind the MCP HTTP server checks the `Host` header (DNS rebinding protection). Requests must send `127.0.0.1:8787` or `localhost:8787`.
 
 **Solution**:
-Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web application, specify `--allow-origin <origin>`.
+Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web application, specify `--allow-origin <origin>`. When serving remotely (`--allow-remote`), pass each name clients will use with `--allow-host <host:port>` (or `<host>:*`); with no `--allow-host` the `Host` check is switched off and a warning is logged.
 
 <h3 id="claude-desktop-not-detecting">Claude Desktop Not Detecting Tools</h3>
 
@@ -127,7 +143,7 @@ Ensure your client sends `Host: 127.0.0.1:8787`. If accessing from a web applica
 2. Confirm the entry for `garage` exists and has the correct path to `garage-mcp`.
 3. Re-install using:
    ```bash
-   garage mcp-install claude-desktop
+   garage mcp-install --target claude-desktop
    ```
 4. Completely quit Claude Desktop (Cmd+Q) and reopen it.
 
@@ -159,11 +175,14 @@ Setting `"materialize": false` ensures online-only placeholders are indexed as m
 When diagnosing issues, check the relevant logs:
 
 - **PostgreSQL Database Logs**:
-  `~/Library/Application Support/GarageApp/logs/postgres.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/postgres.log`
 - **Ingestion & CLI Logs**:
-  `~/Library/Application Support/GarageApp/logs/ingest.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/ingest.log`
 - **MCP Server Logs**:
-  `~/Library/Application Support/GarageApp/logs/mcp.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
+
+With the direct-download (Developer ID) build, `~/Library/Application Support/GarageApp` is a shortcut
+to the same folder, so `~/Library/Application Support/GarageApp/logs/` works too.
 
 <div class="callout callout-info">
   <div class="callout-title">Need to Submit Logs for Support?</div>

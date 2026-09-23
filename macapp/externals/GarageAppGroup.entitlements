@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Developer ID build (not sandboxed): only the App Group, so the app and its XPC services
+	     keep their data in the group container the App Store build also uses. The team-prefixed
+	     identifier needs no provisioning profile outside the store. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+</dict>
+</plist>

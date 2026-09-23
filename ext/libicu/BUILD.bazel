@@ -1,5 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file", "normalize_install_names")
 
 configure_make(
     name = "libicu",
@@ -12,9 +12,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libicu//:libicu_source",
     out_static_libs = [
@@ -40,9 +39,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libicu//:libicu_source",
     out_shared_libs = [
@@ -52,6 +50,13 @@ configure_make(
         "libicutu.76.dylib",
         "libicuuc.76.dylib",
     ],
+    postfix_script = normalize_install_names([
+        "libicudata.76.dylib",
+        "libicui18n.76.dylib",
+        "libicuio.76.dylib",
+        "libicutu.76.dylib",
+        "libicuuc.76.dylib",
+    ]),
     visibility = ["//visibility:public"],
 )
 

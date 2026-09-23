@@ -6,7 +6,7 @@ description: PostgreSQL schema layout, cascade rules, and HNSW vector indexing.
 
 # Schema reference
 
-DDL lives in `../src/data/sql/00*.sql`, which is the source of truth (it holds the CHECK
+DDL lives in `data/sql/00*.sql` at the repository root, which is the source of truth (it holds the CHECK
 constraints and the generated `tsvector`). `db/models.py` mirrors it for typed
 reads and writes, not for schema creation.
 
@@ -60,6 +60,13 @@ is the extension point for social media connectors.
 `allow_cloud_enrichment` defaults `false` and is the third level of the egress
 guard.
 
+`expected_elements` is the item count of the last scan, which the app's
+progress bars measure ingest against. The rest of that scan lives beside it
+(`008_source_scan.sql`): `scan_item_type` (files, messages, …), `scan_details`
+(the scanner's per-kind breakdown) and `scanned_at`. `config` holds only the
+source's own settings, such as `include_code`, as written by `sync` from
+garage.json.
+
 ### `authors` / `author_identities`
 
 An author owns many identities (`git_email`, `email`, `phone`,
@@ -105,6 +112,38 @@ tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
 ```
 
 Postgres maintains the keyword index itself; no application bookkeeping.
+
+`char_start` / `char_end` are the chunk's span of `documents.content`: its
+exact text, or for markdown (whose header splitter drops blank lines) the span
+from its first line to its last. They are NULL when the chunk cannot be found
+in the content, and on chunks built before offsets were recorded; those gain
+them the next time the document is re-chunked.
+
+`chunks.fact_id` (`007_chunk_fact_link.sql`) is a nullable
+`REFERENCES facts(id) ON DELETE CASCADE` column with a partial unique index
+(`WHERE fact_id IS NOT NULL`), so a fact has at most one chunk. It marks a
+chunk as distilled from a fact rather than cut from `documents.content`; such
+chunks carry `chunker = 'facts:langextract:<model>'`. Nothing else about the
+row is special — the backfill's anti-join finds it like any other chunk, which
+is what gets facts embedded under every model without a fact-specific path.
+Deleting a fact cascades into its chunk and, through `chunk_id`, into every
+`emb_*` table.
+
+### `facts`
+
+Atomic, self-contained claims distilled out of a document's text by
+`enrich/facts.py` (`006_facts.sql`). Same shape as chunks: ordered rows scoped
+to a `document_id` (`ON DELETE CASCADE`, unique on `(document_id, ord)`),
+replaced wholesale when the document is re-extracted.
+
+| Column | Purpose |
+|---|---|
+| `fact` | the claim, in the document's own wording |
+| `fact_class` | the extractor's label (its prompt's `extraction_class`, default `'fact'`); unconstrained so the prompt can be specialized per corpus |
+| `attributes` | `jsonb` extractor attributes, default `'{}'` |
+| `char_start` / `char_end` | span of `documents.content` the fact was grounded to; an ungrounded fact is dropped by the extractor rather than stored |
+| `extractor` / `extractor_model` | provenance, default `'langextract'` and the model id |
+| `tsv` | generated `to_tsvector('english', fact)`, GIN-indexed — the keyword half of hybrid search over facts |
 
 ### `conversations` / `messages`
 
@@ -153,10 +192,28 @@ pgvector 0.8 HNSW ceilings are hard limits — `vector` ≤ 2000 dims, `halfvec`
 
 | Model width | Storage | Index |
 |---|---|---|
-| ≤ 2000 | `vector(d)` | HNSW cosine |
-| 2001–4000 | `halfvec(d)` | HNSW cosine |
-| > 4000, Matryoshka | `halfvec(4000)` truncated + renormalized | HNSW cosine |
-| > 4000, not Matryoshka | `vector(d)` | HNSW on `binary_quantize(...)::bit(d)`, re-ranked on exact cosine |
+| ≤ 2000 | `vector(d)` | HNSW on the model's distance |
+| 2001–4000 | `halfvec(d)` | HNSW on the model's distance |
+| > 4000, Matryoshka | `halfvec(4000)` truncated + renormalized | HNSW on the model's distance |
+| > 4000, not Matryoshka | `vector(d)` | HNSW on `binary_quantize(...)::bit(d)`, re-ranked on the exact distance |
+
+#### Distance
+
+`embedding_models.distance` (`009_model_distance.sql`) is the similarity the
+model was trained for: `cosine`, `l2` or `inner_product`. It is declared per
+model in `data/models/models.json` (or `register-model --distance` for a model
+the catalog does not list) and fixes two things that must agree: the HNSW
+operator class (`vector_cosine_ops`, `halfvec_l2_ops`, `vector_ip_ops`, …) and
+the operator search orders by (`<=>`, `<->`, `<#>`). An index built for one
+metric is not used by a query on another, so the metric is chosen once, at
+registration. Models registered before the column existed were indexed for
+cosine, which is its default.
+
+`models.json` is the one model catalog: the app reads it for presets and
+downloads, and `garage_rag.db.catalog` reads the same file for widths,
+`supports_mrl`, `distance` and per-provider names (`provider_refs`, e.g. an
+Ollama tag), found through `GARAGE_MODEL_MANIFEST` (the app points it at its
+bundled copy) or in the repository.
 
 Truncation is only sound for MRL-trained models, so `supports_mrl` is declared
 per model rather than assumed. A CHECK constraint refuses to register an
@@ -169,5 +226,7 @@ length, and pgvector's cosine operator does not normalize for you.
 ### `ingest_runs` / `ingest_seen`
 
 Coverage bookkeeping that makes deletion safe. `completed` is true only for a
-walk that ran to exhaustion with no `--limit`. `ingest_seen` holds one row per
-observed URI per run; `prune_old_runs` bounds its growth.
+walk that ran to exhaustion (not one cut short by `--limit` or cancellation).
+`ingest_seen` holds one row per observed URI per run, including files that were
+stat-skipped without being opened; nothing prunes old runs yet, so it grows
+with every ingest.

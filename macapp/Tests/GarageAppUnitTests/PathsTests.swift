@@ -14,12 +14,6 @@ final class PathsTests: XCTestCase {
         XCTAssertEqual(pgData.deletingLastPathComponent().standardizedFileURL, Paths.appSupportDir.standardizedFileURL)
     }
 
-    func testPgSocketDirIsSubdirectoryOfAppSupport() {
-        let pgSocket = Paths.pgSocketDir
-        XCTAssertEqual(pgSocket.lastPathComponent, "sockets")
-        XCTAssertEqual(pgSocket.deletingLastPathComponent().standardizedFileURL, Paths.appSupportDir.standardizedFileURL)
-    }
-
     func testLogsDirIsSubdirectoryOfAppSupport() {
         let logs = Paths.logsDir
         XCTAssertEqual(logs.lastPathComponent, "logs")
@@ -83,5 +77,28 @@ final class PathsTests: XCTestCase {
     func testGarageWorkingDirectory() {
         let workDir = Paths.garageWorkingDirectory
         XCTAssertEqual(workDir.standardizedFileURL, Paths.appSupportDir.standardizedFileURL)
+    }
+
+    // MARK: displayPath
+
+    func testDisplayPathShowsTheDataDirectoryUnderApplicationSupport() {
+        let data = URL(fileURLWithPath: "/Users/someone/Library/Group Containers/group/Library/Application Support/GarageApp", isDirectory: true)
+
+        XCTAssertEqual(
+            Paths.displayPath(of: data.appendingPathComponent("pgdata", isDirectory: true), dataDirectory: data),
+            "~/Library/Application Support/GarageApp/pgdata"
+        )
+        XCTAssertEqual(Paths.displayPath(of: data, dataDirectory: data), "~/Library/Application Support/GarageApp")
+    }
+
+    func testDisplayPathLeavesPathsOutsideTheDataDirectory() {
+        let data = URL(fileURLWithPath: "/Users/someone/Library/Group Containers/group/Library/Application Support/GarageApp", isDirectory: true)
+        let sibling = URL(fileURLWithPath: "/Users/someone/Library/Group Containers/group/Library/Application Support/GarageAppOther/pgdata")
+
+        XCTAssertEqual(Paths.displayPath(of: sibling, dataDirectory: data), sibling.path)
+    }
+
+    func testPgDataIsShownUnderApplicationSupport() {
+        XCTAssertEqual(Paths.displayPath(of: Paths.pgDataDir), "~/Library/Application Support/GarageApp/pgdata")
     }
 }

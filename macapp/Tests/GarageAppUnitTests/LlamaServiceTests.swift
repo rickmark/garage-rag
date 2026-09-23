@@ -1,13 +1,14 @@
 import XCTest
 import SwiftUI
 import LlamaClient
+import LlamaTestSupport
 @testable import GarageApp
 
 final class LlamaServiceTests: XCTestCase {
 
     @MainActor
     func testInitialServiceState() {
-        let engine = LlamaServerEngine(modelPath: nil, modelAlias: "test-model", totalSlots: 2)
+        let engine = MockLlamaServerEngine(modelPath: nil, modelAlias: "test-model", totalSlots: 2)
         let client = LlamaClient(inProcessEngine: engine)
         let service = LlamaService(client: client)
 
@@ -22,7 +23,7 @@ final class LlamaServiceTests: XCTestCase {
 
     @MainActor
     func testPingAndRefreshStatus() async {
-        let engine = LlamaServerEngine(modelPath: "/tmp/fake.gguf", modelAlias: "llama-3.2-1b", totalSlots: 2)
+        let engine = MockLlamaServerEngine(modelPath: "/tmp/fake.gguf", modelAlias: "llama-3.2-1b", totalSlots: 2)
         let client = LlamaClient(inProcessEngine: engine)
         let service = LlamaService(client: client)
 
@@ -47,7 +48,7 @@ final class LlamaServiceTests: XCTestCase {
 
     @MainActor
     func testLoadAndUnloadModel() async {
-        let engine = LlamaServerEngine(modelPath: nil, modelAlias: "initial-model", totalSlots: 1)
+        let engine = MockLlamaServerEngine(modelPath: nil, modelAlias: "initial-model", totalSlots: 1)
         let client = LlamaClient(inProcessEngine: engine)
         let service = LlamaService(client: client)
 
@@ -74,8 +75,46 @@ final class LlamaServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testUnloadModelByAlias() async {
+        let engine = MockLlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "gemma2-2b", totalSlots: 1)
+        let client = LlamaClient(inProcessEngine: engine)
+        let service = LlamaService(client: client)
+
+        await service.refreshStatus()
+        XCTAssertEqual(service.loadedModelIds, ["gemma2-2b"])
+        XCTAssertTrue(service.isModelLoaded(alias: "gemma2-2b"))
+        XCTAssertFalse(service.isModelLoaded(alias: "bge-m3"))
+
+        // Empty alias is rejected before any request is made.
+        let emptyResult = await service.unloadModel(alias: "  ")
+        XCTAssertFalse(emptyResult)
+        XCTAssertEqual(service.lastError, "Model alias cannot be empty.")
+
+        // An alias that isn't loaded: the mock's `POST /models/unload` answers 404, which
+        // must surface as lastError without touching the loaded model.
+        let unknownResult = await service.unloadModel(alias: "not-loaded")
+        XCTAssertFalse(unknownResult)
+        XCTAssertNil(service.lastSuccess)
+        let err = service.lastError ?? ""
+        XCTAssertTrue(err.contains("Failed to unload model 'not-loaded'"), "unexpected lastError: \(err)")
+        XCTAssertTrue(err.contains("HTTP 404"), "unexpected lastError: \(err)")
+        XCTAssertTrue(service.isModelLoaded(alias: "gemma2-2b"))
+
+        // The loaded alias: 200, status refreshed, nothing left loaded.
+        let result = await service.unloadModel(alias: "gemma2-2b")
+        XCTAssertTrue(result)
+        XCTAssertNil(service.lastError)
+        XCTAssertEqual(service.lastSuccess, "Model 'gemma2-2b' unloaded.")
+        // (The mock keeps listing its alias under /v1/models after unload; health is what flips.)
+        XCTAssertEqual(service.health?.status, "no_model_loaded")
+        XCTAssertEqual(service.statusMessage, "No model loaded")
+        XCTAssertTrue(service.isConnected)
+        XCTAssertFalse(service.isBusy)
+    }
+
+    @MainActor
     func testSlotActions() async {
-        let engine = LlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "slot-test", totalSlots: 1)
+        let engine = MockLlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "slot-test", totalSlots: 1)
         let client = LlamaClient(inProcessEngine: engine)
         let service = LlamaService(client: client)
 
@@ -93,7 +132,7 @@ final class LlamaServiceTests: XCTestCase {
 
     @MainActor
     func testCompletionAndTokenizePlayground() async {
-        let engine = LlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "play-model", totalSlots: 1)
+        let engine = MockLlamaServerEngine(modelPath: "/tmp/model.gguf", modelAlias: "play-model", totalSlots: 1)
         let client = LlamaClient(inProcessEngine: engine)
         let service = LlamaService(client: client)
 
@@ -118,81 +157,6 @@ final class LlamaServiceTests: XCTestCase {
         XCTAssertTrue(tokenizeResult)
         XCTAssertNotNil(service.testOutput)
         XCTAssertTrue(service.testOutput?.contains("Tokens (") == true)
-    }
-
-    @MainActor
-    func testLoadBgeM3ModelAndRunEmbeddings() async throws {
-        let modelPath = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
-        let engine = LlamaServerEngine(modelPath: nil, modelAlias: "initial", totalSlots: 1)
-        let client = LlamaClient(inProcessEngine: engine)
-        let service = LlamaService(client: client)
-
-        // 1. Load BGE-M3 model into LlamaService
-        let loadSuccess = await service.loadModel(
-            path: modelPath,
-            alias: "bge-m3",
-            config: ["n_ctx": 8192, "n_gpu_layers": 33]
-        )
-        XCTAssertTrue(loadSuccess)
-        XCTAssertEqual(service.activeModelId, "bge-m3")
-        XCTAssertNotNil(service.lastSuccess)
-        XCTAssertEqual(service.health?.status, "ok")
-
-        // 2. Test empty embedding text validation
-        let emptyEmbed = await service.testEmbedding(text: "   ")
-        XCTAssertFalse(emptyEmbed)
-        XCTAssertEqual(service.lastError, "Text to embed cannot be empty.")
-
-        // 3. Test interactive embedding verification via testEmbedding
-        let embedPlaygroundSuccess = await service.testEmbedding(text: "BGE-M3 dense multilingual semantic embeddings")
-        XCTAssertTrue(embedPlaygroundSuccess)
-        XCTAssertNotNil(service.testOutput)
-        XCTAssertTrue(service.testOutput?.contains("1024 dimensions") == true)
-        XCTAssertEqual(service.lastSuccess, "Embedding generated (1024 dims).")
-
-        // 3b. Test embedding with explicit model selection
-        let embedExplicitModelSuccess = await service.testEmbedding(text: "BGE-M3 model explicit", model: "bge-m3")
-        XCTAssertTrue(embedExplicitModelSuccess)
-        XCTAssertNotNil(service.testOutput)
-        XCTAssertTrue(service.testOutput?.contains("model: bge-m3") == true)
-        XCTAssertEqual(service.lastSuccess, "Embedding generated (1024 dims, model: bge-m3).")
-
-        // 4. Test programmatic batch embedding via service.embed
-        let texts = [
-            "What is the airspeed velocity of an unladen swallow?",
-            "Garage local RAG and semantic search indexing engine."
-        ]
-        let embeddings = try await service.embed(texts: texts, dimensions: 1024)
-        XCTAssertEqual(embeddings.count, 2)
-        XCTAssertEqual(embeddings[0].count, 1024)
-        XCTAssertEqual(embeddings[1].count, 1024)
-
-        // 5. Verify L2 normalization
-        let norm0 = sqrt(embeddings[0].reduce(0) { $0 + $1 * $1 })
-        let norm1 = sqrt(embeddings[1].reduce(0) { $0 + $1 * $1 })
-        XCTAssertEqual(norm0, 1.0, accuracy: 1e-4)
-        XCTAssertEqual(norm1, 1.0, accuracy: 1e-4)
-
-        // 6. Verify vectors are non-zero and distinct
-        XCTAssertNotEqual(embeddings[0], embeddings[1])
-    }
-
-    @MainActor
-    func testLoadBgeM3DefaultAliasInferenceAndEmbeddings() async throws {
-        let modelPath = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
-        let engine = LlamaServerEngine(modelPath: nil, modelAlias: "initial", totalSlots: 1)
-        let client = LlamaClient(inProcessEngine: engine)
-        let service = LlamaService(client: client)
-
-        // Load without explicit alias - should infer "bge-m3-Q8_0"
-        let loadSuccess = await service.loadModel(path: modelPath)
-        XCTAssertTrue(loadSuccess)
-        XCTAssertEqual(service.activeModelId, "bge-m3-Q8_0")
-
-        // Embedding with default inferred dimensions should produce 1024-dim vectors
-        let embeddings = try await service.embed(texts: ["Evaluating embedding inference without explicit dimensions"])
-        XCTAssertEqual(embeddings.count, 1)
-        XCTAssertEqual(embeddings[0].count, 1024)
     }
 
     @MainActor

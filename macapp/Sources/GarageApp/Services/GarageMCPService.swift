@@ -41,7 +41,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
     public var path: URL
     public var existsOnDisk: Bool
     public var isRegistered: Bool
-    public var isProjectScoped: Bool
     public var note: String
 
     public init(
@@ -50,7 +49,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
         path: URL,
         existsOnDisk: Bool,
         isRegistered: Bool,
-        isProjectScoped: Bool = false,
         note: String = ""
     ) {
         self.id = id
@@ -58,7 +56,6 @@ public struct MCPClientConfig: Identifiable, Equatable {
         self.path = path
         self.existsOnDisk = existsOnDisk
         self.isRegistered = isRegistered
-        self.isProjectScoped = isProjectScoped
         self.note = note
     }
 }
@@ -129,11 +126,13 @@ final class GarageMCPService: ObservableObject {
     let host = "127.0.0.1"
     let path = "/mcp"
 
+    /// Client registration goes through the McpInstall RPC; AppState wires this up.
+    weak var grpc: GarageGRPCService?
+
     private let postgres: PostgresService
     private let client: GarageMCPServerClient
     private let defaults: UserDefaults
     private let maxLogLines = 4000
-    private var isStopping = false
     private var logPollTask: Task<Void, Never>?
 
     init(
@@ -270,7 +269,6 @@ final class GarageMCPService: ObservableObject {
                 path: target.path,
                 existsOnDisk: exists,
                 isRegistered: isRegistered,
-                isProjectScoped: target.projectScoped,
                 note: target.note
             )
         }
@@ -288,32 +286,23 @@ final class GarageMCPService: ObservableObject {
 
     // MARK: - Client Registration Actions
 
-    private func runCliCommand(_ arguments: [String]) async -> (success: Bool, message: String) {
+    /// Writes this server's entry into client configs through the McpInstall RPC.
+    private func install(_ scope: GarageGRPCService.McpInstallScope, force: Bool) async -> (success: Bool, message: String) {
+        guard let grpc else {
+            let message = "gRPC service unavailable; cannot register MCP clients."
+            appendLog(LogLine(stream: .stderr, text: message, source: "garage-mcp"))
+            return (false, message)
+        }
         do {
-            let (exitCode, stdout, stderr) = try await client.executeCommand("", arguments: arguments)
-            if let out = stdout, !out.isEmpty {
-                for line in out.split(separator: "\n", omittingEmptySubsequences: false) {
-                    let text = String(line)
-                    if !text.isEmpty {
-                        appendLog(LogLine(stream: .stdout, text: text, source: "garage-mcp"))
-                    }
-                }
+            let response = try await grpc.mcpInstall(scope: scope, host: host, port: port, force: force)
+            for line in response.message.split(separator: "\n") {
+                appendLog(LogLine(stream: .stdout, text: String(line), source: "garage-mcp"))
             }
-            if let err = stderr, !err.isEmpty {
-                for line in err.split(separator: "\n", omittingEmptySubsequences: false) {
-                    let text = String(line)
-                    if !text.isEmpty {
-                        appendLog(LogLine(stream: .stderr, text: text, source: "garage-mcp"))
-                    }
-                }
-            }
-            let combined = [stdout, stderr].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
-            let success = (exitCode == 0)
-            return (success, combined.isEmpty ? (success ? "Command succeeded." : "Command failed.") : combined)
+            return (true, response.message.isEmpty ? "Registered." : response.message)
         } catch {
-            let errMsg = "XPC command execution failed: \(error.localizedDescription)"
-            appendLog(LogLine(stream: .stderr, text: errMsg, source: "garage-mcp"))
-            return (false, errMsg)
+            let message = "MCP registration failed: \(error.localizedDescription)"
+            appendLog(LogLine(stream: .stderr, text: message, source: "garage-mcp"))
+            return (false, message)
         }
     }
 
@@ -324,12 +313,7 @@ final class GarageMCPService: ObservableObject {
             isRegistering = false
             refreshDetectedClients()
         }
-
-        var args = ["mcp-install", "--all", "--yes", "--port", "\(port)", "--host", host]
-        if force {
-            args.append("--force")
-        }
-        return await runCliCommand(args)
+        return await install(.all, force: force)
     }
 
     @discardableResult
@@ -339,12 +323,7 @@ final class GarageMCPService: ObservableObject {
             isRegistering = false
             refreshDetectedClients()
         }
-
-        var args = ["mcp-install", "--target", targetId, "--yes", "--port", "\(port)", "--host", host]
-        if force {
-            args.append("--force")
-        }
-        return await runCliCommand(args)
+        return await install(.target(targetId), force: force)
     }
 
     @discardableResult
@@ -354,12 +333,7 @@ final class GarageMCPService: ObservableObject {
             isRegistering = false
             refreshDetectedClients()
         }
-
-        var args = ["mcp-install", "--path", url.path, "--yes", "--port", "\(port)", "--host", host]
-        if force {
-            args.append("--force")
-        }
-        return await runCliCommand(args)
+        return await install(.path(url.path), force: force)
     }
 
     // MARK: - Testing & Diagnostics
@@ -624,7 +598,6 @@ final class GarageMCPService: ObservableObject {
             let currentPort = port
             triedPorts.insert(currentPort)
             status = .starting
-            isStopping = false
             sessionId = nil
 
             do {
@@ -674,7 +647,6 @@ final class GarageMCPService: ObservableObject {
     func stop() async {
         guard status == .running || status == .starting else { return }
         status = .stopping
-        isStopping = true
         sessionId = nil
         stopLogPolling()
         _ = try? await client.stopServer()
@@ -683,7 +655,6 @@ final class GarageMCPService: ObservableObject {
 
     func terminateImmediately() {
         status = .stopping
-        isStopping = true
         sessionId = nil
         stopLogPolling()
         Task { [client] in

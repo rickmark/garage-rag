@@ -1,10 +1,13 @@
-"""Client interfaces for executing Garage dedicated RPC commands in-process, over gRPC, or over macOS XPC."""
+"""Python client for ``GarageService``: over gRPC, or in-process against the servicer.
+
+The in-process mode round-trips every request and response through protobuf
+serialization, so a test exercises the same encoding a real channel would.
+"""
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Iterator
+from types import TracebackType
 from typing import Any
 
 import grpc
@@ -18,38 +21,30 @@ from garage_rag.proto.garage_pb2 import (
     BeginIngestSessionResponse,
     CheckDocumentStatRequest,
     CheckDocumentStatResponse,
-    CommandRequest,
-    CommandStatus,
-    ConfigImportSourcesRequest,
-    ConfigImportSourcesResponse,
-    ConfigInitRequest,
-    ConfigInitResponse,
-    ConfigPathRequest,
-    ConfigPathResponse,
-    ConfigSchemaRequest,
-    ConfigSchemaResponse,
-    ConfigShowRequest,
-    ConfigShowResponse,
     DropModelRequest,
     DropModelResponse,
-    ExtractRequest,
-    ExtractResponse,
+    EnrichFactsRequest,
+    EnrichFactsStatus,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
+    GetDocumentRequest,
+    GetDocumentResponse,
     GetEmbeddingBatchesRequest,
     GetEmbeddingBatchesResponse,
-    IngestRequest,
-    IngestStatus,
+    GetSettingRequest,
+    GetSettingResponse,
+    ImportSourcesToConfigRequest,
+    ImportSourcesToConfigResponse,
     InitDbRequest,
     InitDbResponse,
+    ListDocumentsRequest,
+    ListDocumentsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
     ListSourcesResponse,
     McpInstallRequest,
     McpInstallResponse,
-    McpServeRequest,
-    McpServeStatus,
     McpStatusRequest,
     McpStatusResponse,
     McpUninstallRequest,
@@ -72,27 +67,25 @@ from garage_rag.proto.garage_pb2 import (
     SearchResponse,
     SetDefaultModelRequest,
     SetDefaultModelResponse,
+    SetSettingRequest,
+    SetSettingResponse,
     StatsRequest,
     StatsResponse,
     StatusRequest,
     StatusResponse,
-    StatusType,
-    StopRequest,
-    StopResponse,
-    SyncRequest,
-    SyncStatus,
+    SyncSourcesRequest,
+    SyncSourcesResponse,
     UpdateEmbeddingsRequest,
     UpdateEmbeddingsResponse,
     VersionRequest,
     VersionResponse,
 )
 from garage_rag.proto.garage_pb2_grpc import GarageServiceStub
-from garage_rag.service.executor import CommandExecutor
 from garage_rag.service.server import GarageRpcServicer
 
 
 class _InProcessServicerContext:
-    """Mock servicer context for in-process direct RPC execution."""
+    """Servicer context for in-process calls: ``abort`` raises instead of ending an RPC."""
 
     def __init__(self) -> None:
         self.code = grpc.StatusCode.OK
@@ -109,9 +102,12 @@ class _InProcessServicerContext:
     def set_details(self, details: str):
         self.details_msg = details
 
+    def is_active(self) -> bool:
+        return True
+
 
 class GarageClient:
-    """Client for interacting with Garage over dedicated gRPC RPC methods or in-process serialization."""
+    """One method per ``GarageService`` RPC, each taking and returning the proto messages."""
 
     def __init__(
         self,
@@ -134,6 +130,23 @@ class GarageClient:
             self._stub = GarageServiceStub(self._channel)
         return self._stub
 
+    def close(self) -> None:
+        """Close the underlying gRPC channel, if one was opened. Safe to call repeatedly."""
+        channel, self._channel, self._stub = self._channel, None, None
+        if channel is not None:
+            channel.close()
+
+    def __enter__(self) -> GarageClient:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
     def _roundtrip_proto(self, msg: Any, msg_cls: Any) -> Any:
         serialized = msg.SerializeToString()
         out = msg_cls()
@@ -147,66 +160,73 @@ class GarageClient:
             method = getattr(self.servicer, rpc_name)
             res = method(req_copy, ctx)
             return self._roundtrip_proto(res, response_cls)
-        else:
-            stub = self._get_stub()
-            stub_method = getattr(stub, rpc_name)
-            return stub_method(request)
+        stub_method = getattr(self._get_stub(), rpc_name)
+        return stub_method(request)
 
     def _invoke_stream(self, rpc_name: str, request: Any, response_cls: Any) -> Iterator[Any]:
         if self.in_process:
             req_copy = self._roundtrip_proto(request, type(request))
             ctx = _InProcessServicerContext()
-            method = getattr(self.servicer, rpc_name)
-            for item in method(req_copy, ctx):
+            for item in getattr(self.servicer, rpc_name)(req_copy, ctx):
                 yield self._roundtrip_proto(item, response_cls)
-        else:
-            stub = self._get_stub()
-            stub_method = getattr(stub, rpc_name)
-            for item in stub_method(request):
-                yield item
+            return
+        yield from getattr(self._get_stub(), rpc_name)(request)
 
     # -----------------------------------------------------------------------
-    # RPC Methods
+    # System
     # -----------------------------------------------------------------------
 
     def ping(self, message: str = "ping") -> PingResponse:
-        req = PingRequest(message=message)
-        return self._invoke_unary("Ping", req, PingResponse)
+        return self._invoke_unary("Ping", PingRequest(message=message), PingResponse)
 
     def get_status(self) -> StatusResponse:
-        req = StatusRequest()
-        return self._invoke_unary("GetStatus", req, StatusResponse)
+        return self._invoke_unary("GetStatus", StatusRequest(), StatusResponse)
 
     def get_version(self) -> VersionResponse:
-        req = VersionRequest()
-        return self._invoke_unary("GetVersion", req, VersionResponse)
+        return self._invoke_unary("GetVersion", VersionRequest(), VersionResponse)
 
-    def stop(self, reason: str = "") -> StopResponse:
-        req = StopRequest(reason=reason)
-        return self._invoke_unary("Stop", req, StopResponse)
+    # -----------------------------------------------------------------------
+    # Corpus reads
+    # -----------------------------------------------------------------------
 
     def search(self, request: SearchRequest) -> SearchResponse:
         return self._invoke_unary("Search", request, SearchResponse)
 
+    def list_documents(self, request: ListDocumentsRequest) -> ListDocumentsResponse:
+        return self._invoke_unary("ListDocuments", request, ListDocumentsResponse)
+
+    def get_document(self, document_id: int) -> GetDocumentResponse:
+        return self._invoke_unary("GetDocument", GetDocumentRequest(document_id=document_id), GetDocumentResponse)
+
     def list_sources(self) -> ListSourcesResponse:
-        req = ListSourcesRequest()
-        return self._invoke_unary("ListSources", req, ListSourcesResponse)
+        return self._invoke_unary("ListSources", ListSourcesRequest(), ListSourcesResponse)
+
+    def list_models(self) -> ListModelsResponse:
+        return self._invoke_unary("ListModels", ListModelsRequest(), ListModelsResponse)
+
+    def get_stats(self) -> StatsResponse:
+        return self._invoke_unary("GetStats", StatsRequest(), StatsResponse)
+
+    # -----------------------------------------------------------------------
+    # Operations (what the app used to shell out to `garage` for)
+    # -----------------------------------------------------------------------
 
     def add_source(self, request: AddSourceRequest) -> AddSourceResponse:
         return self._invoke_unary("AddSource", request, AddSourceResponse)
 
-    def remove_source(self, slug: str, force: bool = False) -> RemoveSourceResponse:
-        req = RemoveSourceRequest(slug=slug, force=force)
-        return self._invoke_unary("RemoveSource", req, RemoveSourceResponse)
+    def remove_source(self, slug: str) -> RemoveSourceResponse:
+        return self._invoke_unary("RemoveSource", RemoveSourceRequest(slug=slug), RemoveSourceResponse)
 
-    def scan(self, request: ScanRequest) -> ScanResponse:
-        return self._invoke_unary("Scan", request, ScanResponse)
+    def scan(self, source: str = "*", include_code: bool = False) -> ScanResponse:
+        return self._invoke_unary("Scan", ScanRequest(source=source, include_code=include_code), ScanResponse)
 
-    def ingest(self, request: IngestRequest) -> Iterator[IngestStatus]:
-        return self._invoke_stream("Ingest", request, IngestStatus)
+    def sync_sources(self, dry_run: bool = False) -> SyncSourcesResponse:
+        return self._invoke_unary("SyncSources", SyncSourcesRequest(dry_run=dry_run), SyncSourcesResponse)
 
-    def backfill(self, request: BackfillRequest) -> Iterator[BackfillStatus]:
-        return self._invoke_stream("Backfill", request, BackfillStatus)
+    def import_sources_to_config(self, path: str = "") -> ImportSourcesToConfigResponse:
+        return self._invoke_unary(
+            "ImportSourcesToConfig", ImportSourcesToConfigRequest(path=path), ImportSourcesToConfigResponse
+        )
 
     def reconcile(self, request: ReconcileRequest) -> ReconcileResponse:
         return self._invoke_unary("Reconcile", request, ReconcileResponse)
@@ -214,27 +234,28 @@ class GarageClient:
     def register_model(self, request: RegisterModelRequest) -> RegisterModelResponse:
         return self._invoke_unary("RegisterModel", request, RegisterModelResponse)
 
-    def list_models(self) -> ListModelsResponse:
-        req = ListModelsRequest()
-        return self._invoke_unary("ListModels", req, ListModelsResponse)
-
     def set_default_model(self, slug: str) -> SetDefaultModelResponse:
-        req = SetDefaultModelRequest(slug=slug)
-        return self._invoke_unary("SetDefaultModel", req, SetDefaultModelResponse)
+        return self._invoke_unary("SetDefaultModel", SetDefaultModelRequest(slug=slug), SetDefaultModelResponse)
 
-    def drop_model(self, slug: str, force: bool = False) -> DropModelResponse:
-        req = DropModelRequest(slug=slug, force=force)
-        return self._invoke_unary("DropModel", req, DropModelResponse)
+    def drop_model(self, slug: str) -> DropModelResponse:
+        return self._invoke_unary("DropModel", DropModelRequest(slug=slug), DropModelResponse)
 
-    def get_stats(self) -> StatsResponse:
-        req = StatsRequest()
-        return self._invoke_unary("GetStats", req, StatsResponse)
+    def backfill(self, request: BackfillRequest) -> Iterator[BackfillStatus]:
+        return self._invoke_stream("Backfill", request, BackfillStatus)
 
-    def extract(self, request: ExtractRequest) -> ExtractResponse:
-        return self._invoke_unary("Extract", request, ExtractResponse)
+    def enrich_facts(self, request: EnrichFactsRequest) -> Iterator[EnrichFactsStatus]:
+        return self._invoke_stream("EnrichFacts", request, EnrichFactsStatus)
 
-    def mcp_serve(self, request: McpServeRequest) -> Iterator[McpServeStatus]:
-        return self._invoke_stream("McpServe", request, McpServeStatus)
+    def init_db(self, schema_dir: str = "") -> InitDbResponse:
+        return self._invoke_unary("InitDb", InitDbRequest(schema_dir=schema_dir), InitDbResponse)
+
+    def get_setting(self, name: str) -> GetSettingResponse:
+        return self._invoke_unary("GetSetting", GetSettingRequest(name=name), GetSettingResponse)
+
+    def set_setting(self, name: str, value: str, path: str = "") -> SetSettingResponse:
+        return self._invoke_unary(
+            "SetSetting", SetSettingRequest(name=name, value=value, path=path), SetSettingResponse
+        )
 
     def mcp_install(self, request: McpInstallRequest) -> McpInstallResponse:
         return self._invoke_unary("McpInstall", request, McpInstallResponse)
@@ -243,34 +264,11 @@ class GarageClient:
         return self._invoke_unary("McpUninstall", request, McpUninstallResponse)
 
     def mcp_status(self) -> McpStatusResponse:
-        req = McpStatusRequest()
-        return self._invoke_unary("McpStatus", req, McpStatusResponse)
+        return self._invoke_unary("McpStatus", McpStatusRequest(), McpStatusResponse)
 
-    def sync(self, request: SyncRequest) -> Iterator[SyncStatus]:
-        return self._invoke_stream("Sync", request, SyncStatus)
-
-    def init_db(self, schema_dir: str = "") -> InitDbResponse:
-        req = InitDbRequest(schema_dir=schema_dir)
-        return self._invoke_unary("InitDb", req, InitDbResponse)
-
-    def config_init(self, request: ConfigInitRequest) -> ConfigInitResponse:
-        return self._invoke_unary("ConfigInit", request, ConfigInitResponse)
-
-    def config_show(self, show_defaults: bool = False) -> ConfigShowResponse:
-        req = ConfigShowRequest(show_defaults=show_defaults)
-        return self._invoke_unary("ConfigShow", req, ConfigShowResponse)
-
-    def config_path(self) -> ConfigPathResponse:
-        req = ConfigPathRequest()
-        return self._invoke_unary("ConfigPath", req, ConfigPathResponse)
-
-    def config_schema(self, path: str = "") -> ConfigSchemaResponse:
-        req = ConfigSchemaRequest(path=path)
-        return self._invoke_unary("ConfigSchema", req, ConfigSchemaResponse)
-
-    def config_import_sources(self, path: str, dry_run: bool = False) -> ConfigImportSourcesResponse:
-        req = ConfigImportSourcesRequest(path=path, dry_run=dry_run)
-        return self._invoke_unary("ConfigImportSources", req, ConfigImportSourcesResponse)
+    # -----------------------------------------------------------------------
+    # Database facade for the ingest and embed workers
+    # -----------------------------------------------------------------------
 
     def begin_ingest_session(self, request: BeginIngestSessionRequest) -> BeginIngestSessionResponse:
         return self._invoke_unary("BeginIngestSession", request, BeginIngestSessionResponse)
@@ -292,64 +290,3 @@ class GarageClient:
 
     def update_embeddings(self, request: UpdateEmbeddingsRequest) -> UpdateEmbeddingsResponse:
         return self._invoke_unary("UpdateEmbeddings", request, UpdateEmbeddingsResponse)
-
-    def execute_command(self, argv: list[str]) -> Iterator[CommandStatus]:
-        req = CommandRequest(
-            argv=argv,
-            cwd=os.getcwd(),
-            env={k: v for k, v in os.environ.items() if isinstance(v, str)},
-        )
-        return self._invoke_stream("ExecuteCommand", req, CommandStatus)
-
-
-# Global default client
-default_client = GarageClient()
-
-
-def run_command_in_process(
-    argv: list[str],
-    executor: CommandExecutor | None = None,
-) -> Iterator[CommandStatus]:
-    """Execute command in process, streaming CommandStatus."""
-    client = GarageClient(in_process=True, servicer=GarageRpcServicer(executor=executor))
-    return client.execute_command(argv)
-
-
-def run_command_grpc(
-    argv: list[str],
-    host: str = "127.0.0.1",
-    port: int = 50051,
-) -> Iterator[CommandStatus]:
-    """Execute command on a remote gRPC Garage server and stream CommandStatus responses."""
-    client = GarageClient(host=host, port=port, in_process=False)
-    return client.execute_command(argv)
-
-
-def execute_and_render_cli(
-    argv: list[str],
-    host: str | None = None,
-    port: int | None = None,
-    use_remote_grpc: bool = False,
-) -> int:
-    """Execute command serialized through gRPC pipeline and render streaming status/output to console."""
-    if use_remote_grpc or (host and port):
-        h = host or "127.0.0.1"
-        p = port or 50051
-        status_stream = run_command_grpc(argv, host=h, port=p)
-    else:
-        status_stream = run_command_in_process(argv)
-
-    exit_code = 0
-    for status in status_stream:
-        if status.stdout:
-            sys.stdout.write(status.stdout)
-            sys.stdout.flush()
-        if status.stderr:
-            sys.stderr.write(status.stderr)
-            sys.stderr.flush()
-        if status.type == StatusType.STATUS_ERROR:
-            exit_code = status.exit_code or 1
-        elif status.type == StatusType.STATUS_COMPLETED and exit_code == 0:
-            exit_code = status.exit_code
-
-    return exit_code

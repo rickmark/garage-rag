@@ -47,75 +47,6 @@ public enum LogStreamFilter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// A visual badge for log severity levels.
-public struct LogLevelBadge: View {
-    public let level: LogLevel
-
-    public init(level: LogLevel) {
-        self.level = level
-    }
-
-    public var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: iconName)
-                .font(.system(size: 8, weight: .bold))
-            Text(level.rawValue.uppercased())
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-        }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(backgroundColor)
-        .foregroundStyle(foregroundColor)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var iconName: String {
-        switch level {
-        case .debug: return "ant.fill"
-        case .info: return "info.circle.fill"
-        case .warning: return "exclamationmark.triangle.fill"
-        case .error: return "xmark.octagon.fill"
-        }
-    }
-
-    private var backgroundColor: Color {
-        switch level {
-        case .debug: return Color.secondary.opacity(0.12)
-        case .info: return Color.blue.opacity(0.15)
-        case .warning: return Color.orange.opacity(0.18)
-        case .error: return Color.red.opacity(0.18)
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch level {
-        case .debug: return .secondary
-        case .info: return .blue
-        case .warning: return .orange
-        case .error: return .red
-        }
-    }
-}
-
-/// A visual badge for stdout vs stderr stream origins.
-public struct LogStreamBadge: View {
-    public let stream: LogLine.Stream
-
-    public init(stream: LogLine.Stream) {
-        self.stream = stream
-    }
-
-    public var body: some View {
-        Text(stream.rawValue)
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(stream == .stderr ? Color.red.opacity(0.12) : Color.secondary.opacity(0.10))
-            .foregroundStyle(stream == .stderr ? Color.red : Color.secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-    }
-}
-
 /// A comprehensive, sortable, and filterable table view for log entries.
 public struct LogTableView: View {
     public let lines: [LogLine]
@@ -128,6 +59,9 @@ public struct LogTableView: View {
     @State private var selectedLineIDs = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\LogLine.date, order: .forward)]
     @State private var showDetailInspector = false
+    /// `filteredLines`, recomputed only when the lines or a filter change. The table
+    /// redraws at the log poll rate; filtering and sorting on every draw showed up.
+    @State private var visibleLines: [LogLine] = []
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -162,6 +96,9 @@ public struct LogTableView: View {
                 detailInspectorView(for: line)
             }
         }
+        .onChange(of: filterKey, initial: true) {
+            visibleLines = filteredLines
+        }
     }
 
     // MARK: - Filter Toolbar
@@ -183,6 +120,7 @@ public struct LogTableView: View {
                             .foregroundStyle(.secondary)
                             .font(.caption)
                     }
+                    .accessibilityLabel("Clear filter text")
                     .buttonStyle(.plain)
                 }
             }
@@ -222,7 +160,7 @@ public struct LogTableView: View {
             Spacer()
 
             // Count Badge
-            Text("\(filteredLines.count) of \(lines.count) entries")
+            Text("\(visibleLines.count) of \(lines.count) entries")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -267,7 +205,7 @@ public struct LogTableView: View {
                 title: "No Logs Recorded",
                 subtitle: sourceName != nil ? "No log output has been produced by \(sourceName!) yet." : "No log output recorded yet."
             )
-        } else if filteredLines.isEmpty {
+        } else if visibleLines.isEmpty {
             emptyStateView(
                 icon: "line.3.horizontal.decrease.circle",
                 title: "No Matches",
@@ -279,7 +217,7 @@ public struct LogTableView: View {
     }
 
     private var tableContent: some View {
-        Table(filteredLines, selection: $selectedLineIDs, sortOrder: $sortOrder) {
+        Table(visibleLines, selection: $selectedLineIDs, sortOrder: $sortOrder) {
             TableColumn("Time", value: \.date) { line in
                 Text(Self.timestampFormatter.string(from: line.date))
                     .font(.system(.caption2, design: .monospaced))
@@ -370,14 +308,14 @@ public struct LogTableView: View {
                 }
                 Spacer()
                 Button("Copy Text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(line.rawText ?? line.text, forType: .string)
+                    NSPasteboard.general.copy(line.rawText ?? line.text)
                 }
                 .controlSize(.small)
 
                 Button(action: { showDetailInspector = false }) {
                     Image(systemName: "xmark")
                 }
+                .accessibilityLabel("Close log entry details")
                 .buttonStyle(.plain)
                 .font(.caption)
             }
@@ -422,6 +360,28 @@ public struct LogTableView: View {
         streamFilter = .all
     }
 
+    /// Everything `filteredLines` depends on. Lines are keyed by count and last id
+    /// (O(1)); a trimmed ring buffer changes the last id even at a constant count.
+    private struct FilterKey: Equatable {
+        let lineCount: Int
+        let lastLineID: UUID?
+        let searchText: String
+        let levelFilter: LogLevelFilter
+        let streamFilter: LogStreamFilter
+        let sortOrder: [KeyPathComparator<LogLine>]
+    }
+
+    private var filterKey: FilterKey {
+        FilterKey(
+            lineCount: lines.count,
+            lastLineID: lines.last?.id,
+            searchText: searchText,
+            levelFilter: levelFilter,
+            streamFilter: streamFilter,
+            sortOrder: sortOrder
+        )
+    }
+
     public var filteredLines: [LogLine] {
         var result = lines
 
@@ -451,15 +411,13 @@ public struct LogTableView: View {
 
     private func copyFilteredLogs() {
         let content = filteredLines.map { formatLogLineForExport($0) }.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(content, forType: .string)
+        NSPasteboard.general.copy(content)
     }
 
     private func copySelectedLines(ids: Set<UUID>) {
         let matched = filteredLines.filter { ids.contains($0.id) }
         let content = matched.map { formatLogLineForExport($0) }.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(content, forType: .string)
+        NSPasteboard.general.copy(content)
     }
 
     private func formatLogLineForExport(_ line: LogLine) -> String {

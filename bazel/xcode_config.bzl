@@ -5,7 +5,7 @@ load("@rules_xcodeproj//xcode/private:xcode_config.bzl", "get_default_xcode_path
 def _xcode_config_impl(ctx):
     """Xcode config that uses the default Xcode installation."""
     xcode_path = get_default_xcode_path(ctx)
-    
+
     return [
         platform_common.XcodeConfiguration(
             xcode_version = "27.0",

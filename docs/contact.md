@@ -15,7 +15,7 @@ We welcome questions, bug reports, feature suggestions, and security vulnerabili
 ### 1. Bug Reports & Issues
 If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `garage` CLI:
 
-- **Open a GitHub Issue**: [github.com/rickmark/garage/issues](https://github.com/rickmark/garage/issues)
+- **Open a GitHub Issue**: [github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
 - Please include:
   - macOS version and hardware architecture (e.g., macOS 15.0 Sequoia, Apple Silicon M3)
   - Garage version / commit hash
@@ -24,7 +24,7 @@ If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `gar
 
 ### 2. Feature Requests & Discussions
 Have an idea for a new extractor, embedding provider, or MCP tool?
-- Join the discussion and submit proposals under [GitHub Issues / Feature Requests](https://github.com/rickmark/garage/issues).
+- Join the discussion and submit proposals under [GitHub Issues / Feature Requests](https://github.com/rickmark/garage-rag/issues).
 
 ### 3. Security Vulnerability Disclosures
 If you discover a potential security issue or data leakage vulnerability:
@@ -40,9 +40,9 @@ Before sharing logs on public issue trackers, protect your privacy by following 
 
 ### Locating Your Logs
 Logs are stored locally on your machine at:
-- **PostgreSQL Service**: `~/Library/Application Support/GarageApp/logs/postgres.log`
-- **Ingestion & CLI Pipeline**: `~/Library/Application Support/GarageApp/logs/ingest.log`
-- **MCP HTTP Server**: `~/Library/Application Support/GarageApp/logs/mcp.log`
+- **PostgreSQL Service**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/postgres.log`
+- **Ingestion & CLI Pipeline**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/ingest.log`
+- **MCP HTTP Server**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
 
 ### Sanitization Guidelines
 1. **Redact Usernames and Paths**: Replace your home directory name (e.g., `/Users/yourname/`) with `/Users/username/`.

@@ -74,6 +74,10 @@ final class IngestService: ObservableObject {
     @Published private(set) var activeMode: IngestExecutionMode? = nil
     @Published private(set) var currentSource: String? = nil
     @Published private(set) var pendingSources: Set<String> = []
+    /// Every source in the current run, kept for the whole run. `pendingSources`
+    /// drains as each source starts, so it cannot distinguish a finished batch
+    /// run from a single-source run; combined progress keys off this instead.
+    @Published private(set) var runSources: Set<String> = []
     @Published private(set) var latestProgress: IngestProgressUpdate? = nil
     @Published private(set) var progressBySource: [String: IngestProgressUpdate] = [:]
     @Published private(set) var lastError: String? = nil
@@ -85,23 +89,20 @@ final class IngestService: ObservableObject {
     let postgres: PostgresService?
     private let maxLogLines = 4000
     private var activeActivity: NSObjectProtocol? = nil
-    private var osLogMonitorTask: Task<Void, Never>? = nil
     private var seenLogKeys: Set<String> = []
     private var seenLogKeyQueue: [String] = []
     private let maxSeenKeys = 2000
 
+    /// Ingest logs arrive from the XPC helper over its log stream (IngestClient); the
+    /// app's own OSLog is polled once, by OSLogStreamService, not here as well.
     init(
         client: IngestClient = IngestClient(),
-        postgres: PostgresService? = nil,
-        startMonitoring: Bool = true
+        postgres: PostgresService? = nil
     ) {
         let savedMode = UserDefaults.standard.string(forKey: "garage.ingest.executionMode")
         self.executionMode = savedMode.flatMap(IngestExecutionMode.init) ?? .xpcService
         self.xpcClient = client
         self.postgres = postgres
-        if startMonitoring {
-            self.startOSLogMonitoring(since: Date().addingTimeInterval(-300))
-        }
     }
 
     var client: IngestClient {
@@ -169,141 +170,35 @@ final class IngestService: ObservableObject {
         progressBySource.removeAll()
     }
 
+    /// Clears the transient banner state after a run finishes while keeping the
+    /// per-source "Last Ingest" summaries in `progressBySource`.
+    func clearTransientMessages() {
+        lastError = nil
+        lastSuccess = nil
+        latestProgress = nil
+    }
+
     func clearProgressBySource() {
         self.progressBySource.removeAll()
     }
 
     func setPendingSources(_ slugs: Set<String>) {
         self.pendingSources = slugs
+        self.runSources = slugs
     }
 
     func markSourceActive(_ slug: String) {
         self.pendingSources.remove(slug)
+        self.runSources.insert(slug)
+        // handleProgressBatch only adopts a source when `currentSource` is unset
+        // or the "*" placeholder, so without this the first source of a batch
+        // run would stay current for the whole run.
+        self.currentSource = slug
     }
 
     func clearPendingSources() {
         self.pendingSources.removeAll()
-    }
-
-    // MARK: - OSLogStore Monitoring
-
-    private func isRelevantIngestLog(category: String, message: String, process: String) -> Bool {
-        if category.localizedCaseInsensitiveContains("ingest") ||
-            category == "GarageXPCOutputCapture" ||
-            category == "IngestService" ||
-            category == "IngestClient" ||
-            category == "GarageIngestXPCService" ||
-            process.localizedCaseInsensitiveContains("GarageIngest") ||
-            message.hasPrefix("[Python]") {
-            return true
-        }
-        return false
-    }
-
-    private func processOSLogEntry(_ entry: OSLogEntry) {
-        guard let logEntry = entry as? OSLogEntryLog else { return }
-        let category = logEntry.category
-        let message = logEntry.composedMessage
-        let process = logEntry.process
-
-        guard isRelevantIngestLog(category: category, message: message, process: process) else { return }
-
-        let stream: LogLine.Stream = (logEntry.level == .fault || logEntry.level == .error) ? .stderr : .stdout
-        let level: LogLevel
-        switch logEntry.level {
-        case .fault, .error:
-            level = .error
-        case .info, .notice:
-            level = .info
-        case .debug:
-            level = .debug
-        default:
-            level = .info
-        }
-
-        let sourceLabel: String
-        if !category.isEmpty {
-            sourceLabel = category
-        } else if !process.isEmpty {
-            sourceLabel = process
-        } else {
-            sourceLabel = "Ingest (OSLog)"
-        }
-
-        let line = LogLine(
-            id: UUID(),
-            date: logEntry.date,
-            stream: stream,
-            text: message,
-            source: sourceLabel,
-            level: level
-        )
-        appendLog(line)
-    }
-
-    func startOSLogMonitoring(since startDate: Date) {
-        stopOSLogMonitoring()
-
-        guard #available(macOS 12.0, *) else { return }
-        osLogMonitorTask = Task { [weak self] in
-            guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
-
-            var lastDate = startDate
-            var lastPosition = store.position(date: startDate)
-            let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
-
-            while !Task.isCancelled {
-                do {
-                    let entries = try store.getEntries(at: lastPosition, matching: predicate)
-                    var maxDate = lastDate
-                    var collected: [OSLogEntry] = []
-
-                    for entry in entries {
-                        collected.append(entry)
-                        if entry.date > maxDate {
-                            maxDate = entry.date
-                        }
-                    }
-
-                    if !collected.isEmpty {
-                        await MainActor.run {
-                            for entry in collected {
-                                self?.processOSLogEntry(entry)
-                            }
-                        }
-                    }
-
-                    lastDate = maxDate
-                    lastPosition = store.position(date: lastDate)
-                } catch {
-                    logger.debug("IngestService: OSLogStore polling error: \(error.localizedDescription, privacy: .public)")
-                }
-
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-        }
-    }
-
-    func stopOSLogMonitoring() {
-        osLogMonitorTask?.cancel()
-        osLogMonitorTask = nil
-    }
-
-    func drainOSLogs(since startDate: Date) {
-        guard #available(macOS 12.0, *) else { return }
-        guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return }
-        let position = store.position(date: startDate)
-        let predicate = NSPredicate(format: "subsystem BEGINSWITH 'me.rickmark.garage' OR process CONTAINS[c] 'GarageIngest'")
-        if let entries = try? store.getEntries(at: position, matching: predicate) {
-            for entry in entries {
-                processOSLogEntry(entry)
-            }
-        }
-    }
-
-    public func fetchRecentLogsFromOSLogStore(timeWindow: TimeInterval = 300) {
-        let startDate = Date().addingTimeInterval(-timeWindow)
-        drainOSLogs(since: startDate)
+        self.runSources.removeAll()
     }
 
     func handleProgress(_ progress: IngestProgressUpdate, sourceLabel: String = "Ingest") {
@@ -419,8 +314,6 @@ final class IngestService: ObservableObject {
             )
             self.appendLog(startLine)
 
-            self.startOSLogMonitoring(since: runStartDate.addingTimeInterval(-1.0))
-
             var effectiveDatabaseURL = options.databaseUrl
             if effectiveDatabaseURL == nil, let postgres = self.postgres, let dbURL = try? postgres.connectionURL() {
                 effectiveDatabaseURL = dbURL
@@ -437,14 +330,11 @@ final class IngestService: ObservableObject {
             return prep.errorResult ?? IngestResult(succeeded: false, message: "Ingestion is already running")
         }
 
-        let runStartDate = prep.runStartDate
         let targetMode = prep.targetMode
         let selectedClient = self.xpcClient
 
         let cleanup = { @MainActor [weak self] in
             guard let self = self else { return }
-            self.stopOSLogMonitoring()
-            self.drainOSLogs(since: runStartDate.addingTimeInterval(-1.0))
             self.isRunning = false
             self.isCancelling = false
             self.activeMode = nil
@@ -500,7 +390,6 @@ final class IngestService: ObservableObject {
             force: options.force,
             grpcHost: options.grpcHost,
             grpcPort: options.grpcPort,
-            extraArguments: options.extraArguments,
             databaseUrl: prep.dbURL,
             lmStudioApiToken: prep.lmToken
         )

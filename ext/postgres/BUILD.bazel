@@ -21,9 +21,18 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
+        # The icu/readline/zlib dylibs identify themselves as @rpath/<name>
+        # (//bazel:foreign_cc.bzl NORMALIZE_INSTALL_NAMES), so configure's test
+        # program and everything built after it need somewhere to resolve that
+        # against. //ext/postgres:postgres_rpath re-points these at
+        # @loader_path for the shipped bundle.
+        "LDFLAGS": " ".join([
+            "-Wl,-rpath,$$EXT_BUILD_DEPS/libicu_shared/lib",
+            "-Wl,-rpath,$$EXT_BUILD_DEPS/libreadline_shared/lib",
+            "-Wl,-rpath,$$EXT_BUILD_DEPS/libzlib_shared/lib",
+        ]),
     },
     lib_source = "@postgres//:postgres_source",
     out_binaries = [

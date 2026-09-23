@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import grpc
+import pytest
 
 from garage_rag.db.models import Chunk, CorpusClass, Document, Fact, IngestState, TrustTier
 from garage_rag.proto.garage_pb2 import GetDocumentRequest, ListDocumentsRequest
@@ -147,13 +148,17 @@ def test_grpc_get_document_found():
 def test_grpc_get_document_not_found():
     servicer = GarageRpcServicer()
     mock_context = MagicMock()
+    # A real ServicerContext.abort() raises and never returns; mirror that so the
+    # handler cannot fall through to dereference the missing document.
+    mock_context.abort.side_effect = grpc.RpcError("aborted")
 
     with patch("garage_rag.db.engine.session_scope") as mock_scope:
         mock_session = MagicMock()
         mock_scope.return_value.__enter__.return_value = mock_session
         mock_session.get.return_value = None
 
-        response = servicer.GetDocument(GetDocumentRequest(document_id=999), mock_context)
+        with pytest.raises(grpc.RpcError):
+            servicer.GetDocument(GetDocumentRequest(document_id=999), mock_context)
 
-    mock_context.set_code.assert_called_once_with(grpc.StatusCode.NOT_FOUND)
-    assert response.document.id == 0
+    mock_context.abort.assert_called_once()
+    assert mock_context.abort.call_args.args[0] == grpc.StatusCode.NOT_FOUND

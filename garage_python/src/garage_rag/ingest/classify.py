@@ -71,16 +71,8 @@ def classify(
     kind: ContentKind,
     *,
     source_default: CorpusClass = CorpusClass.DOCUMENT,
-    source_pins_class: bool = False,
 ) -> CorpusClass:
-    """Decide the corpus class for one resource.
-
-    ``source_pins_class`` forces the source's default, used for sources whose
-    class is intrinsic (Messages, Mail) rather than inferred per file.
-    """
-    if source_pins_class:
-        return source_default
-
+    """Decide the corpus class for one resource."""
     # Communications are never reclassified by file shape.
     if kind is ContentKind.CONVERSATION or source_default is CorpusClass.COMMUNICATION:
         return CorpusClass.COMMUNICATION

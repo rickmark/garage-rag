@@ -35,8 +35,23 @@ final class LlamaService: ObservableObject {
         return .yellow
     }
 
+    /// Aliases of every model currently loaded in LlamaXPCService (it can hold several at once).
+    var loadedModelIds: [String] {
+        models.map(\.id)
+    }
+
+    /// The default model: the alias `/props` reports (most recently loaded), as long as it is
+    /// still among the loaded models; otherwise the first loaded model.
     var activeModelId: String? {
-        models.first?.id ?? props?.modelAlias
+        if let alias = props?.modelAlias, !alias.isEmpty,
+           models.isEmpty || models.contains(where: { $0.id == alias }) {
+            return alias
+        }
+        return models.first?.id
+    }
+
+    func isModelLoaded(alias: String) -> Bool {
+        loadedModelIds.contains(alias)
     }
 
     func appendLog(_ text: String, stream: LogLine.Stream = .stdout) {
@@ -95,7 +110,8 @@ final class LlamaService: ObservableObject {
             self.slots = slotsResp
 
             if healthResp.status == "ok" {
-                statusMessage = "Ready (\(modelsResp.data.first?.id ?? "model loaded"))"
+                let aliases = modelsResp.data.map(\.id).joined(separator: ", ")
+                statusMessage = "Ready (\(aliases.isEmpty ? "model loaded" : aliases))"
             } else if healthResp.status == "no_model_loaded" {
                 statusMessage = "No model loaded"
             } else {
@@ -165,6 +181,43 @@ final class LlamaService: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             appendLog("Error unloading model: \(error.localizedDescription)", stream: .stderr)
+            return false
+        }
+    }
+
+    /// Unloads a single model by alias via the service's `POST /models/unload` route,
+    /// leaving any other loaded models in place.
+    @discardableResult
+    func unloadModel(alias: String) async -> Bool {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlias.isEmpty else {
+            lastError = "Model alias cannot be empty."
+            return false
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+        lastError = nil
+        lastSuccess = nil
+
+        do {
+            appendLog("Unloading model '\(trimmedAlias)'...")
+            let bodyData = try JSONSerialization.data(withJSONObject: ["model": trimmedAlias])
+            let body = String(data: bodyData, encoding: .utf8)
+            let result = try await client.handleServerRequest(endpoint: "/models/unload", method: "POST", jsonBody: body)
+            await refreshStatus()
+            if (200..<300).contains(result.statusCode) {
+                lastSuccess = "Model '\(trimmedAlias)' unloaded."
+                appendLog("Model '\(trimmedAlias)' unloaded.")
+                return true
+            }
+            let message = "Failed to unload model '\(trimmedAlias)' (HTTP \(result.statusCode)): \(result.responseBody)"
+            lastError = message
+            appendLog(message, stream: .stderr)
+            return false
+        } catch {
+            lastError = error.localizedDescription
+            appendLog("Error unloading model '\(trimmedAlias)': \(error.localizedDescription)", stream: .stderr)
             return false
         }
     }

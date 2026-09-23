@@ -29,8 +29,12 @@ if _version_not_supported:
 
 
 class GarageServiceStub:
-    """The GarageService enables controlling and executing Garage commands,
-    streaming status updates and structured data.
+    """The GarageService is how the macOS app drives the Python pipeline: corpus
+    reads for its views, every operation it would otherwise shell out to the
+    `garage` CLI for (sources, models, backfill, fact distillation, schema,
+    settings, MCP client registration), and the database facade the ingest and
+    embed XPC workers persist through. Each RPC is a thin wrapper over the same
+    garage_rag.ops function the CLI command calls.
     """
 
     def __init__(self, channel):
@@ -53,11 +57,6 @@ class GarageServiceStub:
                 '/garage.GarageService/GetVersion',
                 request_serializer=garage__pb2.VersionRequest.SerializeToString,
                 response_deserializer=garage__pb2.VersionResponse.FromString,
-                _registered_method=True)
-        self.Stop = channel.unary_unary(
-                '/garage.GarageService/Stop',
-                request_serializer=garage__pb2.StopRequest.SerializeToString,
-                response_deserializer=garage__pb2.StopResponse.FromString,
                 _registered_method=True)
         self.Search = channel.unary_unary(
                 '/garage.GarageService/Search',
@@ -94,35 +93,30 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.ScanRequest.SerializeToString,
                 response_deserializer=garage__pb2.ScanResponse.FromString,
                 _registered_method=True)
-        self.Ingest = channel.unary_stream(
-                '/garage.GarageService/Ingest',
-                request_serializer=garage__pb2.IngestRequest.SerializeToString,
-                response_deserializer=garage__pb2.IngestStatus.FromString,
+        self.SyncSources = channel.unary_unary(
+                '/garage.GarageService/SyncSources',
+                request_serializer=garage__pb2.SyncSourcesRequest.SerializeToString,
+                response_deserializer=garage__pb2.SyncSourcesResponse.FromString,
                 _registered_method=True)
-        self.Backfill = channel.unary_stream(
-                '/garage.GarageService/Backfill',
-                request_serializer=garage__pb2.BackfillRequest.SerializeToString,
-                response_deserializer=garage__pb2.BackfillStatus.FromString,
-                _registered_method=True)
-        self.EnrichFacts = channel.unary_stream(
-                '/garage.GarageService/EnrichFacts',
-                request_serializer=garage__pb2.EnrichFactsRequest.SerializeToString,
-                response_deserializer=garage__pb2.EnrichFactsStatus.FromString,
+        self.ImportSourcesToConfig = channel.unary_unary(
+                '/garage.GarageService/ImportSourcesToConfig',
+                request_serializer=garage__pb2.ImportSourcesToConfigRequest.SerializeToString,
+                response_deserializer=garage__pb2.ImportSourcesToConfigResponse.FromString,
                 _registered_method=True)
         self.Reconcile = channel.unary_unary(
                 '/garage.GarageService/Reconcile',
                 request_serializer=garage__pb2.ReconcileRequest.SerializeToString,
                 response_deserializer=garage__pb2.ReconcileResponse.FromString,
                 _registered_method=True)
-        self.RegisterModel = channel.unary_unary(
-                '/garage.GarageService/RegisterModel',
-                request_serializer=garage__pb2.RegisterModelRequest.SerializeToString,
-                response_deserializer=garage__pb2.RegisterModelResponse.FromString,
-                _registered_method=True)
         self.ListModels = channel.unary_unary(
                 '/garage.GarageService/ListModels',
                 request_serializer=garage__pb2.ListModelsRequest.SerializeToString,
                 response_deserializer=garage__pb2.ListModelsResponse.FromString,
+                _registered_method=True)
+        self.RegisterModel = channel.unary_unary(
+                '/garage.GarageService/RegisterModel',
+                request_serializer=garage__pb2.RegisterModelRequest.SerializeToString,
+                response_deserializer=garage__pb2.RegisterModelResponse.FromString,
                 _registered_method=True)
         self.SetDefaultModel = channel.unary_unary(
                 '/garage.GarageService/SetDefaultModel',
@@ -134,30 +128,35 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.DropModelRequest.SerializeToString,
                 response_deserializer=garage__pb2.DropModelResponse.FromString,
                 _registered_method=True)
+        self.Backfill = channel.unary_stream(
+                '/garage.GarageService/Backfill',
+                request_serializer=garage__pb2.BackfillRequest.SerializeToString,
+                response_deserializer=garage__pb2.BackfillStatus.FromString,
+                _registered_method=True)
+        self.EnrichFacts = channel.unary_stream(
+                '/garage.GarageService/EnrichFacts',
+                request_serializer=garage__pb2.EnrichFactsRequest.SerializeToString,
+                response_deserializer=garage__pb2.EnrichFactsStatus.FromString,
+                _registered_method=True)
         self.GetStats = channel.unary_unary(
                 '/garage.GarageService/GetStats',
                 request_serializer=garage__pb2.StatsRequest.SerializeToString,
                 response_deserializer=garage__pb2.StatsResponse.FromString,
-                _registered_method=True)
-        self.Extract = channel.unary_unary(
-                '/garage.GarageService/Extract',
-                request_serializer=garage__pb2.ExtractRequest.SerializeToString,
-                response_deserializer=garage__pb2.ExtractResponse.FromString,
                 _registered_method=True)
         self.InitDb = channel.unary_unary(
                 '/garage.GarageService/InitDb',
                 request_serializer=garage__pb2.InitDbRequest.SerializeToString,
                 response_deserializer=garage__pb2.InitDbResponse.FromString,
                 _registered_method=True)
-        self.Sync = channel.unary_stream(
-                '/garage.GarageService/Sync',
-                request_serializer=garage__pb2.SyncRequest.SerializeToString,
-                response_deserializer=garage__pb2.SyncStatus.FromString,
+        self.GetSetting = channel.unary_unary(
+                '/garage.GarageService/GetSetting',
+                request_serializer=garage__pb2.GetSettingRequest.SerializeToString,
+                response_deserializer=garage__pb2.GetSettingResponse.FromString,
                 _registered_method=True)
-        self.McpServe = channel.unary_stream(
-                '/garage.GarageService/McpServe',
-                request_serializer=garage__pb2.McpServeRequest.SerializeToString,
-                response_deserializer=garage__pb2.McpServeStatus.FromString,
+        self.SetSetting = channel.unary_unary(
+                '/garage.GarageService/SetSetting',
+                request_serializer=garage__pb2.SetSettingRequest.SerializeToString,
+                response_deserializer=garage__pb2.SetSettingResponse.FromString,
                 _registered_method=True)
         self.McpInstall = channel.unary_unary(
                 '/garage.GarageService/McpInstall',
@@ -173,31 +172,6 @@ class GarageServiceStub:
                 '/garage.GarageService/McpStatus',
                 request_serializer=garage__pb2.McpStatusRequest.SerializeToString,
                 response_deserializer=garage__pb2.McpStatusResponse.FromString,
-                _registered_method=True)
-        self.ConfigInit = channel.unary_unary(
-                '/garage.GarageService/ConfigInit',
-                request_serializer=garage__pb2.ConfigInitRequest.SerializeToString,
-                response_deserializer=garage__pb2.ConfigInitResponse.FromString,
-                _registered_method=True)
-        self.ConfigShow = channel.unary_unary(
-                '/garage.GarageService/ConfigShow',
-                request_serializer=garage__pb2.ConfigShowRequest.SerializeToString,
-                response_deserializer=garage__pb2.ConfigShowResponse.FromString,
-                _registered_method=True)
-        self.ConfigPath = channel.unary_unary(
-                '/garage.GarageService/ConfigPath',
-                request_serializer=garage__pb2.ConfigPathRequest.SerializeToString,
-                response_deserializer=garage__pb2.ConfigPathResponse.FromString,
-                _registered_method=True)
-        self.ConfigSchema = channel.unary_unary(
-                '/garage.GarageService/ConfigSchema',
-                request_serializer=garage__pb2.ConfigSchemaRequest.SerializeToString,
-                response_deserializer=garage__pb2.ConfigSchemaResponse.FromString,
-                _registered_method=True)
-        self.ConfigImportSources = channel.unary_unary(
-                '/garage.GarageService/ConfigImportSources',
-                request_serializer=garage__pb2.ConfigImportSourcesRequest.SerializeToString,
-                response_deserializer=garage__pb2.ConfigImportSourcesResponse.FromString,
                 _registered_method=True)
         self.BeginIngestSession = channel.unary_unary(
                 '/garage.GarageService/BeginIngestSession',
@@ -234,16 +208,15 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.UpdateEmbeddingsRequest.SerializeToString,
                 response_deserializer=garage__pb2.UpdateEmbeddingsResponse.FromString,
                 _registered_method=True)
-        self.ExecuteCommand = channel.unary_stream(
-                '/garage.GarageService/ExecuteCommand',
-                request_serializer=garage__pb2.CommandRequest.SerializeToString,
-                response_deserializer=garage__pb2.CommandStatus.FromString,
-                _registered_method=True)
 
 
 class GarageServiceServicer:
-    """The GarageService enables controlling and executing Garage commands,
-    streaming status updates and structured data.
+    """The GarageService is how the macOS app drives the Python pipeline: corpus
+    reads for its views, every operation it would otherwise shell out to the
+    `garage` CLI for (sources, models, backfill, fact distillation, schema,
+    settings, MCP client registration), and the database facade the ingest and
+    embed XPC workers persist through. Each RPC is a thin wrapper over the same
+    garage_rag.ops function the CLI command calls.
     """
 
     def Ping(self, request, context):
@@ -262,13 +235,6 @@ class GarageServiceServicer:
 
     def GetVersion(self, request, context):
         """Version info
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Stop(self, request, context):
-        """Request server shutdown
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -314,25 +280,18 @@ class GarageServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Scan(self, request, context):
-        """--- Ingestion & Pipeline ---
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Ingest(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Backfill(self, request, context):
+    def SyncSources(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def EnrichFacts(self, request, context):
+    def ImportSourcesToConfig(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -344,14 +303,14 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def RegisterModel(self, request, context):
+    def ListModels(self, request, context):
         """--- Embedding Models ---
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListModels(self, request, context):
+    def RegisterModel(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -369,15 +328,22 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetStats(self, request, context):
-        """--- Corpus & DB Stats ---
+    def Backfill(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EnrichFacts(self, request, context):
+        """--- Facts ---
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Extract(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+    def GetStats(self, request, context):
+        """--- Schema, Stats & Settings ---
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -388,21 +354,21 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Sync(self, request, context):
+    def GetSetting(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def McpServe(self, request, context):
-        """--- MCP Operations ---
-        """
+    def SetSetting(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def McpInstall(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """--- MCP Client Registration ---
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -414,37 +380,6 @@ class GarageServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def McpStatus(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ConfigInit(self, request, context):
-        """--- Config Operations ---
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ConfigShow(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ConfigPath(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ConfigSchema(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ConfigImportSources(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -493,13 +428,6 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ExecuteCommand(self, request, context):
-        """--- Legacy / Generic Command Fallback ---
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_GarageServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -517,11 +445,6 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.GetVersion,
                     request_deserializer=garage__pb2.VersionRequest.FromString,
                     response_serializer=garage__pb2.VersionResponse.SerializeToString,
-            ),
-            'Stop': grpc.unary_unary_rpc_method_handler(
-                    servicer.Stop,
-                    request_deserializer=garage__pb2.StopRequest.FromString,
-                    response_serializer=garage__pb2.StopResponse.SerializeToString,
             ),
             'Search': grpc.unary_unary_rpc_method_handler(
                     servicer.Search,
@@ -558,35 +481,30 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     request_deserializer=garage__pb2.ScanRequest.FromString,
                     response_serializer=garage__pb2.ScanResponse.SerializeToString,
             ),
-            'Ingest': grpc.unary_stream_rpc_method_handler(
-                    servicer.Ingest,
-                    request_deserializer=garage__pb2.IngestRequest.FromString,
-                    response_serializer=garage__pb2.IngestStatus.SerializeToString,
+            'SyncSources': grpc.unary_unary_rpc_method_handler(
+                    servicer.SyncSources,
+                    request_deserializer=garage__pb2.SyncSourcesRequest.FromString,
+                    response_serializer=garage__pb2.SyncSourcesResponse.SerializeToString,
             ),
-            'Backfill': grpc.unary_stream_rpc_method_handler(
-                    servicer.Backfill,
-                    request_deserializer=garage__pb2.BackfillRequest.FromString,
-                    response_serializer=garage__pb2.BackfillStatus.SerializeToString,
-            ),
-            'EnrichFacts': grpc.unary_stream_rpc_method_handler(
-                    servicer.EnrichFacts,
-                    request_deserializer=garage__pb2.EnrichFactsRequest.FromString,
-                    response_serializer=garage__pb2.EnrichFactsStatus.SerializeToString,
+            'ImportSourcesToConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.ImportSourcesToConfig,
+                    request_deserializer=garage__pb2.ImportSourcesToConfigRequest.FromString,
+                    response_serializer=garage__pb2.ImportSourcesToConfigResponse.SerializeToString,
             ),
             'Reconcile': grpc.unary_unary_rpc_method_handler(
                     servicer.Reconcile,
                     request_deserializer=garage__pb2.ReconcileRequest.FromString,
                     response_serializer=garage__pb2.ReconcileResponse.SerializeToString,
             ),
-            'RegisterModel': grpc.unary_unary_rpc_method_handler(
-                    servicer.RegisterModel,
-                    request_deserializer=garage__pb2.RegisterModelRequest.FromString,
-                    response_serializer=garage__pb2.RegisterModelResponse.SerializeToString,
-            ),
             'ListModels': grpc.unary_unary_rpc_method_handler(
                     servicer.ListModels,
                     request_deserializer=garage__pb2.ListModelsRequest.FromString,
                     response_serializer=garage__pb2.ListModelsResponse.SerializeToString,
+            ),
+            'RegisterModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterModel,
+                    request_deserializer=garage__pb2.RegisterModelRequest.FromString,
+                    response_serializer=garage__pb2.RegisterModelResponse.SerializeToString,
             ),
             'SetDefaultModel': grpc.unary_unary_rpc_method_handler(
                     servicer.SetDefaultModel,
@@ -598,30 +516,35 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     request_deserializer=garage__pb2.DropModelRequest.FromString,
                     response_serializer=garage__pb2.DropModelResponse.SerializeToString,
             ),
+            'Backfill': grpc.unary_stream_rpc_method_handler(
+                    servicer.Backfill,
+                    request_deserializer=garage__pb2.BackfillRequest.FromString,
+                    response_serializer=garage__pb2.BackfillStatus.SerializeToString,
+            ),
+            'EnrichFacts': grpc.unary_stream_rpc_method_handler(
+                    servicer.EnrichFacts,
+                    request_deserializer=garage__pb2.EnrichFactsRequest.FromString,
+                    response_serializer=garage__pb2.EnrichFactsStatus.SerializeToString,
+            ),
             'GetStats': grpc.unary_unary_rpc_method_handler(
                     servicer.GetStats,
                     request_deserializer=garage__pb2.StatsRequest.FromString,
                     response_serializer=garage__pb2.StatsResponse.SerializeToString,
-            ),
-            'Extract': grpc.unary_unary_rpc_method_handler(
-                    servicer.Extract,
-                    request_deserializer=garage__pb2.ExtractRequest.FromString,
-                    response_serializer=garage__pb2.ExtractResponse.SerializeToString,
             ),
             'InitDb': grpc.unary_unary_rpc_method_handler(
                     servicer.InitDb,
                     request_deserializer=garage__pb2.InitDbRequest.FromString,
                     response_serializer=garage__pb2.InitDbResponse.SerializeToString,
             ),
-            'Sync': grpc.unary_stream_rpc_method_handler(
-                    servicer.Sync,
-                    request_deserializer=garage__pb2.SyncRequest.FromString,
-                    response_serializer=garage__pb2.SyncStatus.SerializeToString,
+            'GetSetting': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSetting,
+                    request_deserializer=garage__pb2.GetSettingRequest.FromString,
+                    response_serializer=garage__pb2.GetSettingResponse.SerializeToString,
             ),
-            'McpServe': grpc.unary_stream_rpc_method_handler(
-                    servicer.McpServe,
-                    request_deserializer=garage__pb2.McpServeRequest.FromString,
-                    response_serializer=garage__pb2.McpServeStatus.SerializeToString,
+            'SetSetting': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetSetting,
+                    request_deserializer=garage__pb2.SetSettingRequest.FromString,
+                    response_serializer=garage__pb2.SetSettingResponse.SerializeToString,
             ),
             'McpInstall': grpc.unary_unary_rpc_method_handler(
                     servicer.McpInstall,
@@ -637,31 +560,6 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.McpStatus,
                     request_deserializer=garage__pb2.McpStatusRequest.FromString,
                     response_serializer=garage__pb2.McpStatusResponse.SerializeToString,
-            ),
-            'ConfigInit': grpc.unary_unary_rpc_method_handler(
-                    servicer.ConfigInit,
-                    request_deserializer=garage__pb2.ConfigInitRequest.FromString,
-                    response_serializer=garage__pb2.ConfigInitResponse.SerializeToString,
-            ),
-            'ConfigShow': grpc.unary_unary_rpc_method_handler(
-                    servicer.ConfigShow,
-                    request_deserializer=garage__pb2.ConfigShowRequest.FromString,
-                    response_serializer=garage__pb2.ConfigShowResponse.SerializeToString,
-            ),
-            'ConfigPath': grpc.unary_unary_rpc_method_handler(
-                    servicer.ConfigPath,
-                    request_deserializer=garage__pb2.ConfigPathRequest.FromString,
-                    response_serializer=garage__pb2.ConfigPathResponse.SerializeToString,
-            ),
-            'ConfigSchema': grpc.unary_unary_rpc_method_handler(
-                    servicer.ConfigSchema,
-                    request_deserializer=garage__pb2.ConfigSchemaRequest.FromString,
-                    response_serializer=garage__pb2.ConfigSchemaResponse.SerializeToString,
-            ),
-            'ConfigImportSources': grpc.unary_unary_rpc_method_handler(
-                    servicer.ConfigImportSources,
-                    request_deserializer=garage__pb2.ConfigImportSourcesRequest.FromString,
-                    response_serializer=garage__pb2.ConfigImportSourcesResponse.SerializeToString,
             ),
             'BeginIngestSession': grpc.unary_unary_rpc_method_handler(
                     servicer.BeginIngestSession,
@@ -698,11 +596,6 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     request_deserializer=garage__pb2.UpdateEmbeddingsRequest.FromString,
                     response_serializer=garage__pb2.UpdateEmbeddingsResponse.SerializeToString,
             ),
-            'ExecuteCommand': grpc.unary_stream_rpc_method_handler(
-                    servicer.ExecuteCommand,
-                    request_deserializer=garage__pb2.CommandRequest.FromString,
-                    response_serializer=garage__pb2.CommandStatus.SerializeToString,
-            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'garage.GarageService', rpc_method_handlers)
@@ -712,8 +605,12 @@ def add_GarageServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class GarageService:
-    """The GarageService enables controlling and executing Garage commands,
-    streaming status updates and structured data.
+    """The GarageService is how the macOS app drives the Python pipeline: corpus
+    reads for its views, every operation it would otherwise shell out to the
+    `garage` CLI for (sources, models, backfill, fact distillation, schema,
+    settings, MCP client registration), and the database facade the ingest and
+    embed XPC workers persist through. Each RPC is a thin wrapper over the same
+    garage_rag.ops function the CLI command calls.
     """
 
     @staticmethod
@@ -787,33 +684,6 @@ class GarageService:
             '/garage.GarageService/GetVersion',
             garage__pb2.VersionRequest.SerializeToString,
             garage__pb2.VersionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Stop(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/Stop',
-            garage__pb2.StopRequest.SerializeToString,
-            garage__pb2.StopResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1014,7 +884,7 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
-    def Ingest(request,
+    def SyncSources(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1024,12 +894,12 @@ class GarageService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_stream(
+        return grpc.experimental.unary_unary(
             request,
             target,
-            '/garage.GarageService/Ingest',
-            garage__pb2.IngestRequest.SerializeToString,
-            garage__pb2.IngestStatus.FromString,
+            '/garage.GarageService/SyncSources',
+            garage__pb2.SyncSourcesRequest.SerializeToString,
+            garage__pb2.SyncSourcesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1041,7 +911,7 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
-    def Backfill(request,
+    def ImportSourcesToConfig(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1051,39 +921,12 @@ class GarageService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_stream(
+        return grpc.experimental.unary_unary(
             request,
             target,
-            '/garage.GarageService/Backfill',
-            garage__pb2.BackfillRequest.SerializeToString,
-            garage__pb2.BackfillStatus.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def EnrichFacts(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/garage.GarageService/EnrichFacts',
-            garage__pb2.EnrichFactsRequest.SerializeToString,
-            garage__pb2.EnrichFactsStatus.FromString,
+            '/garage.GarageService/ImportSourcesToConfig',
+            garage__pb2.ImportSourcesToConfigRequest.SerializeToString,
+            garage__pb2.ImportSourcesToConfigResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1122,33 +965,6 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
-    def RegisterModel(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/RegisterModel',
-            garage__pb2.RegisterModelRequest.SerializeToString,
-            garage__pb2.RegisterModelResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
     def ListModels(request,
             target,
             options=(),
@@ -1165,6 +981,33 @@ class GarageService:
             '/garage.GarageService/ListModels',
             garage__pb2.ListModelsRequest.SerializeToString,
             garage__pb2.ListModelsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/RegisterModel',
+            garage__pb2.RegisterModelRequest.SerializeToString,
+            garage__pb2.RegisterModelResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1230,6 +1073,60 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
+    def Backfill(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/garage.GarageService/Backfill',
+            garage__pb2.BackfillRequest.SerializeToString,
+            garage__pb2.BackfillStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnrichFacts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/garage.GarageService/EnrichFacts',
+            garage__pb2.EnrichFactsRequest.SerializeToString,
+            garage__pb2.EnrichFactsStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GetStats(request,
             target,
             options=(),
@@ -1246,33 +1143,6 @@ class GarageService:
             '/garage.GarageService/GetStats',
             garage__pb2.StatsRequest.SerializeToString,
             garage__pb2.StatsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Extract(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/Extract',
-            garage__pb2.ExtractRequest.SerializeToString,
-            garage__pb2.ExtractResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1311,7 +1181,7 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
-    def Sync(request,
+    def GetSetting(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1321,12 +1191,12 @@ class GarageService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_stream(
+        return grpc.experimental.unary_unary(
             request,
             target,
-            '/garage.GarageService/Sync',
-            garage__pb2.SyncRequest.SerializeToString,
-            garage__pb2.SyncStatus.FromString,
+            '/garage.GarageService/GetSetting',
+            garage__pb2.GetSettingRequest.SerializeToString,
+            garage__pb2.GetSettingResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1338,7 +1208,7 @@ class GarageService:
             _registered_method=True)
 
     @staticmethod
-    def McpServe(request,
+    def SetSetting(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1348,12 +1218,12 @@ class GarageService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_stream(
+        return grpc.experimental.unary_unary(
             request,
             target,
-            '/garage.GarageService/McpServe',
-            garage__pb2.McpServeRequest.SerializeToString,
-            garage__pb2.McpServeStatus.FromString,
+            '/garage.GarageService/SetSetting',
+            garage__pb2.SetSettingRequest.SerializeToString,
+            garage__pb2.SetSettingResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1435,141 +1305,6 @@ class GarageService:
             '/garage.GarageService/McpStatus',
             garage__pb2.McpStatusRequest.SerializeToString,
             garage__pb2.McpStatusResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ConfigInit(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/ConfigInit',
-            garage__pb2.ConfigInitRequest.SerializeToString,
-            garage__pb2.ConfigInitResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ConfigShow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/ConfigShow',
-            garage__pb2.ConfigShowRequest.SerializeToString,
-            garage__pb2.ConfigShowResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ConfigPath(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/ConfigPath',
-            garage__pb2.ConfigPathRequest.SerializeToString,
-            garage__pb2.ConfigPathResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ConfigSchema(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/ConfigSchema',
-            garage__pb2.ConfigSchemaRequest.SerializeToString,
-            garage__pb2.ConfigSchemaResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ConfigImportSources(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/garage.GarageService/ConfigImportSources',
-            garage__pb2.ConfigImportSourcesRequest.SerializeToString,
-            garage__pb2.ConfigImportSourcesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1759,33 +1494,6 @@ class GarageService:
             '/garage.GarageService/UpdateEmbeddings',
             garage__pb2.UpdateEmbeddingsRequest.SerializeToString,
             garage__pb2.UpdateEmbeddingsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ExecuteCommand(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/garage.GarageService/ExecuteCommand',
-            garage__pb2.CommandRequest.SerializeToString,
-            garage__pb2.CommandStatus.FromString,
             options,
             channel_credentials,
             insecure,

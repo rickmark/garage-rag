@@ -1,5 +1,9 @@
 """Targets in the repository root"""
 
+# tools/swiftcheck is a venv-only dev script (tree-sitter comes from the `dev` extras, which
+# the @pypi hub does not expose), not a Bazel target.
+# gazelle:exclude tools/swiftcheck
+
 exports_files(
     [
         "README.md",
@@ -108,16 +112,19 @@ alias(
 alias(
     name = "installer",
     actual = "//macapp:installer",
+    tags = ["manual"],
 )
 
 alias(
     name = "package",
     actual = "//macapp:package",
+    tags = ["manual"],
 )
 
 alias(
     name = "install",
     actual = "//macapp:install",
+    tags = ["manual"],
 )
 
 alias(
@@ -126,16 +133,6 @@ alias(
 )
 
 alias(
-    name = "website",
-    actual = "//docs:site",
-)
-
-alias(
     name = "site",
-    actual = "//docs:site",
-)
-
-alias(
-    name = "docs",
     actual = "//docs:site",
 )

@@ -1,7 +1,7 @@
 """Bazel test rules for verifying codesign signatures, hardened runtime, and identities."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel:macho_test.bzl", "mach_o_arch_test", "macho_arch_test", "multi_arch_test", "universal_binary_test")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 def _codesign_test_impl(ctx):
     if not ctx.target_platform_has_constraint(ctx.attr._macos_constraint[platform_common.ConstraintValueInfo]):
@@ -49,6 +49,7 @@ set -euo pipefail
 
 signing_identity="{signing_identity}"
 is_store="{is_store}"
+store_authority="{store_authority}"
 hardened_runtime="{hardened_runtime}"
 deep_verify="{deep_verify}"
 
@@ -109,13 +110,64 @@ mkdir -p "$STAGE_DIR"
 for item in "${{resolved_inputs[@]}}"; do
     if [ -d "$item" ]; then
         mkdir -p "$STAGE_DIR/$(basename "$item")"
-        tar -chf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)
+        # Keep symlinks (no -h): a versioned framework's Versions/Current, top-level
+        # binary and Resources are links, and flattening them makes codesign call the
+        # bundle "ambiguous" and fail a correctly signed framework.
+        tar -cf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)
     elif [[ "$item" == *.zip ]]; then
         /usr/bin/unzip -q -o "$item" -d "$STAGE_DIR"
     else
         cp "$item" "$STAGE_DIR/"
     fi
 done
+
+# The framework's own links are relative and must stay links. Runfiles can also
+# reach the real files through absolute symlinks, which tar kept as links: left
+# alone they point back into the runfiles tree (codesign then reports "Too many
+# levels of symbolic links") and no staged file is a regular file to check. Those
+# are replaced by copies of what they point to.
+while IFS= read -r link; do
+    target="$(readlink "$link")"
+    case "$target" in
+        /*)
+            rm "$link"
+            cp -RL "$target" "$link"
+            ;;
+    esac
+done < <(find "$STAGE_DIR" -type l)
+
+# Put back a versioned framework's links. The darwin sandbox hands a tree artifact
+# over with them resolved (Versions/Current a real copy of the version, top-level
+# Python/Resources/Headers copies too), and codesign rejects that layout as an
+# ambiguous bundle. Rebuild Versions/Current -> <version> and each top-level entry
+# -> Versions/Current/<entry>; outside the sandbox this recreates the same links.
+while IFS= read -r fw; do
+    versions="$fw/Versions"
+    [ -d "$versions" ] || continue
+    version=""
+    if [ -L "$versions/Current" ]; then
+        version="$(readlink "$versions/Current")"
+    else
+        candidates=()
+        for d in "$versions"/*/; do
+            n="$(basename "$d")"
+            [ "$n" = "Current" ] || candidates+=("$n")
+        done
+        if [ "${{#candidates[@]}}" -eq 1 ]; then
+            version="${{candidates[0]}}"
+        fi
+    fi
+    [ -n "$version" ] && [ -d "$versions/$version" ] || continue
+    rm -rf "$versions/Current"
+    ln -s "$version" "$versions/Current"
+    for entry in "$versions/$version"/*; do
+        top="$fw/$(basename "$entry")"
+        if [ -e "$top" ] || [ -L "$top" ]; then
+            rm -rf "$top"
+            ln -s "Versions/Current/$(basename "$entry")" "$top"
+        fi
+    done
+done < <(find "$STAGE_DIR" -maxdepth 3 -type d -name "*.framework")
 
 should_exclude() {{
     local file_path="$1"
@@ -136,6 +188,7 @@ echo "============================================================"
 
 total_checked=0
 failed_count=0
+bundle_failed_count=0
 
 # Verify any top-level bundles
 if [ "$deep_verify" = "1" ]; then
@@ -148,7 +201,7 @@ if [ "$deep_verify" = "1" ]; then
         echo "Verifying bundle: $rel_bundle"
         if ! /usr/bin/codesign --verify --deep --strict --verbose=2 "$bundle_path" 2>&1; then
             echo "[FAIL] Bundle verification failed: $rel_bundle"
-            failed_count=$((failed_count + 1))
+            bundle_failed_count=$((bundle_failed_count + 1))
         else
             echo "[PASS] Bundle valid: $rel_bundle"
         fi
@@ -217,8 +270,8 @@ while IFS= read -r f; do
             # 5. Store-specific verification
             if [ "$is_store" = "1" ]; then
                 if [ -z "$signing_identity" ]; then
-                    if ! echo "$cs_out" | grep -q -E "Authority=Apple Distribution"; then
-                        echo "[FAIL] $rel_name: store binary not signed with Apple Distribution"
+                    if ! echo "$cs_out" | grep -q -F "Authority=$store_authority"; then
+                        echo "[FAIL] $rel_name: store binary not signed with $store_authority"
                         bin_failed=1
                     fi
                 fi
@@ -235,6 +288,9 @@ done < <(find "$STAGE_DIR" -type f)
 
 echo "============================================================"
 echo "Checked $total_checked Mach-O binaries: $((total_checked - failed_count)) passed, $failed_count failed"
+if [ "$bundle_failed_count" -gt 0 ]; then
+    echo "Bundles: $bundle_failed_count failed verification"
+fi
 echo "============================================================"
 
 if [ "$total_checked" -eq 0 ]; then
@@ -242,7 +298,7 @@ if [ "$total_checked" -eq 0 ]; then
     exit 1
 fi
 
-if [ "$failed_count" -gt 0 ]; then
+if [ "$failed_count" -gt 0 ] || [ "$bundle_failed_count" -gt 0 ]; then
     exit 1
 fi
 
@@ -250,6 +306,8 @@ exit 0
 """.format(
         signing_identity = signing_identity,
         is_store = is_store_str,
+        # "Apple Development" from "Apple Development: Name (ID)".
+        store_authority = STORE_IDENTITY.split(":")[0],
         hardened_runtime = hardened_runtime_str,
         deep_verify = deep_verify_str,
         excludes = excludes_str,

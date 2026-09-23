@@ -46,6 +46,7 @@ sh_binary(
     srcs = ["open_xcarchive.sh"],
     args = ["$(location :GarageStore.xcarchive)"],
     data = [":GarageStore.xcarchive"],
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -81,19 +82,17 @@ xcodeproj(
         top_level_target(
             "//macapp/Tests/GarageAppUITests:GarageAppUITests",
         ),
+        top_level_target(
+            "//macapp/Tests/LlamaClientTests:LlamaClientTests",
+        ),
     ],
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "GarageApp",
-    actual = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "install",
     actual = "//macapp/package:install",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -103,28 +102,37 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+alias(
+    name = "garage-mcp",
+    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
+    visibility = ["//visibility:public"],
+)
+
 # Primary alias used by the build and tests to reference the main executable.
 alias(
     name = "macapp",
     # The macOS application binary is produced by the developer_id_macos_application rule above.
-    actual = ":GarageApp",
+    actual = "//macapp/Sources/GarageApp:GarageApp",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "installer",
-    actual = ":GarageInstaller",
+    actual = "//macapp/package:GarageInstaller",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "package",
     actual = "//macapp/package:package",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "xcarchive",
     actual = ":GarageStore.xcarchive",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )

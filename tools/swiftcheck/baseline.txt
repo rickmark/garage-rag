@@ -1,0 +1,12 @@
+# Known tree-sitter-swift grammar gaps (valid Swift it cannot parse). One entry per
+# construct: 'path: :col: message'. Regenerate with --update-baseline after verifying
+# each entry compiles with swiftc.
+macapp/Sources/GarageApp/Services/GarageMCPService.swift: 32: unexpected 't["description"] as? String ??'
+macapp/Sources/GarageApp/Services/GarageMCPService.swift: 32: unexpected 't["name"] as? String ??'
+macapp/Sources/GarageApp/Services/LlamaService.swift: 13: unexpected 'return true'
+macapp/Sources/GarageApp/Services/LlamaService.swift: 1: missing '}'
+macapp/Sources/GarageApp/Services/ModelDownloadService.swift: 17: unexpected 'stopPollingIfNoActiveDownloads'
+macapp/Sources/GarageApp/Services/ModelDownloadService.swift: 5: unexpected 'private'
+macapp/Sources/GarageApp/Services/XPCServiceManager.swift: 91: unexpected 'error.localizedDescription,'
+macapp/Sources/PythonXPCService/GaragePythonRuntime.swift: 51: missing '!'
+macapp/Sources/PythonXPCService/GaragePythonRuntime.swift: 56: unexpected 'Void'

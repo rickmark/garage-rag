@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
@@ -21,15 +23,23 @@ from garage_rag.ingest.scanner import (
     scan_source,
     scan_sqlite,
 )
-from garage_rag.proto.garage_pb2 import ScanRequest
-from garage_rag.service.server import GarageRpcServicer
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's git config out of these repositories. A global
+    commit.gpgsign made `git commit` wait on a signing prompt (a Secure Enclave
+    key) for as long as nobody answered it."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 # ---------------------------------------------------------------------------
 # 1. Filesystem Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_filesystem_nonexistent_path(tmp_path: Path) -> None:
     non_existent = tmp_path / "does_not_exist"
@@ -79,9 +89,46 @@ def test_scan_filesystem_directory(tmp_path: Path) -> None:
     assert res_with_code.item_count == 3
 
 
+def test_scan_filesystem_exclude_prefixes_prune_subtrees(tmp_path: Path) -> None:
+    """Prefixes are root-relative directory names, so they must be compared against
+    the root-relative path, never the absolute one (which never starts with "Library/")."""
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "Library" / "deeper").mkdir()
+    (tmp_path / "Library" / "deeper" / "c.txt").write_text("c", encoding="utf-8")
+    (tmp_path / "Notes").mkdir()
+    (tmp_path / "Notes" / "b.txt").write_text("b", encoding="utf-8")
+
+    res = scan_filesystem(tmp_path, source_slug="prefixed", exclude_prefixes=("Library/",))
+    assert res.item_count == 1
+    assert res.error is None
+
+    # Without prefixes every file counts, so the exclusion is what made the difference.
+    assert scan_filesystem(tmp_path, source_slug="prefixed").item_count == 3
+
+
 # ---------------------------------------------------------------------------
 # 2. Git Scanner Tests
 # ---------------------------------------------------------------------------
+
+
+def test_a_root_under_a_cache_path_is_still_walked(tmp_path: Path) -> None:
+    """Dependency-cache fragments ("Library/Caches", "go/pkg/mod") prune subtrees
+    below the source root, never the root's own ancestors. Bazel's output base on
+    macOS is ~/Library/Caches/bazel, so matching the absolute path made every
+    walk and scan under Bazel count nothing."""
+    from garage_rag.ingest.walker import walk
+
+    root = tmp_path / "Library" / "Caches" / "bazel" / "notes"
+    (root / "sub").mkdir(parents=True)
+    (root / "go" / "pkg" / "mod").mkdir(parents=True)
+    (root / "a.md").write_text("# one\n\ntext\n")
+    (root / "sub" / "b.md").write_text("# two\n\ntext\n")
+    (root / "go" / "pkg" / "mod" / "dep.md").write_text("# a dependency's readme\n")
+
+    assert sorted(c.path.name for c in walk(root)) == ["a.md", "b.md"]
+    assert scan_filesystem(root).item_count == 2
+
 
 def test_scan_git_repository(tmp_path: Path) -> None:
     # Initialize a git repository
@@ -98,14 +145,38 @@ def test_scan_git_repository(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(tmp_path), "add", "README.md", "main.py"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "initial commit"], check=True, capture_output=True)
 
+    # Ingest walks the working tree, untracked files included, and the scan
+    # counts the same thing, so expected_elements matches what a run sees.
     res_no_code = scan_git(tmp_path, source_slug="git-test", include_code=False)
     assert res_no_code.kind == "git"
-    assert res_no_code.item_count == 1  # Only README.md (main.py is code)
+    assert res_no_code.item_count == 2  # README.md and untracked.md (main.py is code)
     assert res_no_code.item_type == "files"
     assert res_no_code.details.get("is_git_repo") is True
+    assert res_no_code.details.get("tracked_files") == 2
 
     res_code = scan_git(tmp_path, source_slug="git-test", include_code=True)
-    assert res_code.item_count == 2  # README.md and main.py
+    assert res_code.item_count == 3  # plus main.py
+
+    # Prefixes are root-relative, as in the walker.
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "x.md").write_text("# x", encoding="utf-8")
+    assert scan_git(tmp_path, source_slug="git-test").item_count == 3
+    assert scan_git(tmp_path, source_slug="git-test", exclude_prefixes=("Library/",)).item_count == 2
+
+
+def test_scan_git_counts_what_ingest_walks(tmp_path: Path) -> None:
+    """The scan's count for a git source equals the walk ingest does over it."""
+    from garage_rag.ingest.walker import walk
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "tracked.md").write_text("# t", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("untracked notes", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text("# g", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.md"], check=True, capture_output=True)
+
+    walked = sum(1 for _ in walk(tmp_path))
+    assert scan_git(tmp_path, source_slug="git-test").item_count == walked == 3
 
 
 def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
@@ -113,11 +184,13 @@ def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
     res = scan_git(tmp_path, source_slug="non-git")
     assert res.item_count == 1
     assert res.item_type == "files"
+    assert res.details.get("is_git_repo") is False
 
 
 # ---------------------------------------------------------------------------
 # 3. SQLite Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_sqlite_database(tmp_path: Path) -> None:
     db_file = tmp_path / "test.db"
@@ -186,6 +259,7 @@ def test_scan_sqlite_apple_messages_counts_threads_not_messages(tmp_path: Path) 
 # 4. Maildir Scanner Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_maildir(tmp_path: Path) -> None:
     # Standard maildir structure: cur, new, tmp
     cur_dir = tmp_path / "cur"
@@ -214,6 +288,7 @@ def test_scan_maildir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 5. Feed Scanner Tests
 # ---------------------------------------------------------------------------
+
 
 def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
     # RSS 2.0 Feed
@@ -264,6 +339,7 @@ def test_scan_feed_rss_atom_json(tmp_path: Path) -> None:
 # 6. Source Dispatcher Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scan_source_dispatcher(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("test", encoding="utf-8")
 
@@ -295,6 +371,7 @@ def test_scan_source_dispatcher(tmp_path: Path) -> None:
 # 7. Pipeline Scan Phase Integration Tests
 # ---------------------------------------------------------------------------
 
+
 def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
     (tmp_path / "doc1.txt").write_text("Content 1", encoding="utf-8")
     (tmp_path / "doc2.txt").write_text("Content 2", encoding="utf-8")
@@ -316,11 +393,11 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 
     progress_events = []
 
-    def on_progress(counters, budget, total_items=0, phase="ingest", scan_result=None):
+    def on_progress(counters, budget, total_items=0, phase="ingest", scan_result=None, current_item=None):
         progress_events.append((phase, total_items, counters.seen))
 
-    with patch("garage_rag.ingest.pipeline.ensure_self_author"), \
-         patch("garage_rag.ingest.pipeline.ingest_one"):
+    # begin_session imports ensure_self_author function-locally from the resolver module.
+    with patch("garage_rag.attribute.resolver.ensure_self_author"), patch("garage_rag.ingest.pipeline.ingest_one"):
         counters, walk_stats, budget = ingest_source(
             mock_session_factory,
             "test-slug",
@@ -336,45 +413,9 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. gRPC Servicer Scan & Ingest Tests
+# 8. CLI Scan Command Tests
 # ---------------------------------------------------------------------------
 
-def test_grpc_scan_rpc(tmp_path: Path) -> None:
-    (tmp_path / "file1.txt").write_text("file 1", encoding="utf-8")
-    (tmp_path / "file2.txt").write_text("file 2", encoding="utf-8")
-
-    src = Source(
-        id=1,
-        slug="rpc-source",
-        kind="filesystem",
-        root=str(tmp_path),
-        default_class=CorpusClass.DOCUMENT,
-        default_trust=TrustTier.AUTHORED,
-    )
-
-    servicer = GarageRpcServicer()
-    mock_context = MagicMock()
-
-    with patch("garage_rag.db.engine.get_session_factory") as mock_factory:
-        mock_session = MagicMock()
-        mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = src
-        mock_session.query.return_value.order_by.return_value.all.return_value = [src]
-        mock_session.__enter__.return_value = mock_session
-        mock_factory.return_value = MagicMock(return_value=mock_session)
-
-        req = ScanRequest(source="rpc-source")
-        resp = servicer.Scan(req, mock_context)
-
-        assert len(resp.sources) == 1
-        assert resp.sources[0].source == "rpc-source"
-        assert resp.sources[0].item_count == 2
-        assert resp.sources[0].item_type == "files"
-        assert resp.total_items == 2
-
-
-# ---------------------------------------------------------------------------
-# 9. CLI Scan Command Tests
-# ---------------------------------------------------------------------------
 
 def test_cli_scan_command(tmp_path: Path) -> None:
     (tmp_path / "doc.txt").write_text("Hello", encoding="utf-8")

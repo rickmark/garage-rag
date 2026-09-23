@@ -32,11 +32,6 @@ final class GarageMCPManagedServer: GarageManagedService {
         lock.unlock()
     }
 
-    var isConfigured: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return autoStart
-    }
-
     var isRunning: Bool {
         lock.lock()
         let flag = running
@@ -59,7 +54,8 @@ final class GarageMCPManagedServer: GarageManagedService {
             return
         }
 
-        try GaragePythonRuntime.shared.withGIL {
+        // A PythonError is converted to a string error inside the GIL scope, so the host can report it safely.
+        try GaragePythonRuntime.shared.withGILDescribingErrors {
             let os = Python.import("os")
             for (key, value) in opts {
                 os.environ[key] = PythonObject(value)
@@ -99,14 +95,15 @@ final class GarageMCPManagedServer: GarageManagedService {
         guard wasRunning else { return }
 
         do {
-            try GaragePythonRuntime.shared.withGIL {
+            try GaragePythonRuntime.shared.withGILDescribingErrors {
                 let mcpModule = try Python.attemptImport("garage_rag.mcp_server.server")
                 _ = try mcpModule.stop_background_server.throwing.dynamicallyCall(withArguments: [])
             }
             logger.info("Garage MCP server stopped (graceful: \(graceful, privacy: .public))")
         } catch {
             // Mirror the previous behaviour: a failing stop is a warning, the server is considered stopped.
-            logger.warning("MCP server stopped with warning: \(GaragePythonRuntime.describe(error), privacy: .public)")
+            // The error was already described inside the GIL scope; do not call back into Python here.
+            logger.warning("MCP server stopped with warning: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
@@ -179,31 +176,6 @@ final class GarageMCPServerServiceDelegate: GarageXPCServiceBase, GarageMCPServe
 
     func isServerRunning(with reply: @escaping (Bool) -> Void) {
         reply(mcpServer.isRunning)
-    }
-
-    func executeCommand(_ command: String, arguments: [String], with reply: @escaping (Int32, String?, String?) -> Void) {
-        logger.info("executeCommand '\(command, privacy: .public)' \(arguments, privacy: .public)")
-        let result = withPython { () -> (Int32, String, String) in
-            let cliRunnerModule = try Python.attemptImport("typer.testing")
-            let appModule = try Python.attemptImport("garage_rag.cli")
-            let runner = cliRunnerModule.CliRunner()
-            var fullArgs: [String] = []
-            if !command.isEmpty {
-                fullArgs.append(command)
-            }
-            fullArgs.append(contentsOf: arguments)
-            let invocation = try runner.invoke.throwing.dynamicallyCall(withArguments: [appModule.app, PythonObject(fullArgs)])
-            let exitCode = Int32(invocation.exit_code) ?? 0
-            let stdout = String(invocation.stdout) ?? ""
-            let stderr = String(invocation.checking.stderr ?? Python.None) ?? ""
-            return (exitCode, stdout, stderr)
-        }
-        switch result {
-        case .success(let (exitCode, stdout, stderr)):
-            reply(exitCode, stdout, stderr)
-        case .failure(let error):
-            reply(1, nil, "Failed to execute command: \(error.localizedDescription)")
-        }
     }
 }
 

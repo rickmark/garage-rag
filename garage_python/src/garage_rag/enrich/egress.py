@@ -59,9 +59,7 @@ class EgressRequest:
     def __post_init__(self) -> None:
         # Level 2. First check, before any other consideration.
         if self.corpus_class is CorpusClass.COMMUNICATION:
-            raise EgressBlocked(
-                f"communications may never be sent to a cloud API (purpose={self.purpose!r})"
-            )
+            raise EgressBlocked(f"communications may never be sent to a cloud API (purpose={self.purpose!r})")
         # Level 3.
         if not self.source_allows_cloud:
             raise EgressBlocked(
@@ -88,15 +86,12 @@ def _client():
     settings = get_settings()
     if not settings.enable_cloud_ocr:
         raise CloudUnavailable(
-            "cloud enrichment is disabled; set cloud.enable_ocr = true in "
-            f"{settings.config_path or 'garage.json'}"
+            f"cloud enrichment is disabled; set cloud.enable_ocr = true in {settings.config_path or 'garage.json'}"
         )
 
     key = settings.read_api_key()
     if key is None:
-        raise CloudUnavailable(
-            "no API key available; point cloud.api_key_file at a file containing your Anthropic key"
-        )
+        raise CloudUnavailable("no API key available; point cloud.api_key_file at a file containing your Anthropic key")
     return anthropic.Anthropic(api_key=key)
 
 

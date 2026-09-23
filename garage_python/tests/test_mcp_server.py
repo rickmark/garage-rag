@@ -2,31 +2,44 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
+from garage_rag.enrich.egress import EgressBlocked
+from garage_rag.enrich.generation import ChatReply
 from garage_rag.mcp_server.server import (
     _HOME,
+    ASK_SYSTEM_PROMPT,
+    AskResult,
     AuthorInfo,
     AuthorList,
+    Citation,
     CorpusStats,
     DocumentResult,
+    GenerateResult,
     Hit,
     ModelInfo,
     SearchResult,
     SourceInfo,
     SourceList,
     _as_list,
+    _http_security,
     _log_startup,
     _tidy,
+    _untidy,
+    build_ask_messages,
     is_loopback,
     main,
+    rag_ask,
+    rag_generate,
     rag_get_document,
     rag_list_authors,
     rag_list_sources,
@@ -50,6 +63,35 @@ class TestServerHelpers:
         assert _as_list(["reference", "authored"]) == ["reference", "authored"]
         assert _as_list(None) is None
         assert _as_list(123) == 123
+
+    def test_untidy_expands_only_a_leading_tilde(self) -> None:
+        assert _untidy("~/docs/a~b.md") == f"{_HOME}/docs/a~b.md"
+        assert _untidy("~") == _HOME
+        assert _untidy("/srv/~backup/x.md") == "/srv/~backup/x.md"
+        assert _untidy("~other/x.md") == "~other/x.md"
+
+    def test_http_security_loopback_checks_the_host_header(self) -> None:
+        settings = _http_security("127.0.0.1", 8787, None)
+        assert settings.enable_dns_rebinding_protection is True
+        assert set(settings.allowed_hosts) == {"127.0.0.1:8787", "localhost:8787"}
+        assert settings.allowed_origins == []
+
+    def test_http_security_brackets_ipv6_binds(self) -> None:
+        settings = _http_security("::1", 8787, None)
+        assert "[::1]:8787" in settings.allowed_hosts
+
+    def test_http_security_remote_without_hosts_turns_the_check_off(self, caplog) -> None:
+        """An exact-match allowlist nobody can satisfy is worse than no check."""
+        with caplog.at_level(logging.WARNING, logger="garage_rag.mcp"):
+            settings = _http_security("0.0.0.0", 8787, ["https://app.example"])
+        assert settings.enable_dns_rebinding_protection is False
+        assert settings.allowed_origins == ["https://app.example"]
+        assert "Host header is not checked" in caplog.text
+
+    def test_http_security_remote_with_hosts_keeps_the_check(self) -> None:
+        settings = _http_security("0.0.0.0", 8787, None, ["rag.example.com:*", "10.0.0.5:8787"])
+        assert settings.enable_dns_rebinding_protection is True
+        assert {"rag.example.com:*", "10.0.0.5:8787", "localhost:8787"} <= set(settings.allowed_hosts)
 
     @pytest.mark.parametrize(
         ("host", "expected"),
@@ -113,12 +155,15 @@ class TestMcpTools:
                 patch("garage_rag.mcp_server.server.run_search", return_value=[mock_hit]) as mock_run_search,
                 patch("garage_rag.mcp_server.server.list_models", return_value=[mock_model]),
             ):
+                # A direct call bypasses the pydantic BeforeValidator at the MCP
+                # boundary; the body must still turn a bare string into a
+                # one-item list rather than iterating its characters.
                 result = rag_search(
                     query="test query",
                     limit=5,
                     mode="hybrid",
                     corpus_class="document",
-                    trust="authored",
+                    trust=["authored"],
                     source="notes",
                     author="Rick",
                 )
@@ -241,8 +286,10 @@ class TestMcpTools:
                 rag_get_document(document_id=999)
 
     def test_rag_list_sources(self) -> None:
+        # SimpleNamespace rather than MagicMock: the query labels a column ``cls``,
+        # and ``cls`` is not a valid MagicMock constructor keyword.
         rows = [
-            MagicMock(
+            SimpleNamespace(
                 slug="vault",
                 kind="obsidian",
                 cls="document",
@@ -251,7 +298,7 @@ class TestMcpTools:
                 documents=120,
                 chunks=450,
             ),
-            MagicMock(
+            SimpleNamespace(
                 slug="repo",
                 kind="git",
                 cls="code",
@@ -346,6 +393,128 @@ class TestMcpTools:
 
 
 # ---------------------------------------------------------------------------
+# rag_ask / rag_generate: local generation over the retrieval above
+# ---------------------------------------------------------------------------
+def _fake_chat_model(reply: ChatReply, *, is_local: bool = True) -> MagicMock:
+    model = MagicMock()
+    model.provider = "llama_xpc"
+    model.model_ref = "gemma2-2b"
+    model.is_local = is_local
+    model.complete.return_value = reply
+    model.chat.return_value = reply.text
+    return model
+
+
+class TestAsk:
+    def test_prompt_numbers_excerpts_and_ends_with_the_question(self) -> None:
+        hits = [
+            MockSearchHit(chunk_id=1, document_id=10, title="User Guide", text="Install with brew."),
+            MockSearchHit(chunk_id=2, document_id=11, title=None, heading_path=None, text="x" * 5000),
+        ]
+        messages = build_ask_messages("how do I install?", hits)
+        assert [m["role"] for m in messages] == ["system", "user"]
+        assert messages[0]["content"] == ASK_SYSTEM_PROMPT
+        user = messages[1]["content"]
+        assert "[1] User Guide \u2014 ~/docs/guide.md \u00a7 Introduction > Getting Started\nInstall with brew." in user
+        assert "[2] (untitled) \u2014 ~/docs/guide.md\n" in user
+        assert user.endswith("\n\nQuestion: how do I install?")
+        # Long excerpts are trimmed to ~1,200 characters, never sent whole.
+        second = user.split("[2] ")[1].split("\n\nQuestion:")[0]
+        assert len(second) < 1300
+        assert second.endswith("\u2026")
+
+    def test_prompt_without_hits_says_so(self) -> None:
+        user = build_ask_messages("anything?", [])[1]["content"]
+        assert "(no excerpts were retrieved)" in user
+        assert user.endswith("Question: anything?")
+
+    def test_rag_ask_runs_retrieval_then_the_model(self) -> None:
+        hit = MockSearchHit(text="Widgets ship on Tuesdays. " * 20)
+        chat_model = _fake_chat_model(ChatReply(text="Tuesdays [1].", prompt_tokens=90, completion_tokens=5))
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as mock_scope,
+            patch("garage_rag.mcp_server.server.run_search", return_value=[hit]) as mock_run_search,
+            patch("garage_rag.mcp_server.server.list_models", return_value=[MockModelRow(slug="bge-base")]),
+            patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model),
+        ):
+            mock_session = MagicMock()
+            mock_scope.return_value.__enter__.return_value = mock_session
+            result = rag_ask(question="when do widgets ship?", limit=3, trust="authored", max_tokens=100)
+
+        # Same retrieval rag_search does, same filter normalisation.
+        mock_run_search.assert_called_once_with(
+            mock_session,
+            "when do widgets ship?",
+            limit=3,
+            mode="hybrid",
+            corpus_classes=None,
+            trust_tiers=["authored"],
+            sources=None,
+            author=None,
+        )
+        messages = chat_model.complete.call_args.args[0]
+        assert chat_model.complete.call_args.kwargs == {"max_tokens": 100, "temperature": 0.2}
+        assert messages[0]["role"] == "system"
+        assert "[1] User Guide" in messages[1]["content"]
+        assert "Question: when do widgets ship?" in messages[1]["content"]
+
+        assert isinstance(result, AskResult)
+        assert result.answer == "Tuesdays [1]."
+        assert result.model == "gemma2-2b"
+        assert result.provider == "llama_xpc"
+        assert result.question == "when do widgets ship?"
+        assert result.prompt_tokens == 90
+        assert result.completion_tokens == 5
+        assert len(result.citations) == 1
+        citation = result.citations[0]
+        assert isinstance(citation, Citation)
+        assert citation.n == 1
+        assert citation.document_id == 10
+        assert citation.title == "User Guide"
+        assert citation.location == "~/docs/guide.md"
+        assert citation.score == 0.876543
+        assert len(citation.snippet) <= 240
+
+    def test_rag_ask_refuses_to_send_communications_off_box(self) -> None:
+        """Only reachable with ollama_host pointed at another machine."""
+        hit = MockSearchHit(corpus_class="communication")
+        chat_model = _fake_chat_model(ChatReply(text="never"), is_local=False)
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as mock_scope,
+            patch("garage_rag.mcp_server.server.run_search", return_value=[hit]),
+            patch("garage_rag.mcp_server.server.list_models", return_value=[]),
+            patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model),
+        ):
+            mock_scope.return_value.__enter__.return_value = MagicMock()
+            with pytest.raises(EgressBlocked):
+                rag_ask(question="q")
+        chat_model.complete.assert_not_called()
+
+    def test_rag_generate_is_a_raw_prompt(self) -> None:
+        chat_model = _fake_chat_model(ChatReply(text="pong"))
+        with patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model):
+            result = rag_generate(prompt="ping", system="be terse", max_tokens=16, temperature=0.0)
+        chat_model.chat.assert_called_once_with(
+            [{"role": "system", "content": "be terse"}, {"role": "user", "content": "ping"}],
+            max_tokens=16,
+            temperature=0.0,
+        )
+        assert result == GenerateResult(text="pong", model="gemma2-2b", provider="llama_xpc")
+
+    def test_rag_generate_without_system(self) -> None:
+        chat_model = _fake_chat_model(ChatReply(text="pong"))
+        with patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model):
+            rag_generate(prompt="ping")
+        assert chat_model.chat.call_args.args[0] == [{"role": "user", "content": "ping"}]
+
+    def test_tools_are_registered(self) -> None:
+        from garage_rag.mcp_server.server import mcp
+
+        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        assert {"rag_ask", "rag_generate", "rag_search"} <= names
+
+
+# ---------------------------------------------------------------------------
 # Server startup & transport tests
 # ---------------------------------------------------------------------------
 class TestServerLifecycle:
@@ -360,6 +529,14 @@ class TestServerLifecycle:
                 assert "database connection: postgresql+psycopg:///rag" in caplog.text
                 assert "7 sources registered" in caplog.text
 
+    def test_log_startup_survives_an_unreachable_database(self, caplog: pytest.LogCaptureFixture) -> None:
+        with (
+            patch("garage_rag.mcp_server.server.session_scope", side_effect=ConnectionRefusedError("refused")),
+            caplog.at_level(logging.INFO),
+        ):
+            _log_startup()
+        assert "could not query the database during start-up: refused" in caplog.text
+
     def test_serve_stdio(self) -> None:
         with (
             patch("garage_rag.mcp_server.server._log_startup"),
@@ -367,6 +544,16 @@ class TestServerLifecycle:
         ):
             serve("stdio")
             mock_mcp_run.assert_called_once_with()
+
+    def test_serve_stdio_answers_without_touching_the_database(self) -> None:
+        """A stdio client waits on `initialize`; nothing may connect before the server runs."""
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as scope,
+            patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run,
+        ):
+            serve("stdio")
+        scope.assert_not_called()
+        mock_mcp_run.assert_called_once_with()
 
     def test_serve_unsupported_transport(self) -> None:
         with (
@@ -431,8 +618,33 @@ class TestServerLifecycle:
 
     def test_main_calls_serve_stdio(self) -> None:
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
-            main()
+            main([])
             mock_serve.assert_called_once_with("stdio")
+
+    def test_main_loads_the_config_it_is_given(self, tmp_path: Path) -> None:
+        """Clients spawn garage-mcp from anywhere, so registrations pass --config."""
+        from garage_rag.config import get_settings, reset_settings
+
+        cfg = tmp_path / "garage.json"
+        cfg.write_text(json.dumps({"mcp": {"port": 9123}}))
+        try:
+            with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+                main(["--config", str(cfg)])
+            mock_serve.assert_called_once_with("stdio")
+            assert get_settings().mcp_port == 9123
+        finally:
+            reset_settings()
+
+    def test_main_reports_a_bad_config_on_stderr(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        cfg = tmp_path / "garage.json"
+        cfg.write_text(json.dumps({"no_such_section": {}}))
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve, pytest.raises(SystemExit) as exit_info:
+            main(["--config", str(cfg)])
+        assert exit_info.value.code == 2
+        mock_serve.assert_not_called()
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "config error" in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -442,21 +654,30 @@ runner = CliRunner()
 
 
 class TestMcpCliCommands:
-    def test_mcp_serve_defaults_to_stdio(self) -> None:
+    def test_mcp_serve_defaults_to_http(self) -> None:
+        """stdio belongs to `garage-mcp`; the CLI command is the long-running HTTP server."""
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
             result = runner.invoke(app, ["mcp-serve"])
-            assert result.exit_code == 0
-            mock_serve.assert_called_once_with("stdio")
+            assert result.exit_code == 0, result.output
+            assert mock_serve.call_args.args == ("streamable-http",)
+
+    def test_mcp_serve_has_no_stdio(self) -> None:
+        """stdio is `garage-mcp` only; the CLI refuses it rather than serving it."""
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+            result = runner.invoke(app, ["mcp-serve", "--stdio"])
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+        mock_serve.assert_not_called()
 
     def test_mcp_serve_conflicting_transports(self) -> None:
-        result = runner.invoke(app, ["mcp-serve", "--stdio", "--http"])
+        result = runner.invoke(app, ["mcp-serve", "--sse", "--http"])
         assert result.exit_code != 0
-        assert "choose one of --stdio, --http, or --sse" in result.output
+        assert "choose one of --http or --sse" in result.output
 
     def test_mcp_serve_remote_without_allow_remote_fails(self) -> None:
         result = runner.invoke(app, ["mcp-serve", "--http", "--host", "0.0.0.0"])
         assert result.exit_code != 0
-        assert "is not a loopback address" in result.output
+        assert "refusing to bind 0.0.0.0" in result.output
         assert "--allow-remote" in result.output
 
     def test_mcp_serve_remote_with_allow_remote_succeeds(self) -> None:
@@ -478,15 +699,37 @@ class TestMcpCliCommands:
                 ],
             )
             assert result.exit_code == 0
+            assert "Host header is not checked" in result.output
             mock_serve.assert_called_once_with(
                 "streamable-http",
                 host="0.0.0.0",
                 port=8765,
                 path="/custom-mcp",
-                allowed_origins=[],
+                allowed_origins=None,
+                allowed_hosts=None,
                 json_response=True,
                 stateless=True,
             )
+
+    def test_mcp_serve_remote_passes_allowed_hosts(self) -> None:
+        with patch("garage_rag.mcp_server.server.serve") as mock_serve:
+            result = runner.invoke(
+                app,
+                [
+                    "mcp-serve",
+                    "--http",
+                    "--host",
+                    "0.0.0.0",
+                    "--allow-remote",
+                    "--allow-host",
+                    "rag.example.com:*",
+                    "--allow-host",
+                    "10.0.0.5:8787",
+                ],
+            )
+            assert result.exit_code == 0
+            assert "Host header is not checked" not in result.output
+            assert mock_serve.call_args.kwargs["allowed_hosts"] == ["rag.example.com:*", "10.0.0.5:8787"]
 
     def test_mcp_serve_sse_mode(self) -> None:
         with patch("garage_rag.mcp_server.server.serve") as mock_serve:
@@ -500,7 +743,8 @@ class TestMcpCliCommands:
                 host="127.0.0.1",
                 port=8888,
                 path="/mcp",
-                allowed_origins=[],
+                allowed_origins=None,
+                allowed_hosts=None,
                 json_response=False,
                 stateless=False,
             )

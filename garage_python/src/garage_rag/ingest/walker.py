@@ -23,7 +23,6 @@ from garage_rag.config import (
     DIAGNOSTIC_FILE_PATTERNS,
     get_settings,
 )
-from garage_rag.db.models import CorpusClass
 from garage_rag.extract.dispatch import is_indexable
 from garage_rag.extract.placeholder import is_placeholder
 from garage_rag.ingest.classify import is_code_path
@@ -60,14 +59,6 @@ class WalkStats:
     placeholders: int = 0
     unreadable: int = 0
 
-    @property
-    def scanned(self) -> int:
-        return self.files_seen
-
-    @property
-    def candidates(self) -> int:
-        return self.yielded
-
 
 def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     lowered = name.lower()
@@ -94,6 +85,21 @@ def is_dependency_path(path_str: str) -> bool:
     return any(fragment.lower() in lowered for fragment in DEPENDENCY_PATH_FRAGMENTS)
 
 
+def is_dependency_dir(path: Path, root: Path) -> bool:
+    """Whether ``path`` is a package-manager cache below the source ``root``.
+
+    Only the part below ``root`` is matched: the root itself may sit under such a
+    path (Bazel's output base on macOS is ``~/Library/Caches/bazel``, and a user may
+    add a source that lives in a cache on purpose), and pruning on an ancestor
+    would silently index nothing at all.
+    """
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return relative != "." and is_dependency_path(f"/{relative}/")
+
+
 def _is_hidden(name: str) -> bool:
     # Dotfiles are configuration or caches, not writing. The few exceptions
     # (dotfile repos) are not worth the noise of indexing every .DS_Store.
@@ -104,9 +110,7 @@ def walk(
     root: Path,
     *,
     include_code: bool = False,
-    exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS,
     exclude_prefixes: tuple[str, ...] = (),
-    max_bytes: int | None = None,
     stats: WalkStats | None = None,
 ) -> Iterator[Candidate]:
     """Yield indexable files under ``root``.
@@ -115,8 +119,7 @@ def walk(
     for documentation only -- which is the difference between ~18k documents and
     ~192k files in a tree full of checked-out repositories.
     """
-    settings = get_settings()
-    limit = max_bytes if max_bytes is not None else settings.max_file_bytes
+    limit = get_settings().max_file_bytes
     tally = stats if stats is not None else WalkStats()
     root = root.expanduser()
 
@@ -131,7 +134,7 @@ def walk(
         current = Path(dirpath)
 
         # Whole dependency caches: stop descending entirely.
-        if is_dependency_path(dirpath):
+        if is_dependency_dir(current, root):
             log.debug("Walker pruning dependency path: %s", dirpath)
             dirnames[:] = []
             tally.skipped_excluded_dir += 1
@@ -141,7 +144,7 @@ def walk(
         # subtrees are never descended into at all.
         kept: list[str] = []
         for name in dirnames:
-            if name in exclude_dirs or _is_hidden(name):
+            if name in DEFAULT_EXCLUDE_DIRS or _is_hidden(name):
                 tally.skipped_excluded_dir += 1
                 continue
             if is_diagnostic_dir(name):
@@ -208,7 +211,7 @@ def walk(
             )
 
 
-def default_exclude_prefixes(source_class: CorpusClass, root: Path) -> tuple[str, ...]:
+def default_exclude_prefixes(root: Path) -> tuple[str, ...]:
     """Source-specific subtree exclusions.
 
     Dropbox keeps application bundles and binary objects in known top-level

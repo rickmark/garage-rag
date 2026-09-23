@@ -1,4 +1,5 @@
 import XCTest
+import PythonXPCService
 import SwiftUI
 import IngestClient
 import ModelDownloadClient
@@ -54,12 +55,38 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testRunGarageWhenCliUnavailable() async {
+    func testRunOperationReportsItsOutput() async {
         let state = AppState()
 
-        let result = await state.runGarage(["status"])
-        // If CLI is not found or fails
-        XCTAssertEqual(result, state.lastCommandSucceeded ?? false)
+        let result = await state.runOperation { _ in "default model = bge-m3" }
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertEqual(state.lastCommandOutput, "default model = bge-m3")
+        XCTAssertEqual(state.garage.logs.last?.text, "default model = bge-m3")
+    }
+
+    @MainActor
+    func testRunOperationReportsTheServerError() async {
+        let state = AppState()
+
+        let result = await state.runOperation { _ in
+            throw GarageGRPCError.rpcFailed("communication sources may never enable cloud enrichment")
+        }
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandSucceeded, false)
+        XCTAssertEqual(state.lastCommandOutput, "communication sources may never enable cloud enrichment")
+    }
+
+    @MainActor
+    func testOperationNeedingTheServiceFailsWhileTheDatabaseIsOffline() async {
+        let state = AppState()
+
+        let result = await state.runOperation { try await $0.syncSources().message }
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandOutput, GarageGRPCError.databaseNotOnline.localizedDescription)
     }
 
     @MainActor
@@ -143,11 +170,43 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testResetDatabaseUpdatesState() async {
+    func testResetDatabaseStopsServicesButNeitherDeletesNorRelaunchesInTests() async {
         let state = AppState()
-        await state.resetDatabase()
-        XCTAssertNotNil(state.lastCommandSucceeded)
+        XCTAssertEqual(state.postgres.status, .stopped)
+        await state.resetDatabaseAndRelaunch()
+        // Under XCTest the cluster is never deleted and the test host never relaunched.
+        XCTAssertEqual(state.postgres.status, .stopped)
+        XCTAssertFalse(state.isResettingDatabase)
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
+    }
+
+    func testDatabaseResetMessageSaysHowManySourcesCameBack() {
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 0).contains("declares no sources"))
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 1).contains("The 1 source in garage.json"))
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 3).contains("The 3 sources in garage.json"))
+    }
+
+    func testDatabaseResetParentIsReadFromTheLaunchArguments() {
+        XCTAssertEqual(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "4242"]), 4242)
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp"]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "zero"]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "0"]))
+    }
+
+    func testWaitForExitReturnsAtOnceForAProcessThatIsGone() async {
+        let started = Date()
+        // Above macOS's pid ceiling, so no such process.
+        await AppState.waitForExit(of: 999_999, timeout: 5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
+    func testWaitForExitGivesUpAtTheTimeout() async {
+        let started = Date()
+        await AppState.waitForExit(of: getpid(), timeout: 0.3)
+        let waited = Date().timeIntervalSince(started)
+        XCTAssertGreaterThanOrEqual(waited, 0.3)
+        XCTAssertLessThan(waited, 2)
     }
 
     @MainActor
@@ -186,9 +245,11 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.backfill.isRunning)
         XCTAssertTrue(state.backfill.logs.isEmpty)
 
-        // Running backfill when CLI is not running
-        _ = await state.runBackfill(["backfill", "--model", "test-model"])
+        // With the database offline the gRPC service cannot start, so the run fails and says why.
+        let succeeded = await state.runBackfill(model: "test-model")
+        XCTAssertFalse(succeeded)
         XCTAssertFalse(state.backfill.isRunning)
+        XCTAssertFalse(state.backfill.logs.isEmpty)
 
         // Clear logs for backfill
         state.clearLogs(for: "Backfill")
@@ -200,19 +261,19 @@ final class AppStateTests: XCTestCase {
         let state = AppState()
 
         let now = Date()
-        let line1 = LogLine(date: now.addingTimeInterval(-10), stream: .stdout, text: "CLI Ingest Line 1", source: "ingest")
+        let line1 = LogLine(date: now.addingTimeInterval(-10), stream: .stdout, text: "XPC Ingest Line 1", source: "ingest-xpc")
         let line2 = LogLine(date: now.addingTimeInterval(-5), stream: .stdout, text: "XPC Ingest Line 2", source: "ingest-xpc")
-        let line3 = LogLine(date: now, stream: .stdout, text: "CLI Ingest Line 3", source: "ingest")
+        let line3 = LogLine(date: now, stream: .stdout, text: "XPC Ingest Line 3", source: "ingest-xpc")
 
-        state.ingest.appendLog(line1.text)
+        state.ingestService.appendLog(line1.text)
         state.ingestService.appendLog(line2.text)
-        state.ingest.appendLog(line3.text)
+        state.ingestService.appendLog(line3.text)
 
         let combined = state.combinedIngestLogs
         XCTAssertEqual(combined.count, 3)
-        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 1" })
+        XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 1" })
         XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 2" })
-        XCTAssertTrue(combined.contains { $0.text == "CLI Ingest Line 3" })
+        XCTAssertTrue(combined.contains { $0.text == "XPC Ingest Line 3" })
 
         // Check chronological ordering
         for i in 0..<(combined.count - 1) {
@@ -221,19 +282,16 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testClearLogsForIngestClearsBothStreams() {
+    func testClearLogsForIngestClearsStream() {
         let state = AppState()
 
-        state.ingest.appendLog("CLI log")
         state.ingestService.appendLog("XPC log")
 
-        XCTAssertFalse(state.ingest.logs.isEmpty)
         XCTAssertFalse(state.ingestService.logs.isEmpty)
         XCTAssertFalse(state.combinedIngestLogs.isEmpty)
 
         state.clearLogs(for: "Ingest")
 
-        XCTAssertTrue(state.ingest.logs.isEmpty)
         XCTAssertTrue(state.ingestService.logs.isEmpty)
         XCTAssertTrue(state.combinedIngestLogs.isEmpty)
     }
@@ -519,11 +577,11 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testRunGarageScanSkippedWhenIngesting() async {
+    func testScanSkippedWhenIngestingSaysWhy() async {
         let state = AppState()
         state.setIngestingForTesting(true)
 
-        let result = await state.runGarage(["scan", "--source", "*"])
+        let result = await state.scanSources(source: "*")
         XCTAssertFalse(result)
         XCTAssertEqual(state.lastCommandSucceeded, false)
         XCTAssertEqual(state.lastCommandOutput, "Cannot scan while ingestion is in progress.")

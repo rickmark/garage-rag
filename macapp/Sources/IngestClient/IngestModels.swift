@@ -101,44 +101,6 @@ public struct IngestProgressUpdate: Codable, Sendable, Equatable {
     }
 }
 
-/// Splits command-line strings into discrete arguments respecting quotes and escapes.
-public enum CommandLineParser {
-    /// Splits a command line string into an array of arguments, respecting single and double quotes and escaped spaces.
-    public static func splitArguments(_ commandLine: String) -> [String] {
-        var arguments: [String] = []
-        var current = ""
-        var inSingleQuote = false
-        var inDoubleQuote = false
-        var isEscaped = false
-
-        for char in commandLine {
-            if isEscaped {
-                current.append(char)
-                isEscaped = false
-            } else if char == "\\" && !inSingleQuote {
-                isEscaped = true
-            } else if char == "'" && !inDoubleQuote {
-                inSingleQuote.toggle()
-            } else if char == "\"" && !inSingleQuote {
-                inDoubleQuote.toggle()
-            } else if char.isWhitespace && !inSingleQuote && !inDoubleQuote {
-                if !current.isEmpty {
-                    arguments.append(current)
-                    current = ""
-                }
-            } else {
-                current.append(char)
-            }
-        }
-
-        if !current.isEmpty {
-            arguments.append(current)
-        }
-
-        return arguments
-    }
-}
-
 /// Options configuring an ingest run.
 public struct IngestOptions: Codable, Sendable, Equatable {
     public let includeCode: Bool
@@ -146,7 +108,6 @@ public struct IngestOptions: Codable, Sendable, Equatable {
     public let force: Bool
     public let grpcHost: String?
     public let grpcPort: Int?
-    public let extraArguments: [String]
     public let databaseUrl: String?
     public let lmStudioApiToken: String?
 
@@ -156,7 +117,6 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         force: Bool = false,
         grpcHost: String? = nil,
         grpcPort: Int? = nil,
-        extraArguments: [String] = [],
         databaseUrl: String? = nil,
         lmStudioApiToken: String? = nil
     ) {
@@ -165,7 +125,6 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.force = force
         self.grpcHost = grpcHost
         self.grpcPort = grpcPort
-        self.extraArguments = extraArguments
         self.databaseUrl = databaseUrl
         self.lmStudioApiToken = lmStudioApiToken
     }
@@ -178,7 +137,6 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         case force
         case grpcHost = "grpc_host"
         case grpcPort = "grpc_port"
-        case extraArguments = "extra_arguments"
         case databaseUrl = "database_url"
         case lmStudioApiToken = "lmstudio_api_token"
     }
@@ -190,7 +148,6 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
         self.grpcHost = try container.decodeIfPresent(String.self, forKey: .grpcHost)
         self.grpcPort = try container.decodeIfPresent(Int.self, forKey: .grpcPort)
-        self.extraArguments = try container.decodeIfPresent([String].self, forKey: .extraArguments) ?? []
         self.databaseUrl = try container.decodeIfPresent(String.self, forKey: .databaseUrl)
         self.lmStudioApiToken = try container.decodeIfPresent(String.self, forKey: .lmStudioApiToken)
     }

@@ -1,13 +1,14 @@
 import XCTest
 @testable import LlamaClient
+import LlamaTestSupport
 
 final class LlamaClientTests: XCTestCase {
-    var engine: LlamaServerEngine!
+    var engine: MockLlamaServerEngine!
     var client: LlamaClient!
 
     override func setUp() {
         super.setUp()
-        engine = LlamaServerEngine(modelPath: "/tmp/mock-model.gguf", modelAlias: "test-model", totalSlots: 2)
+        engine = MockLlamaServerEngine(modelPath: "/tmp/mock-model.gguf", modelAlias: "test-model", totalSlots: 2)
         client = LlamaClient(inProcessEngine: engine)
     }
 
@@ -133,57 +134,26 @@ final class LlamaClientTests: XCTestCase {
         XCTAssertEqual(health.status, "no_model_loaded")
     }
 
-    func testLoadBgeM3ModelAndEmbeddings() async throws {
-        let modelPath = "/Users/rickmark/Desktop/bge-m3-Q8_0.gguf"
-        let loadMsg = try await client.loadModel(path: modelPath, alias: "bge-m3")
-        XCTAssertTrue(loadMsg.contains("loaded successfully"))
-
-        let models = try await client.listModels()
-        XCTAssertEqual(models.data.first?.id, "bge-m3")
-
-        let texts = [
-            "Text representation for multi-lingual information retrieval",
-            "Dense retrieval with BGE-M3 model"
-        ]
-
-        // 1. Explicit dimensions 1024
-        let embeddings1024 = try await client.embed(texts: texts, model: "bge-m3", dimensions: 1024)
-        XCTAssertEqual(embeddings1024.count, 2)
-        XCTAssertEqual(embeddings1024[0].count, 1024)
-        XCTAssertEqual(embeddings1024[1].count, 1024)
-
-        let norm0 = sqrt(embeddings1024[0].reduce(0) { $0 + $1 * $1 })
-        let norm1 = sqrt(embeddings1024[1].reduce(0) { $0 + $1 * $1 })
-        XCTAssertEqual(norm0, 1.0, accuracy: 1e-4)
-        XCTAssertEqual(norm1, 1.0, accuracy: 1e-4)
-
-        // 2. Full request object endpoint testing with token usage verification
-        let req = LlamaEmbeddingRequest(input: texts, model: "bge-m3", dimensions: 1024)
-        let resp = try await client.embed(req)
-        XCTAssertEqual(resp.object, "list")
-        XCTAssertEqual(resp.data.count, 2)
-        XCTAssertEqual(resp.data[0].embedding.count, 1024)
-        XCTAssertEqual(resp.data[1].embedding.count, 1024)
-        XCTAssertGreaterThan(resp.usage.totalTokens, 0)
-    }
-
-    func testLlamaClientFallbackWhenHelperUnavailable() async throws {
-        // Test client configured with non-existent helper service name
+    func testLlamaClientSurfacesUnreachableHelper() async throws {
+        // A client pointed at a helper that does not exist must fail every call: nothing answers from an
+        // in-process engine, so a dead or crashed helper can never look healthy to the app.
         let disconnectedClient = LlamaClient(serviceName: "me.rickmark.nonexistent.llama-xpc")
 
-        let ping = try await disconnectedClient.ping()
-        XCTAssertTrue(ping.contains("pong"))
+        func expectServiceError(_ label: String, _ body: () async throws -> Void) async {
+            do {
+                try await body()
+                XCTFail("\(label) should throw when the helper is unreachable")
+            } catch {
+                XCTAssertTrue(error is LlamaClientError, "\(label) threw \(type(of: error)), expected LlamaClientError")
+            }
+        }
 
-        let health = try await disconnectedClient.health()
-        XCTAssertEqual(health.status, "ok")
-
-        let props = try await disconnectedClient.props()
-        XCTAssertEqual(props.modelAlias, "default")
-
-        let models = try await disconnectedClient.listModels()
-        XCTAssertEqual(models.object, "list")
-
-        let completion = try await disconnectedClient.complete(prompt: "Hello", maxTokens: 10)
-        XCTAssertFalse(completion.content.isEmpty)
+        await expectServiceError("ping()") { _ = try await disconnectedClient.ping() }
+        await expectServiceError("health()") { _ = try await disconnectedClient.health() }
+        await expectServiceError("props()") { _ = try await disconnectedClient.props() }
+        await expectServiceError("listModels()") { _ = try await disconnectedClient.listModels() }
+        await expectServiceError("complete()") { _ = try await disconnectedClient.complete(prompt: "Hello", maxTokens: 10) }
+        await expectServiceError("embed()") { _ = try await disconnectedClient.embed(texts: ["Hello"]) }
+        await expectServiceError("unloadModel()") { _ = try await disconnectedClient.unloadModel() }
     }
 }

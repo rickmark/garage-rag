@@ -72,6 +72,10 @@ class IngestStorageGateway(ABC):
     """Abstract interface for ingestion persistence operations."""
 
     @abstractmethod
+    def list_enabled_sources(self) -> list[str]:
+        """Slugs of every enabled source, in registration order. Opens no ingest run."""
+
+    @abstractmethod
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         """Initialize ingest run session for a source."""
 
@@ -113,6 +117,14 @@ class IngestStorageGateway(ABC):
         uri: str,
     ) -> None:
         """Record document rejection (deleting existing)."""
+
+    @abstractmethod
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        """Record that ``uri`` was observed by this run without touching its document row.
+
+        Used for files the pipeline never opened (stat-skipped) or could not turn into
+        chunks; reconciliation would otherwise treat them as deleted.
+        """
 
     @abstractmethod
     def refresh_metadata(
@@ -175,6 +187,12 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
     def __init__(self, session_factory: Callable[[], Any]) -> None:
         self.factory = session_factory
 
+    def list_enabled_sources(self) -> list[str]:
+        from garage_rag.db.models import Source
+
+        with self.factory() as session:
+            return [s.slug for s in session.query(Source).filter_by(enabled=True).order_by(Source.id).all()]
+
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         from garage_rag.attribute.resolver import ensure_self_author
         from garage_rag.db.models import IngestRun, Source
@@ -183,13 +201,13 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             if source_slug == "*":
                 sources = session.query(Source).filter_by(enabled=True).order_by(Source.id).all()
                 if not sources:
-                    raise RuntimeError("No sources registered")
+                    raise LookupError("No sources registered")
                 source_slugs = [s.slug for s in sources]
                 src = sources[0]
             else:
                 src = session.query(Source).filter_by(slug=source_slug).one_or_none()
                 if src is None:
-                    raise RuntimeError(f"No such source: {source_slug}")
+                    raise LookupError(f"No such source: {source_slug}")
                 source_slugs = [src.slug]
 
             ensure_self_author(session)
@@ -205,7 +223,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 default_trust=src.default_trust,
                 allow_cloud_enrichment=bool(src.allow_cloud_enrichment),
                 run_id=run.id,
-                kind=src.kind if hasattr(src, "kind") and src.kind else "filesystem",
+                kind=src.kind,
                 source_slugs=source_slugs,
             )
 
@@ -222,7 +240,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is None:
                 return ExistingDocStat(exists=False)
@@ -258,7 +276,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is None:
                 mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None
@@ -281,9 +299,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 doc.error = error or "not materialized"
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def record_extract_failed(
@@ -300,16 +316,14 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 doc.state = IngestState.EXTRACT_FAILED
                 doc.error = error[:2000]
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def record_rejected(
@@ -325,15 +339,24 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 session.delete(doc)
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
+            session.commit()
+
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from garage_rag.db.models import IngestSeen
+
+        if not run_id:
+            return
+        with self.factory() as session:
+            session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def refresh_metadata(
@@ -354,7 +377,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 doc.byte_size = byte_size
@@ -362,9 +385,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     doc.mtime = datetime.fromtimestamp(mtime, tz=UTC)
                 if source_sha256:
                     doc.source_sha256 = (
-                        source_sha256
-                        if isinstance(source_sha256, (bytes, bytearray))
-                        else bytes.fromhex(source_sha256)
+                        source_sha256 if isinstance(source_sha256, (bytes, bytearray)) else bytes.fromhex(source_sha256)
                     )
                 if corpus_class:
                     doc.corpus_class = CorpusClass(corpus_class)
@@ -372,9 +393,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     doc.trust_tier = TrustTier(trust_tier)
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
 
     def replace_document(
@@ -416,7 +435,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
-                raise RuntimeError(f"No such source: {source_slug}")
+                raise LookupError(f"No such source: {source_slug}")
 
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None
@@ -498,8 +517,8 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                         ord=c.ord,
                         text=c.text,
                         token_count=c.token_count or None,
-                        char_start=c.char_start or None,
-                        char_end=c.char_end or None,
+                        char_start=c.char_start,
+                        char_end=c.char_end,
                         heading_path=c.heading_path or None,
                         chunk_sha256=chunk_hash,
                         chunker=c.chunker or doc.chunker or "default",
@@ -507,9 +526,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 )
 
             if run_id:
-                session.execute(
-                    pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing()
-                )
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
             session.commit()
             return len(chunks)
 
@@ -551,6 +568,10 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
     def __init__(self, client: Any) -> None:
         self.client = client
 
+    def list_enabled_sources(self) -> list[str]:
+        resp = self.client.list_sources()
+        return [s.slug for s in resp.sources if s.enabled]
+
     def begin_session(self, source_slug: str, include_code: bool = False) -> SourceContext:
         from garage_rag.proto.garage_pb2 import BeginIngestSessionRequest
 
@@ -564,7 +585,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             default_trust=TrustTier(resp.default_trust),
             allow_cloud_enrichment=resp.allow_cloud_enrichment,
             run_id=resp.run_id,
-            kind=getattr(resp, "kind", "") or "filesystem",
+            # Picks the scanner: without it sqlite/maildir sources were walked as folders.
+            kind=resp.kind or "filesystem",
             source_slugs=list(resp.source_slugs),
         )
 
@@ -652,6 +674,12 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         )
         self.client.persist_document(req)
 
+    def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
+        from garage_rag.proto.garage_pb2 import PersistDocumentRequest
+
+        req = PersistDocumentRequest(run_id=run_id, source_slug=source_slug, uri=uri, action="seen")
+        self.client.persist_document(req)
+
     def refresh_metadata(
         self,
         run_id: int,
@@ -665,11 +693,7 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
     ) -> None:
         from garage_rag.proto.garage_pb2 import PersistDocumentRequest
 
-        src_sha = (
-            source_sha256.hex()
-            if isinstance(source_sha256, (bytes, bytearray))
-            else (source_sha256 or "")
-        )
+        src_sha = source_sha256.hex() if isinstance(source_sha256, (bytes, bytearray)) else (source_sha256 or "")
         req = PersistDocumentRequest(
             run_id=run_id,
             source_slug=source_slug,
@@ -727,8 +751,8 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
                 ord=c.ord,
                 text=c.text,
                 token_count=c.token_count or 0,
-                char_start=c.char_start or 0,
-                char_end=c.char_end or 0,
+                char_start=c.char_start,
+                char_end=c.char_end,
                 heading_path=c.heading_path or "",
                 chunk_sha256=(
                     c.chunk_sha256.hex()
@@ -796,80 +820,6 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         )
         self.client.finalize_ingest_session(req)
 
-    def test_read_documents(
-        self,
-        source_slug: str | None = None,
-        limit: int = 5,
-        sample_bytes: int = 1024,
-    ) -> dict[str, Any]:
-        """Query gRPC server for registered source(s) and test reading sample document files from disk."""
-        sources = []
-        if source_slug and source_slug != "*":
-            sources = [source_slug]
-        else:
-            list_resp = self.client.list_sources()
-            sources = [s.slug for s in list_resp.sources if s.enabled]
-            if not sources and list_resp.sources:
-                sources = [s.slug for s in list_resp.sources]
-
-        results: list[dict[str, Any]] = []
-        total_tested = 0
-        total_readable = 0
-
-        for slug in sources:
-            ctx = self.begin_session(slug)
-            root_path = Path(ctx.root)
-            sample_uris: list[str] = []
-            if root_path.exists() and root_path.is_dir():
-                for p in root_path.rglob("*"):
-                    if p.is_file() and not p.name.startswith("."):
-                        sample_uris.append(str(p.relative_to(root_path)))
-                        if len(sample_uris) >= limit:
-                            break
-            elif root_path.is_file():
-                sample_uris.append(root_path.name)
-
-            for uri in sample_uris:
-                total_tested += 1
-                stat = self.check_stat(slug, uri)
-                full_path = root_path / uri if root_path.is_dir() else root_path
-                can_read = False
-                bytes_read = 0
-                error_msg = None
-                try:
-                    with open(full_path, "rb") as f:
-                        data = f.read(sample_bytes)
-                        bytes_read = len(data)
-                        can_read = True
-                        total_readable += 1
-                except Exception as e:
-                    error_msg = str(e)
-
-                results.append({
-                    "source_slug": slug,
-                    "uri": uri,
-                    "full_path": str(full_path),
-                    "exists": stat.exists,
-                    "byte_size": (
-                        stat.byte_size if stat.exists else (full_path.stat().st_size if full_path.exists() else 0)
-                    ),
-                    "can_read": can_read,
-                    "bytes_read": bytes_read,
-                    "error": error_msg,
-                })
-
-        return {
-            "status": "ok" if (total_tested == total_readable and total_tested > 0) or total_tested == 0 else "partial",
-            "total_tested": total_tested,
-            "total_readable": total_readable,
-            "documents": results,
-            "message": (
-                f"Tested {total_tested} document(s): {total_readable} readable"
-                if total_tested > 0
-                else "No documents found to test"
-            ),
-        }
-
 
 def get_storage_gateway(
     session_factory: Callable[[], Any] | None = None,
@@ -896,6 +846,9 @@ def get_storage_gateway(
     host = grpc_host or env_host
 
     if port:
+        # Imported here, not at module scope: garage_rag.service depends on
+        # ingest, so a top-level import would be a cycle.
+        # gazelle:ignore garage_rag.service.client
         from garage_rag.service.client import GarageClient
 
         client = GarageClient(host=host, port=port, in_process=False)

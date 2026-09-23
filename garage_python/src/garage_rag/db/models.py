@@ -1,4 +1,4 @@
-"""SQLAlchemy models mirroring ``sql/*.sql``.
+"""SQLAlchemy models mirroring ``data/sql/*.sql``.
 
 The SQL files remain the source of truth for DDL (they hold the CHECK
 constraints and the generated tsvector column). These mappings exist for typed
@@ -99,7 +99,10 @@ class Source(Base):
     allow_cloud_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     expected_elements: Mapped[int] = mapped_column(BigInteger, default=0)
-    expected_items: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The last scan (008_source_scan.sql); config stays user-facing settings only.
+    scan_item_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scan_details: Mapped[dict] = mapped_column(JSONB, default=dict)
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -201,9 +204,7 @@ class Chunk(Base):
     chunker: Mapped[str] = mapped_column(Text)
     # Set when this chunk is a fact's text rather than a slice of
     # documents.content, so the fact can be embedded like any other chunk.
-    fact_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True
-    )
+    fact_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("facts.id", ondelete="CASCADE"), nullable=True)
     # `tsv` is a generated column; it is read-only from the ORM's perspective and
     # is intentionally not mapped.
 
@@ -302,6 +303,9 @@ class EmbeddingModel(Base):
     stored_dims: Mapped[int] = mapped_column(Integer)
     storage_kind: Mapped[StorageKind] = mapped_column(String)
     index_kind: Mapped[IndexKind] = mapped_column(String)
+    # cosine | l2 | inner_product (009_model_distance.sql): the index's operator
+    # class and the search operator both follow it.
+    distance: Mapped[str] = mapped_column(Text, default="cosine")
     normalized: Mapped[bool] = mapped_column(Boolean, default=True)
     table_name: Mapped[str] = mapped_column(Text, unique=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -355,6 +355,13 @@ final class ProcessRunner: @unchecked Sendable {
         process.terminate()
     }
 
+    /// SIGINT. For Postgres this is a fast shutdown: it disconnects clients and writes a shutdown
+    /// checkpoint, where SIGTERM (`terminate()`) is a smart shutdown that waits for every client to leave.
+    func interrupt() {
+        guard let process, process.isRunning else { return }
+        kill(process.processIdentifier, SIGINT)
+    }
+
     func forceKill() {
         cleanupHandlers()
         guard let process, process.isRunning else { return }

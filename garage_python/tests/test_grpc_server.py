@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import threading
+from unittest.mock import patch
 
 import grpc
 import pytest
 
 from garage_rag.proto.garage_pb2 import (
-    CommandRequest,
-    ConfigPathRequest,
-    ConfigShowRequest,
-    McpStatusRequest,
+    GetEmbeddingBatchesRequest,
     PingRequest,
     StatusRequest,
-    StatusType,
-    StopRequest,
     VersionRequest,
 )
 from garage_rag.proto.garage_pb2_grpc import GarageServiceStub
@@ -46,10 +41,16 @@ def test_grpc_ping(grpc_server):
 
 def test_grpc_get_status(grpc_server):
     port, _ = grpc_server
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+    # The servicer runs in this process, so patching the DB boundary here applies to it.
+    with (
+        patch("garage_rag.db.engine.get_engine"),
+        patch("garage_rag.db.migrate.has_pending_migrations", return_value=False),
+        grpc.insecure_channel(f"127.0.0.1:{port}") as channel,
+    ):
         stub = GarageServiceStub(channel)
         response = stub.GetStatus(StatusRequest())
         assert response.is_ready is True
+        assert response.db_status == "connected"
         assert response.server_type == "grpc"
         assert response.pid > 0
         assert len(response.version) > 0
@@ -64,53 +65,29 @@ def test_grpc_get_version(grpc_server):
         assert len(response.version) > 0
 
 
-def test_grpc_config_show(grpc_server):
+def test_grpc_get_embedding_batches_unknown_model_is_not_found(grpc_server):
+    """An unregistered model aborts with NOT_FOUND instead of an empty OK response."""
     port, _ = grpc_server
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+    with (
+        patch("garage_rag.db.engine.session_scope"),
+        patch("garage_rag.db.emb_tables.get_model", side_effect=LookupError("no model 'nope' registered")),
+        grpc.insecure_channel(f"127.0.0.1:{port}") as channel,
+    ):
         stub = GarageServiceStub(channel)
-        response = stub.ConfigShow(ConfigShowRequest(show_defaults=True))
-        assert response.config_json
-        data = json.loads(response.config_json)
-        assert isinstance(data, dict)
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.GetEmbeddingBatches(GetEmbeddingBatchesRequest(model_slug="nope", batch_size=8))
+    assert excinfo.value.code() == grpc.StatusCode.NOT_FOUND
+    assert "nope" in excinfo.value.details()
 
 
-def test_grpc_config_path(grpc_server):
+def test_grpc_get_embedding_batches_db_outage_is_an_error(grpc_server):
+    """A database failure must surface as an RPC error, not as "nothing pending"."""
     port, _ = grpc_server
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+    with (
+        patch("garage_rag.db.engine.session_scope", side_effect=RuntimeError("connection refused")),
+        grpc.insecure_channel(f"127.0.0.1:{port}") as channel,
+    ):
         stub = GarageServiceStub(channel)
-        response = stub.ConfigPath(ConfigPathRequest())
-        assert len(response.candidate_paths) > 0
-
-
-def test_grpc_mcp_status(grpc_server):
-    port, _ = grpc_server
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
-        stub = GarageServiceStub(channel)
-        response = stub.McpStatus(McpStatusRequest())
-        assert len(response.clients) > 0
-        assert response.server_command
-
-
-def test_grpc_execute_command_stream(grpc_server):
-    port, _ = grpc_server
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
-        stub = GarageServiceStub(channel)
-        req = CommandRequest(argv=["version"])
-        statuses = list(stub.ExecuteCommand(req))
-        assert len(statuses) >= 2
-        types = [s.type for s in statuses]
-        assert StatusType.STATUS_STARTED in types
-        assert StatusType.STATUS_COMPLETED in types
-
-        output_chunks = [s.stdout for s in statuses if s.stdout]
-        assert "garage v" in "".join(output_chunks)
-
-
-def test_grpc_stop(grpc_server):
-    port, servicer = grpc_server
-    assert not servicer.stop_event.is_set()
-    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
-        stub = GarageServiceStub(channel)
-        res = stub.Stop(StopRequest(reason="test"))
-        assert res.success is True
-    assert servicer.stop_event.is_set()
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.GetEmbeddingBatches(GetEmbeddingBatchesRequest(model_slug="bge-m3"))
+    assert excinfo.value.code() != grpc.StatusCode.OK

@@ -1,5 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file", "normalize_install_names")
 
 configure_make(
     name = "libzlib",
@@ -9,9 +9,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_static_libs = [
@@ -29,14 +28,14 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libzlib//:libzlib_source",
     out_shared_libs = [
         "libz.1.dylib",
     ],
+    postfix_script = normalize_install_names(["libz.1.dylib"]),
     visibility = ["//visibility:public"],
 )
 

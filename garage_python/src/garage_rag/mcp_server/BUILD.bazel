@@ -6,13 +6,19 @@ py_binary(
     imports = ["../.."],
     visibility = ["//visibility:public"],
     deps = [
+        # Owns garage_rag/__init__.py, whose libpq configure hook the bundled app
+        # relies on; without it garage_rag is only a namespace package here.
+        # Nothing in server.py imports it, so gazelle needs the keep.
+        "//garage_python/src/garage_rag",  # keep
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/search",
         "@pypi//mcp",
         "@pypi//mcp_types",
         "@pypi//pydantic",
         "@pypi//sqlalchemy",
+        "@pypi//uvicorn",
     ],
 )
 
@@ -28,10 +34,12 @@ py_library(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/search",
         "@pypi//mcp",
         "@pypi//mcp_types",
         "@pypi//pydantic",
         "@pypi//sqlalchemy",
+        "@pypi//uvicorn",
     ],
 )

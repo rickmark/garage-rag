@@ -56,7 +56,7 @@ For detailed architectural and design specifications, see:
 ├── MODULE.bazel              # Bazel dependencies (aspect_rules_py, rules_swift, rules_apple, etc.)
 ├── data/
 │   ├── schema/               # JSON schema for garage configuration validation
-│   └── sql/                  # PostgreSQL migration and DDL scripts (001_extensions, 002_core, 003_registry)
+│   └── sql/                  # PostgreSQL DDL, applied in order (001_extensions … 007_chunk_fact_link)
 ├── docs/                     # In-depth architectural, privacy, schema, and attribution documentation
 ├── ext/                      # Hermetic Bazel builds for PostgreSQL 18, pgvector, and C/C++ libraries
 ├── garage_python/            # Python backend package (garage_rag), CLI (garage), and MCP server (garage-mcp)
@@ -92,8 +92,8 @@ For detailed architectural and design specifications, see:
 
 3. **Register an embedding model**:
    ```bash
-   garage register-model bge-m3 --provider ollama --dimensions 1024
-   garage default-model bge-m3
+   garage register-model bge-m3 --provider ollama --dims 1024
+   garage set-default-model bge-m3
    ```
 
 4. **Add and ingest sources**:
@@ -114,11 +114,15 @@ For detailed architectural and design specifications, see:
 
 6. **Start or Install the MCP Server**:
    ```bash
-   # Run standalone stdio server for LLM agents
-   garage-mcp
+   # The stdio server MCP clients spawn (its own entry point, separate from the CLI)
+   garage-mcp --config ~/.garage.json
 
-   # Or install into Claude Desktop / Claude Code configurations
-   garage mcp-install claude-desktop
+   # Or one long-running HTTP server for several clients
+   garage mcp-serve
+
+   # Register either with Claude Desktop / Claude Code (HTTP by default, --stdio for garage-mcp)
+   garage mcp-install --target claude-desktop
+   garage mcp-install --target claude-code-user --stdio
    ```
 
 ---
@@ -133,10 +137,6 @@ This monorepo uses [Aspect CLI](https://aspect.build) / Bazel for hermetic build
 # Build all targets in the repository
 aspect build //...
 
-# Build the Python CLI binaries
-aspect build //garage_python:garage
-aspect build //garage_python:garage-mcp
-
 # Build the macOS application
 aspect build //:macapp
 ```
@@ -147,6 +147,12 @@ aspect build //:macapp
 # Run all unit and integration tests across the repo
 aspect test //...
 ```
+
+The tests in `garage_python/tests/test_postgres.py` run against a real Postgres with pgvector.
+They skip unless `GARAGE_TEST_DATABASE_URL` names a development server, such as Homebrew's
+`postgresql@18` with `pgvector` running as a service. Point it at a superuser URL such as
+`postgresql://localhost:5432/postgres`, never at the app's own database. See "Testing against
+Postgres" in `CLAUDE.md`.
 
 ### Code Quality & Formatting
 
@@ -172,7 +178,7 @@ open macapp/Garage.xcodeproj
 
 ## License
 
-See [LICENSE](LICENSE) for terms of use.
+See [LICENSE](garage_python/LICENSE) for terms of use.
 
 ## Dedication
 

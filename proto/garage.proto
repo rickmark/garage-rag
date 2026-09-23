@@ -2,8 +2,12 @@ syntax = "proto3";
 
 package garage;
 
-// The GarageService enables controlling and executing Garage commands,
-// streaming status updates and structured data.
+// The GarageService is how the macOS app drives the Python pipeline: corpus
+// reads for its views, every operation it would otherwise shell out to the
+// `garage` CLI for (sources, models, backfill, fact distillation, schema,
+// settings, MCP client registration), and the database facade the ingest and
+// embed XPC workers persist through. Each RPC is a thin wrapper over the same
+// garage_rag.ops function the CLI command calls.
 service GarageService {
     // Ping / Healthcheck
     rpc Ping (PingRequest) returns (PingResponse);
@@ -13,9 +17,6 @@ service GarageService {
 
     // Version info
     rpc GetVersion (VersionRequest) returns (VersionResponse);
-
-    // Request server shutdown
-    rpc Stop (StopRequest) returns (StopResponse);
 
     // --- Search ---
     rpc Search (SearchRequest) returns (SearchResponse);
@@ -28,38 +29,31 @@ service GarageService {
     rpc ListSources (ListSourcesRequest) returns (ListSourcesResponse);
     rpc AddSource (AddSourceRequest) returns (AddSourceResponse);
     rpc RemoveSource (RemoveSourceRequest) returns (RemoveSourceResponse);
-
-    // --- Ingestion & Pipeline ---
     rpc Scan (ScanRequest) returns (ScanResponse);
-    rpc Ingest (IngestRequest) returns (stream IngestStatus);
-    rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
-    rpc EnrichFacts (EnrichFactsRequest) returns (stream EnrichFactsStatus);
+    rpc SyncSources (SyncSourcesRequest) returns (SyncSourcesResponse);
+    rpc ImportSourcesToConfig (ImportSourcesToConfigRequest) returns (ImportSourcesToConfigResponse);
     rpc Reconcile (ReconcileRequest) returns (ReconcileResponse);
 
     // --- Embedding Models ---
-    rpc RegisterModel (RegisterModelRequest) returns (RegisterModelResponse);
     rpc ListModels (ListModelsRequest) returns (ListModelsResponse);
+    rpc RegisterModel (RegisterModelRequest) returns (RegisterModelResponse);
     rpc SetDefaultModel (SetDefaultModelRequest) returns (SetDefaultModelResponse);
     rpc DropModel (DropModelRequest) returns (DropModelResponse);
+    rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
 
-    // --- Corpus & DB Stats ---
+    // --- Facts ---
+    rpc EnrichFacts (EnrichFactsRequest) returns (stream EnrichFactsStatus);
+
+    // --- Schema, Stats & Settings ---
     rpc GetStats (StatsRequest) returns (StatsResponse);
-    rpc Extract (ExtractRequest) returns (ExtractResponse);
     rpc InitDb (InitDbRequest) returns (InitDbResponse);
-    rpc Sync (SyncRequest) returns (stream SyncStatus);
+    rpc GetSetting (GetSettingRequest) returns (GetSettingResponse);
+    rpc SetSetting (SetSettingRequest) returns (SetSettingResponse);
 
-    // --- MCP Operations ---
-    rpc McpServe (McpServeRequest) returns (stream McpServeStatus);
+    // --- MCP Client Registration ---
     rpc McpInstall (McpInstallRequest) returns (McpInstallResponse);
     rpc McpUninstall (McpUninstallRequest) returns (McpUninstallResponse);
     rpc McpStatus (McpStatusRequest) returns (McpStatusResponse);
-
-    // --- Config Operations ---
-    rpc ConfigInit (ConfigInitRequest) returns (ConfigInitResponse);
-    rpc ConfigShow (ConfigShowRequest) returns (ConfigShowResponse);
-    rpc ConfigPath (ConfigPathRequest) returns (ConfigPathResponse);
-    rpc ConfigSchema (ConfigSchemaRequest) returns (ConfigSchemaResponse);
-    rpc ConfigImportSources (ConfigImportSourcesRequest) returns (ConfigImportSourcesResponse);
 
     // --- Database Facade for Ingest & Embed Workers ---
     rpc BeginIngestSession (BeginIngestSessionRequest) returns (BeginIngestSessionResponse);
@@ -69,9 +63,6 @@ service GarageService {
     rpc FinalizeIngestSession (FinalizeIngestSessionRequest) returns (FinalizeIngestSessionResponse);
     rpc GetEmbeddingBatches (GetEmbeddingBatchesRequest) returns (GetEmbeddingBatchesResponse);
     rpc UpdateEmbeddings (UpdateEmbeddingsRequest) returns (UpdateEmbeddingsResponse);
-
-    // --- Legacy / Generic Command Fallback ---
-    rpc ExecuteCommand (CommandRequest) returns (stream CommandStatus);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,41 +92,6 @@ message VersionRequest {}
 
 message VersionResponse {
     string version = 1;
-}
-
-message StopRequest {
-    string reason = 1;
-}
-
-message StopResponse {
-    bool success = 1;
-}
-
-message CommandRequest {
-    repeated string argv = 1;
-    string cwd = 2;
-    map<string, string> env = 3;
-    map<string, string> options = 4;
-}
-
-enum StatusType {
-    STATUS_UNKNOWN = 0;
-    STATUS_STARTED = 1;
-    STATUS_OUTPUT = 2;
-    STATUS_PROGRESS = 3;
-    STATUS_COMPLETED = 4;
-    STATUS_ERROR = 5;
-}
-
-message CommandStatus {
-    StatusType type = 1;
-    string stdout = 2;
-    string stderr = 3;
-    float progress = 4;
-    string progress_message = 5;
-    int32 exit_code = 6;
-    string error_message = 7;
-    string json_data = 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,8 +170,9 @@ message DocumentChunkInfo {
     int32 ord = 2;
     string text = 3;
     int32 token_count = 4;
-    int32 char_start = 5;
-    int32 char_end = 6;
+    // Span of documents.content; unset when the chunk is not a verbatim slice of it.
+    optional int32 char_start = 5;
+    optional int32 char_end = 6;
     string heading_path = 7;
 }
 
@@ -231,8 +188,9 @@ message DocumentFactInfo {
     string fact = 3;
     string fact_class = 4;
     string attributes_json = 5;
-    int32 char_start = 6;
-    int32 char_end = 7;
+    // Span of documents.content the fact was grounded to.
+    optional int32 char_start = 6;
+    optional int32 char_end = 7;
     string extractor = 8;
 }
 
@@ -290,147 +248,6 @@ message ListSourcesResponse {
     string formatted_output = 2;
 }
 
-message AddSourceRequest {
-    string slug = 1;
-    string root = 2;
-    string kind = 3;
-    string corpus_class = 4;
-    string trust = 5;
-    bool allow_cloud_enrichment = 6;
-}
-
-message AddSourceResponse {
-    bool success = 1;
-    string message = 2;
-    string slug = 3;
-    string root = 4;
-    string formatted_output = 5;
-}
-
-message RemoveSourceRequest {
-    string slug = 1;
-    bool force = 2;
-}
-
-message RemoveSourceResponse {
-    bool success = 1;
-    int64 deleted_documents = 2;
-    string message = 3;
-    string formatted_output = 4;
-}
-
-// ---------------------------------------------------------------------------
-// Ingest, Backfill, Reconcile
-// ---------------------------------------------------------------------------
-
-message ScanRequest {
-    string source = 1;
-    bool include_code = 2;
-}
-
-message SourceScanStatus {
-    string source = 1;
-    string kind = 2;
-    string root = 3;
-    int64 item_count = 4;
-    string item_type = 5;
-    string error = 6;
-    map<string, string> details = 7;
-}
-
-message ScanResponse {
-    repeated SourceScanStatus sources = 1;
-    int64 total_items = 2;
-    string formatted_output = 3;
-}
-
-message IngestRequest {
-    string source = 1;
-    bool include_code = 2;
-    int32 limit = 3;
-    bool force = 4;
-}
-
-message IngestStatus {
-    string source = 1;
-    int64 candidates_seen = 2;
-    int64 indexed = 3;
-    int64 skipped = 4;
-    int64 failed = 5;
-    int64 rejected = 6;
-    int64 chunks_written = 7;
-    int64 placeholders = 8;
-    int64 dirs_walked = 9;
-    int64 files_examined = 10;
-    bool is_complete = 11;
-    float progress = 12;
-    string progress_message = 13;
-    string error_message = 14;
-    repeated string sample_errors = 15;
-    string formatted_output = 16;
-    int64 total_items = 17;
-    string phase = 18;
-}
-
-message BackfillRequest {
-    string model = 1;
-    int32 batch_size = 2;
-    int32 limit = 3;
-    bool verify = 4;
-}
-
-message BackfillStatus {
-    string model_slug = 1;
-    int64 total = 2;
-    int64 embedded = 3;
-    int64 failed = 4;
-    int64 remaining = 5;
-    int64 batches = 6;
-    bool is_complete = 7;
-    float progress = 8;
-    string progress_message = 9;
-    string error_message = 10;
-    string formatted_output = 11;
-}
-
-message EnrichFactsRequest {
-    string source = 1; // source slug filter, or "*"/empty for all sources
-    int64 document_id = 2; // if > 0, extract facts for just this document, ignoring `source`
-    string model_id = 3; // fact_distil model slug/ref to use; empty = default (gemma2:2b)
-    string provider = 4; // "ollama" (default, real inference) | "llama_xpc" (placeholder until real inference lands)
-}
-
-message EnrichFactsStatus {
-    string document_uri = 1;
-    int64 document_id = 2;
-    int64 total = 3;
-    int64 processed = 4;
-    int64 facts_extracted = 5;
-    int64 failed = 6;
-    bool is_complete = 7;
-    float progress = 8;
-    string progress_message = 9;
-    string error_message = 10;
-    string formatted_output = 11;
-}
-
-message ReconcileRequest {
-    string source = 1;
-    bool apply = 2;
-    bool force = 3;
-}
-
-message ReconcileResponse {
-    string source = 1;
-    int64 total_documents = 2;
-    int64 candidates = 3;
-    int64 deleted = 4;
-    float fraction = 5;
-    bool refused = 6;
-    string reason = 7;
-    string formatted_output = 8;
-}
-
 // ---------------------------------------------------------------------------
 // Embedding Models
 // ---------------------------------------------------------------------------
@@ -446,26 +263,7 @@ message ModelInfo {
     string table_name = 8;
     bool is_default = 9;
     string model_id = 10;
-}
-
-message RegisterModelRequest {
-    string slug = 1;
-    string provider = 2;
-    string model_ref = 3;
-    int32 dims = 4;
-    string storage = 5;
-    string index = 6;
-    bool is_default = 7;
-    int32 context_window = 8;
-    int32 max_tokens = 9;
-    int32 batch_size = 10;
-    string model_id = 11;
-}
-
-message RegisterModelResponse {
-    bool success = 1;
-    string message = 2;
-    string formatted_output = 3;
+    string distance = 11;  // cosine | l2 | inner_product
 }
 
 message ListModelsRequest {}
@@ -475,27 +273,8 @@ message ListModelsResponse {
     string formatted_output = 2;
 }
 
-message SetDefaultModelRequest {
-    string slug = 1;
-}
-
-message SetDefaultModelResponse {
-    bool success = 1;
-    string message = 2;
-}
-
-message DropModelRequest {
-    string slug = 1;
-    bool force = 2;
-}
-
-message DropModelResponse {
-    bool success = 1;
-    string message = 2;
-}
-
 // ---------------------------------------------------------------------------
-// Stats & Extract
+// Stats
 // ---------------------------------------------------------------------------
 
 message StatsRequest {}
@@ -510,79 +289,256 @@ message StatsResponse {
     string formatted_output = 7;
 }
 
-message ExtractRequest {
-    string path = 1;
-    int32 show = 2;
-    bool full = 3;
-}
-
-message ExtractChunk {
-    int32 ord = 1;
-    string text = 2;
-    string heading_path = 3;
-    int32 char_count = 4;
-}
-
-message ExtractResponse {
-    string target = 1;
-    string extractor = 2;
-    string extractor_version = 3;
-    string kind = 4;
-    string title = 5;
-    int64 char_count = 6;
-    int32 chunk_count = 7;
-    string chunker = 8;
-    string meta_json = 9;
-    repeated string author_hints = 10;
-    repeated ExtractChunk chunks = 11;
-    string formatted_output = 12;
-}
-
 // ---------------------------------------------------------------------------
-// MCP
+// Source Operations
 // ---------------------------------------------------------------------------
 
-message McpServeRequest {
-    string transport = 1; // stdio | http | sse
-    string host = 2;
-    int32 port = 3;
-    string path = 4;
-    repeated string allow_origin = 5;
-    bool json_response = 6;
-    bool stateless = 7;
-    bool allow_remote = 8;
+message AddSourceRequest {
+    string slug = 1;
+    string root = 2;
+    string kind = 3;          // default "filesystem"
+    string corpus_class = 4;  // default "document"
+    string trust = 5;         // default "authored"
+    bool allow_cloud_enrichment = 6;
 }
 
-message McpServeStatus {
-    bool is_running = 1;
-    string transport = 2;
-    string url = 3;
+message AddSourceResponse {
+    string slug = 1;
+    string root = 2;
+    bool created = 3;
     string message = 4;
-    int32 exit_code = 5;
-    string error_message = 6;
 }
+
+message RemoveSourceRequest {
+    string slug = 1;
+}
+
+message RemoveSourceResponse {
+    string slug = 1;
+    int64 deleted_documents = 2;
+    string message = 3;
+}
+
+message ScanRequest {
+    string source = 1;  // slug, or "*"/empty for every enabled source
+    bool include_code = 2;
+}
+
+message SourceScanStatus {
+    string source = 1;
+    string kind = 2;
+    string root = 3;
+    int64 item_count = 4;
+    string item_type = 5;
+    double duration_seconds = 6;
+    string error = 7;
+}
+
+message ScanResponse {
+    repeated SourceScanStatus sources = 1;
+    int64 total_items = 2;
+    string message = 3;
+}
+
+message SyncSourcesRequest {
+    bool dry_run = 1;
+}
+
+message UndeclaredSource {
+    string slug = 1;
+    int64 document_count = 2;
+}
+
+message SyncSourcesResponse {
+    string config_path = 1;
+    int32 declared = 2;
+    bool applied = 3;
+    repeated string created = 4;
+    repeated string updated = 5;
+    repeated UndeclaredSource undeclared = 6;
+    string message = 7;
+}
+
+message ImportSourcesToConfigRequest {
+    string path = 1;  // config file to update; empty = the one in use
+}
+
+message ImportSourcesToConfigResponse {
+    string path = 1;
+    repeated string added = 2;
+    string message = 3;
+}
+
+message ReconcileRequest {
+    string source = 1;
+    bool apply = 2;
+    bool force = 3;
+}
+
+message ReconcileResponse {
+    string source = 1;
+    int64 total_documents = 2;
+    int64 candidates = 3;
+    int64 deleted = 4;
+    double fraction = 5;
+    bool refused = 6;
+    string reason = 7;
+    string message = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Model Operations
+// ---------------------------------------------------------------------------
+
+message RegisterModelRequest {
+    string slug = 1;
+    int32 dims = 2;          // 0 = from the known-model table
+    string model_ref = 3;
+    string provider = 4;
+    string model_id = 5;
+    bool make_default = 6;
+    string distance = 7;     // empty = models.json (cosine for models it does not list)
+}
+
+message RegisterModelResponse {
+    ModelInfo model = 1;
+    repeated string notes = 2;
+    string message = 3;
+}
+
+message SetDefaultModelRequest {
+    string slug = 1;
+}
+
+message SetDefaultModelResponse {
+    string message = 1;
+}
+
+message DropModelRequest {
+    string slug = 1;
+}
+
+message DropModelResponse {
+    string message = 1;
+}
+
+message BackfillRequest {
+    string model = 1;  // slug, or "*"/empty for every model
+    int32 batch_size = 2;
+    int32 limit = 3;
+    bool skip_verify = 4;
+}
+
+// One step: phase is complete | skipped | started | progress | finished.
+message BackfillStatus {
+    string model_slug = 1;
+    string phase = 2;
+    int64 total = 3;
+    int64 embedded = 4;
+    int64 failed = 5;
+    int64 remaining = 6;
+    int64 batches = 7;
+    string message = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Fact Distillation
+// ---------------------------------------------------------------------------
+
+message EnrichFactsRequest {
+    string source = 1;       // slug, or "*"/empty for all sources
+    int64 document_id = 2;   // > 0: just this document, ignoring source
+    string model = 3;        // empty = facts.model
+    string provider = 4;     // empty = facts.provider
+}
+
+// phase is started (total, model, provider) | document (one per document) |
+// finished (the totals).
+message EnrichFactsStatus {
+    string phase = 1;
+    int64 total = 2;
+    int64 index = 3;
+    int64 document_id = 4;
+    string document_uri = 5;
+    int64 facts = 6;
+    string error = 7;
+    string model = 8;
+    string provider = 9;
+    int64 enriched = 10;
+    int64 failed = 11;
+    string message = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Schema & Settings
+// ---------------------------------------------------------------------------
+
+message InitDbRequest {
+    string schema_dir = 1;  // empty = the bundled schema
+}
+
+message InitDbResponse {
+    repeated string applied = 1;
+    string message = 2;
+}
+
+message GetSettingRequest {
+    string name = 1;  // SECTION.KEY, e.g. facts.model
+}
+
+message GetSettingResponse {
+    string name = 1;
+    string value_json = 2;
+}
+
+message SetSettingRequest {
+    string name = 1;
+    string value = 2;  // as on the command line: true/false, numbers, comma-separated lists
+    string path = 3;   // config file; empty = the one in use, else ~/.garage.json
+}
+
+message SetSettingResponse {
+    string name = 1;
+    string value_json = 2;
+    string path = 3;
+}
+
+// ---------------------------------------------------------------------------
+// MCP Client Registration
+// ---------------------------------------------------------------------------
 
 message McpInstallRequest {
-    string target = 1;
-    string path = 2;
-    string name = 3;
-    bool http = 4;
-    string host = 5;
-    int32 port = 6;
-    string route = 7;
-    bool force = 8;
-    bool dry_run = 9;
-    bool stdio = 10;
+    string target = 1;       // a client key; default "project"
+    string path = 2;         // write this config file instead of a known target
+    bool all = 3;            // every detected client config
+    string name = 4;         // server name; default "garage-rag"
+    bool stdio = 5;          // register a spawned command instead of the HTTP URL
+    string host = 6;
+    int32 port = 7;
+    string route = 8;
+    bool force = 9;
+    bool dry_run = 10;
+}
+
+message McpTargetOutcome {
+    string key = 1;
+    string label = 2;
+    string path = 3;
+    bool written = 4;
+    bool created_file = 5;
+    bool replaced_entry = 6;
+    string backup_path = 7;
+    string skipped = 8;
+    string preview_json = 9;
 }
 
 message McpInstallResponse {
-    bool success = 1;
-    string target = 2;
-    string path = 3;
-    string backup_path = 4;
-    string dry_run_json = 5;
+    string url = 1;
+    string command = 2;
+    repeated string args = 3;
+    bool fell_back = 4;
+    repeated McpTargetOutcome outcomes = 5;
     string message = 6;
-    string formatted_output = 7;
 }
 
 message McpUninstallRequest {
@@ -592,100 +548,24 @@ message McpUninstallRequest {
 }
 
 message McpUninstallResponse {
-    bool success = 1;
-    string message = 2;
-}
-
-message McpClientInfo {
-    string key = 1;
-    string label = 2;
-    bool is_registered = 3;
-    string config_path = 4;
+    string path = 1;
+    bool removed = 2;
+    string message = 3;
 }
 
 message McpStatusRequest {}
 
+message McpClientInfo {
+    string key = 1;
+    string label = 2;
+    string path = 3;
+    bool registered = 4;
+    bool config_exists = 5;
+}
+
 message McpStatusResponse {
     string server_command = 1;
     repeated McpClientInfo clients = 2;
-    string formatted_output = 3;
-}
-
-// ---------------------------------------------------------------------------
-// Config, Sync, Init DB
-// ---------------------------------------------------------------------------
-
-message SyncRequest {
-    bool apply = 1;
-    bool force = 2;
-    bool prune = 3;
-}
-
-message SyncStatus {
-    string message = 1;
-    bool is_complete = 2;
-    string formatted_output = 3;
-}
-
-message InitDbRequest {
-    string schema_dir = 1;
-}
-
-message InitDbResponse {
-    bool success = 1;
-    string message = 2;
-}
-
-message ConfigInitRequest {
-    string path = 1;
-    bool user = 2;
-    string from_env = 3;
-    bool force = 4;
-}
-
-message ConfigInitResponse {
-    string path = 1;
-    bool success = 2;
-    string message = 3;
-}
-
-message ConfigShowRequest {
-    bool show_defaults = 1;
-}
-
-message ConfigShowResponse {
-    string config_json = 1;
-    string config_path = 2;
-    string formatted_output = 3;
-}
-
-message ConfigPathRequest {}
-
-message ConfigPathResponse {
-    string active_path = 1;
-    repeated string candidate_paths = 2;
-    string formatted_output = 3;
-}
-
-message ConfigSchemaRequest {
-    string path = 1;
-}
-
-message ConfigSchemaResponse {
-    string schema_json = 1;
-    string formatted_output = 2;
-}
-
-message ConfigImportSourcesRequest {
-    string path = 1;
-    bool dry_run = 2;
-}
-
-message ConfigImportSourcesResponse {
-    int32 added_count = 1;
-    int32 updated_count = 2;
-    int32 skipped_count = 3;
-    string formatted_output = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +586,7 @@ message BeginIngestSessionResponse {
     bool allow_cloud_enrichment = 6;
     int64 run_id = 7;
     repeated string source_slugs = 8;
+    string kind = 9;  // filesystem | git | sqlite | maildir: picks the scanner
 }
 
 message PersistScanRequest {
@@ -749,8 +630,9 @@ message DocumentChunkPayload {
     int32 ord = 1;
     string text = 2;
     int32 token_count = 3;
-    int32 char_start = 4;
-    int32 char_end = 5;
+    // Unset when unknown: 0 is a real offset, so it cannot mean "none".
+    optional int32 char_start = 4;
+    optional int32 char_end = 5;
     string heading_path = 6;
     string chunk_sha256 = 7;
     string chunker = 8;

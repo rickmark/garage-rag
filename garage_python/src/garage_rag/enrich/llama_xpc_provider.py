@@ -1,12 +1,13 @@
 """LangExtract provider that runs fact-distillation prompts through LlamaXPC.
 
-`LlamaXPCClient` (`garage_rag.xpc.llama_xpc`) is an in-process bridge to the
-LlamaXPCService's llama-server -- not a listening HTTP endpoint -- so this
-provider calls it directly rather than posting to a `base_url` like
-LangExtract's built-in Ollama/OpenAI providers do. Everything else (prompting,
-few-shot examples, JSON parsing, grounding) is still LangExtract's; only the
-transport is swapped, so nothing here needs to change once the LlamaXPC
-backend grows a real inference engine behind the same client interface.
+`LlamaXPCClient` (`garage_rag.xpc.llama_xpc`) is an HTTP client of the
+llama-server-compatible API the app's LlamaXPCService serves on loopback
+(`settings.llama_host`), so this provider posts each prompt to its
+`/v1/chat/completions` route rather than to a caller-supplied `base_url`
+like LangExtract's built-in Ollama/OpenAI providers do. Everything else
+(prompting, few-shot examples, JSON parsing, grounding) is still
+LangExtract's; only the transport is swapped. The client refuses any
+non-loopback host, so content handed to it never leaves the machine.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError
 
 @dataclasses.dataclass(init=False)
 class LlamaXPCLanguageModel(base_model.BaseLanguageModel):
-    """Runs LangExtract prompts through the local LlamaXPCService, in-process."""
+    """Runs LangExtract prompts through the local LlamaXPCService over loopback HTTP."""
 
     model_id: str
     format_type: core_types.FormatType = core_types.FormatType.JSON
@@ -42,12 +43,11 @@ class LlamaXPCLanguageModel(base_model.BaseLanguageModel):
         super().__init__(constraint=schema.Constraint())
         self.model_id = model_id
         self.format_type = core_types.FormatType.JSON
+        # ``kwargs`` absorbs the provider-generic options LangExtract may pass
+        # (temperature, max_workers, ...); none of them apply to this transport.
         self._client = client or LlamaXPCClient()
-        self._extra_kwargs = kwargs or {}
 
-    def infer(
-        self, batch_prompts: Sequence[str], **kwargs: Any
-    ) -> Iterator[Sequence[core_types.ScoredOutput]]:
+    def infer(self, batch_prompts: Sequence[str], **kwargs: Any) -> Iterator[Sequence[core_types.ScoredOutput]]:
         for prompt in batch_prompts:
             try:
                 response = self._client.chat_completion(

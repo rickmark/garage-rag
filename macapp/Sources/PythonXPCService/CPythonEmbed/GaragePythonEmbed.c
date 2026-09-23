@@ -67,6 +67,21 @@ GaragePythonEmbedResult GaragePythonEmbedInitialize(const GaragePythonEmbedOptio
     PyStatus status;
     PyConfig config;
 
+    // UTF-8 mode (PEP 540). The isolated pre-configuration leaves it off, so a
+    // process the app launches without LANG/LC_ALL gets an ASCII locale, and
+    // sys.stdout then raises UnicodeEncodeError on the first non-ASCII character
+    // it prints (a citation's trailing "\u2026" in `garage ask` was the first to
+    // hit it). Every string this interpreter exchanges with the app is UTF-8
+    // anyway, so pin stdio, open() and the filesystem encoding to it.
+    PyPreConfig preconfig;
+    PyPreConfig_InitIsolatedConfig(&preconfig);
+    preconfig.utf8_mode = 1;
+    status = Py_PreInitialize(&preconfig);
+    if (PyStatus_Exception(status)) {
+        _GarageCopyStatusError(errorBuffer, errorBufferSize, status);
+        return GaragePythonEmbedResultConfigError;
+    }
+
     // Isolated configuration: ignore PYTHON* environment variables, the current
     // working directory, user site-packages and command line arguments so the
     // embedded interpreter only ever sees the environment shipped in the bundle.

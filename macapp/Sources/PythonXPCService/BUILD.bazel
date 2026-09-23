@@ -2,12 +2,15 @@ load("@rules_apple//apple:macos.bzl", "macos_framework")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_swift//swift:swift.bzl", "swift_binary", "swift_library")
 load("//bazel:codesign.bzl", "codesign")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 # Protocol definitions for all XPC services
 swift_library(
     name = "PythonXPCService_protocol",
     srcs = [
+        "GarageAppGroup.swift",
         "GarageCommonXPCProtocol.swift",
+        "GaragePostgresEndpoint.swift",
     ],
     module_name = "PythonXPCService_protocol",
     visibility = ["//visibility:public"],
@@ -32,13 +35,13 @@ swift_library(
     name = "PythonXPCService_swift",
     srcs = [
         "GarageFileLogger.swift",
-        "GarageGRPCOverXPC.swift",
         "GaragePythonRuntime.swift",
         "GarageXPCCrashHandler.swift",
         "GarageXPCOutputCapture.swift",
         "GarageXPCSelfTests.swift",
         "GarageXPCServiceBase.swift",
         "GarageXPCServiceHost.swift",
+        "UTF8StreamDecoder.swift",
         "XPCSitePathSetup.swift",
         "_Reexport.swift",
     ],
@@ -111,8 +114,9 @@ codesign(
     out = "PythonXPCService.framework",
     is_framework = True,
     signing_identity = select({
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
-        "//conditions:default": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
+        "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
 )

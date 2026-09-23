@@ -19,6 +19,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
 
@@ -37,10 +38,6 @@ class AuthorTally:
     email: str
     commits: int = 0
 
-    @property
-    def identity(self) -> tuple[str, str]:
-        return (self.name, self.email.lower())
-
 
 @dataclass
 class RepoAttribution:
@@ -51,7 +48,6 @@ class RepoAttribution:
     # repo-relative POSIX path -> identity key -> tally
     by_path: dict[str, dict[tuple[str, str], AuthorTally]] = field(default_factory=dict)
     commit_count: int = 0
-    truncated: bool = False
 
     def authors_for(self, relative_path: str) -> list[AuthorTally]:
         """Contributors to one file, most commits first."""
@@ -59,9 +55,6 @@ class RepoAttribution:
         if not tallies:
             return []
         return sorted(tallies.values(), key=lambda t: (-t.commits, t.name))
-
-    def is_tracked(self, relative_path: str) -> bool:
-        return relative_path in self.by_path
 
 
 def _run_git(args: list[str], cwd: Path, *, timeout: float = _GIT_TIMEOUT) -> str | None:
@@ -146,7 +139,6 @@ def load_repo_attribution(root: Path, *, max_commits: int | None = None) -> Repo
 
     attribution.by_path = dict(by_path)
     attribution.commit_count = commits
-    attribution.truncated = bool(max_commits and commits >= max_commits)
     log.debug("%s: %d commits, %d tracked paths", root.name, commits, len(attribution.by_path))
     return attribution
 
@@ -156,8 +148,8 @@ def cached_repo_attribution(root_str: str, max_commits: int | None = None) -> Re
     """Memoized per-repository attribution.
 
     A walk visits thousands of files per repository; without this the ``git log``
-    would be re-run for each one. Keyed on a string because ``Path`` is not
-    reliably hashable across the process boundary.
+    would be re-run for each one. Keyed on a string so the cache key is exactly
+    the path as given, with no ``Path`` normalization or platform flavor in it.
     """
     return load_repo_attribution(Path(root_str), max_commits=max_commits)
 
@@ -173,17 +165,20 @@ def relative_posix(root: Path, path: Path) -> str | None:
 def remote_owner(remote: str | None) -> str | None:
     """Owner segment of a git remote URL, for third-party detection.
 
-    Handles both ``git@host:owner/repo.git`` and ``https://host/owner/repo``.
+    Handles URL forms (``https://host/owner/repo``, ``ssh://git@host:22/owner/repo``),
+    scp-style ``git@host:owner/repo.git``, and bare ``host/owner/repo``.
     """
     if not remote:
         return None
     cleaned = remote.removesuffix(".git")
-    if "@" in cleaned and ":" in cleaned.split("@", 1)[1]:
+    if "://" in cleaned:
+        # A real URL: let urlsplit take the userinfo/host/port apart, since a
+        # port makes the naive "colon after @" test misread ssh:// remotes.
+        tail = urlsplit(cleaned).path
+    elif "@" in cleaned and ":" in cleaned.split("@", 1)[1]:
         # scp-style: git@github.com:owner/repo
         tail = cleaned.split(":", 1)[1]
     else:
-        parts = cleaned.split("//", 1)
-        tail = parts[1] if len(parts) == 2 else cleaned
-        tail = tail.split("/", 1)[1] if "/" in tail else tail
+        tail = cleaned.split("/", 1)[1] if "/" in cleaned else cleaned
     segments = [segment for segment in tail.split("/") if segment]
     return segments[0] if segments else None

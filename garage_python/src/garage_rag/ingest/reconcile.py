@@ -6,8 +6,9 @@ interrupted walk all look exactly like "every file was deleted". Acting on that
 would silently destroy the index.
 
 So reconciliation trusts only a run that recorded **completed coverage**: a walk
-that ran to exhaustion with no limit applied. Every URI it observed is recorded
-in ``ingest_seen``; anything in ``documents`` for that source but absent from the
+that ran to exhaustion (one cut short by ``--limit`` or cancellation does not
+count). Every URI it observed -- indexed, skipped or failed -- is recorded in
+``ingest_seen``; anything in ``documents`` for that source but absent from the
 latest completed run's observations is genuinely gone.
 
 A sanity threshold guards the remaining case. If a completed run would delete
@@ -75,17 +76,11 @@ def reconcile_source(
     run = latest_complete_run(session, source.id)
     if run is None:
         result.refused = True
-        result.reason = (
-            "no completed scan on record; run a full `garage ingest` (without "
-            "--limit) before reconciling"
-        )
+        result.reason = "no completed scan on record; run a full `garage ingest` (without --limit) before reconciling"
         return result
 
     result.total_documents = (
-        session.query(func.count(Document.id))
-        .filter(Document.source_id == source.id)
-        .scalar()
-        or 0
+        session.query(func.count(Document.id)).filter(Document.source_id == source.id).scalar() or 0
     )
 
     ids = [
@@ -93,9 +88,7 @@ def reconcile_source(
         for row in session.query(Document.id)
         .filter(
             Document.source_id == source.id,
-            ~session.query(IngestSeen.uri)
-            .filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri)
-            .exists(),
+            ~session.query(IngestSeen.uri).filter(IngestSeen.run_id == run.id, IngestSeen.uri == Document.uri).exists(),
         )
         .all()
     ]
@@ -121,34 +114,3 @@ def reconcile_source(
     result.deleted = len(ids)
     log.info("reconcile %s: deleted %d documents", slug, result.deleted)
     return result
-
-
-def prune_old_runs(session: Session, *, keep: int = 10) -> int:
-    """Drop old ingest_runs rows, keeping the most recent ``keep`` per source.
-
-    ``ingest_seen`` holds one row per file per run, so unbounded history would
-    grow faster than the corpus itself.
-    """
-    ranked = (
-        session.query(
-            IngestRun.id.label("id"),
-            func.row_number()
-            .over(
-                partition_by=IngestRun.source_id,
-                order_by=IngestRun.started_at.desc(),
-            )
-            .label("rn"),
-        )
-        .subquery()
-    )
-    ids_to_delete = (
-        session.query(ranked.c.id)
-        .filter(ranked.c.rn > keep)
-        .scalar_subquery()
-    )
-    deleted = (
-        session.query(IngestRun)
-        .filter(IngestRun.id.in_(ids_to_delete))
-        .delete(synchronize_session=False)
-    )
-    return int(deleted or 0)

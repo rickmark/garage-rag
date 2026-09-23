@@ -11,7 +11,7 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
                                                           │
                             attribution ◀─────────────────┤
                                   │                       ▼
-                                  └──────▶ documents ── chunks
+                                  └──────▶ documents ── chunks ◀── facts
                                                           │
                                               ┌───────────┴───────────┐
                                               ▼                       ▼
@@ -92,7 +92,32 @@ Signals in precedence order, each recording its evidence:
 See [`schema.md`](schema.md). Chunks are model-agnostic; each embedding model
 owns a table keyed on `chunk_id` with `ON DELETE CASCADE`.
 
-### 7. Search (`search/hybrid.py`)
+### 7. Distill facts (`enrich/facts.py`)
+
+An optional pass over stored documents, run as `garage enrich-facts` or the
+`EnrichFacts` streaming RPC (the app's Enrich Facts action), not part of ingest
+itself. [LangExtract](https://github.com/google/langextract) is pointed at the
+local model named by `facts.model` on `facts.provider` (default: the app's
+`gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` is the other
+option, and `--model`/`--provider` override both) with a deliberately generic prompt —
+the module has no notion of what kind of document it is given — and asks for
+every standalone claim in the document's own wording. `model_id`/`model_url`
+are always passed explicitly because `lx.extract` otherwise defaults to a cloud
+Gemini model; like the rest of local inference, content never leaves the
+machine.
+
+Each fact lands in `facts` grounded to the exact span of `documents.content`
+it came from; a fact the extractor cannot locate is dropped rather than stored.
+Facts for a document are replaced wholesale on re-extraction.
+
+Every fact also gets a `chunks` row of its own (`chunks.fact_id`,
+`chunker = 'facts:langextract:<model>'`). That is the entire embedding story: a
+chunk is a chunk regardless of where its text came from, so the ordinary
+backfill anti-join picks fact chunks up and every registered model ends up with
+a vector for them, with no fact-specific embedding path. Deleting a fact
+cascades into its chunk and, from there, into every `emb_*` table.
+
+### 8. Search (`search/hybrid.py`)
 
 Reciprocal Rank Fusion over vector KNN and Postgres FTS, `k = 60`, 200
 candidates per engine. RRF needs only each side's *ranking*, which matters
@@ -103,11 +128,27 @@ would require every word of "secure enclave firmware validation" in one chunk an
 return nothing; RRF is what decides ordering, so the keyword side should favour
 recall.
 
-### 8. Serve (`mcp_server/server.py`)
+### 9. Serve (`mcp_server/server.py`)
 
-MCP 2.0 over stdio. Every tool returns a dataclass, because under MCP 2.0
+MCP 2.0 over stdio (`garage-mcp`, the entry point clients spawn, separate from
+the `garage` CLI) or HTTP (`garage mcp-serve`, or the macOS app's MCP helper).
+Every tool returns a dataclass, because under MCP 2.0
 dataclass returns map field-for-field while scalars and lists get wrapped in
-`{"result": ...}`.
+`{"result": ...}`. `rag_search`, `rag_get_document`, `rag_list_sources`,
+`rag_list_authors` and `rag_stats` read the corpus; `rag_ask` and
+`rag_generate` also generate text, entirely on a local model.
+
+`rag_ask` runs the same retrieval as `rag_search`, numbers the excerpts (each
+trimmed to ~1,200 characters), and asks the model to answer from them citing
+`[n]`; the result carries the answer plus one `Citation` per excerpt so a client
+can resolve `[n]` back to a document. `rag_generate` is the same model with a raw
+prompt and no retrieval. The model is `LocalChatModel` (`enrich/generation.py`),
+built from `facts.provider` / `facts.model`: `llama_xpc` posts to the app's
+`LlamaXPCService` on `llama_host` (the `model` field of each request selects
+among the models the engine holds), `ollama` to a local Ollama server on
+`ollama_host`. Neither is a cloud API; retrieved communications may appear in the
+prompt but never leave the machine (see `docs/privacy.md`). `garage ask` is the
+CLI front door to both tools, with `--json` for the app.
 
 ## Idempotency
 
@@ -124,15 +165,22 @@ One transaction per document, so a crash leaves earlier documents committed.
 
 The risk is not deleting, it is *deciding* something is missing — an unmounted
 volume looks identical to a mass deletion. `ingest_runs.completed` marks only
-walks that ran to exhaustion with no limit, `ingest_seen` records every URI
-observed, and a run that would delete more than 25% of a source refuses without
-`--force`.
+walks that ran to exhaustion (a `--limit` or a cancellation that stopped the
+walk early leaves it false), `ingest_seen` records every URI the walk yielded —
+indexed, stat-skipped, failed or placeholder alike — and a run that would delete
+more than 25% of a source refuses without `--force`.
 
 ## Concurrency
 
-Extraction is CPU-bound and parallel across 10 of 16 cores, leaving headroom for
-Postgres and Ollama. `OMP_THREAD_LIMIT=1` per worker, because Tesseract is
-internally threaded and would otherwise oversubscribe.
+Ingest is a single process that handles one file at a time: walk, materialize,
+extract, chunk and store run sequentially, one transaction per document. The
+only worker thread is the one that guards a placeholder download with a
+timeout. Parallelism across sources comes from running separate ingest
+invocations, not from a pool inside the pipeline.
 
 Embedding is a single batching producer at 64 chunks per request: Ollama
 serializes model execution, so client fan-out buys contention, not throughput.
+The `llama_xpc` provider (embeddings and, with `--provider llama_xpc`, facts)
+talks to the app's `LlamaXPCService` over loopback HTTP (`llama_host`, a
+llama-server-compatible API); the app loads and unloads models over XPC, so
+the Python side is a plain client with no model lifecycle of its own.

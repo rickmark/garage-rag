@@ -87,10 +87,6 @@ def is_vendored(path: Path) -> bool:
     return any(part in VENDOR_MARKERS for part in path.parts)
 
 
-def is_excluded_prefix(relative: str) -> bool:
-    return any(relative.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
-
-
 def relative_to_root(root: Path, path: Path) -> str:
     """Source-relative POSIX path, or the bare name when outside the root."""
     try:

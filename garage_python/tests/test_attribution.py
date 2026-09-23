@@ -12,6 +12,9 @@ from garage_rag.attribute.pathrules import classify_path, is_vendored
 from garage_rag.attribute.resolver import SelfIdentity, get_or_create_author
 from garage_rag.db.models import Author, AuthorIdentity, CorpusClass, TrustTier
 from garage_rag.extract.base import ContentKind, clean_author_hints, looks_like_tool_name
+from garage_rag.extract.office import _core_properties
+from garage_rag.extract.pdf import _pdf_metadata
+from garage_rag.extract.text import extract_markdown, read_text_file
 from garage_rag.ingest.classify import classify, is_code_path
 
 
@@ -66,16 +69,12 @@ class TestPathRules:
         assert trust is TrustTier.REFERENCE
         assert label == "path:vendored"
 
-    @pytest.mark.parametrize(
-        "marker", ["node_modules", "vendor", "Pods", "third_party", "site-packages"]
-    )
+    @pytest.mark.parametrize("marker", ["node_modules", "vendor", "Pods", "third_party", "site-packages"])
     def test_vendor_markers(self, marker: str) -> None:
         assert is_vendored(Path(f"/a/b/{marker}/c/d.md"))
 
     def test_unmatched_path_uses_supplied_default(self) -> None:
-        trust, label = classify_path(
-            self.ROOT / "Misc/thing.md", self.ROOT, default=TrustTier.RECEIVED
-        )
+        trust, label = classify_path(self.ROOT / "Misc/thing.md", self.ROOT, default=TrustTier.RECEIVED)
         assert trust is TrustTier.RECEIVED
         assert label == "path:default"
 
@@ -88,12 +87,112 @@ class TestRemoteOwner:
             ("https://github.com/rickmark/garage.git", "rickmark"),
             ("https://github.com/anza-xyz/agave", "anza-xyz"),
             ("ssh://git@gitlab.com/group/repo.git", "group"),
+            # A port after the host used to be misread as scp-style syntax,
+            # yielding "git@github.com:22" as the owner.
+            ("ssh://git@github.com:22/owner/repo.git", "owner"),
+            ("ssh://git@git.example.com:2222/team/project", "team"),
+            ("https://user:token@github.com/owner/repo.git", "owner"),
+            ("github.com/owner/repo", "owner"),
             (None, None),
             ("", None),
         ],
     )
     def test_owner_extraction(self, remote: str | None, expected: str | None) -> None:
         assert remote_owner(remote) == expected
+
+
+class TestTextDecoding:
+    """``read_text_file`` decode order: BOM-aware, never blind UTF-16."""
+
+    def test_utf8_bom_is_stripped_so_frontmatter_is_detected(self, tmp_path: Path) -> None:
+        path = tmp_path / "note.md"
+        path.write_bytes(b"\xef\xbb\xbf---\ntitle: Hello\nauthor: Ann\n---\n\n# Body\n")
+
+        text, encoding = read_text_file(path)
+        assert encoding == "utf-8-sig"
+        assert text.startswith("---")
+
+        result = extract_markdown(path)
+        assert result.title == "Hello"
+        assert result.author_hints == ["Ann"]
+        assert result.meta["encoding"] == "utf-8-sig"
+
+    def test_plain_utf8_reports_utf8(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.txt"
+        path.write_bytes("caf\u00e9\n".encode())
+        assert read_text_file(path) == ("caf\u00e9\n", "utf-8")
+
+    def test_utf16_only_with_bom(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.txt"
+        path.write_bytes("caf\u00e9 au lait\n".encode("utf-16"))
+        assert read_text_file(path) == ("caf\u00e9 au lait\n", "utf-16")
+
+    def test_latin1_bytes_are_not_mistaken_for_utf16(self, tmp_path: Path) -> None:
+        # Even length, no BOM: Python's utf-16 codec would happily decode this
+        # into CJK garbage if it were tried before the single-byte encodings.
+        path = tmp_path / "a.txt"
+        raw = b"caf\xe9 au lait!\n"
+        assert len(raw) % 2 == 0
+        path.write_bytes(raw)
+        text, encoding = read_text_file(path)
+        assert text == "caf\u00e9 au lait!\n"
+        assert encoding == "cp1252"
+
+    def test_bytes_cp1252_rejects_fall_back_to_latin1(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.txt"
+        path.write_bytes(b"x\x81y")
+        assert read_text_file(path) == ("x\x81y", "latin-1")
+
+
+class TestMetadataProvenance:
+    """Tool names stay in ``meta`` for provenance; only author hints are filtered."""
+
+    def test_pdf_keeps_producer_and_title_but_filters_author_hints(self) -> None:
+        info = MagicMock()
+        info.author = "Microsoft Word; Jane Doe"
+        info.title = "Typesetting with LaTeX"
+        info.creator = "Microsoft Word for Mac"
+        info.producer = "Acrobat Distiller"
+        info.get.return_value = None
+        reader = MagicMock()
+        reader.metadata = info
+
+        meta, hints, title = _pdf_metadata(reader)
+
+        assert meta["pdf_author"] == "Microsoft Word; Jane Doe"
+        assert meta["pdf_title"] == "Typesetting with LaTeX"
+        assert meta["pdf_creator"] == "Microsoft Word for Mac"
+        assert meta["pdf_producer"] == "Acrobat Distiller"
+        assert title == "Typesetting with LaTeX"
+        assert clean_author_hints(hints) == ["Jane Doe"]
+
+    def test_office_core_properties_accept_openpyxl_spelling(self) -> None:
+        class XlsxProps:
+            creator = "Jane Doe"
+            lastModifiedBy = "Bob Roe"  # noqa: N815 - openpyxl's attribute name
+            title = "Budget"
+
+        meta, hints, title = _core_properties(XlsxProps())
+
+        assert meta == {
+            "office_author": "Jane Doe",
+            "office_last_modified_by": "Bob Roe",
+            "office_title": "Budget",
+        }
+        assert hints == ["Jane Doe", "Bob Roe"]
+        assert title == "Budget"
+
+    def test_office_core_properties_docx_spelling_unchanged(self) -> None:
+        class DocxProps:
+            author = "Jane Doe"
+            last_modified_by = "Jane Doe"
+            title = ""
+
+        meta, hints, title = _core_properties(DocxProps())
+
+        assert meta == {"office_author": "Jane Doe"}
+        assert hints == ["Jane Doe"]
+        assert title is None
 
 
 class TestCorpusClassification:
@@ -108,29 +207,13 @@ class TestCorpusClassification:
         assert not is_code_path(Path("/r/LICENSE"))
 
     def test_conversation_is_communication(self) -> None:
-        assert (
-            classify(Path("/x/thread.txt"), ContentKind.CONVERSATION) is CorpusClass.COMMUNICATION
-        )
-
-    def test_communication_source_pins_class(self) -> None:
-        """Messages stay communication regardless of file shape."""
-        assert (
-            classify(
-                Path("/x/some.py"),
-                ContentKind.CODE,
-                source_default=CorpusClass.COMMUNICATION,
-                source_pins_class=True,
-            )
-            is CorpusClass.COMMUNICATION
-        )
+        assert classify(Path("/x/thread.txt"), ContentKind.CONVERSATION) is CorpusClass.COMMUNICATION
 
     def test_code_path_excludes_docs(self) -> None:
         assert is_code_path(Path("/r/x.swift"))
         assert not is_code_path(Path("/r/x.md"))
 
-    @pytest.mark.parametrize(
-        "name", ["security.rb", "license.py", "changelog.js", "authors.go", "readme.ts"]
-    )
+    @pytest.mark.parametrize("name", ["security.rb", "license.py", "changelog.js", "authors.go", "readme.ts"])
     def test_doc_stem_does_not_override_code_extension(self, name: str) -> None:
         """Regression: a source file named `security.rb` is code, not prose.
 

@@ -19,7 +19,7 @@ out, in preference order:
    which is why ``supports_mrl`` must be declared per model rather than assumed.
 2. Store the full-width ``vector`` unindexed, and put the HNSW index on
    ``binary_quantize(embedding)::bit(dims)`` with ``bit_hamming_ops``. Queries
-   over-fetch on Hamming distance, then re-rank on exact cosine.
+   over-fetch on Hamming distance, then re-rank on the model's exact distance.
 
 These functions are pure so the mapping can be tested without a database.
 """
@@ -27,9 +27,22 @@ These functions are pure so the mapping can be tested without a database.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal, cast
 
 from garage_rag.db.models import IndexKind, StorageKind
+
+# The similarity a model was trained for. It picks the HNSW operator class the
+# table is indexed with and the operator search orders by, which must agree for
+# the index to be used at all; models.json declares it per model.
+Distance = Literal["cosine", "l2", "inner_product"]
+DISTANCES: tuple[Distance, ...] = ("cosine", "l2", "inner_product")
+
+# pgvector's ordering operator for each metric (smaller sorts first; `<#>` is the
+# negated inner product, so ascending order is still best-first).
+_DISTANCE_OPERATORS: dict[str, str] = {"cosine": "<=>", "l2": "<->", "inner_product": "<#>"}
+# Suffix of the HNSW operator class: vector_cosine_ops, halfvec_ip_ops, ...
+_DISTANCE_OPS_SUFFIX: dict[str, str] = {"cosine": "cosine_ops", "l2": "l2_ops", "inner_product": "ip_ops"}
 
 # pgvector HNSW ceilings.
 HNSW_MAX_VECTOR_DIMS = 2000
@@ -49,6 +62,25 @@ class ModelSpec:
     # True only for models documented as Matryoshka-trained (e.g. Qwen3-Embedding).
     supports_mrl: bool = False
     model_id: str | None = None
+    distance: Distance = "cosine"
+    # Where a provider names the model differently from model_ref (Ollama tags).
+    provider_refs: dict[str, str] = field(default_factory=dict)
+
+    def ref_for(self, provider: str) -> str:
+        """The model's name under ``provider``."""
+        return self.provider_refs.get(provider, self.model_ref)
+
+
+def check_distance(distance: str) -> Distance:
+    """``distance`` if it is a metric pgvector can index, else ValueError."""
+    if distance not in DISTANCES:
+        raise ValueError(f"unknown distance {distance!r}; choose one of {', '.join(DISTANCES)}")
+    return cast(Distance, distance)
+
+
+def distance_operator(distance: str) -> str:
+    """The pgvector operator that orders by ``distance``."""
+    return _DISTANCE_OPERATORS[check_distance(distance)]
 
 
 @dataclass(frozen=True)
@@ -70,7 +102,7 @@ def table_name_for(slug: str) -> str:
     """Derive the per-model table name.
 
     Constrained to ``^emb_[a-z0-9_]+$`` and matched by a CHECK constraint in
-    ``sql/004_registry.sql``, because this identifier is interpolated into DDL
+    ``data/sql/004_registry.sql``, because this identifier is interpolated into DDL
     and search SQL where bind parameters cannot be used.
     """
     normalized = _SLUG_RE.sub("_", slug.strip().lower()).strip("_")
@@ -105,7 +137,7 @@ def plan_storage(dims: int, *, supports_mrl: bool = False) -> StoragePlan:
         )
 
     # Cannot truncate safely and cannot index directly: keep full fidelity and
-    # index a binary quantization, re-ranking exact cosine at query time.
+    # index a binary quantization, re-ranking on the exact distance at query time.
     return StoragePlan(stored_dims=dims, storage_kind=StorageKind.VECTOR, index_kind=IndexKind.HNSW_BQ)
 
 
@@ -114,19 +146,24 @@ def column_type_sql(plan: StoragePlan) -> str:
     return f"{plan.storage_kind}({plan.stored_dims})"
 
 
-def index_ddl(table: str, plan: StoragePlan) -> str | None:
-    """DDL for the vector index, or ``None`` when the model is unindexed."""
+def index_ddl(table: str, plan: StoragePlan, distance: str = "cosine") -> str | None:
+    """DDL for the vector index, or ``None`` when the model is unindexed.
+
+    The operator class follows the model's ``distance``: an index built for one
+    metric is not used by a query ordering on another.
+    """
     if plan.index_kind == "none":
         return None
 
     if plan.index_kind == "hnsw":
-        ops = "vector_cosine_ops" if plan.storage_kind == "vector" else "halfvec_cosine_ops"
+        ops = f"{plan.storage_kind}_{_DISTANCE_OPS_SUFFIX[check_distance(distance)]}"
         return (
             f"CREATE INDEX IF NOT EXISTS {table}_hnsw ON {table} "
             f"USING hnsw (embedding {ops}) WITH (m = 16, ef_construction = 64)"
         )
 
-    # Binary quantization: index the quantized bits, not the vector itself.
+    # Binary quantization: index the quantized bits, not the vector itself. Hamming
+    # distance pre-selects whatever the metric; search re-ranks on ``distance``.
     return (
         f"CREATE INDEX IF NOT EXISTS {table}_hnsw_bq ON {table} "
         f"USING hnsw ((binary_quantize(embedding)::bit({plan.stored_dims})) bit_hamming_ops)"
@@ -149,67 +186,3 @@ def truncate_vector(values: list[float], plan: StoragePlan) -> list[float]:
     if norm == 0.0:
         return head
     return [v / norm for v in head]
-
-
-# Known models, so `garage register-model bge-m3` does not require the user to
-# look up widths. Anything absent can be registered with an explicit --dims.
-KNOWN_MODELS: dict[str, ModelSpec] = {
-    "nomic-embed-text": ModelSpec(
-        slug="nomic-embed-text",
-        model_ref="nomic-embed-text",
-        dims=768,
-        model_id="nomic-ai/nomic-embed-text-v1.5",
-    ),
-    "bge-m3": ModelSpec(
-        slug="bge-m3",
-        model_ref="bge-m3",
-        dims=1024,
-        model_id="BAAI/bge-m3",
-    ),
-    "mxbai-embed-xsmall": ModelSpec(
-        slug="mxbai-embed-xsmall",
-        model_ref="mxbai-embed-xsmall",
-        dims=384,
-        model_id="mixedbread-ai/mxbai-embed-xsmall-v1",
-    ),
-    "mxbai-embed-large": ModelSpec(
-        slug="mxbai-embed-large",
-        model_ref="mxbai-embed-large",
-        dims=1024,
-        model_id="mixedbread-ai/mxbai-embed-large",
-    ),
-    "embeddinggemma": ModelSpec(
-        slug="embeddinggemma",
-        model_ref="embeddinggemma",
-        dims=768,
-        model_id="google/embeddinggemma-2b",
-    ),
-    "snowflake-arctic-embed2": ModelSpec(
-        slug="snowflake-arctic-embed2",
-        model_ref="snowflake-arctic-embed2",
-        dims=1024,
-        model_id="Snowflake/snowflake-arctic-embed-m-v2.0",
-    ),
-    # Qwen3 embedding family is Matryoshka-trained, so truncation is safe.
-    "qwen3-embedding-0.6b": ModelSpec(
-        slug="qwen3-embedding-0.6b",
-        model_ref="qwen3-embedding:0.6b",
-        dims=1024,
-        supports_mrl=True,
-        model_id="Qwen/Qwen3-Embedding-0.6B",
-    ),
-    "qwen3-embedding-4b": ModelSpec(
-        slug="qwen3-embedding-4b",
-        model_ref="qwen3-embedding:4b",
-        dims=2560,
-        supports_mrl=True,
-        model_id="Qwen/Qwen3-Embedding-4B",
-    ),
-    "qwen3-embedding-8b": ModelSpec(
-        slug="qwen3-embedding-8b",
-        model_ref="qwen3-embedding:8b",
-        dims=4096,
-        supports_mrl=True,
-        model_id="Qwen/Qwen3-Embedding-8B",
-    ),
-}

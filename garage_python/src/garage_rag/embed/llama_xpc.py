@@ -1,19 +1,25 @@
 """Llama XPC embedding provider.
 
-Calls LlamaXPCService via LlamaXPCClient to generate embedding vectors.
+Posts chunk text to the llama.cpp HTTP API that the app's LlamaXPCService
+serves on loopback (``settings.llama_host``) via :class:`LlamaXPCClient`.
+Connection failures and server errors surface as :class:`EmbeddingError`
+through the :class:`Embedder` base, like every other backend.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from garage_rag.embed.base import Embedder
-from garage_rag.embed.ollama import EmbeddingError
+from garage_rag.embed.base import Embedder, EmbeddingError
 from garage_rag.xpc.llama_xpc import LlamaXPCClient
+
+__all__ = ["EmbeddingError", "LlamaXPCEmbedder"]
 
 
 class LlamaXPCEmbedder(Embedder):
-    """Embedding backend backed by LlamaXPCService over macOS XPC."""
+    """Embedding backend backed by LlamaXPCService's loopback HTTP API."""
+
+    provider_name = "llama_xpc"
 
     def __init__(
         self,
@@ -23,20 +29,5 @@ class LlamaXPCEmbedder(Embedder):
         self.model_ref = model_ref
         self.client = client or LlamaXPCClient()
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed a batch of texts, preserving order."""
-        if not texts:
-            return []
-        try:
-            return self.client.embed_texts(texts, model=self.model_ref)
-        except Exception as exc:
-            raise EmbeddingError(f"llama_xpc embed failed for {self.model_ref}: {exc}") from exc
-
-    def probe_dims(self) -> int:
-        """Return the actual output width by embedding a short probe string."""
-        vectors = self.embed(["probe"])
-        if not vectors or not vectors[0]:
-            raise ValueError(
-                f"LlamaXPCEmbedder probe failed for model {self.model_ref!r}: received empty embedding response"
-            )
-        return len(vectors[0])
+    def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
+        return self.client.embed_texts(texts, model=self.model_ref)

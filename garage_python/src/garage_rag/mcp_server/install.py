@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SERVER_NAME = "garage-rag"
 
+# ``--target`` values that mean "every client config found on disk" rather
+# than one entry of the table below.
+MULTI_TARGETS: tuple[str, ...] = ("all", "any")
+
 
 @dataclass(frozen=True)
 class ClientTarget:
@@ -133,94 +137,111 @@ def client_targets(project_dir: Path | None = None) -> dict[str, ClientTarget]:
     return {t.key: t for t in targets}
 
 
+def target_keys() -> tuple[str, ...]:
+    """The ``--target`` values, in table order, for help text and validation.
+
+    Only the keys are wanted, so the project directory is irrelevant; the home
+    directory is passed to avoid depending on (or failing without) a cwd.
+    """
+    return tuple(client_targets(project_dir=Path.home()))
+
+
 def find_existing_configs(project_dir: Path | None = None) -> dict[str, ClientTarget]:
     """Return only the client targets whose configuration files currently exist on disk."""
     targets = client_targets(project_dir=project_dir)
     return {key: target for key, target in targets.items() if target.path.is_file()}
 
 
-def install_all(
-    targets: list[ClientTarget] | None = None,
+@dataclass(frozen=True)
+class TargetPlan:
+    """Which client configs an install should touch."""
+
+    targets: list[ClientTarget]
+    # Several configs are in play, so one that refuses (already configured,
+    # malformed) should be reported and skipped rather than abort the rest.
+    multi: bool = False
+    # A multi-target request found nothing on disk and fell back to the
+    # project file plus Claude Desktop.
+    fell_back: bool = False
+
+
+def plan_targets(
+    target: str = "project",
     *,
+    path: Path | None = None,
+    all_configs: bool = False,
     project_dir: Path | None = None,
-    found_only: bool = True,
-    server_name: str = DEFAULT_SERVER_NAME,
-    config_path: Path | None = None,
-    extra_env: dict[str, str] | None = None,
-    url: str | None = None,
-    transport: str = "http",
-    force: bool = False,
-    dry_run: bool = False,
-) -> list[InstallResult]:
-    """Install the MCP server into multiple client configurations.
+) -> TargetPlan:
+    """Resolve ``--target`` / ``--path`` / ``--all`` into the configs to write.
 
-    If ``targets`` is omitted and ``found_only`` is True, installs into all detected
-    existing client configs on disk. If no configs exist on disk and ``found_only`` is True,
-    falls back to installing the default targets ('project' and 'claude-desktop').
+    Raises :class:`ValueError` for a target that is not in the table.
     """
-    if targets is None:
-        if found_only:
-            found = find_existing_configs(project_dir=project_dir)
-            if found:
-                targets = list(found.values())
-            else:
-                all_targets = client_targets(project_dir=project_dir)
-                targets = [all_targets["project"], all_targets["claude-desktop"]]
-        else:
-            targets = list(client_targets(project_dir=project_dir).values())
+    if all_configs or target in MULTI_TARGETS:
+        found = find_existing_configs(project_dir=project_dir)
+        if found:
+            return TargetPlan(list(found.values()), multi=True)
+        table = client_targets(project_dir=project_dir)
+        return TargetPlan([table["project"], table["claude-desktop"]], multi=True, fell_back=True)
+    if path is not None:
+        return TargetPlan([ClientTarget(key="custom", label="custom path", path=path.expanduser().resolve())])
+    table = client_targets(project_dir=project_dir)
+    if target not in table:
+        choices = ", ".join([*table, *MULTI_TARGETS])
+        raise ValueError(f"unknown target {target!r}; choose from {choices}")
+    return TargetPlan([table[target]])
 
-    results: list[InstallResult] = []
-    for target in targets:
-        result = install(
-            target,
-            server_name=server_name,
-            config_path=config_path,
-            extra_env=extra_env,
-            url=url,
-            transport=transport,
-            force=force,
-            dry_run=dry_run,
-        )
-        results.append(result)
-    return results
+
+# Set by the macOS app's launchers (macapp/Sources/GarageLauncher), and by the app for
+# its gRPC server, to the bundled `garage-mcp` executable.
+MCP_EXECUTABLE_ENV = "GARAGE_MCP_EXECUTABLE"
+
+
+def app_launcher() -> str | None:
+    """The macOS app's bundled `garage-mcp`, when running under the app.
+
+    That launcher starts the app if it is not running and reads the database
+    password from the Keychain, so a registration naming it needs no
+    environment -- in particular no database URL with its password in it.
+    """
+    path = os.environ.get(MCP_EXECUTABLE_ENV)
+    if path and Path(path).is_absolute() and os.access(path, os.X_OK):
+        return path
+    return None
 
 
 def server_command(config_path: Path | None = None) -> tuple[str, list[str]]:
-    """The command an MCP client should run to start this server.
+    """The command an MCP client should run to start this server: `garage-mcp`.
+
+    `garage-mcp` is the one stdio entry point, separate from the `garage` CLI
+    (whose callback and console output have no business near a JSON-RPC
+    stream). In order of preference: the macOS app's bundled launcher, the
+    `garage-mcp` console script next to this interpreter, and the server module
+    run by this interpreter.
 
     A client launches the server from an arbitrary working directory, where the
-    config search order would find nothing. ``--config`` is therefore passed
-    explicitly with an absolute path -- which is why the ``garage`` entry point
-    is preferred over ``garage-mcp``: it accepts the flag.
+    config search order would find nothing, so ``--config`` is passed with an
+    absolute path.
 
     ``sys.executable`` is used **unresolved** on purpose. Inside a virtualenv it
     is already the right path (``.venv/bin/python``); resolving it follows the
     symlink out to the base interpreter, which has none of this project's
     packages installed and fails with ModuleNotFoundError at launch.
     """
-    interpreter = Path(sys.executable)
-
-    # `--config` is a global option on the Typer callback, so it must precede the
-    # subcommand. Placed after `mcp-serve` it fails with "No such option".
-    head: list[str] = []
+    args: list[str] = []
     if config_path is not None:
-        head = ["--config", str(config_path.expanduser().resolve())]
+        args = ["--config", str(config_path.expanduser().resolve())]
 
-    garage = interpreter.parent / "garage"
-    if garage.is_file() and os.access(garage, os.X_OK):
-        return str(garage), [*head, "mcp-serve", "--stdio"]
+    # Inside the macOS app, Python is embedded in the Swift launchers and
+    # sys.executable names an interpreter the bundle does not ship.
+    if launcher := app_launcher():
+        return launcher, args
 
+    interpreter = Path(sys.executable)
     console_script = interpreter.parent / "garage-mcp"
-    if console_script.is_file() and os.access(console_script, os.X_OK) and not head:
-        return str(console_script), []
+    if console_script.is_file() and os.access(console_script, os.X_OK):
+        return str(console_script), args
 
-    return str(interpreter), [
-        "-m",
-        "garage_rag.cli",
-        *head,
-        "mcp-serve",
-        "--stdio",
-    ]
+    return str(interpreter), ["-m", "garage_rag.mcp_server.server", *args]
 
 
 def http_url(host: str, port: int, path: str) -> str:
@@ -274,9 +295,7 @@ def _read_config(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"{path} is not valid JSON ({exc}); fix or move it before installing"
-        ) from exc
+        raise RuntimeError(f"{path} is not valid JSON ({exc}); fix or move it before installing") from exc
     if not isinstance(data, dict):
         raise RuntimeError(f"{path} does not contain a JSON object")
     return data
@@ -342,9 +361,7 @@ def install(
 
     replaced = server_name in servers
     if replaced and not force:
-        raise FileExistsError(
-            f"{server_name!r} is already configured in {target.path}; pass --force to overwrite it"
-        )
+        raise FileExistsError(f"{server_name!r} is already configured in {target.path}; pass --force to overwrite it")
 
     entry = server_entry(config_path=config_path, extra_env=extra_env, url=url, transport=transport)
     others = sorted(k for k in servers if k != server_name)

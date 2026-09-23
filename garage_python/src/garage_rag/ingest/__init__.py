@@ -1,4 +1,5 @@
 """ingest"""
+
 from __future__ import annotations
 
 import contextlib
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 
 _global_c_callback: Any = None
 _global_c_log_callback: Any = None
+# What set_c_log_callback replaced, so unregistering (address 0) can put it back.
+_saved_log_state: dict[str, Any] | None = None
 _global_cancel_requested: bool = False
 # Guards (re)registration of the C callbacks; the Swift host may register them from
 # several threads (pythonDidBecomeReady, each ingest request).
@@ -72,34 +75,65 @@ class StreamToLog:
 
 
 def set_c_log_callback(callback_address: int) -> None:
-    """Register a C ABI function pointer (address) for real-time logging to OSLog."""
-    global _global_c_log_callback
+    """Register a C ABI function pointer (address) for real-time logging to OSLog.
+
+    Registering redirects the root logger, ``sys.stdout``/``sys.stderr`` and
+    ``sys.excepthook`` to the callback. Registering address 0 undoes all of that
+    and restores whatever was in place before the first registration.
+    """
+    global _global_c_log_callback, _saved_log_state
     with _c_callback_lock:
         if not callback_address:
             _global_c_log_callback = None
-        else:
-            callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
-            _global_c_log_callback = callback_type(callback_address)
-
+            saved = _saved_log_state
+            _saved_log_state = None
+            if saved is None:
+                return
             root_logger = logging.getLogger()
-            has_oslog_handler = any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
-            if not has_oslog_handler:
-                handler = OSLogHandler()
-                formatter = logging.Formatter("[%(name)s] %(message)s")
-                handler.setFormatter(formatter)
-                handler.setLevel(logging.DEBUG)
-                root_logger.addHandler(handler)
-                if root_logger.level == logging.NOTSET or root_logger.level > logging.DEBUG:
-                    root_logger.setLevel(logging.DEBUG)
-
+            for handler in list(root_logger.handlers):
+                if isinstance(handler, OSLogHandler):
+                    root_logger.removeHandler(handler)
+            root_logger.setLevel(saved["root_level"])
             garage_logger = logging.getLogger("garage_rag")
-            garage_logger.setLevel(logging.DEBUG)
-            garage_logger.propagate = True
+            garage_logger.setLevel(saved["garage_level"])
+            garage_logger.propagate = saved["garage_propagate"]
+            sys.stdout = saved["stdout"]
+            sys.stderr = saved["stderr"]
+            sys.excepthook = saved["excepthook"]
+            return
 
-            if not isinstance(sys.stdout, StreamToLog):
-                sys.stdout = StreamToLog(20, sys.__stdout__, name="stdout")  # INFO
-            if not isinstance(sys.stderr, StreamToLog):
-                sys.stderr = StreamToLog(40, sys.__stderr__, name="stderr")  # ERROR
+        callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
+        _global_c_log_callback = callback_type(callback_address)
+
+        root_logger = logging.getLogger()
+        garage_logger = logging.getLogger("garage_rag")
+        if _saved_log_state is None:
+            _saved_log_state = {
+                "root_level": root_logger.level,
+                "garage_level": garage_logger.level,
+                "garage_propagate": garage_logger.propagate,
+                "stdout": sys.stdout,
+                "stderr": sys.stderr,
+                "excepthook": sys.excepthook,
+            }
+
+        has_oslog_handler = any(isinstance(h, OSLogHandler) for h in root_logger.handlers)
+        if not has_oslog_handler:
+            handler = OSLogHandler()
+            formatter = logging.Formatter("[%(name)s] %(message)s")
+            handler.setFormatter(formatter)
+            handler.setLevel(logging.DEBUG)
+            root_logger.addHandler(handler)
+            if root_logger.level == logging.NOTSET or root_logger.level > logging.DEBUG:
+                root_logger.setLevel(logging.DEBUG)
+
+        garage_logger.setLevel(logging.DEBUG)
+        garage_logger.propagate = True
+
+        if not isinstance(sys.stdout, StreamToLog):
+            sys.stdout = StreamToLog(20, sys.__stdout__, name="stdout")  # INFO
+        if not isinstance(sys.stderr, StreamToLog):
+            sys.stderr = StreamToLog(40, sys.__stderr__, name="stderr")  # ERROR
 
         def custom_excepthook(exc_type, exc_value, exc_traceback):
             import traceback
@@ -136,6 +170,7 @@ class IngestProgress:
     skipped: int = 0
     failed: int = 0
     placeholders: int = 0
+    rejected: int = 0
     chunks_written: int = 0
     item_type: str = "items"
     progress: float = 0.0
@@ -221,8 +256,9 @@ def ingest_xpc(
     )
 
     if source == "*":
-        source_ctx = gw.begin_session("*", include_code=include_code)
-        sources = source_ctx.source_slugs
+        sources = gw.list_enabled_sources()
+        if not sources:
+            raise RuntimeError("No sources registered")
         log.info("Wildcard source expanded to %d source(s): %s", len(sources), sources)
     else:
         sources = [source]
@@ -271,6 +307,7 @@ def ingest_xpc(
             skipped = getattr(counters, "skipped", 0)
             failed = getattr(counters, "failed", 0)
             placeholders = getattr(counters, "placeholders", 0)
+            rejected = getattr(counters, "rejected", 0)
             chunks_written = getattr(counters, "chunks_written", 0)
             item_type = getattr(counters, "item_type", "items")
             errors = getattr(counters, "errors", [])
@@ -280,12 +317,6 @@ def ingest_xpc(
 
             if phase == "scan":
                 msg = f"Scanning {_source}: found {total_items} {item_type}"
-            elif phase == "complete":
-                prog_val = 1.0
-                msg = (
-                    f"Ingested {_source}: {indexed} ingested ({seen}/{total_items} {item_type} scanned, "
-                    f"{skipped} skipped, {failed} failed, {chunks_written} chunks written)"
-                )
             elif phase == "cancelled":
                 msg = (
                     f"Ingestion cancelled for {_source} after {seen}/{total_items} {item_type} scanned "
@@ -313,6 +344,7 @@ def ingest_xpc(
                 skipped=skipped,
                 failed=failed,
                 placeholders=placeholders,
+                rejected=rejected,
                 chunks_written=chunks_written,
                 item_type=item_type,
                 progress=prog_val,
@@ -359,22 +391,9 @@ def ingest_xpc(
             raise
 
         if is_ingest_cancelled():
+            # The pipeline already emitted the phase="cancelled" event (with the
+            # item it stopped on); do not send a second one.
             log.warning("Ingest run marked cancelled for %r", current_source)
-            cancel_prog = IngestProgress(
-                source=current_source,
-                phase="cancelled",
-                seen=counters.seen,
-                total_items=counters.total_items,
-                indexed=counters.indexed,
-                skipped=counters.skipped,
-                failed=counters.failed,
-                placeholders=counters.placeholders,
-                chunks_written=counters.chunks_written,
-                item_type=counters.item_type,
-                progress=min(1.0, float(counters.seen) / float(counters.total_items)) if counters.total_items else 0.0,
-                message=f"Ingestion cancelled for {current_source}",
-            )
-            _emit_progress(cancel_prog)
             break
 
         final_prog = IngestProgress(
@@ -386,6 +405,7 @@ def ingest_xpc(
             skipped=counters.skipped,
             failed=counters.failed,
             placeholders=counters.placeholders,
+            rejected=counters.rejected,
             chunks_written=counters.chunks_written,
             item_type=counters.item_type,
             progress=1.0,
@@ -396,28 +416,3 @@ def ingest_xpc(
             ),
         )
         _emit_progress(final_prog)
-
-
-def run_ingest_xpc(
-    source: str,
-    progress_callback: Callable[[Any], Any] | None = None,
-    **kwargs: Any,
-) -> None:
-    """Synchronous entry point for running ingest_xpc."""
-    ingest_xpc(source, progress_callback=progress_callback, **kwargs)
-
-
-def test_read_documents_via_grpc(
-    grpc_host: str = "127.0.0.1",
-    grpc_port: int = 50051,
-    source_slug: str | None = None,
-    limit: int = 5,
-    sample_bytes: int = 1024,
-) -> dict[str, Any]:
-    """Connect to gRPC server, query source/document metadata, and test reading document files from disk."""
-    from garage_rag.ingest.gateway import GrpcIngestStorageGateway
-    from garage_rag.service.client import GarageClient
-
-    client = GarageClient(host=grpc_host, port=grpc_port, in_process=False)
-    gateway = GrpcIngestStorageGateway(client)
-    return gateway.test_read_documents(source_slug=source_slug, limit=limit, sample_bytes=sample_bytes)

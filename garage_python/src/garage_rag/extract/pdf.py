@@ -30,14 +30,17 @@ VERSION = "1"
 
 
 def _clean_metadata_value(value: object) -> str | None:
+    """Normalize one raw metadata value, or None when it carries nothing.
+
+    Deliberately does *not* filter tool names: ``/Producer`` and ``/Creator``
+    are supposed to name software, and a title mentioning "LaTeX" is still the
+    title. Raw values stay in ``meta`` for provenance; only the author
+    candidates are filtered, by :func:`clean_author_hints` at the end.
+    """
     if value is None:
         return None
     text = str(value).strip()
     if not text or text.startswith("\x00"):
-        return None
-    # Producers often stuff tool names into /Author; those are not people.
-    lowered = text.lower()
-    if any(token in lowered for token in ("acrobat", "microsoft word", "latex", "pdftex")):
         return None
     return text[:500]
 
@@ -101,11 +104,7 @@ def _plumber_page_text(path: Path, page_index: int) -> str:
         # Tables carry meaning that flat text extraction destroys.
         try:
             for table in page.extract_tables() or []:
-                rows = [
-                    " | ".join((cell or "").strip() for cell in row)
-                    for row in table
-                    if any(cell for cell in row)
-                ]
+                rows = [" | ".join((cell or "").strip() for cell in row) for row in table if any(cell for cell in row)]
                 if rows:
                     parts.append("\n".join(rows))
         except Exception as exc:  # noqa: BLE001

@@ -1,8 +1,10 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Combine
 import OSLog
 import IngestClient
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "AppState")
 
@@ -11,13 +13,14 @@ final class AppState: ObservableObject {
     static weak var shared: AppState?
     private static let scheduledMaintenanceEnabledKey = "scheduledMaintenanceEnabled"
     private static let scheduledMaintenanceIntervalKey = "scheduledMaintenanceInterval"
-    private static let maintenanceTriggeringCommands: Set<String> = ["add-source", "register-model"]
 
     let postgres = PostgresService()
-    let garage: GarageCLIService
-    let ingest: GarageCLIService
-    let backfill: GarageCLIService
-    let enrichFacts: GarageCLIService
+    /// General operations (sources, models, schema, settings), one at a time.
+    let garage: OperationRunner
+    /// Embedding backfill and fact distillation run on their own runners so a long
+    /// job never blocks an ordinary operation.
+    let backfill: OperationRunner
+    let enrichFacts: OperationRunner
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -28,14 +31,18 @@ final class AppState: ObservableObject {
     @Published var osLogStreamService: OSLogStreamService
     private var cancellables = Set<AnyCancellable>()
 
-    /// Output of the most recent manual or scheduled `garage` command,
+    /// Output of the most recent manual or scheduled operation,
     /// separate from the rolling activity log.
     @Published var lastCommandOutput: String = ""
     @Published var lastCommandSucceeded: Bool?
     @Published var autoStartPostgres = true
     @Published private(set) var lmStudioTokenConfigured = false
     @Published private(set) var presetModels: [ModelPresetEntry] = []
-    @Published private(set) var factDistilPresetModels: [ModelPresetEntry] = []
+    /// Generative presets (models.json `fact_distil`) offered for fact distillation / `rag_ask`.
+    @Published private(set) var factDistilPresets: [ModelPresetEntry] = []
+    /// The `facts` section of garage.json: which model answers `enrich-facts` and `rag_ask`.
+    @Published private(set) var factsModel: String = GarageConfigLoader.defaultFactsModel
+    @Published private(set) var factsProvider: String = GarageConfigLoader.defaultFactsProvider
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
@@ -63,7 +70,14 @@ final class AppState: ObservableObject {
     }
 
     private var commandInProgress = false
+    /// True from the moment "Reset Database" starts stopping services until this instance quits.
+    @Published private(set) var isResettingDatabase = false
     private var hasLaunched = false
+    private var hasTerminated = false
+    /// Set once "Reset Database" has asked a new instance to start. From then on this instance's
+    /// services are already stopped, and the Postgres pid file and XPC service names belong to the new
+    /// instance, so quitting must not run the usual shutdown (which stops both by pid file and name).
+    private(set) var hasHandedOffToRelaunch = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
     private var pendingMaintenanceTask: Task<Void, Never>?
 
@@ -83,12 +97,15 @@ final class AppState: ObservableObject {
         xpcMgr.osLogStreamService = osLogSvc
         self.xpcServices = xpcMgr
         self.osLogStreamService = osLogSvc
-        garage = GarageCLIService(postgres: postgres)
-        ingest = GarageCLIService(postgres: postgres, commandLabel: "garage ingest")
-        backfill = GarageCLIService(postgres: postgres, commandLabel: "garage backfill")
-        enrichFacts = GarageCLIService(postgres: postgres, commandLabel: "garage enrich-facts")
-        mcp = GarageMCPService(postgres: postgres)
-        grpc = GarageGRPCService(postgres: postgres)
+        garage = OperationRunner(label: "garage")
+        backfill = OperationRunner(label: "garage backfill")
+        enrichFacts = OperationRunner(label: "garage enrich-facts")
+        let grpcService = GarageGRPCService(postgres: postgres)
+        let mcpService = GarageMCPService(postgres: postgres)
+        // Client registration (McpInstall) goes over gRPC.
+        mcpService.grpc = grpcService
+        mcp = mcpService
+        grpc = grpcService
 
         if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
             scheduledMaintenanceEnabled = storedEnabled
@@ -108,7 +125,6 @@ final class AppState: ObservableObject {
         grpc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         enrichFacts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        ingest.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -127,7 +143,48 @@ final class AppState: ObservableObject {
     }
 
     func launch() {
+        guard !hasLaunched else { return }
         hasLaunched = true
+        let arguments = CommandLine.arguments
+        guard arguments.contains(GarageAppLaunch.databaseResetArgument) else {
+            launchServices(startsPostgres: autoStartPostgres)
+            return
+        }
+        lastCommandOutput = "Creating a new database…"
+        Task {
+            // The instance that deleted the database quits right after launching this one, and its
+            // quit path stops Postgres by pid file and XPC services by executable name. Start
+            // nothing of our own until it is gone.
+            if let parent = Self.databaseResetParent(in: arguments) {
+                await Self.waitForExit(of: parent, timeout: 30)
+            }
+            launchServices(startsPostgres: false)
+            await startPostgres()
+            await finishDatabaseReset()
+        }
+    }
+
+    /// The pid after `--after-database-reset`, when this instance was launched by a reset.
+    nonisolated static func databaseResetParent(in arguments: [String]) -> pid_t? {
+        guard let flag = arguments.firstIndex(of: GarageAppLaunch.databaseResetArgument),
+              flag + 1 < arguments.count,
+              let pid = pid_t(arguments[flag + 1]), pid > 0 else {
+            return nil
+        }
+        return pid
+    }
+
+    /// Returns once `pid` has exited, or after `timeout` seconds.
+    nonisolated static func waitForExit(of pid: pid_t, timeout: TimeInterval) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline, kill(pid, 0) == 0 || errno == EPERM {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+    }
+
+    private func launchServices(startsPostgres: Bool) {
+        // Before anything reads the data folder's contents or starts Postgres / an XPC service.
+        GarageDataMigration.runAtLaunch()
         fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
         osLogStreamService.loadAllPersistedLogs()
@@ -138,7 +195,7 @@ final class AppState: ObservableObject {
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
-        guard autoStartPostgres else { return }
+        guard startsPostgres else { return }
         Task { await startPostgres() }
     }
 
@@ -160,7 +217,27 @@ final class AppState: ObservableObject {
 
     func fetchPresetModels() {
         self.presetModels = GarageConfigLoader.loadModelPresets()
-        self.factDistilPresetModels = GarageConfigLoader.loadFactDistilPresets()
+        self.factDistilPresets = GarageConfigLoader.loadFactDistilPresets()
+        fetchFactsSettings()
+    }
+
+    /// Re-reads the `facts` section of garage.json.
+    func fetchFactsSettings() {
+        let facts = GarageConfigLoader.loadFactsSettings()
+        self.factsModel = facts.model
+        self.factsProvider = facts.provider
+    }
+
+    /// Points `enrich-facts` / `rag_ask` at a model: sets `facts.model`, then `facts.provider`.
+    @discardableResult
+    func setFactsModel(_ slug: String, provider: String = GarageConfigLoader.defaultFactsProvider) async -> Bool {
+        let succeeded = await runOperation { grpc in
+            let model = try await grpc.setSetting("facts.model", to: slug)
+            let chosen = try await grpc.setSetting("facts.provider", to: provider)
+            return [model.summary, chosen.summary].joined(separator: "\n")
+        }
+        fetchFactsSettings()
+        return succeeded
     }
 
     func fetchRegisteredModels() async {
@@ -169,7 +246,7 @@ final class AppState: ObservableObject {
         isFetchingModels = true
         defer { isFetchingModels = false }
         do {
-            let models = try postgres.listRegisteredModels()
+            let models = try await postgres.listRegisteredModels()
             self.registeredModels = models
         } catch {
             // Silently ignore or leave models as-is if table not yet migrated
@@ -184,7 +261,7 @@ final class AppState: ObservableObject {
         var dbSources: [RegisteredSource] = []
         if postgres.status == .running {
             do {
-                dbSources = try postgres.listRegisteredSources()
+                dbSources = try await postgres.listRegisteredSources()
             } catch {
                 // Table might not exist yet or error
             }
@@ -227,12 +304,13 @@ final class AppState: ObservableObject {
         isFetchingStats = true
         defer { isFetchingStats = false }
         do {
-            var stats = try postgres.fetchCorpusStats()
+            var stats = try await postgres.fetchCorpusStats()
             if stats.sourcesCount == 0 && !registeredSources.isEmpty {
                 stats.sourcesCount = registeredSources.count
             }
             self.corpusStats = stats
-            if let docCounts = try? postgres.fetchSourceDocumentCounts() {
+            let docCounts = stats.sourceDocumentCounts
+            if !docCounts.isEmpty {
                 self.registeredSources = self.registeredSources.map { source in
                     var updated = source
                     if let count = docCounts[source.slug] {
@@ -252,49 +330,145 @@ final class AppState: ObservableObject {
     }
 
     func stopPostgres() async {
-        scheduledMaintenanceTask?.cancel()
-        scheduledMaintenanceTask = nil
         await mcp.stop()
         await grpc.stop()
         await postgres.stop()
     }
 
     /// Synchronously terminates all child and daemon processes, CLI runs, and XPC helper services.
+    /// Idempotent: every quit path (applicationShouldTerminate, applicationWillTerminate) calls it once.
     func terminateImmediately() {
+        guard !hasTerminated, !hasHandedOffToRelaunch else { return }
+        hasTerminated = true
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = nil
         mcp.terminateImmediately()
         grpc.terminateImmediately()
+        // postgres.terminateImmediately() already runs PostgresService.stopAnyRunningInstance().
         postgres.terminateImmediately()
         garage.cancel()
-        ingest.cancel()
         backfill.cancel()
         enrichFacts.cancel()
+        // xpcServices.terminateAll() already runs XPCServiceManager.stopAnyRunningInstances().
         xpcServices.terminateAll()
-        XPCServiceManager.stopAnyRunningInstances()
-        PostgresService.stopAnyRunningInstance()
     }
 
-    func resetDatabase() async {
+    /// "Reset Database": stops every service, deletes the Postgres cluster, and relaunches the app,
+    /// which creates a new, empty database (`finishDatabaseReset`). Only what Garage built goes: the
+    /// sources' own files, downloaded model files, logs, garage.json and the Keychain password stay.
+    func resetDatabaseAndRelaunch() async {
+        guard !isResettingDatabase else { return }
+        isResettingDatabase = true
+        lastCommandOutput = "Stopping Garage's services…"
+
+        scheduledMaintenanceTask?.cancel()
+        scheduledMaintenanceTask = nil
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = nil
+        garage.cancel()
+        backfill.cancel()
+        enrichFacts.cancel()
+        await mcp.stop()
+        await grpc.stop()
+        await postgres.stop()
+        // Anything still holding pgdata: an orphaned postmaster from an earlier run.
+        await PostgresService.stopAnyRunningInstance()
+        xpcServices.terminateAll()
+
         do {
-            try await postgres.resetDatabase()
-            if postgres.status == .running || postgres.status == .needsMigration {
-                try await postgres.applyMigrations()
-                await runGarage(["sync"])
-                if postgres.status == .running {
-                    try? await mcp.start()
-                    try? await grpc.start()
+            try await postgres.deleteClusterForReset()
+        } catch {
+            isResettingDatabase = false
+            lastCommandSucceeded = false
+            lastCommandOutput = "Reset stopped: \(error.localizedDescription) Restarting the services."
+            xpcServices.startStreamingAllServices()
+            configureScheduledMaintenance()
+            await startPostgres()
+            return
+        }
+        // Never relaunch the test host.
+        guard !isRunningInTestEnvironment else {
+            isResettingDatabase = false
+            return
+        }
+        lastCommandOutput = "Database deleted. Relaunching Garage to create a new one…"
+        relaunchAfterDatabaseReset()
+    }
+
+    private func relaunchAfterDatabaseReset() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = [GarageAppLaunch.databaseResetArgument, String(getpid())]
+        // Before the new instance can start anything: a quit from here on must leave its services alone.
+        markHandedOffToRelaunch()
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            let failure = error?.localizedDescription
+            Task { @MainActor in
+                guard let failure else {
+                    Self.terminateFromRunLoop()
+                    return
                 }
-                await fetchRegisteredModels()
-                await fetchRegisteredSources()
-                await fetchCorpusStats()
+                // No second instance: create the new database in this one instead.
+                logger.error("Relaunch after reset failed: \(failure, privacy: .public)")
+                self.hasHandedOffToRelaunch = false
+                self.isResettingDatabase = false
+                await self.startPostgres()
+                await self.finishDatabaseReset()
             }
-            lastCommandSucceeded = true
-            lastCommandOutput = "Database reset successfully."
+        }
+    }
+
+    func markHandedOffToRelaunch() {
+        hasHandedOffToRelaunch = true
+    }
+
+    /// `NSApp.terminate` from the run loop rather than from inside a main-actor job. Called from a
+    /// job, AppKit's wait for `reply(toApplicationShouldTerminate:)` runs a nested event loop inside
+    /// that job, and since the main queue is serial, any reply scheduled as another main-actor job
+    /// never runs: the app hangs in `terminate:` until it is killed.
+    private static func terminateFromRunLoop() {
+        RunLoop.main.perform {
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Second half of a reset, once Postgres has initialized a new cluster: apply the schema,
+    /// start the gRPC and MCP services, and register the sources garage.json declares again.
+    func finishDatabaseReset() async {
+        do {
+            if postgres.status == .needsMigration {
+                try await postgres.applyMigrations()
+            }
+            guard postgres.status == .running else {
+                throw PostgresError.other("Postgres did not start with the new database; see the Database page.")
+            }
+            try? await grpc.start()
+            try? await mcp.start()
+            let synced = await runOperation { try await $0.syncSources().message }
+            await fetchRegisteredModels()
+            await fetchRegisteredSources()
+            await fetchCorpusStats()
+            lastCommandSucceeded = synced
+            lastCommandOutput = synced
+                ? Self.databaseResetMessage(registeredSourceCount: registeredSources.count)
+                : "Database reset: a new database was created, but registering the sources from garage.json "
+                    + "failed: \(lastCommandOutput)"
         } catch {
             lastCommandSucceeded = false
-            lastCommandOutput = "Failed to reset database: \(error.localizedDescription)"
+            lastCommandOutput = "Database reset: the new database could not be set up: \(error.localizedDescription)"
         }
+    }
+
+    nonisolated static func databaseResetMessage(registeredSourceCount: Int) -> String {
+        let sources = switch registeredSourceCount {
+        case 0: "garage.json declares no sources, so none are registered; add them on the Sources page."
+        case 1: "The 1 source in garage.json was registered again."
+        default: "The \(registeredSourceCount) sources in garage.json were registered again."
+        }
+        return "Database reset: a new, empty database was created. \(sources) Register your embedding models "
+            + "on the Models page, then run ingest to rebuild the index."
     }
 
     func applyMigrations() async {
@@ -323,15 +497,14 @@ final class AppState: ObservableObject {
     }
 
     func checkPendingMigrations() {
-        postgres.refreshPendingMigrations()
-        if postgres.status == .running {
-            Task {
-                if mcp.status == .stopped {
-                    try? await mcp.start()
-                }
-                if grpc.status == .stopped {
-                    try? await grpc.start()
-                }
+        Task {
+            await postgres.refreshPendingMigrations()
+            guard postgres.status == .running else { return }
+            if mcp.status == .stopped {
+                try? await mcp.start()
+            }
+            if grpc.status == .stopped {
+                try? await grpc.start()
             }
         }
     }
@@ -403,11 +576,15 @@ final class AppState: ObservableObject {
     }
 
     func backupDatabase(to destination: URL) {
-        performDatabaseOperation { try postgres.backupDatabase(to: destination) }
+        Task {
+            await performDatabaseOperation { try await postgres.backupDatabase(to: destination) }
+        }
     }
 
     func restoreDatabase(from source: URL) {
-        performDatabaseOperation { try postgres.restoreDatabase(from: source) }
+        Task {
+            await performDatabaseOperation { try await postgres.restoreDatabase(from: source) }
+        }
     }
 
     @discardableResult
@@ -480,31 +657,27 @@ final class AppState: ObservableObject {
     /// Performs a scan on configured sources to calculate item counts and update expected element totals.
     @discardableResult
     func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
-        guard postgres.status == .running else { return false }
         guard !isIngesting else {
+            lastCommandSucceeded = false
+            lastCommandOutput = "Cannot scan while ingestion is in progress."
             logger.info("Scan skipped because ingestion is in progress.")
             return false
         }
-        var args = ["scan", "--source", source]
-        if includeCode {
-            args.append("--include-code")
-        }
-        let succeeded = await runGarage(args)
+        guard postgres.status == .running else { return false }
+        let succeeded = await runOperation { try await $0.scan(source: source, includeCode: includeCode).message }
         await fetchRegisteredSources()
         await fetchCorpusStats()
         return succeeded
     }
 
-    /// Runs a garage subcommand and captures its combined output for display.
+    /// Runs one operation over gRPC on the general runner and shows what it reports.
+    /// `triggersMaintenance` schedules ingest + backfill afterwards (a new source or
+    /// model has nothing indexed yet) when automatic maintenance is enabled.
     @discardableResult
-    func runGarage(_ arguments: [String]) async -> Bool {
-        if arguments.first == "scan" && isIngesting {
-            lastCommandSucceeded = false
-            lastCommandOutput = "Cannot scan while ingestion is in progress."
-            logger.warning("Attempted to run garage scan while ingestion is in progress.")
-            return false
-        }
-
+    func runOperation(
+        triggersMaintenance: Bool = false,
+        _ operation: @escaping @MainActor (GarageGRPCService) async throws -> String
+    ) async -> Bool {
         guard !commandInProgress else {
             lastCommandSucceeded = false
             lastCommandOutput = "A garage command is already running."
@@ -513,21 +686,15 @@ final class AppState: ObservableObject {
 
         commandInProgress = true
         defer { commandInProgress = false }
-        let result = await garage.run(arguments)
-        lastCommandOutput = result.lines.map(\.text).joined(separator: "\n")
+        let grpc = self.grpc
+        let result = await garage.run { _ in try await operation(grpc) }
+        lastCommandOutput = result.output
         lastCommandSucceeded = result.succeeded
 
-        if result.succeeded, let command = arguments.first, Self.maintenanceTriggeringCommands.contains(command) {
+        if result.succeeded, triggersMaintenance {
             scheduleDebouncedMaintenanceTrigger()
         }
 
-        return result.succeeded
-    }
-
-    /// Runs ingestion in an independent process and log stream.
-    @discardableResult
-    func runIngest(_ arguments: [String]) async -> Bool {
-        let result = await ingest.run(arguments)
         return result.succeeded
     }
 
@@ -573,8 +740,7 @@ final class AppState: ObservableObject {
                 limit: options.limit,
                 force: options.force,
                 grpcHost: options.grpcHost,
-                grpcPort: options.grpcPort,
-                extraArguments: options.extraArguments
+                grpcPort: options.grpcPort
             )
             let result = await ingestService.ingest(slug: source.slug, options: sourceOptions, mode: mode)
             await fetchRegisteredSources()
@@ -586,31 +752,44 @@ final class AppState: ObservableObject {
         return allSucceeded
     }
 
-    /// Runs ingestion specifically through the XPC service streaming real-time progress to the UI.
+    /// Embeds pending chunks for `model` (nil = every registered model) on the backfill
+    /// runner, logging each progress step the server streams back.
     @discardableResult
-    func ingestViaXPC(slug: String, options: IngestOptions = .default) async -> Bool {
-        await ingestSource(slug: slug, options: options, mode: .xpcService)
-    }
-
-    /// Runs embedding backfill in an independent process and log stream.
-    @discardableResult
-    func runBackfill(_ arguments: [String]) async -> Bool {
-        let result = await backfill.run(arguments)
+    func runBackfill(model: String? = nil) async -> Bool {
+        let grpc = self.grpc
+        let result = await backfill.run { runner in
+            _ = try await grpc.backfill(model: model) { status in
+                if !status.message.isEmpty {
+                    runner.appendLog(status.message)
+                }
+            }
+            return ""
+        }
         await fetchCorpusStats()
         await fetchRegisteredModels()
         return result.succeeded
     }
 
-    /// Distills documents into facts ("glean facts") in an independent process and log stream.
+    /// Distills documents into facts ("glean facts") on the enrich-facts runner: every
+    /// document of `source`, or just `documentID` when given.
     @discardableResult
-    func runEnrichFacts(_ arguments: [String]) async -> Bool {
-        let result = await enrichFacts.run(arguments)
+    func runEnrichFacts(source: String = "*", documentID: Int64? = nil) async -> Bool {
+        let grpc = self.grpc
+        let result = await enrichFacts.run { runner in
+            let finished = try await grpc.enrichFacts(source: source, documentID: documentID) { status in
+                // The summary is logged once, as the operation's result.
+                if status.phase != "finished", !status.message.isEmpty {
+                    runner.appendLog(status.message, stream: status.error.isEmpty ? .stdout : .stderr)
+                }
+            }
+            return finished?.message ?? ""
+        }
         return result.succeeded
     }
 
-    /// Combines CLI ingest logs and XPC ingestion logs into a single chronologically ordered stream.
+    /// XPC ingestion logs as a chronologically ordered stream.
     var combinedIngestLogs: [LogLine] {
-        (ingest.logs + ingestService.logs).sorted { $0.date < $1.date }
+        ingestService.logs.sorted { $0.date < $1.date }
     }
 
     func clearLogs(for sourceName: String) {
@@ -618,14 +797,13 @@ final class AppState: ObservableObject {
         case "Postgres":
             postgres.clearLogs()
             osLogStreamService.clearLogs(for: .postgres)
-        case "garage CLI", "garage":
+        case "garage CLI", "garage", "App":
             garage.clearLogs()
             osLogStreamService.clearLogs(for: .garage)
         case "Ingest", "Ingest XPC", "Ingest (XPC)", "Ingest (CLI)":
-            ingest.clearLogs()
             ingestService.clearLogs()
             osLogStreamService.clearLogs(for: .ingest)
-        case "Embedding", "Backfill":
+        case "Embedding", "Backfill", "Embed":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
         case "Enrich Facts", "garage enrich-facts":
@@ -636,10 +814,10 @@ final class AppState: ObservableObject {
         case "gRPC Server":
             grpc.clearLogs()
             osLogStreamService.clearLogs(for: .grpc)
-        case "Llama Service", "Llama XPC":
+        case "Llama Service", "Llama XPC", "LLaMa":
             llama.clearLogs()
             osLogStreamService.clearLogs(for: .llama)
-        case "Model Downloader", "Model Download XPC":
+        case "Model Downloader", "Model Download XPC", "Downloader":
             modelDownload.clearLogs()
             osLogStreamService.clearLogs(for: .modelDownload)
         case "XPC Services", "XPC Service", "XPC":
@@ -724,7 +902,7 @@ final class AppState: ObservableObject {
     }
 
     var isIngesting: Bool {
-        ingestService.isRunning || ingest.isRunning
+        ingestService.isRunning
     }
 
     var isScanning: Bool {
@@ -739,17 +917,14 @@ final class AppState: ObservableObject {
         if ingestService.isRunning {
             _ = await ingestService.cancel()
         }
-        if ingest.isRunning {
-            ingest.cancel()
-        }
     }
 
     private func runScheduledMaintenance() async {
-        guard postgres.status == .running, !ingestService.isRunning, !ingest.isRunning, !backfill.isRunning else { return }
+        guard postgres.status == .running, !ingestService.isRunning, !backfill.isRunning else { return }
 
         _ = await scanSources()
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
-        let backfillSucceeded = await runBackfill(["backfill"])
+        let backfillSucceeded = await runBackfill()
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded
     }
@@ -763,7 +938,7 @@ final class AppState: ObservableObject {
 
     /// Debounces `triggerMaintenanceIfEnabled()` so a rapid burst of add-source/
     /// register-model calls (e.g. "Add All") coalesces into a single run that
-    /// starts once the burst settles, rather than each add racing `runGarage`'s
+    /// starts once the burst settles, rather than each add racing `runOperation`'s
     /// `commandInProgress` guard against the scan/ingest the previous add kicked off.
     private func scheduleDebouncedMaintenanceTrigger() {
         pendingMaintenanceTask?.cancel()
@@ -774,9 +949,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func performDatabaseOperation(_ operation: () throws -> Void) {
+    private func performDatabaseOperation(_ operation: () async throws -> Void) async {
         do {
-            try operation()
+            try await operation()
             lastCommandSucceeded = true
             lastCommandOutput = "Completed successfully."
         } catch {
@@ -790,7 +965,7 @@ final class AppState: ObservableObject {
     /// Total number of expected documents from prior scan across active / registered sources.
     var combinedIngestTotalExpected: Int {
         // If ingesting a single source and not in a batch run:
-        if ingestService.pendingSources.isEmpty,
+        if ingestService.runSources.count <= 1,
            let current = ingestService.currentSource,
            current != "*",
            let src = registeredSources.first(where: { $0.slug == current }) {
@@ -828,7 +1003,7 @@ final class AppState: ObservableObject {
     /// Total number of documents processed (seen / scanned) so far in the current ingestion run.
     var combinedIngestProcessedCount: Int {
         // If single source:
-        if ingestService.pendingSources.isEmpty,
+        if ingestService.runSources.count <= 1,
            let current = ingestService.currentSource,
            current != "*",
            let src = registeredSources.first(where: { $0.slug == current }) {
@@ -967,7 +1142,7 @@ final class AppState: ObservableObject {
     }
 
     var combinedIngestTitle: String {
-        if ingestService.pendingSources.isEmpty, let current = ingestService.currentSource, current != "*" {
+        if ingestService.runSources.count <= 1, let current = ingestService.currentSource, current != "*" {
             return current
         }
         if let current = ingestService.currentSource, !current.isEmpty, current != "*" {

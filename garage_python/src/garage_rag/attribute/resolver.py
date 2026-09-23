@@ -69,13 +69,6 @@ class Attribution:
     evidence: str = ""
     meta: dict = field(default_factory=dict)
 
-    @property
-    def primary(self) -> AttributedAuthor | None:
-        for author in self.authors:
-            if author.role in (AuthorRole.AUTHOR, AuthorRole.SENDER):
-                return author
-        return self.authors[0] if self.authors else None
-
 
 class SelfIdentity:
     """The corpus owner's identities, used to tell authored from reference."""
@@ -120,9 +113,7 @@ def _git_attribution(path: Path, self_identity: SelfIdentity) -> Attribution | N
         return None
 
     owner = remote_owner(repo.remote)
-    self_commits = sum(
-        t.commits for t in tallies if self_identity.matches(name=t.name, email=t.email)
-    )
+    self_commits = sum(t.commits for t in tallies if self_identity.matches(name=t.name, email=t.email))
     total_commits = sum(t.commits for t in tallies) or 1
 
     authors: list[AttributedAuthor] = []
@@ -172,9 +163,7 @@ def _git_attribution(path: Path, self_identity: SelfIdentity) -> Attribution | N
     )
 
 
-def _metadata_attribution(
-    author_hints: list[str], self_identity: SelfIdentity
-) -> Attribution | None:
+def _metadata_attribution(author_hints: list[str], self_identity: SelfIdentity) -> Attribution | None:
     """Attribution from embedded document metadata."""
     if not author_hints:
         return None
@@ -192,9 +181,7 @@ def _metadata_attribution(
 
     # Somebody else's name in the metadata means collected, not written.
     if any(self_identity.matches(name=hint) for hint in author_hints):
-        return Attribution(
-            trust=TrustTier.AUTHORED, authors=authors, evidence="document-metadata:self"
-        )
+        return Attribution(trust=TrustTier.AUTHORED, authors=authors, evidence="document-metadata:self")
     return Attribution(
         trust=TrustTier.REFERENCE,
         authors=authors,
@@ -269,10 +256,12 @@ def get_or_create_author(
     """
     if identities is None:
         pairs: list[tuple[str, str]] = []
-    elif isinstance(identities, Mapping) or hasattr(identities, "items"):
+    elif isinstance(identities, Mapping):
         pairs = list(identities.items())
     else:
-        pairs = list(identities)
+        # Mapping-likes that aren't registered as Mapping still hand over pairs.
+        items = getattr(identities, "items", None)
+        pairs = list(items()) if callable(items) else list(identities)
 
     valid_pairs: list[tuple[str, str]] = []
     for item in pairs:

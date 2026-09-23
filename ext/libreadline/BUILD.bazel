@@ -1,5 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file", "normalize_install_names")
 
 configure_make(
     name = "libreadline",
@@ -10,9 +10,8 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libreadline//:libreadline_source",
     out_static_libs = [
@@ -31,14 +30,14 @@ configure_make(
     ],
     env = {
         "AR": "/usr/bin/ar",
-        "CFLAGS": "-arch arm64 -arch x86_64 -g",
-        "CXXFLAGS": "-arch arm64 -arch x86_64 -g",
-        "LDFLAGS": "-arch arm64 -arch x86_64",
+        "CFLAGS": "-g",
+        "CXXFLAGS": "-g",
     },
     lib_source = "@libreadline//:libreadline_source",
     out_shared_libs = [
         "libreadline.8.dylib",
     ],
+    postfix_script = normalize_install_names(["libreadline.8.dylib"]),
     visibility = ["//visibility:public"],
 )
 

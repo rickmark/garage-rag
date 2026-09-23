@@ -86,7 +86,7 @@ struct MenuBarView: View {
             }
 
             Button("Quit Garage") {
-                NSApp.terminate(nil)
+                AppDelegate.quit()
             }
         }
         .padding(12)

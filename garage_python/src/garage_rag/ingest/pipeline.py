@@ -3,47 +3,34 @@
 Idempotency contract, per document, each in its own transaction so a crash
 leaves earlier documents committed and the current one untouched:
 
-1. **stat only.** If a row exists whose ``mtime``, ``byte_size``, and
-   ``source_sha256`` all match, skip -- without opening or parsing the file, and
+1. **stat only.** If a row exists whose ``mtime`` and ``byte_size`` match and
+   whose state is OK, skip -- without opening or parsing the file, and
    crucially without materializing a cloud placeholder.
 2. **extract**, then hash the extracted text.
 3. If ``content_sha256`` is unchanged *and* the chunker signature is unchanged,
-   the chunks are still valid: refresh the stat fields, backfill any missing
-   model embeddings, done.
+   the chunks are still valid: refresh the stat fields, done. (Embeddings are
+   not touched here; ``garage backfill`` fills in missing model vectors.)
 4. Otherwise replace: upsert the document, delete its chunks (which cascades
    into every per-model embedding table), re-chunk, insert.
 
-The two hashes are not redundant. ``source_sha256`` is over raw bytes and enables
-step 1. ``content_sha256`` is over extracted text and drives step 3, so
-upgrading an extractor correctly rebuilds chunks even though the file on disk
-never changed.
+The two hashes are not redundant. ``source_sha256`` is over raw bytes and is
+refreshed whenever a file is opened. ``content_sha256`` is over extracted text
+and drives step 3, so upgrading an extractor correctly rebuilds chunks even
+though the file on disk never changed.
+
+Every candidate the walk yields -- indexed, skipped, failed, or placeholder --
+is recorded in ``ingest_seen`` for its run, because reconciliation treats any
+document absent from the latest completed run's observations as deleted.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
-from sqlalchemy.orm import Session
-
-from garage_rag.attribute.resolver import (
-    Attribution,
-    SelfIdentity,
-    get_or_create_author,
-    resolve,
-)
+from garage_rag.attribute.resolver import SelfIdentity, resolve
 from garage_rag.config import get_settings
-from garage_rag.db.models import (
-    Chunk,
-    CorpusClass,
-    Document,
-    DocumentAuthor,
-    IngestState,
-    Source,
-)
 from garage_rag.extract.base import ExtractionError, ExtractResult, file_sha256, sha256_text
 from garage_rag.extract.dispatch import extract
 from garage_rag.extract.placeholder import PlaceholderFile
@@ -93,70 +80,9 @@ def _chunker_signature(result: ExtractResult, chunks: list[TextChunk]) -> str:
     return f"{result.kind}:{label}"
 
 
-def _apply_authors(
-    session: Session,
-    document: Document,
-    attribution: Attribution,
-    self_identity: SelfIdentity,
-) -> None:
-    """Replace a document's authorship rows."""
-    session.query(DocumentAuthor).filter_by(document_id=document.id).delete()
-
-    seen: set[tuple[int, str]] = set()
-    for candidate in attribution.authors:
-        if not candidate.name:
-            continue
-        is_self = self_identity.matches(name=candidate.name, email=candidate.email)
-        author = get_or_create_author(
-            session,
-            candidate.name,
-            identities=candidate.identity_pairs,
-            is_self=is_self,
-        )
-        key = (author.id, str(candidate.role))
-        if key in seen:
-            continue
-        seen.add(key)
-        session.add(
-            DocumentAuthor(
-                document_id=document.id,
-                author_id=author.id,
-                role=candidate.role,
-                confidence=candidate.confidence,
-                evidence=candidate.evidence,
-            )
-        )
-
-
-def _write_chunks(session: Session, document: Document, chunks: list[TextChunk]) -> int:
-    """Replace a document's chunks.
-
-    The delete cascades into every per-model embedding table, so stale vectors
-    cannot outlive the text they were derived from.
-    """
-    session.query(Chunk).filter_by(document_id=document.id).delete()
-    session.flush()
-
-    for chunk in chunks:
-        session.add(
-            Chunk(
-                document_id=document.id,
-                ord=chunk.ord,
-                text=chunk.text,
-                token_count=chunk.token_estimate,
-                char_start=chunk.char_start,
-                char_end=chunk.char_end,
-                heading_path=chunk.heading_path,
-                chunk_sha256=chunk.sha256,
-                chunker=chunk.chunker,
-            )
-        )
-    return len(chunks)
-
-
 def ingest_one(
-    gateway_or_session: IngestStorageGateway | Session,
-    source_or_context: SourceContext | Source,
+    gateway: IngestStorageGateway,
+    source_ctx: SourceContext,
     candidate: Candidate,
     *,
     self_identity: SelfIdentity,
@@ -167,166 +93,16 @@ def ingest_one(
     """Index a single file, replacing any previous version of it."""
     log.debug("Evaluating %s (size=%d bytes, placeholder=%s)", candidate.uri, candidate.size, candidate.placeholder)
 
-    if isinstance(gateway_or_session, Session):
-        session = gateway_or_session
-        source = source_or_context
-        # Legacy session path fallback if called with raw Session
-        existing = (
-            session.query(Document).filter_by(source_id=source.id, uri=candidate.uri).one_or_none()
-        )
-        if existing is not None and not force and not candidate.placeholder:
-            same_size = existing.byte_size == candidate.size
-            same_mtime = (
-                existing.mtime is not None
-                and abs((existing.mtime - candidate.mtime).total_seconds()) < 1.0
-            )
-            if same_size and same_mtime and existing.state == IngestState.OK:
-                counters.skipped += 1
-                return
-
-        try:
-            ensure_local(candidate.path, budget)
-        except PlaceholderFile:
-            counters.placeholders += 1
-            if existing is None:
-                session.add(
-                    Document(
-                        source_id=source.id,
-                        uri=candidate.uri,
-                        corpus_class=source.default_class,
-                        trust_tier=source.default_trust,
-                        title=candidate.path.stem,
-                        byte_size=0,
-                        mtime=candidate.mtime,
-                        content_sha256=sha256_text(""),
-                        extractor="none",
-                        state=IngestState.PLACEHOLDER,
-                        error="not materialized",
-                    )
-                )
-            elif existing.state != IngestState.PLACEHOLDER:
-                existing.state = IngestState.PLACEHOLDER
-                existing.error = "not materialized"
-            return
-
-        try:
-            result = extract(
-                candidate.path,
-                source_allows_cloud=bool(source.allow_cloud_enrichment),
-            )
-        except (ExtractionError, OSError) as exc:
-            counters.note_error(f"{candidate.path.name}: {exc}")
-            if existing is not None:
-                existing.state = IngestState.EXTRACT_FAILED
-                existing.error = str(exc)[:2000]
-            return
-
-        settings = get_settings()
-        if settings.reject_machine_generated:
-            verdict = assess(result.text)
-            if verdict.machine_generated:
-                counters.rejected += 1
-                if existing is not None:
-                    session.delete(existing)
-                return
-
-        content_hash = sha256_text(result.text)
-        try:
-            raw_hash = file_sha256(candidate.path)
-        except OSError:
-            raw_hash = None
-
-        chunks = chunk_text(result.text, result.kind, extension=candidate.path.suffix.lower())
-        if not chunks:
-            counters.note_error(f"{candidate.path.name}: produced no chunks")
-            return
-
-        truncated_chunks = 0
-        if len(chunks) > settings.max_chunks_per_document:
-            truncated_chunks = len(chunks) - settings.max_chunks_per_document
-            chunks = chunks[: settings.max_chunks_per_document]
-        signature = _chunker_signature(result, chunks)
-
-        corpus_class = classify(
-            candidate.path,
-            result.kind,
-            source_default=source.default_class,
-            source_pins_class=source.default_class is CorpusClass.COMMUNICATION,
-        )
-        attribution = resolve(
-            candidate.path,
-            Path(source.root),
-            source_default_trust=source.default_trust,
-            author_hints=result.author_hints,
-            self_identity=self_identity,
-        )
-
-        if (
-            existing is not None
-            and not force
-            and existing.content_sha256 == content_hash
-            and existing.chunker == signature
-            and existing.state == IngestState.OK
-        ):
-            existing.byte_size = candidate.size
-            existing.mtime = candidate.mtime
-            existing.source_sha256 = raw_hash
-            existing.corpus_class = corpus_class
-            existing.trust_tier = attribution.trust
-            counters.skipped += 1
-            return
-
-        document = existing
-        if document is None:
-            document = Document(source_id=source.id, uri=candidate.uri)
-            session.add(document)
-
-        document.corpus_class = corpus_class
-        document.trust_tier = attribution.trust
-        document.title = result.title
-        document.mime = None
-        document.lang = result.lang
-        document.byte_size = candidate.size
-        document.mtime = candidate.mtime
-        document.source_sha256 = raw_hash
-        document.content_sha256 = content_hash
-        document.extractor = result.extractor
-        document.extractor_version = result.extractor_version
-        document.chunker = signature
-        document.content = result.text
-        document.meta = {
-            **result.meta,
-            **attribution.meta,
-            "attribution": attribution.evidence,
-            **({"truncated_chunks": truncated_chunks} if truncated_chunks else {}),
-        }
-        document.state = IngestState.OK
-        document.error = None
-        document.ingested_at = datetime.now(tz=UTC)
-        session.flush()
-
-        _apply_authors(session, document, attribution, self_identity)
-        written = _write_chunks(session, document, chunks)
-        counters.chunks_written += written
-        counters.indexed += 1
-        return
-
-    # Gateway execution path
-    gateway = gateway_or_session
-    source_ctx = source_or_context
-
     existing_stat = gateway.check_stat(source_ctx.slug, candidate.uri)
 
     # --- step 1: skip on unchanged stat, without opening the file -----------
     if existing_stat.exists and not force and not candidate.placeholder:
         same_size = existing_stat.byte_size == candidate.size
-        same_mtime = (
-            existing_stat.mtime > 0
-            and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
-        )
+        same_mtime = existing_stat.mtime > 0 and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
         if same_size and same_mtime and existing_stat.state.upper() == "OK":
             log.debug("Skipped %s: stat matches existing document in DB", candidate.uri)
             counters.skipped += 1
+            gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
             return
 
     # --- materialize if this is a cloud stub --------------------------------
@@ -393,6 +169,7 @@ def ingest_one(
     if not chunks:
         log.warning("%s produced 0 chunks from %d characters", candidate.path.name, len(result.text))
         counters.note_error(f"{candidate.path.name}: produced no chunks")
+        gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
         return
 
     # Final safety net: no single document may dominate the index.
@@ -408,12 +185,7 @@ def ingest_one(
         )
     signature = _chunker_signature(result, chunks)
 
-    corpus_class = classify(
-        candidate.path,
-        result.kind,
-        source_default=source_ctx.default_class,
-        source_pins_class=source_ctx.default_class is CorpusClass.COMMUNICATION,
-    )
+    corpus_class = classify(candidate.path, result.kind, source_default=source_ctx.default_class)
     attribution = resolve(
         candidate.path,
         Path(source_ctx.root),
@@ -438,8 +210,8 @@ def ingest_one(
             candidate.size,
             candidate.mtime.timestamp(),
             raw_hash_hex or "",
-            corpus_class.value if hasattr(corpus_class, "value") else str(corpus_class),
-            attribution.trust.value if hasattr(attribution.trust, "value") else str(attribution.trust),
+            corpus_class.value,
+            attribution.trust.value,
         )
         counters.skipped += 1
         return
@@ -455,7 +227,7 @@ def ingest_one(
     authors = [
         AuthorPayload(
             name=cand.name,
-            role=cand.role.value if hasattr(cand.role, "value") else str(cand.role),
+            role=cand.role.value,
             confidence=cand.confidence,
             evidence=cand.evidence,
             identities=dict(cand.identity_pairs),
@@ -473,7 +245,7 @@ def ingest_one(
             char_start=chunk.char_start,
             char_end=chunk.char_end,
             heading_path=chunk.heading_path,
-            chunk_sha256=chunk.sha256.hex() if isinstance(chunk.sha256, bytes) else str(chunk.sha256),
+            chunk_sha256=chunk.sha256.hex(),
             chunker=chunk.chunker,
         )
         for chunk in chunks
@@ -494,8 +266,8 @@ def ingest_one(
         chunker=signature,
         content=result.text,
         meta=meta,
-        corpus_class=corpus_class.value if hasattr(corpus_class, "value") else str(corpus_class),
-        trust_tier=attribution.trust.value if hasattr(attribution.trust, "value") else str(attribution.trust),
+        corpus_class=corpus_class.value,
+        trust_tier=attribution.trust.value,
         authors=authors,
         chunks=chunk_payloads,
     )
@@ -517,9 +289,6 @@ def ingest_source(
     source_slug: str = "",
     *,
     gateway: IngestStorageGateway | None = None,
-    grpc_client: Any | None = None,
-    grpc_host: str | None = None,
-    grpc_port: int | None = None,
     include_code: bool = False,
     limit: int | None = None,
     force: bool = False,
@@ -527,13 +296,7 @@ def ingest_source(
     is_cancelled=None,
 ) -> tuple[IngestCounters, WalkStats, MaterializationBudget]:
     """Walk and index one source, recording coverage for reconciliation."""
-    gw = get_storage_gateway(
-        session_factory=session_factory,
-        gateway=gateway,
-        grpc_client=grpc_client,
-        grpc_host=grpc_host,
-        grpc_port=grpc_port,
-    )
+    gw = get_storage_gateway(session_factory=session_factory, gateway=gateway)
 
     counters = IngestCounters()
     walk_stats = WalkStats()
@@ -556,7 +319,7 @@ def ingest_source(
     )
 
     self_identity = SelfIdentity.from_settings()
-    prefixes = default_exclude_prefixes(source_class, root)
+    prefixes = default_exclude_prefixes(root)
     completed = False
 
     # --- Step 0: Scan Phase ---
@@ -577,23 +340,14 @@ def ingest_source(
     def _call_progress(phase: str, current_item: str | None = None) -> None:
         if progress is None:
             return
-        try:
-            progress(
-                counters,
-                budget,
-                total_items=counters.total_items,
-                phase=phase,
-                scan_result=scan_result,
-                current_item=current_item,
-            )
-        except TypeError:
-            try:
-                progress(counters, budget, total_items=counters.total_items, phase=phase, current_item=current_item)
-            except TypeError:
-                try:
-                    progress(counters, budget, total_items=counters.total_items, phase=phase)
-                except TypeError:
-                    progress(counters, budget)
+        progress(
+            counters,
+            budget,
+            total_items=counters.total_items,
+            phase=phase,
+            scan_result=scan_result,
+            current_item=current_item,
+        )
 
     _call_progress(phase="scan")
 
@@ -624,18 +378,24 @@ def ingest_source(
             except Exception as exc:  # noqa: BLE001 - one file must not end the run
                 counters.note_error(f"{candidate.path.name}: {exc}")
                 log.warning("Ingest failed for %s: %s", candidate.path, exc, exc_info=True)
+                # The file is still there; without a seen row reconcile would treat it as deleted.
+                try:
+                    gw.record_seen(run_id, source_slug, candidate.uri)
+                except Exception as seen_exc:  # noqa: BLE001
+                    log.warning("Could not record %s as seen: %s", candidate.path, seen_exc)
 
             _call_progress(phase="ingest", current_item=candidate.path.name)
             if limit is not None and counters.seen >= limit:
                 log.info("Hit candidate limit (%d) for source %r", limit, source_slug)
                 break
         else:
-            # Only a walk that ran to exhaustion counts as full coverage.
+            # Only a walk that ran to exhaustion counts as full coverage; a
+            # ``limit`` or cancellation breaks out before the else clause.
             completed = True
     finally:
         gw.finalize_session(
             run_id=run_id,
-            completed=completed and limit is None,
+            completed=completed,
             seen=counters.seen,
             indexed=counters.indexed,
             skipped=counters.skipped,

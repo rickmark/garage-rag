@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from garage_rag.config import get_settings
+from garage_rag.db.catalog import known_models
 from garage_rag.db.models import EmbeddingModel
 from garage_rag.db.registry import (
-    KNOWN_MODELS,
     ModelSpec,
     StoragePlan,
+    check_distance,
     column_type_sql,
     index_ddl,
     plan_storage,
@@ -27,7 +30,7 @@ from garage_rag.db.registry import (
 
 log = logging.getLogger(__name__)
 
-# Matches the CHECK constraint in sql/004_registry.sql. Validated again here
+# Matches the CHECK constraint in data/sql/004_registry.sql. Validated again here
 # because these identifiers are interpolated into DDL and search SQL, where bind
 # parameters are not usable.
 _TABLE_RE = re.compile(r"^emb_[a-z0-9_]+$")
@@ -40,8 +43,8 @@ def assert_safe_table(name: str) -> str:
     return name
 
 
-def create_embedding_table(session: Session, table: str, plan: StoragePlan) -> None:
-    """Create one per-model embedding table and its vector index."""
+def create_embedding_table(session: Session, table: str, plan: StoragePlan, distance: str = "cosine") -> None:
+    """Create one per-model embedding table and its vector index (built for ``distance``)."""
     assert_safe_table(table)
     coltype = column_type_sql(plan)
 
@@ -57,7 +60,7 @@ def create_embedding_table(session: Session, table: str, plan: StoragePlan) -> N
         )
     )
 
-    ddl = index_ddl(table, plan)
+    ddl = index_ddl(table, plan, distance)
     if ddl:
         session.execute(text(ddl))
     else:
@@ -71,52 +74,32 @@ def resolve_spec(
     model_ref: str | None = None,
     provider: str | None = None,
     model_id: str | None = None,
+    distance: str | None = None,
 ) -> ModelSpec:
-    """Look up a known model, or build a spec from explicit arguments."""
-    known = KNOWN_MODELS.get(slug)
+    """The catalog's model (models.json), adjusted by explicit arguments, or a
+    spec built from the arguments alone for a model the catalog does not list."""
+    known = known_models().get(slug)
     if known is not None:
-        effective_model_id = model_id or known.model_id
-        if dims is not None and dims != known.dims:
-            # Trust the caller: a quantized or MRL-truncated pull can differ.
-            return ModelSpec(
-                slug=known.slug,
-                model_ref=model_ref or known.model_ref,
-                dims=dims,
-                provider=provider or known.provider,
-                normalized=known.normalized,
-                supports_mrl=known.supports_mrl,
-                model_id=effective_model_id,
-            )
-        if provider is not None and provider != known.provider:
-            return ModelSpec(
-                slug=known.slug,
-                model_ref=model_ref or known.model_ref,
-                dims=known.dims,
-                provider=provider,
-                normalized=known.normalized,
-                supports_mrl=known.supports_mrl,
-                model_id=effective_model_id,
-            )
-        if model_id is not None and model_id != known.model_id:
-            return ModelSpec(
-                slug=known.slug,
-                model_ref=model_ref or known.model_ref,
-                dims=known.dims,
-                provider=known.provider,
-                normalized=known.normalized,
-                supports_mrl=known.supports_mrl,
-                model_id=model_id,
-            )
-        return known
+        chosen_provider = provider or known.provider
+        return replace(
+            known,
+            # Trust the caller's width: a quantized or MRL-truncated pull can differ.
+            dims=dims if dims is not None else known.dims,
+            provider=chosen_provider,
+            model_ref=model_ref or known.ref_for(chosen_provider),
+            model_id=model_id or known.model_id,
+            distance=check_distance(distance) if distance else known.distance,
+        )
 
     if dims is None:
-        raise ValueError(f"model {slug!r} is not in the known-model table; pass --dims explicitly")
+        raise ValueError(f"model {slug!r} is not in models.json; pass --dims explicitly")
     return ModelSpec(
         slug=slug,
         model_ref=model_ref or slug,
         dims=dims,
         provider=provider or "llama_xpc",
         model_id=model_id,
+        distance=check_distance(distance) if distance else "cosine",
     )
 
 
@@ -146,12 +129,13 @@ def register_model(
     if plan.index_kind == "hnsw_bq":
         log.warning(
             "%s is %d-dim and not MRL-capable; indexing a binary quantization "
-            "and re-ranking on exact cosine at query time",
+            "and re-ranking on exact %s distance at query time",
             spec.slug,
             spec.dims,
+            spec.distance,
         )
 
-    create_embedding_table(session, table, plan)
+    create_embedding_table(session, table, plan, spec.distance)
 
     row = EmbeddingModel(
         slug=spec.slug,
@@ -162,6 +146,7 @@ def register_model(
         stored_dims=plan.stored_dims,
         storage_kind=plan.storage_kind,
         index_kind=plan.index_kind,
+        distance=spec.distance,
         normalized=spec.normalized,
         table_name=table,
         is_default=False,
@@ -198,13 +183,32 @@ def count_vectors(session: Session, model: EmbeddingModel | str) -> int:
 
 
 def get_model(session: Session, slug: str | None = None) -> EmbeddingModel:
-    """Fetch a model by slug, or the default when ``slug`` is None."""
+    """Fetch a model by slug, or the default when ``slug`` is None.
+
+    The default is the row flagged ``is_default``; when no row is flagged, the
+    configured ``embedding.default_model`` is tried, so a config that names a
+    registered model works without a separate ``set-default-model`` step.
+    """
     query = session.query(EmbeddingModel)
-    row = query.filter_by(slug=slug).one_or_none() if slug else query.filter_by(is_default=True).one_or_none()
-    if row is None:
-        which = f"model {slug!r}" if slug else "default model"
-        raise LookupError(f"no {which} registered; run 'garage register-model' first")
-    return row
+    if slug:
+        row = query.filter_by(slug=slug).one_or_none()
+        if row is None:
+            raise LookupError(f"no model {slug!r} registered; run 'garage register-model' first")
+        return row
+
+    row = query.filter_by(is_default=True).one_or_none()
+    if row is not None:
+        return row
+    configured = get_settings().default_embedding_model
+    if configured:
+        row = query.filter_by(slug=configured).one_or_none()
+        if row is not None:
+            return row
+        raise LookupError(
+            f"no default model registered, and the configured embedding.default_model "
+            f"{configured!r} is not registered either; run 'garage register-model' first"
+        )
+    raise LookupError("no default model registered; run 'garage register-model' first")
 
 
 def list_models(session: Session) -> list[EmbeddingModel]:

@@ -27,7 +27,7 @@ public enum LlamaClientError: LocalizedError {
 /// High-level Swift client for connecting to `LlamaXPCService` over macOS XPC or in-process.
 public final class LlamaClient: @unchecked Sendable {
     private let connection: NSXPCConnection?
-    private let inProcessEngine: LlamaServerEngine?
+    private let inProcessEngine: (any LlamaInferenceEngine)?
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
 
@@ -49,8 +49,9 @@ public final class LlamaClient: @unchecked Sendable {
         self.inProcessEngine = nil
     }
 
-    /// Initialize client using an in-process LlamaServerEngine (ideal for testing or direct embedded use).
-    public init(inProcessEngine: LlamaServerEngine) {
+    /// Initialize client against an in-process engine. Only tests use this (with `MockLlamaServerEngine`);
+    /// the app always talks to `LlamaXPCService` over XPC.
+    public init(inProcessEngine: any LlamaInferenceEngine) {
         self.connection = nil
         self.inProcessEngine = inProcessEngine
     }
@@ -111,18 +112,16 @@ public final class LlamaClient: @unchecked Sendable {
 
     // MARK: - Status & Info
 
+    /// Health check of the helper. Like every other call, this surfaces an unreachable helper as an error
+    /// instead of answering from an in-process engine, so status displays are honest.
     public func ping() async throws -> String {
         if inProcessEngine != nil {
             return "pong (in-process)"
         }
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.ping { reply in
-                    relay.resume(returning: reply)
-                }
+        return try await performRemoteCall { proxy, relay in
+            proxy.ping { reply in
+                relay.resume(returning: reply)
             }
-        } catch {
-            return "pong (in-process fallback)"
         }
     }
 
@@ -132,29 +131,23 @@ public final class LlamaClient: @unchecked Sendable {
             let data = try JSONSerialization.data(withJSONObject: dict)
             return try jsonDecoder.decode(LlamaHealthResponse.self, from: data)
         }
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.health { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty health response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaHealthResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.health { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty health response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaHealthResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = LlamaServerEngine.shared.handleHealth()
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaHealthResponse.self, from: data)
         }
     }
 
@@ -164,29 +157,23 @@ public final class LlamaClient: @unchecked Sendable {
             let data = try JSONSerialization.data(withJSONObject: dict)
             return try jsonDecoder.decode(LlamaPropsResponse.self, from: data)
         }
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.props { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty props response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaPropsResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.props { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty props response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaPropsResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = LlamaServerEngine.shared.handleProps()
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaPropsResponse.self, from: data)
         }
     }
 
@@ -196,29 +183,23 @@ public final class LlamaClient: @unchecked Sendable {
             let data = try JSONSerialization.data(withJSONObject: dict)
             return try jsonDecoder.decode(LlamaModelsResponse.self, from: data)
         }
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.models { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty models response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaModelsResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.models { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty models response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaModelsResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = LlamaServerEngine.shared.handleModels()
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaModelsResponse.self, from: data)
         }
     }
 
@@ -236,29 +217,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaCompletionResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.completion(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty completion response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaCompletionResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.completion(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty completion response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaCompletionResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleCompletion(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaCompletionResponse.self, from: data)
         }
     }
 
@@ -291,29 +266,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaChatCompletionResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.chatCompletion(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty chat completion response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaChatCompletionResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.chatCompletion(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty chat completion response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaChatCompletionResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleChatCompletion(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaChatCompletionResponse.self, from: data)
         }
     }
 
@@ -344,29 +313,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaEmbeddingResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.embeddings(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty embeddings response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaEmbeddingResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.embeddings(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty embeddings response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaEmbeddingResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleEmbeddings(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaEmbeddingResponse.self, from: data)
         }
     }
 
@@ -395,29 +358,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaTokenizeResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.tokenize(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty tokenize response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaTokenizeResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.tokenize(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty tokenize response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaTokenizeResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleTokenize(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaTokenizeResponse.self, from: data)
         }
     }
 
@@ -433,28 +390,23 @@ public final class LlamaClient: @unchecked Sendable {
             return (dict["content"] as? String) ?? ""
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.detokenize(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty detokenize response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaDetokenizeResponse.self, from: data)
-                        relay.resume(returning: resp.content)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.detokenize(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty detokenize response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaDetokenizeResponse.self, from: data)
+                    relay.resume(returning: resp.content)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleDetokenize(jsonString: reqJson)
-            return (dict["content"] as? String) ?? ""
         }
     }
 
@@ -478,29 +430,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaRerankResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.rerank(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty rerank response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaRerankResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.rerank(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty rerank response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaRerankResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleRerank(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaRerankResponse.self, from: data)
         }
     }
 
@@ -524,29 +470,23 @@ public final class LlamaClient: @unchecked Sendable {
             return try jsonDecoder.decode(LlamaInfillResponse.self, from: data)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.infill(requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty infill response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaInfillResponse.self, from: data)
-                        relay.resume(returning: resp)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.infill(requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty infill response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaInfillResponse.self, from: data)
+                    relay.resume(returning: resp)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = try LlamaServerEngine.shared.handleInfill(jsonString: reqJson)
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            return try jsonDecoder.decode(LlamaInfillResponse.self, from: data)
         }
     }
 
@@ -560,30 +500,23 @@ public final class LlamaClient: @unchecked Sendable {
             return resp.slots
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.slots { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json, let data = json.data(using: .utf8) else {
-                        relay.resume(throwing: LlamaClientError.invalidResponse("Empty slots response"))
-                        return
-                    }
-                    do {
-                        let resp = try self.jsonDecoder.decode(LlamaSlotsResponse.self, from: data)
-                        relay.resume(returning: resp.slots)
-                    } catch {
-                        relay.resume(throwing: error)
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.slots { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                guard let json = json, let data = json.data(using: .utf8) else {
+                    relay.resume(throwing: LlamaClientError.invalidResponse("Empty slots response"))
+                    return
+                }
+                do {
+                    let resp = try self.jsonDecoder.decode(LlamaSlotsResponse.self, from: data)
+                    relay.resume(returning: resp.slots)
+                } catch {
+                    relay.resume(throwing: error)
                 }
             }
-        } catch {
-            let dict = LlamaServerEngine.shared.handleSlots()
-            let data = try JSONSerialization.data(withJSONObject: dict)
-            let resp = try jsonDecoder.decode(LlamaSlotsResponse.self, from: data)
-            return resp.slots
         }
     }
 
@@ -599,24 +532,20 @@ public final class LlamaClient: @unchecked Sendable {
             return try engine.handleSlotAction(slotId: slotId, action: action, jsonString: reqJson)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.slotAction(slotId: slotId, action: action, requestJson: reqJson) { json, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    guard let json = json,
-                          let data = json.data(using: .utf8),
-                          let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        relay.resume(returning: ["status": "ok"])
-                        return
-                    }
-                    relay.resume(returning: dict)
+        return try await performRemoteCall { proxy, relay in
+            proxy.slotAction(slotId: slotId, action: action, requestJson: reqJson) { json, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
                 }
+                guard let json = json,
+                      let data = json.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    relay.resume(returning: ["status": "ok"])
+                    return
+                }
+                relay.resume(returning: dict)
             }
-        } catch {
-            return try LlamaServerEngine.shared.handleSlotAction(slotId: slotId, action: action, jsonString: reqJson)
         }
     }
 
@@ -631,19 +560,15 @@ public final class LlamaClient: @unchecked Sendable {
             return engine.handleRoute(endpoint: endpoint, method: method, jsonBody: jsonBody)
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.handleServerRequest(endpoint: endpoint, method: method, jsonBody: jsonBody) { statusCode, responseBody, errorMessage in
-                    if statusCode >= 200 && statusCode < 300 {
-                        relay.resume(returning: (statusCode, responseBody ?? "{}"))
-                    } else {
-                        let body = responseBody ?? (errorMessage != nil ? "{\"error\": \"\(errorMessage!)\"}" : "{}")
-                        relay.resume(returning: (statusCode, body))
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.handleServerRequest(endpoint: endpoint, method: method, jsonBody: jsonBody) { statusCode, responseBody, errorMessage in
+                if statusCode >= 200 && statusCode < 300 {
+                    relay.resume(returning: (statusCode, responseBody ?? "{}"))
+                } else {
+                    let body = responseBody ?? (errorMessage != nil ? "{\"error\": \"\(errorMessage!)\"}" : "{}")
+                    relay.resume(returning: (statusCode, body))
                 }
             }
-        } catch {
-            return LlamaServerEngine.shared.handleRoute(endpoint: endpoint, method: method, jsonBody: jsonBody)
         }
     }
 
@@ -665,26 +590,17 @@ public final class LlamaClient: @unchecked Sendable {
             }
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.loadModel(modelPath: path, alias: alias, configJson: configJson) { success, msg, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    if success {
-                        relay.resume(returning: msg ?? "Model loaded")
-                    } else {
-                        relay.resume(throwing: LlamaClientError.serverError(statusCode: 500, message: msg ?? "Failed to load model"))
-                    }
+        return try await performRemoteCall { proxy, relay in
+            proxy.loadModel(modelPath: path, alias: alias, configJson: configJson) { success, msg, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
                 }
-            }
-        } catch {
-            let res = LlamaServerEngine.shared.loadModel(path: path, alias: alias, configJson: configJson)
-            if res.success {
-                return res.message
-            } else {
-                throw LlamaClientError.serverError(statusCode: 500, message: res.message)
+                if success {
+                    relay.resume(returning: msg ?? "Model loaded")
+                } else {
+                    relay.resume(throwing: LlamaClientError.serverError(statusCode: 500, message: msg ?? "Failed to load model"))
+                }
             }
         }
     }
@@ -694,18 +610,14 @@ public final class LlamaClient: @unchecked Sendable {
             return engine.unloadModel()
         }
 
-        do {
-            return try await performRemoteCall { proxy, relay in
-                proxy.unloadModel { success, error in
-                    if let error = error {
-                        relay.resume(throwing: error)
-                        return
-                    }
-                    relay.resume(returning: success)
+        return try await performRemoteCall { proxy, relay in
+            proxy.unloadModel { success, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
                 }
+                relay.resume(returning: success)
             }
-        } catch {
-            return LlamaServerEngine.shared.unloadModel()
         }
     }
 }
