@@ -235,3 +235,111 @@ attempted.
 Nothing was fixed and nothing was pushed to `claude/adoring-ritchie-c084cj`. Both scratch databases
 (`garage_m3_mig`, `garage_m3_search`) were dropped; the app's own database was never written to.
 Garage.app is quit and its cluster stopped — `14824`, `8787` and `8790` all have zero listeners.
+
+---
+
+# Re-check (80c11fc)
+
+Re-run on the current head `80c11fc` after `62edda7` ("Let stdio garage-mcp answer initialize
+before touching the database"). Same machine: Apple M3 Max, 128 GB · macOS 27.0 (26A428) ·
+Xcode 27.0 (27A266a) · Swift 6.4.
+
+| Step | Result |
+|---|---|
+| 1. `aspect build //:macapp` | **PASS** |
+| 2. Dead DB port: initialize, then `tools/call` | **PASS** |
+| 3. Live scratch cluster: initialize, then `tools/call` | **PASS** |
+| 4. Keychain prompt with `GARAGE_DATABASE_URL` unset | **No prompt** |
+
+`62edda7` fixes the step 4 failure from the first report. `garage-mcp` now answers `initialize`
+in every configuration tried, and a dead database surfaces as a tool error rather than a hang.
+
+Not run, per instructions: notarize, the installer, any install target, `xcarchive_open`.
+
+## 1. Build — PASS
+
+`aspect build //:macapp` → exit 0, 386.4 s, "Build completed successfully".
+
+## 2. Nothing listening at the URL's port — PASS
+
+`GARAGE_DATABASE_URL=postgresql+psycopg://nobody@localhost:15999/nodb`, with zero listeners on
+15999. Setting the variable does make the launcher skip both the Keychain read and the app launch:
+there is no `Starting Garage…` line and Garage.app was not started.
+
+```
+INITIALIZE: OK  (5.39 s)
+  -> {"jsonrpc":"2.0","id":1,"result":{"capabilities":{...},"protocolVersion":"2025-06-18",
+      "serverInfo":{"name":"garage-rag",...}}}
+tools: ['rag_search', 'rag_get_document', 'rag_list_sources', 'rag_list_authors',
+        'rag_stats', 'rag_ask', 'rag_generate']
+TOOLS/CALL: responded  (0.11 s)
+  isError: True
+  content: Error executing tool rag_search
+process alive after call: True
+```
+
+The start-up log names the database without querying it, which is the change:
+
+```
+INFO garage_rag.mcp: garage-rag MCP server starting (transport=stdio)
+INFO garage_rag.mcp: database connection: postgresql+psycopg://nobody@localhost:15999/nodb
+```
+
+The failure is a clean JSON-RPC tool error — `isError: true`, answered in 0.11 s, server still
+alive and able to take more requests. No hang and no crash. The underlying
+`sqlalchemy ... engine.raw_connection()` traceback stays on stderr.
+
+One small note: the text the client receives is only `Error executing tool rag_search`. It does not
+say the database is unreachable, so from an MCP client the cause is not diagnosable without the
+server's stderr. Worth considering a message that names the connection failure.
+
+## 3. Scratch cluster up — PASS
+
+`GARAGE_DATABASE_URL` pointing at a scratch database on the Homebrew cluster, migrated to 009, with
+the 384-dim `mxbai-embed-xsmall` model registered as default and one document ingested and
+embedded (the app was running only to provide `LlamaXPCService` on 8790 for query embedding).
+
+```
+INITIALIZE (live DB): OK  (3.34 s)
+TOOLS/CALL rag_search: responded  (0.18 s)
+  isError: False
+  structured: {"query": "what ruins heat pump efficiency", "mode": "hybrid", "model": "embed",
+               "count": 1, "hits": [{"chunk_id": 1, "document_id": 1,
+               "title": "Heat pumps in cold climates", "corpus_class": "document",
+               "trust_tier": "authored", "matched_by": "both", "score": 0.032787, ...}]}
+TOOLS/CALL rag_stats: (0.02 s)
+  isError: False | {"documents": 1, "chunks": 1, "authors": 0, "placeholders_pending": 0,
+                    "by_class_and_trust": [...], "models": [{"slug": "embed", "dims": 384, ...}]}
+```
+
+`matched_by: "both"` shows RRF fusing the vector and FTS engines, and the score matches what the
+CLI returns for the same query.
+
+## 4. Keychain prompt with `GARAGE_DATABASE_URL` unset — no prompt
+
+Recorded only; nothing was answered or approved.
+
+**No Keychain prompt appears.** Measured by comparing the set of `SecurityAgent` processes
+immediately before and during each run:
+
+- **Warm** (Garage.app running, its Postgres up on 14824): `initialize` answered at **3.15 s**, and
+  `SecurityAgent` was absent both before and during — an identical (empty) set. There is no
+  `Starting Garage…` line, because the launcher sees the app already running.
+- **Cold-ish** (app running but its Postgres not yet up): `Starting Garage…` at 0.01 s, then a
+  22.8 s gap, then `initialize` answered at **22.81 s**. The gap is the launcher waiting for
+  Postgres to come up, not a prompt: the `SecurityAgent` pid present before that run was unchanged
+  during it and exited afterwards on its own.
+
+In both cases the bundled binary read the password silently and logged
+`postgresql+psycopg://rickmark:***@localhost:14824/garage-rag`, which is expected — `garage-mcp`
+ships inside the same signed bundle as the app, so it is already on the Keychain item's ACL.
+
+This is process-level evidence. Screen capture is not available to this session, so a dialog that
+somehow left no `SecurityAgent` process behind would not have been seen; nothing in the observed
+behaviour suggests one.
+
+## Environment left behind
+
+`claude/adoring-ritchie-c084cj` unchanged. The scratch database `garage_recheck` was dropped and no
+`garage*` databases remain on the Homebrew cluster; the app's own database was never written to.
+Garage.app is quit and its cluster stopped — 14824, 8787 and 8790 all have zero listeners.
