@@ -1053,3 +1053,140 @@ Still open (not regressions):
 2. The Developer ID app ships with no entitlements at all (see step 5). Probably intended, but
    worth a runtime check.
 3. Unchanged from round 3: the Developer ID build is not notarized, by design.
+
+---
+
+# App group data folder (`claude/app-group-data`)
+
+Branch **`claude/app-group-data`**, commit **`904ab61`**, based on the PR head **`f558ef7`**. It is
+pushed for review and for folding into PR #15; nothing went to `claude/adoring-ritchie-c084cj`.
+The change gives the App Store and Developer ID builds one shared data folder.
+
+## 1. Where the data lives
+
+The data is `pgdata/` (the Postgres cluster), `models/`, `logs/` and `garage.json`, all in one
+folder.
+
+| build | before | now |
+|---|---|---|
+| Developer ID (not sandboxed) | `~/Library/Application Support/GarageApp/` | `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/` |
+| App Store (sandboxed) | `~/Library/Containers/me.rickmark.garage-rag/Data/Library/Application Support/GarageApp/` | same group path as above |
+| locally signed / tests (not entitled) | `~/Library/Application Support/GarageApp/` | unchanged |
+
+Resolution lives in the new `GarageAppGroup` (`macapp/Sources/PythonXPCService/GarageAppGroup.swift`,
+in `PythonXPCService_protocol`). It returns the group path only when the running process actually
+carries the group entitlement (`SecTaskCopyValueForEntitlement`). Otherwise it returns the
+per-user path, so unentitled builds never touch a group container. On macOS 15+ that can prompt.
+`Paths.appSupportDir`, `ModelDownloaderEngine.defaultModelsDirectory` and `GarageFileLogger` all
+use it.
+
+Fixed on the way: `GarageFileLogger.appGroupIdentifier` was `group.me.rickmark.garage-rag`, which
+has no team prefix and did not match the entitlement. That is why a stray
+`~/Library/Group Containers/group.me.rickmark.garage-rag/logs/` exists on this Mac. It is now
+`GarageAppGroup.identifier`.
+
+## 2. Entitlements per config
+
+| binary | App Store (`is_store`) | Developer ID (`is_developer_id`) | local / default |
+|---|---|---|---|
+| `Garage.app` | unchanged (sandbox, app-id, team-id, group, …) | **new:** `com.apple.security.application-groups = [DWVXMLB45Y.group.me.rickmark.garage-rag]` only | none |
+| 6 XPC services | unchanged (sandbox, group, …) | **new:** the same group, only | none |
+| `garage` / `garage-mcp` launchers | unchanged (`GarageServer.entitlements`: sandbox + inherit) | none (unchanged; they never touch the folder) | none |
+
+The Developer ID entitlements file is `macapp/externals/GarageAppGroup.entitlements`. The seven
+`entitlements = select(...)` blocks gained an `"//bazel:is_developer_id"` arm; the package's
+Developer ID transition sets `signing_certificate_name`, which selects it.
+
+**No provisioning profile is needed for Developer ID.** A group ID that begins with the signing
+team's ID (`DWVXMLB45Y.`, the macOS form) is valid without a profile. A profile is required only for
+iOS-style `group.`-prefixed IDs, and the Store profile's `DWVXMLB45Y.*` wildcard also covers this ID.
+
+**Packaging bug found and fixed (`bazel/lipo.bzl`).** Adding the entitlement at first changed
+nothing in the packaged app. rules_apple *had* signed it (the pre-lipo app carried the group), but
+`macos_lipo_app`'s re-sign dropped it, for two reasons:
+1. Nested `.xpc`/`.framework` bundles were re-signed without `--entitlements`, which re-signs their
+   main executable bare.
+2. The app was signed with the entitlements of `Contents/MacOS/<bundle name>` = `Garage`, which does
+   not exist. The script fell back to whichever file `os.listdir` returned first (`garage-mcp`,
+   which has none).
+
+Bundles are now signed with the entitlements of their `CFBundleExecutable`. This is also why rounds
+3 and 4 showed the Developer ID app with **no entitlements at all**. It was a bug, not intent.
+
+## 3. Migrating an existing install
+
+At launch, `GarageDataMigration.runAtLaunch()` runs as the first step of `AppState.launch()`, before
+garage.json is re-read, the XPC services start streaming, or Postgres starts. It moves the build's own
+old folder (Developer ID: `~/Library/Application Support/GarageApp`; Store: its container's) into the
+group folder. It runs only in an entitled, non-test process. Rules:
+- **Rename only.** It never copies, deletes or overwrites.
+  - An entry moves when the group folder has nothing by that name, or only an empty directory
+    (an XPC service may have created `models/` or `logs/` first).
+  - Anything already present there stays in the old folder and is logged.
+- **Two clusters:** the first build launched moves its `pgdata`. The other build's old cluster is
+  left in place untouched, and a warning is logged. There is no merge.
+- **Running postmaster:** if `pgdata/postmaster.pid` names a live process, `pgdata` is not moved this
+  launch. A stale pid file (after a crash) does not block the move.
+- **Emptied old folder:** it is replaced by a symlink to the group folder, so saved paths and older
+  builds still resolve. The move is idempotent, and a second run is a no-op.
+- **Partial or failed move:** each entry is independent. Failures are logged (`GarageDataMigration`
+  category) and retried on the next launch. Two guards in `PostgresService` keep a partial move safe:
+  - `ensureInitialized()` **refuses to `initdb`** while the old folder still holds
+    `pgdata/PG_VERSION` and the group folder does not. The app shows "The database is still in … and
+    could not be moved … Quit every copy of Garage, then open it again", instead of creating an
+    empty cluster that would hide the corpus.
+  - `postgresPassword()` **refuses to generate a new password** when a cluster exists but this
+    build's Keychain lookup finds no item. Before, it would silently save a new one and lock itself
+    out. This is the expected failure if the Store build opens a cluster the Developer ID build
+    created and the sandboxed Keychain lookup can't see the other build's item. It is untested
+    (see 5).
+
+This Mac currently has **two** clusters: Developer ID `~/Library/Application Support/GarageApp/pgdata`
+(299 MB, Sep 21, plus 774 MB of models) and Store `…/Containers/me.rickmark.garage-rag/…/pgdata`
+(64 MB, Sep 20). Whichever build launches first will move its own cluster into the group folder,
+and the other will be left where it is.
+
+## 4. Launchers and the Python side
+
+- **`garage` / `garage-mcp`** (`GarageLauncher`) never used the data folder. They read the password
+  from the Keychain (`com.rickmark.garage.postgres`), connect to `localhost:14824`, and find config
+  via `--config`, `./garage.json` in *their* working directory, or `~/.garage.json`. Unchanged.
+- **`GARAGE_MODEL_MANIFEST`** points into the app bundle (`Paths.modelsJSON`, and `Launcher.swift:122`
+  for the launchers), not the data folder. Unchanged.
+- **gRPC server `./garage.json`**: the working directory is `Paths.garageWorkingDirectory` =
+  `Paths.appSupportDir`, now the group folder, passed as `GARAGE_WORKING_DIRECTORY` to the XPC service.
+  That service carries the group entitlement in both configs, and `garage.json` moves with the folder.
+- **Models:** files are found by name relative to the models folder (`download_file`); no saved
+  absolute paths were found. The old-path symlink covers any that exist.
+
+## 5. What was verified, and what was not
+
+- `tools/swiftcheck/check.sh`: 110 files, pass.
+- `aspect build //:macapp`, `//...`, `//macapp:GarageStore.app`, `//macapp/package:GarageApp`: all
+  exit 0. No new warnings (the same three Swift 6 ones).
+- `aspect test //macapp/Tests/...`: 3/3 targets pass. `GarageAppUnitTests` ran 228 tests with 0
+  failures, including 10 new `GarageDataMigrationTests` covering these cases:
+  - moves everything and links the old folder;
+  - a second run is a no-op;
+  - it never overwrites an existing cluster;
+  - it replaces empty directories;
+  - it keeps pgdata while a postmaster runs;
+  - a stale pid file does not block the move;
+  - no old folder, and the same folder, are no-ops;
+  - the team-prefixed ID, and an unentitled test host.
+- **Developer ID package** (after the lipo fix): `codesign --verify --deep --strict` is valid. The
+  chain is Developer ID Application → Developer ID CA → Apple Root CA, `TeamIdentifier=DWVXMLB45Y`,
+  `flags=0x10000(runtime)`, arm64. Entitlement dump: `Garage.app` and all six XPC services show
+  `{"com.apple.security.application-groups":["DWVXMLB45Y.group.me.rickmark.garage-rag"]}`;
+  `garage`, `garage-mcp`, `Python.framework` and `PythonXPCService.framework` show none.
+- **App Store app:** verifies under Apple Distribution. The app (10 keys) and six XPC services
+  (7–8 keys) all carry the same team-prefixed group plus `app-sandbox = true`, unchanged from round 4.
+- **Neither app was launched.** First launch performs the migration on the real corpus, so it
+  waits for an explicit go-ahead. Still unverified at runtime:
+  - the move itself;
+  - Postgres (a child of the Developer ID app) starting from the group container;
+  - whether a Developer ID app with a team-prefixed group launches without a prompt on macOS 27;
+  - whether each build can read the other's Keychain item.
+
+  Before that first launch: quit Garage and back up both old folders (`ditto`) or `pg_dump`, then
+  launch **one** build, check the logs, and only then the other.
