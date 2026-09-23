@@ -681,3 +681,195 @@ Still open:
 
 Unverified: the Developer ID transition on `//macapp/package:GarageApp` (step 4 skipped at the
 user's request).
+
+---
+
+# Round 3 (4c067e4)
+
+Run on 2026-09-23 on the same M4 (macOS 27.0 / 26A428, arm64), at PR head **`4c067e4`**, checked out
+detached. It targets the four round-2b failures with `7cdbdc5` (the walker and scanner no longer prune
+a source root under `Library/Caches`), `8735dff` (`test_migrate` no longer imports psycopg) and
+`4c067e4` (codesign_test staging). The **Developer ID Application** certificate is now in the
+login keychain (`E44E5D95… "Developer ID Application: Richard Penwell (DWVXMLB45Y)"`).
+Nothing was pushed to `claude/adoring-ritchie-c084cj`. No notarize, installer, pkgbuild, install or
+`xcarchive_open` target ran.
+
+**No Keychain prompt appeared** ("codesign wants to access key") at any point. No `SecurityAgent`
+process was up during the Developer ID signing actions, and every signing action completed
+unattended.
+
+Note on invocation: this Aspect CLI (launcher 2026.35.26 / CLI v2026.28.4) rejects bare Bazel flags
+(`error: unexpected argument '--test_output' found`). Step 2 therefore ran as
+`aspect test //... --bazel-flag=--test_output=errors`.
+
+## Step 1: `aspect build //...` **PASS**
+
+Exit 0, 9m35s. First-party warnings: the same three Swift 6 concurrency warnings as round 2b, and
+nothing new:
+```
+macapp/Sources/GarageApp/Services/XPCServiceManager.swift:242:25: warning: reference to captured var 'manager' in concurrently-executing code; this is an error in the Swift 6 language mode
+macapp/Sources/GarageApp/Services/XPCServiceManager.swift:245:25: warning: reference to captured var 'osLogStreamService' in concurrently-executing code; this is an error in the Swift 6 language mode
+macapp/Sources/GarageIngestXPCService/main.swift:345:36: warning: capture of 'requester' with non-Sendable type 'NSXPCConnection?' in an isolated local function; this is an error in the Swift 6 language mode
+```
+There are also first-party *link* warnings, `ld: warning: duplicate -rpath '@executable_path/../Frameworks'
+ignored` and `... '@loader_path/../Frameworks' ignored`. They come from linking
+`macapp/Sources/GarageApp:GarageApp_bin` and both test bundles (`GarageAppUITests`,
+`GarageAppUnitTests`). They are harmless but point to the rpath being added twice.
+All other warnings (~1,900 lines) come from vendored Swift deps (swift-nio, grpc-swift,
+swift-atomics, swift-collections). Bazel also warns `rules_swift@3.6.1` requested but `4.0.1`
+resolved.
+
+## Step 2: `aspect test //... --test_output=errors` **31 tests: 30 pass, 1 fail** (exit 3)
+
+`Executed 31 out of 31 tests: 30 tests pass and 1 fails locally.` (Round 2b: 26 pass / 4 fail.)
+
+| round-2b failure | now | detail |
+|---|---|---|
+| `test_ingest_gateway` | **PASS** | `12 passed`. Counters are no longer stuck at 0, so `7cdbdc5` fixed it. |
+| `test_scanner` | **PASS** | `16 passed`. The scanner counts again. Same root cause, same fix. |
+| `test_migrate` | **PASS** | `11 passed`. No libpq needed (`8735dff`). |
+| `python_framework_codesign_test` | **FAIL** | New error, see below. |
+
+Everything else passes too: all 26 other `garage_python/tests` targets, `//bazel:preset.update_test`,
+and the Swift `GarageAppUnitTests` (47.7s), `GarageAppUITests` and `LlamaClientTests`. Caveat:
+**`test_postgres` "PASSED" with `16 skipped`**. `GARAGE_TEST_DATABASE_URL` is not set in this
+shell, so none of its real-SQL tests ran.
+
+### `python_framework_codesign_test`: **still FAILING, with a different error**
+
+The symlink loop and the `-1 passed` arithmetic are both gone. The staging now flattens the
+framework, and codesign rejects it as ambiguous:
+```
+Verifying bundle: Python.framework
+.../codesign_test.D92iq6/stage/Python.framework: bundle format is ambiguous (could be app or framework)
+[FAIL] Bundle verification failed: Python.framework
+.../stage/Python.framework/Python: bundle format is ambiguous (could be app or framework)
+[FAIL] Python.framework/Python: codesign verification failed
+[PASS] Python.framework/Versions/3.13/Python
+[PASS] Python.framework/Versions/Current/Python
+Checked 3 Mach-O binaries: 2 passed, 1 failed
+Bundles: 1 failed verification
+```
+**Root cause (confirmed with `--sandbox_debug`):** `4c067e4` assumes the framework's own links
+(`Versions/Current`, top-level `Python`/`Resources`/`Headers`) reach the test as relative symlinks.
+That holds in `bazel-out`:
+```
+bazel-out/.../bin/ext/python/Python.framework/
+  Headers   -> Versions/Current/Headers
+  Python    -> Versions/Current/Python
+  Resources -> Versions/Current/Resources
+  Versions/Current -> 3.13
+```
+It does not hold inside the **darwin-sandbox**. There the tree artifact is laid out as real
+directories, with every leaf file an **absolute** symlink into the execroot:
+```
+sandbox/darwin-sandbox/3468/.../runfiles/_main/ext/python/Python.framework/
+  Headers/            (real dir)
+  Resources/          (real dir)
+  Python -> /Users/.../execroot/_main/bazel-out/.../Python.framework/Python    (absolute)
+  Versions/Current/   (real dir, a duplicate of 3.13)
+  Versions/3.13/Python -> /Users/.../Python.framework/Versions/3.13/Python    (absolute)
+```
+So `tar` has no relative links to keep. The new loop at **`bazel/codesign_test.bzl:127-135`** then
+`cp -RL`s every absolute link, which turns top-level `Python` into a regular Mach-O and leaves
+`Current`, `Resources` and `Headers` as real directories. That produces the "ambiguous" bundle.
+Round 2b's "Too many levels of symbolic links" was the same sandbox layout, before the copy step.
+
+Possible fixes (not applied): after staging, rebuild the versioned-framework links
+(`Versions/Current -> <ver>`, and top-level `Python`/`Resources`/`Headers` -> `Versions/Current/…`).
+Or stage from the real `bazel-out` tree, found by `readlink`ing any leaf and stripping its relative
+suffix. Tagging the test `no-sandbox` would also sidestep it. The framework itself is signed
+correctly: step 3 verifies it inside the app.
+
+## Step 3: `aspect build //macapp/package:GarageApp` (Developer ID) **PASS**
+
+Exit 0, 9m25s (a full rebuild under the Developer ID transition). No new first-party warnings: the
+same three Swift warnings. Output is `bazel-bin/macapp/package/GarageApp.zip` (211 MB), extracted with
+`ditto -x -k` to `Garage.app`.
+
+**`codesign --verify --deep --strict --verbose=2 Garage.app`**: exit 0
+```
+Garage.app: valid on disk
+Garage.app: satisfies its Designated Requirement
+```
+
+**`codesign -dvv Garage.app`**
+```
+Identifier=me.rickmark.garage-rag
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=75266 flags=0x10000(runtime) hashes=2345+3 location=embedded
+Authority=Developer ID Application: Richard Penwell (DWVXMLB45Y)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=Sep 23, 2026 at 7:36:21 AM
+TeamIdentifier=DWVXMLB45Y
+Runtime Version=27.0.0
+```
+The authority chain is as expected, with a secure timestamp, and **hardened runtime is on**
+(`flags=0x10000(runtime)`).
+
+Nested code. `--verify --deep --strict` exits 0 ("valid on disk / satisfies its Designated
+Requirement") on each of these, and `-dvv` shows the same three-level Developer ID chain,
+`TeamIdentifier=DWVXMLB45Y` and `flags=0x10000(runtime)` on each:
+
+| path | Identifier | Format | Timestamp |
+|---|---|---|---|
+| `Contents/Frameworks/Python.framework` | `org.python.python` | bundle with Mach-O thin (arm64) | 7:36:19 AM |
+| `Contents/MacOS/garage` | `garage` | Mach-O thin (arm64) | 7:36:18 AM |
+| `Contents/MacOS/garage-mcp` | `garage-mcp` | Mach-O thin (arm64) | 7:36:15 AM |
+| `Contents/XPCServices/GarageIngestXPCService.xpc` (spot check) | — | — | Developer ID, runtime |
+
+So **round 1's blocker (b) is fixed**: `//macapp/package:GarageApp` does transition to, and sign
+with, the Developer ID identity.
+
+**`spctl --assess --type execute -vv Garage.app`**, recorded as-is: exit 0
+```
+Garage.app: accepted
+source=Developer ID
+origin=Developer ID Application: Richard Penwell (DWVXMLB45Y)
+```
+This is **not** the expected "Unnotarized Developer ID". The app is *not* notarized, though:
+- `xcrun stapler validate`: "Garage.app does not have a ticket stapled to it."
+- `syspolicy_check distribution Garage.app`: "App has failed one or more pre-distribution checks …
+  **Notary Ticket Missing** … Severity: Fatal".
+- `spctl --status`: assessments enabled.
+
+The bundle carries `com.apple.provenance` but no `com.apple.quarantine`, because it was built and
+unzipped locally. The likely explanation is that Gatekeeper's `spctl --assess` is lenient toward
+non-quarantined, locally produced code on macOS 27. I have not verified this. Do not read "accepted"
+as notarized: a downloaded copy would still need notarization.
+
+## Step 4: architectures **arm64 only**
+
+`macos_lipo_app` is declared with `arch = "arm64"` (`macapp/package/BUILD.bazel:13`), i.e. the
+target thins to arm64 on purpose. It does not produce a universal binary. `lipo -archs` output:
+```
+arm64  MacOS/GarageApp
+arm64  MacOS/garage
+arm64  Frameworks/Python.framework/Versions/Current/Python
+arm64  XPCServices/GarageEmbedXPCService.xpc/Contents/MacOS/GarageEmbedXPCService
+arm64  XPCServices/GarageIngestXPCService.xpc/Contents/MacOS/GarageIngestXPCService
+arm64  XPCServices/GarageMCPServerService.xpc/Contents/MacOS/GarageMCPServerService
+arm64  XPCServices/GarageXPCService.xpc/Contents/MacOS/GarageXPCService
+arm64  XPCServices/LlamaXPCService.xpc/Contents/MacOS/LlamaXPCService
+arm64  XPCServices/ModelDownloadXPCService.xpc/Contents/MacOS/ModelDownloadXPCService
+```
+This matches what the target declares.
+
+## Round 3 summary
+
+**Fixed since round 2b:** the ingest counters (`test_ingest_gateway`), the scanner (`test_scanner`),
+and `test_migrate`'s libpq dependency. The Developer ID packaging is now verified end-to-end:
+signed, timestamped, hardened runtime, correct chain on the app, Python.framework, both CLIs and
+the XPC services, arm64 as declared. Tests went from **26/4 to 30/1**.
+
+**Still open:**
+1. **`python_framework_codesign_test`**: "bundle format is ambiguous". The darwin sandbox
+   materializes the framework with absolute per-file links and real `Current`/`Resources`/`Headers`
+   directories, and the new `cp -RL` at `bazel/codesign_test.bzl:127-135` flattens top-level
+   `Python`. Staging has to rebuild the framework's relative links, not assume they survive.
+2. Minor: duplicate `-rpath` link warnings on `GarageApp_bin` and the two test bundles.
+3. `test_postgres` was skipped entirely (no `GARAGE_TEST_DATABASE_URL`). Its SQL coverage was not
+   exercised in this round.
+4. `spctl` accepts the unnotarized build locally. This is expected to differ for a quarantined
+   download, and notarization is still required for distribution.
