@@ -839,3 +839,150 @@ quit.**
 - These four checks need a person at the Mac, or an accessibility grant decided by the user.
 - **The app was left running** (pid 46583) for that. Quit it with ⌘Q, then run
   `pg_controldata "…/pgdata" | grep state`, which should say `shut down`.
+
+# Check of 97e3dd2
+
+The PR head moved on to `97e3dd2` while the 898c0e6 check above ran. Per the update, I re-ran just
+the new and app tests on it (detached, same worktree, with Homebrew's server for tests):
+`aspect test //garage_python/tests:test_materialize //macapp/Tests/... --bazel-flag=--test_output=errors`.
+
+| Target | Result |
+|---|---|
+| `//garage_python/tests:test_materialize` | **PASSED** in 1.9 s, 4 tests |
+| `//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests` | **PASSED** in 30.5 s: **245 tests, 0 failures**, including the new `UTF8StreamDecoderTests` |
+| `//macapp/Tests/GarageAppUITests:GarageAppUITests` | **PASSED** in 2.9 s |
+| `//macapp/Tests/LlamaClientTests:LlamaClientTests` | **PASSED** in 3.4 s |
+
+4/4 targets, 50 s wall (warm). `97e3dd2` is also what was merged into `claude/reset-xcuitest`.
+
+# OpenSSL paths in the bundle
+
+Read-only look at the Developer ID app built in the 898c0e6 check (`~/GarageTest/Garage.app`,
+build 225). No code was changed.
+
+## Answer
+
+The `/opt/homebrew/etc/openssl@3` path comes from **`cryptography` 43.0.3's prebuilt wheel**. Its
+`_rust.abi3.so` statically links pyca's own **OpenSSL 3.3.2** (built on pyca's macOS CI, so its
+compiled-in `OPENSSLDIR` is Homebrew's). It is not from `//ext/openssl`, and it does not load any
+Homebrew library: its only load commands are `/usr/lib/libiconv.2.dylib` and
+`/usr/lib/libSystem.B.dylib`. It does **read** `openssl.cnf` from that directory when its OpenSSL
+initializes. That was the M4's harmless sandbox denial, and on a Developer ID build it reads whatever
+is there. **Nothing in the bundle loads a Homebrew dylib at runtime.**
+
+Separately, **our own `_ssl` has no usable default CA paths.** `//ext/openssl`'s `OPENSSLDIR` is the
+Bazel build sandbox (`…/sandbox/darwin-sandbox/5840/…/ext/openssl/openssl.build_tmpdir/openssl/ssl`),
+so `ssl.create_default_context()` in the app loads **0 CA certificates** on every Mac.
+
+## 1. Every file with `/opt/homebrew`, `/usr/local/ssl` or `OPENSSLDIR`
+
+`grep -rl --binary-files=binary` over the whole bundle:
+- `/opt/homebrew`: **11 files**, all Mach-O.
+- `/usr/local/ssl`: **0 files**.
+- `OPENSSLDIR`: the `_rust.abi3.so` and `_ssl` strings below.
+
+| File | `/opt/homebrew` string | What it is |
+|---|---|---|
+| `Resources/site-python/site-packages/cryptography/hazmat/bindings/_rust.abi3.so` | `OPENSSLDIR: "/opt/homebrew/etc/openssl@3"`, `…/openssl@3/cert.pem`, `…/openssl@3/certs` | PyPI wheel `cryptography-43.0.3`, `Generator: maturin (1.7.0)`, tag `cp39-abi3-macosx_10_9_universal2`, installed by `aspect_rules_py`. Static `OpenSSL 3.3.2 3 Sep 2024`. |
+| `MacOS/garage`, `MacOS/garage-mcp`, `Frameworks/PythonXPCService.framework/PythonXPCService`, and the six `XPCServices/*.xpc` executables (9 files) | `/opt/homebrew/Frameworks/` | PythonKit's `librarySearchPaths = ["", "/opt/homebrew/Frameworks/", "/usr/local/Frameworks/"]` (`PythonKit/PythonLibrary.swift:104`), compiled in with `//ext/pythonkit`. Not a load command or rpath (see 2). |
+| `MacOS/GarageApp` | `/opt/homebrew/bin/garage-mcp` | Our `macapp/Sources/GarageApp/Services/Paths.swift:202`: a developer fallback in the `garage-mcp` lookup, used only when the bundled `Contents/MacOS/garage-mcp` is missing. |
+
+## 2. Load commands and rpaths
+
+All 249 Mach-O files in the bundle were checked with `otool -L` and their `LC_RPATH`s.
+**No load command and no rpath points into `/opt/homebrew` or `/usr/local`.**
+
+`_rust.abi3.so` (cryptography):
+```
+@rpath/cryptography.hazmat.bindings._rust.abi3.so (compatibility version 0.0.0, current version 0.0.0)
+/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1336.61.1)
+```
+No `LC_RPATH`.
+
+**PythonKit never reaches its Homebrew search path.**
+- `PythonLibrary.loadPythonLibrary()` first checks whether Python is already loaded in the process
+  (`isPythonLibraryLoaded()`, then `defaultLibraryHandle`). Only if it isn't does it try
+  `PYTHON_LIBRARY`, then its search paths.
+- Every Python-using binary links `@rpath/Python.framework/Versions/3.13/Python` at load time:
+  `garage`, `garage-mcp`, `PythonXPCService.framework` and all six XPC executables show it in
+  `otool -L`. `GarageApp` gets it through `PythonXPCService.framework`.
+- So the search is dead code in this bundle. It would still run if a binary using PythonKit ever
+  stopped linking Python.
+
+Load commands or rpaths outside the bundle and system that are **not** Homebrew (all harmless at
+runtime, listed for completeness):
+- `site-python/config-3.13-darwin/libpython3.13.a`: a static archive that is never loaded. Its
+  recorded dependency is the Bazel sandbox's `Python.framework`. It is dead weight in the bundle.
+- `site-packages/google/_upb/_message.abi3.so` (protobuf wheel): install name
+  `bazel-out/k8-opt-ST-d581c5370a66/bin/python/lib_message_binary.so`, from Google's Linux CI.
+- `site-packages/PIL/.dylibs/libjpeg.62.4.0.dylib` (Pillow wheel): rpath
+  `/Users/runner/work/Pillow/Pillow/build/deps/darwin/lib`.
+- 21 Postgres and libpq dylibs: rpaths into this Mac's Bazel sandbox
+  (`…/postgres.ext_build_deps/{libicu,libreadline,libzlib}_shared/lib`), next to the bundle-relative
+  ones that actually resolve.
+- 10 Swift binaries: the toolchain rpaths
+  `/private/var/select/developer_dir/…/swift-6.2/macosx` and
+  `/var/db/xcode_select_link/…/swift-6.2/macosx`, after `/usr/lib/swift`.
+
+## 3. `_ssl` and `_hashlib`
+
+In `Resources/site-python/lib-dynload`:
+- Both `_ssl.cpython-313-darwin.so` and `_hashlib.cpython-313-darwin.so` link only `/usr/lib` and
+  `/System` libraries: `libc++`, Foundation, `libobjc`, `libSystem`.
+- Both carry the OpenSSL symbols themselves, so they are **statically linked against
+  `//ext/openssl`**: `OpenSSL 3.4.7 25 Aug 2026`.
+- `_ssl` has `OPENSSLDIR: "/Users/rickmark/Library/Caches/bazel/_bazel_rickmark/006d35fe81451c822614e361922fd371/sandbox/darwin-sandbox/5840/execroot/_main/bazel-out/darwin_arm64-fastbuild-macos-arm64-min14.0-ST-3ad2ede33e28/bin/ext/openssl/openssl.build_tmpdir/openssl/ssl"`.
+
+**The bundle has no `python` executable** (`bin/` is stripped from `Python.framework`), and the Bazel
+`python3.13` is a launcher that re-executes `Python.app`, which isn't shipped. So I compiled a
+two-line `Py_BytesMain` host, in a scratch directory, against the bundle's own `Python.framework`.
+Its `sys.prefix` was the bundle's `site-python`:
+```
+_ssl     : <site-python>/lib-dynload/_ssl.cpython-313-darwin.so
+version  : OpenSSL 3.4.7 25 Aug 2026
+paths    : DefaultVerifyPaths(cafile=None, capath=None, openssl_cafile_env='SSL_CERT_FILE',
+           openssl_cafile='…/sandbox/darwin-sandbox/5840/…/ext/openssl/openssl.build_tmpdir/openssl/ssl/cert.pem',
+           openssl_capath_env='SSL_CERT_DIR',
+           openssl_capath='…/sandbox/darwin-sandbox/5840/…/ext/openssl/openssl.build_tmpdir/openssl/ssl/certs')
+exists   : cafile False | openssl_cafile False | openssl_capath False
+default context CA certs: 0
+certifi context CA certs: 121
+```
+
+- Neither the Python code nor the Swift side sets `SSL_CERT_FILE`, `SSL_CERT_DIR` or `OPENSSL_CONF`,
+  or uses `certifi` or `truststore` explicitly. Both packages are bundled: `certifi` 2026.7.22 and
+  `truststore` 0.10.4.
+- `httpx`, which the `anthropic` client uses, picks up `certifi` itself, so it is unaffected.
+- Anything that uses `ssl.create_default_context()` or `urllib` with the defaults fails
+  certificate verification.
+
+## 4. Would anything load Homebrew at runtime?
+
+**No dylib, no framework and no plugin comes from Homebrew.** Nothing in the bundle has a load
+command or rpath there, and PythonKit's search path is never reached (see 2). A Mac without
+Homebrew runs the same code.
+
+Homebrew is still **read** at runtime in two ways, which the "never Homebrew" rule rules out:
+- **`cryptography`'s OpenSSL loads `/opt/homebrew/etc/openssl@3/openssl.cnf`** when it initializes.
+  That happens whenever something imports it: `garage-rag` depends on it directly, and so do
+  `pdfminer-six` (the PDF extractor) and `google-auth`.
+  - With no such file, that is a no-op.
+  - With one, the app runs under whatever configuration someone left in their Homebrew folder.
+    `openssl.cnf` can change defaults and name provider modules. Library validation should stop an
+    unsigned provider loading into the hardened-runtime app, but the rest still applies.
+- **The two developer fallbacks** (PythonKit's search path, `Paths.swift`'s
+  `/opt/homebrew/bin/garage-mcp`) are only reached when the bundle is broken. They are still paths
+  into Homebrew in shipped code.
+
+Possible fixes, not made here:
+1. Export `OPENSSL_CONF` pointing at an empty `openssl.cnf` shipped in the bundle, from
+   `GaragePythonRuntime`, the way it exports `GARAGE_LIBPQ_PATH`. That covers `cryptography` and
+   `_ssl`.
+2. Export `SSL_CERT_FILE` as `certifi.where()`, or call `truststore.inject_into_ssl()` at Python
+   start-up, so default contexts verify.
+3. Give `//ext/openssl` a fixed `--openssldir`. The sandbox path is useless and names the build
+   user.
+4. Drop the PythonKit and `Paths.swift` Homebrew candidates. PythonKit could be patched, or given
+   `PYTHON_LIBRARY` explicitly.
+5. Drop `site-python/config-3.13-darwin` from the bundle.
