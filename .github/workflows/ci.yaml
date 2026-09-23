@@ -39,7 +39,37 @@ jobs:
           echo "${sha}  $RUNNER_TEMP/bin/aspect" | shasum -a 256 -c -
           chmod +x "$RUNNER_TEMP/bin/aspect"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # A cold build of //... (Postgres, ICU, Python.framework, llama.cpp from
+      # source) runs past the hosted runner's 6h job limit, so every run started
+      # from nothing and none finished. Bazel's disk and repository caches carry
+      # the work across runs instead.
+      - name: Restore Bazel caches
+        id: bazel-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/bazel-disk
+            ~/.cache/bazel-repo
+          key: bazel-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock') }}-
+            bazel-test-${{ runner.os }}-${{ runner.arch }}-
+      - name: Point Bazel at the caches
+        # user.bazelrc is git-ignored and try-imported last by .bazelrc.
+        run: echo "common --disk_cache=$HOME/.cache/bazel-disk --repository_cache=$HOME/.cache/bazel-repo" >> user.bazelrc
       - run: aspect test --task:name test -- //...
+        # Stop before the 6h limit: a job the runner kills skips its remaining
+        # steps, so the save below would never run and the next run would start
+        # cold again.
+        timeout-minutes: 320
+      - name: Save Bazel caches
+        if: always() && steps.bazel-cache.outputs.cache-primary-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/bazel-disk
+            ~/.cache/bazel-repo
+          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
 
   gazelle:
     runs-on: macos-latest
