@@ -368,6 +368,28 @@ final class FirstRunTests: XCTestCase {
     }
 
     @MainActor
+    func testMaintenanceWaitsUntilTheAssistantCloses() async {
+        let state = AppState()
+        let wasEnabled = state.scheduledMaintenanceEnabled
+        state.scheduledMaintenanceEnabled = true
+        defer { state.scheduledMaintenanceEnabled = wasEnabled }
+
+        // A scan started by the data page would hold runOperation while the models page
+        // tries to register its picks, so maintenance only notes that it came due.
+        state.firstRun.setStepForTesting(.selectModels, active: true)
+        await state.triggerMaintenanceIfEnabled()
+        XCTAssertTrue(state.isMaintenanceDeferredForFirstRun)
+
+        state.firstRun.setStepForTesting(.settingUp, active: false)
+        state.resumeMaintenanceAfterFirstRun()
+        XCTAssertFalse(state.isMaintenanceDeferredForFirstRun)
+
+        // Nothing owed: resuming again is a no-op.
+        state.resumeMaintenanceAfterFirstRun()
+        XCTAssertFalse(state.isMaintenanceDeferredForFirstRun)
+    }
+
+    @MainActor
     func testContentViewShowsTheAssistantWhileActive() {
         let state = AppState()
         state.firstRun.setStepForTesting(.selectData, active: true)

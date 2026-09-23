@@ -883,9 +883,6 @@ struct FirstRunSetupAgentPage: View {
                         } else {
                             FirstRunBadge(text: "NOT FOUND", tint: .secondary)
                         }
-                        if client.isProjectScoped {
-                            FirstRunBadge(text: "PROJECT", tint: .orange)
-                        }
                     }
                     Text(client.path.path.replacingOccurrences(of: home, with: "~"))
                         .font(.caption2.monospaced())
