@@ -1668,3 +1668,142 @@ No development profile covering this Mac exists for the app. Create one in the d
 - **XPC services:** none needed, as long as the build keeps signing them without a profile.
   Their entitlements are the sandbox plus the team-prefixed group, with no
   `application-identifier`.
+
+---
+
+# Check of b107e82
+
+Commit **`b107e82`** ("Fix the reset relaunch deadlock and unclean Postgres shutdown; add backup to
+the reset sheet") on `claude/adoring-ritchie-c084cj`. It is one commit on top of `4463955`: 14
+files, +237/−28.
+- Checked out detached in `~/Developer/garage-validate`.
+- No notarize, installer, pkgbuild, install target, `xcarchive_open` or upload. No test was pointed
+  at 14824.
+- Nothing was pushed to the PR branch.
+- 2026-09-23 11:00–11:26 MDT.
+
+**Summary: every check passes.** R1 and R2 are fixed. The splash, message, password and
+path fixes all show up in the running app.
+
+## 0. Second copy of the Developer ID backup
+
+`ditto ~/GarageBackup-20260923/developer-id ~/GarageBackup-20260923/developer-id-copy2`: 1.0G. `diff -rq` against the
+original reports the two folders identical. `pg_controldata` gives the same system identifier (`…608111`),
+state `in production` and REDO file `000000010000000000000099`, which is present. Postgres was not
+started on either copy.
+
+## 1. Unit tests: PASS
+
+`aspect test //macapp/Tests/... --bazel-flag=--test_output=errors`: 3/3 targets pass.
+`GarageAppUnitTests` ran **241 tests, 0 failures** (e67d0a9: 234). All the named new tests pass:
+```
+AppDelegateTests      testQuitAfterTheResetHandOffIsImmediateAndStopsNothing
+AppStateTests         testDatabaseResetMessageSaysHowManySourcesCameBack
+PathsTests            testDisplayPathLeavesPathsOutsideTheDataDirectory
+PathsTests            testDisplayPathShowsTheDataDirectoryUnderApplicationSupport
+PathsTests            testPgDataIsShownUnderApplicationSupport
+PostgresServiceTests  testConnectionURLFormat / …IsConsistentAcrossCalls / …IsShownWithoutThePassword /
+                      …UsesLoggedInUserNotPostgresSuperuser / …WithoutAPasswordIsShownAsIs
+```
+I did not run `aspect test //...` this round.
+
+## 2. Developer ID build
+
+`aspect build //macapp/package:GarageApp`: PASS, 533s. It was extracted with `ditto -x -k` to
+`~/GarageTest/Garage.app`, which is version 0.9, build 222. The e67d0a9 build is kept as
+`~/GarageTest/Garage-e67d0a9.app`.
+- `codesign --verify --deep --strict` passes.
+- Authority: `Developer ID Application: Richard Penwell (DWVXMLB45Y)`.
+
+## 3. R2, clean quit: FIXED
+
+Launched and waited for Postgres on 14824 and MCP on 8787, then pressed ⌘Q through System Events.
+
+- **First ⌘Q did nothing: the splash sheet blocks quitting.** AppKit logged `App termination blocked
+  by modal sheet` and `Termination aborted`. This is a small UX finding and not part of R2. It
+  also explains the "Quit … sheet" experience from before.
+- After dismissing the splash (`splash.continue`), ⌘Q:
+  - `applicationShouldTerminate: NSTerminateLater` at 18.039, then `replyToApplicationShouldTerminate:YES`
+    at 18.474.
+  - **GarageApp exited 0.69s after the keystroke**, and every Garage process was gone after 0.74s.
+  - No listeners were left on 14824, 8787, 8790 or 50051, and there was no `postmaster.pid`.
+  - **`pg_controldata`: `Database cluster state: shut down`** (last modified 11:20:18). Before
+    the fix, every quit left `in production`.
+
+## 4. R1, reset handoff: FIXED
+
+The 0.5s sampler and `log stream` ran as before, on the scratch cluster from the 10:17 re-run (0 sources).
+
+- **Page and sheet.** `database.backup`, `database.restore` and `database.reset` are on the Database page.
+  The sheet has `reset.backup`, `reset.cancel` and `reset.confirm`. The sheet's path line now reads
+  `~/Library/Application Support/GarageApp/pgdata` and adds "…or bring a backup back with Restore…
+  on the Database page".
+- **Back Up First….** It opens a save panel titled "Back Up Garage Database", with the default name
+  `garage-rag-<date>-<time>.dump`. I saved to `~/GarageTest/pre-reset.dump`. **The sheet then showed
+  "Saved pre-reset.dump"**, and the file is 46,388 bytes with a `PGDMP` header (custom format).
+- **Reset and Relaunch.** Clicked at 11:23:06.78:
+
+| Time | Event |
+|---|---|
+| 11:23:06.85 | Old instance 28273 still has its Postgres (28336) and the old cluster. |
+| 11:23:07.428 | 28273: `terminate:` → **`applicationShouldTerminate: NSTerminateNow`** → exit at 07.438. |
+| 11:23:07.51 | New instance **33209 `--after-database-reset 28273`** is up. `pgdata` is gone, and nothing listens. |
+| by 11:23:08.14 | **28273 is gone, 0.67s after the click.** e67d0a9 never exited on its own. |
+| 11:23:08.78 | 33209 runs initdb, **after the old instance has exited**. |
+| 11:23:09.41 | Postgres 33290 (parent 33209) is on 14824. gRPC 50051 is up at 10.67, and MCP 8787 shortly after. |
+
+- **Afterwards:** at 11:23:51 and again at 11:25, Postgres 14824, MCP 8787 and gRPC 50051 are still
+  served by 33209's processes. launchd logged no SIGKILL or exit of any Garage process after 11:23:07.
+- **No splash sheet** on the relaunched instance: one window, 0 sheets.
+- **Message:** "Database reset: a new, empty database was created. garage.json declares no sources,
+  so none are registered; add them on the Sources page. Register your embedding models on the
+  Models page, then run ingest to rebuild the index."
+
+The XPC services of the new instance start as soon as it launches: launchd starts them on demand,
+at 11:23:08.78 here. This is harmless now, because the old instance exits within a second and, after
+the handoff, no longer stops anything by name.
+
+## 5. Database page: FIXED
+
+- **Connection URL:** `postgresql://rickmark:••••••@localhost:14824/garage-rag`. Read from the
+  accessibility tree, the password is masked there too.
+- **Data directory:** `~/Library/Application Support/GarageApp/pgdata`.
+
+## 6. Restore: skipped
+
+`pre-reset.dump` came from the scratch cluster, which had **0 sources**. A restore would show no
+source coming back, so there was nothing to confirm.
+
+## 7. Screenshot
+
+First I checked whether it could prompt:
+- `CGPreflightScreenCaptureAccess()` from this process chain returned **true**. The responsible
+  process is IntelliJ (pid 51166), granted at 09:48.
+- The CG window list returned window titles, which also needs Screen Recording.
+
+`screencapture -x -o -l<sheet window>` then raised **no prompt**: tccd logged four
+`kTCCServiceScreenCapture` requests, all `authValue=2` (reason 4, already allowed).
+
+![Reset sheet, b107e82](img/b107e82-reset-sheet.png)
+
+The sheet as rendered (light appearance), matching the accessibility tree:
+- a red warning glyph and the title;
+- **Deleted**: the search index, facts, conversation memory, registrations and history;
+- **Kept**: original files; models, logs and settings; the database password;
+- the path footnote;
+- **Back Up First…** (with a drive icon) on the left;
+- **Cancel** and a **red "Reset and Relaunch"** on the right. The red tint now shows, which fixes
+  the e67d0a9 note.
+
+## State left behind
+
+- Garage b107e82 (pid 33209) is **still running**, as requested, on a new scratch cluster
+  (created 11:23:08). The sheet was closed with Cancel.
+- `~/GarageTest/pre-reset.dump` and `~/GarageTest/Garage-e67d0a9.app` are kept.
+- Both Developer ID backups are untouched.
+
+## Findings
+
+- **New, minor: the splash sheet blocks ⌘Q** (`App termination blocked by modal sheet`). On a normal
+  launch the first ⌘Q does nothing. Options: dismiss the splash on `terminate:`, or show it as a
+  window rather than a sheet.
