@@ -65,8 +65,10 @@ macos_application(
     ],
     infoplists = [":Info.plist"],
     minimum_os_version = "14.0",
+    # Store builds sign with Apple Development and this development profile, so they run on
+    # registered Macs; Xcode re-signs with Apple Distribution (GarageMacAppConnect) on upload.
     provisioning_profile = select({
-        "//bazel:is_store": "//macapp:GarageSplatAppStore.provisionprofile",
+        "//bazel:is_store": "//macapp:GarageRAGDevelopmentApp.provisionprofile",
         "//conditions:default": None,
     }),
     version = ":GarageAppVersion",

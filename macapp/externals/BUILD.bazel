@@ -1,5 +1,6 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//bazel:codesign.bzl", "codesign")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 exports_files(
     glob(["*"]),
@@ -42,7 +43,7 @@ codesign(
     parent_dir = "postgres",
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
         "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
@@ -58,7 +59,7 @@ codesign(
     options = ["runtime"],
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
         "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
@@ -114,7 +115,7 @@ codesign(
     options = ["runtime"],
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
         "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],

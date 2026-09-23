@@ -14,7 +14,10 @@ LOCAL_SIGNING_IDENTITY = "Garage Local Signing"
 
 DEVELOPER_ID_IDENTITY = "Developer ID Application: Richard Penwell (DWVXMLB45Y)"
 
-STORE_IDENTITY = "Apple Distribution: Richard Penwell (DWVXMLB45Y)"
+# The App Store configuration signs with Apple Development and the development profile
+# (macapp/GarageRAGDevelopmentApp.provisionprofile), so a store build runs on registered Macs.
+# Uploading re-signs the archive with Apple Distribution and GarageMacAppConnect in Xcode.
+STORE_IDENTITY = "Apple Development: Rick Penwell (23E5F7Z5L7)"
 
 # Identities with no Apple-issued chain: usable to establish a stable identity,
 # but not to notarize, and — because hardened runtime turns on library

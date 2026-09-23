@@ -1,5 +1,6 @@
 load("@rules_swift//swift:swift.bzl", "swift_binary")
 load("//bazel:codesign.bzl", "codesign")
+load("//bazel:signing.bzl", "STORE_IDENTITY")
 
 swift_binary(
     name = "garage_mcp_bin",
@@ -48,7 +49,7 @@ codesign(
     options = ["runtime"],
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": "Apple Distribution: Richard Penwell (DWVXMLB45Y)",
+        "//bazel:is_store": STORE_IDENTITY,
         "//conditions:default": "-",
     }),
     visibility = ["//visibility:public"],
