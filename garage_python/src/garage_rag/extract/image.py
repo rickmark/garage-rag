@@ -1,16 +1,12 @@
-"""Image text extraction: Tesseract locally, Claude only as a bounded fallback.
+"""Image text extraction with Tesseract, on this machine.
 
-Tesseract handles clean screenshots well and costs nothing. It struggles with
-low-contrast captures, dense UI, diagrams, and handwriting -- exactly the cases
-where a vision model earns its keep. So Tesseract runs first and its *confidence*
-decides whether escalation is worth it.
+Tesseract handles clean screenshots and scans well. It struggles with
+low-contrast captures, dense UI, diagrams and handwriting; those images yield
+little or no text, and there is no fallback -- no image is ever sent to a cloud
+vision model.
 
-Two properties keep this honest:
-
-* Escalation is opt-in per source and globally, and is impossible for
-  communications -- see :mod:`garage_rag.enrich.egress`.
-* An image that yields no usable text is reported as a failure rather than
-  indexed as an empty document, so the run report reflects reality.
+An image that yields no usable text is reported as a failure rather than
+indexed as an empty document, so the run report reflects reality.
 
 Note on the corpus: most images in a source tree are UI assets -- icons, arrows,
 logos. Those have no recoverable text and should not consume OCR time at all, so
@@ -19,7 +15,6 @@ tiny images are rejected before Tesseract runs.
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from pathlib import Path
@@ -37,14 +32,6 @@ MIN_OCR_WIDTH = 200
 MIN_OCR_HEIGHT = 200
 # Guard against decompression bombs and multi-hundred-megapixel scans.
 MAX_OCR_PIXELS = 40_000_000
-
-_MEDIA_TYPES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
 
 
 def _open_image(path: Path):
@@ -105,90 +92,11 @@ def _tesseract(path: Path) -> tuple[str, float]:
     return normalize_text(text), mean_conf
 
 
-def _claude_vision(path: Path, *, source_allows_cloud: bool) -> str:
-    """Transcribe an image with Claude. Routed through the egress chokepoint."""
-    from garage_rag.db.models import CorpusClass
-    from garage_rag.enrich.egress import EgressRequest, send
-
-    suffix = path.suffix.lower()
-    media_type = _MEDIA_TYPES.get(suffix)
-    if media_type is None:
-        raise ExtractionError(f"cloud OCR does not support {suffix}: {path}")
-
-    encoded = base64.standard_b64encode(path.read_bytes()).decode("ascii")
-
-    # The class is hard-coded: an image extractor has no corpus_class of its
-    # own (classification happens after extraction). What keeps communications
-    # out of this call today is ``source_allows_cloud`` -- the CLI refuses to
-    # set ``allow_cloud_enrichment`` on a communication source, and
-    # ``EgressRequest`` refuses any request without it. Should the true class
-    # ever be threaded through, pass it here so the type-level check applies.
-    request = EgressRequest(
-        corpus_class=CorpusClass.DOCUMENT,
-        purpose="image-ocr",
-        source_allows_cloud=source_allows_cloud,
-        max_tokens=4096,
-        content=[
-            {
-                "type": "image",
-                "source": {"type": "base64", "media_type": media_type, "data": encoded},
-            },
-            {
-                "type": "text",
-                "text": (
-                    "Transcribe all text in this image verbatim. If it is a "
-                    "diagram or chart rather than text, describe its content and "
-                    "any labels. If there is no text and no meaningful content, "
-                    "reply with exactly: NO_TEXT"
-                ),
-            },
-        ],
-    )
-    return send(
-        request,
-        system=(
-            "You extract text from images for a search index. Output only the "
-            "transcription or description, with no preamble."
-        ),
-    )
-
-
-def extract_image(
-    path: Path,
-    *,
-    source_allows_cloud: bool = False,
-) -> ExtractResult:
-    """Extract text from an image, escalating to a vision model when permitted."""
+def extract_image(path: Path) -> ExtractResult:
+    """Extract text from an image with Tesseract."""
     settings = get_settings()
 
     text, confidence = _tesseract(path)
-    meta: dict = {"ocr_engine": "tesseract", "ocr_confidence": round(confidence, 2)}
-
-    good_enough = len(text) >= settings.ocr_min_chars and confidence >= settings.ocr_min_confidence
-
-    if not good_enough:
-        from garage_rag.enrich.egress import EgressBlocked, cloud_enabled
-
-        if cloud_enabled() and source_allows_cloud:
-            try:
-                better = _claude_vision(path, source_allows_cloud=source_allows_cloud)
-            except EgressBlocked as exc:
-                # A refused egress is this file's failure, not a pipeline
-                # crash: the ingest loop only catches ExtractionError/OSError,
-                # and a bare EgressBlocked would abort the whole run.
-                raise ExtractionError(str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001 - a failed fallback is not fatal
-                log.debug("cloud OCR failed for %s: %s", path.name, exc)
-                better = ""
-
-            if better and better.strip() != "NO_TEXT":
-                text = normalize_text(better)
-                meta["ocr_engine"] = "tesseract+claude"
-                meta["ocr_escalated"] = True
-                meta["cloud_model"] = settings.cloud_ocr_model
-        else:
-            meta["ocr_escalation_skipped"] = "cloud disabled" if not cloud_enabled() else "source disallows cloud"
-
     if len(text) < settings.ocr_min_chars:
         # Reported as a failure, not indexed as an empty document: most images in
         # a code tree are icons and genuinely contain nothing.
@@ -197,8 +105,8 @@ def extract_image(
     return ExtractResult(
         text=text,
         kind=ContentKind.PROSE,
-        extractor=meta["ocr_engine"],
+        extractor="tesseract",
         extractor_version=VERSION,
         title=path.stem,
-        meta=meta,
+        meta={"ocr_engine": "tesseract", "ocr_confidence": round(confidence, 2)},
     )

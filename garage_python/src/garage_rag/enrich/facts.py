@@ -16,10 +16,10 @@ backend here is always one of the two local providers
 model is refused outright (:func:`refuse_cloud_model_id`) rather than passed to
 a local server that could never serve it.
 
-The Ollama host itself is configurable (``ollama_host``). It is assumed to be
-loopback; when it is not, :func:`extract_and_store_facts` runs the document's
-class through ``enrich.egress.assert_egress_allowed`` so communications are
-never posted to a remote host even by configuration.
+The Ollama host itself is configurable (``ollama_host``), but only to another
+loopback URL: the configuration refuses anything else, and so does
+:class:`OllamaLanguageModel`. :func:`extract_and_store_facts` checks before it
+touches the document's stored facts.
 
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
@@ -43,14 +43,12 @@ import textwrap
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from garage_rag.config import get_settings
+from garage_rag.config import get_settings, require_loopback
 from garage_rag.db.models import Chunk, Document, Fact
 from garage_rag.enrich import langextract as lx
-from garage_rag.enrich.egress import assert_egress_allowed
 from garage_rag.enrich.langextract.base_model import BaseLanguageModel
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
 from garage_rag.enrich.ollama_provider import OllamaLanguageModel
-from garage_rag.xpc.llama_xpc import is_loopback_url
 
 log = logging.getLogger(__name__)
 
@@ -247,15 +245,11 @@ def extract_and_store_facts(
     gets a ``chunks`` row appended after the document's existing chunks, ready
     for ``embed.ollama.backfill_model`` to pick up.
 
-    If the Ollama endpoint is not on this machine, the document's corpus class
-    is checked through the egress chokepoint first: a communication is never
-    posted to a remote host, whatever the configuration says.
+    An Ollama endpoint that is not on this machine is refused
+    (:class:`~garage_rag.config.NonLoopbackHost`) before anything is deleted.
     """
     if provider == "ollama":
-        url = resolve_model_url(model_url)
-        if not is_loopback_url(url):
-            log.warning("ollama_host %s is not loopback; applying egress policy to document %s", url, document.id)
-            assert_egress_allowed(document.corpus_class)
+        require_loopback(resolve_model_url(model_url), "embedding.ollama_host")
 
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     if not document.content:

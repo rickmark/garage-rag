@@ -234,7 +234,9 @@ message SourceInfo {
     string kind = 2;
     string corpus_class = 3;
     string trust_tier = 4;
-    bool allow_cloud_enrichment = 5;
+    // The cloud OCR fallback and its per-source switch were removed.
+    reserved 5;
+    reserved "allow_cloud_enrichment";
     bool enabled = 6;
     string root = 7;
     int64 document_count = 8;
@@ -299,7 +301,9 @@ message AddSourceRequest {
     string kind = 3;          // default "filesystem"
     string corpus_class = 4;  // default "document"
     string trust = 5;         // default "authored"
-    bool allow_cloud_enrichment = 6;
+    // The cloud OCR fallback and its per-source switch were removed.
+    reserved 6;
+    reserved "allow_cloud_enrichment";
 }
 
 message AddSourceResponse {
@@ -583,7 +587,9 @@ message BeginIngestSessionResponse {
     string root = 3;
     string default_class = 4;
     string default_trust = 5;
-    bool allow_cloud_enrichment = 6;
+    // The cloud OCR fallback and its per-source switch were removed.
+    reserved 6;
+    reserved "allow_cloud_enrichment";
     int64 run_id = 7;
     repeated string source_slugs = 8;
     string kind = 9;  // filesystem | git | sqlite | maildir: picks the scanner

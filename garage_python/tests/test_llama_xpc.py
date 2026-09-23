@@ -277,8 +277,11 @@ def test_rejects_non_loopback_base_url(url: str) -> None:
 
 
 def test_rejects_non_loopback_setting() -> None:
-    """The guard applies to the configured host too, not only explicit arguments."""
-    set_settings(Settings(llama_host="http://llama.example:8790"))
+    """The configuration refuses the host before a client is ever built; the
+    client checks again for settings that bypassed validation."""
+    with pytest.raises(ValueError, match="loopback"):
+        Settings(llama_host="http://llama.example:8790")
+    set_settings(Settings.model_construct(llama_host="http://llama.example:8790"))
     try:
         with pytest.raises(LlamaXPCError, match="loopback"):
             LlamaXPCClient()

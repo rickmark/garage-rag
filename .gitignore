@@ -4,7 +4,7 @@
 *.db
 .build
 macapp/build/
-# Credentials referenced by cloud.api_key_file
+# Credential files (an LM Studio token, or a key left over from the retired cloud OCR)
 *.key
 anthropic.key
 

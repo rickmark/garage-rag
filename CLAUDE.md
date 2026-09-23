@@ -204,7 +204,7 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   (`MaterializationBudget`). Idempotent ingest means hitting the budget cap is fine, not a failure.
 - **Extract** (`extract/`) — dispatch by extension with lazy imports (Markdown/`text.py`,
   PDF/`pdf.py` with `pypdf`→`pdfplumber` per-page escalation, Office/`office.py`,
-  images/`image.py` via Tesseract with optional Claude escalation, code verbatim via `text.py`).
+  images/`image.py` via Tesseract only, code verbatim via `text.py`).
 - **Quality gate** (`extract/quality.py`) — content-based backstop against non-prose text (repeated
   line shapes, timestamp prefixes, hex/base64 density) that path rules alone miss.
 - **Attribute** (`attribute/`) — precedence-ordered signals, each recording its `evidence`: git
@@ -213,7 +213,8 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   → path convention (`pathrules.py`, data-driven table) → source default. See `docs/attribution.md`.
 - **Store** — chunks are model-agnostic; see the schema section below.
 - **Distill facts** (`enrich/facts.py`, `garage enrich-facts`, `EnrichFacts` RPC) — optional
-  post-ingest pass: LangExtract against local Ollama distills each document into atomic,
+  post-ingest pass: LangExtract (only its local part, vendored as `enrich/langextract`) against a
+  local model (`llama_xpc` or Ollama) distills each document into atomic,
   span-grounded `facts` rows; every fact also gets its own `chunks` row (`chunks.fact_id`,
   `chunker = 'facts:...'`), so the ordinary backfill embeds facts under every model with no
   fact-specific path. Schema in `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
@@ -248,7 +249,7 @@ linear history.
 Two independent axes on every document:
 
 - `corpus_class` — **what it is**: `document` | `code` | `communication` (communications never
-  leave the machine — this is what the egress guard keys on, not trust).
+  leave the machine — this is what the embedding guard keys on, not trust).
 - `trust_tier` — **how much it's trusted**: `authored` | `reference` | `received`.
 
 Embeddings live one table per model (`emb_<slug>`, e.g. `emb_bge_m3`) rather than one shared table,
@@ -259,24 +260,31 @@ backfill, not a re-ingest. Storage type is selected by dimension against pgvecto
 (`vector` ≤2000 dims, `halfvec` ≤4000, binary-quantized beyond that for non-MRL models). Full
 reference: `docs/schema.md`.
 
-### Privacy / egress guarantee (`enrich/egress.py`)
+### Privacy guarantee: no cloud AI, loopback only
 
-Content with `corpus_class = 'communication'` structurally never reaches a cloud API, enforced at
-four independent levels (removing any one fails the test suite — see `test_egress_block.py`):
+No document content leaves the machine. There is no cloud AI client in the codebase, and every model
+server must be on loopback. Each layer is tested on its own in `tests/test_egress_block.py`, so
+removing one fails the suite:
 
-1. `enrich/egress.py` is the **only** module allowed to import `anthropic` or construct a client;
-   `tests/test_egress_block.py` parses every source file's AST to enforce this, including
-   function-local imports.
-2. `EgressRequest.__post_init__` refuses to construct if `corpus_class is COMMUNICATION`, checked
-   before anything else — no way to build a forbidden request even by mistake.
-3. `sources.allow_cloud_enrichment` defaults `false`; the CLI refuses to set it on a communication
-   source at all.
-4. `cloud.enable_ocr` in `~/.garage.json` gates the whole path globally (default `false`, Tesseract
-   only).
+1. **No cloud AI SDK.** An AST scan of every source file (function-local and `importlib` imports
+   included) fails on `anthropic`, `google.genai`, `google.cloud`, `cohere`, `mistralai`, upstream
+   `langextract` and the like, and `uv.lock` must contain none of them. `openai` is allowed only in
+   `embed/lmstudio.py`, as the client for LM Studio's OpenAI-compatible API on loopback. OCR is
+   Tesseract only; the old Claude fallback and its settings (`cloud.*`,
+   `sources[].allow_cloud_enrichment`) are retired.
+2. **Loopback only.** `embedding.ollama_host`, `lmstudio_host` and `llama_host` must be loopback
+   (`localhost` or a literal loopback address); `Settings` rejects anything else, and every client
+   re-checks the URL it is given with `config.require_loopback`, ignores proxy variables and does
+   not follow redirects. The gRPC client to the app's facade is held to the same rule.
+3. **Listed network clients.** Only the modules in `NETWORK_CLIENTS` may import an HTTP/socket
+   client; a new one must enforce rule 2 and be added there.
+4. **Local fact extraction.** Only the local part of LangExtract is vendored (no provider routing),
+   and `enrich/facts.py` refuses a cloud model id.
 
-When touching `enrich/`, `egress.py`, or anything that could construct an outbound request for
-document content, preserve this — it's the load-bearing privacy property of the project. Full
-detail: `docs/privacy.md`.
+Behind these, backfill still withholds communication chunks from a provider that is not on this
+machine (`test_embed_egress.py`). When touching `embed/`, `enrich/`, `config/` or anything that
+could construct an outbound request for document content, preserve all of this — it's the
+load-bearing privacy property of the project. Full detail: `docs/privacy.md`.
 
 ### Configuration (`config/__init__.py`)
 

@@ -95,8 +95,6 @@ class Source(Base):
     root: Mapped[str] = mapped_column(Text)
     default_class: Mapped[CorpusClass] = mapped_column(_corpus_class, default=CorpusClass.DOCUMENT)
     default_trust: Mapped[TrustTier] = mapped_column(_trust_tier)
-    # Egress guard, level 3: false for messages/mail and never flipped by code.
-    allow_cloud_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     expected_elements: Mapped[int] = mapped_column(BigInteger, default=0)
     # The last scan (008_source_scan.sql); config stays user-facing settings only.

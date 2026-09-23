@@ -3,8 +3,8 @@
 :class:`LocalChatModel` is a small provider-neutral chat client built from the
 ``facts`` section of the configuration (``facts.provider`` / ``facts.model``).
 Both providers are **local inference servers on this machine**; there is no
-cloud path here at all, and none can be added without going through
-``enrich/egress.py`` (``test_egress_block`` enforces that structurally):
+cloud path here at all (``test_egress_block`` fails the build if any module
+imports a cloud AI SDK):
 
 * ``llama_xpc`` -- the llama.cpp HTTP API the app's ``LlamaXPCService`` serves
   on ``embedding.llama_host`` (default ``http://127.0.0.1:8790``). The engine
@@ -17,10 +17,8 @@ cloud path here at all, and none can be added without going through
 
 Retrieved chunks -- communications included -- may be placed in a prompt to
 either server; that is local inference on the owner's own machine, the same
-as embedding them. The one configuration that could change that is pointing
-``ollama_host`` off-box, which :attr:`LocalChatModel.is_local` exposes so the
-caller can apply the egress policy before building such a prompt (``rag_ask``
-does).
+as embedding them. Both hosts must be loopback: the configuration refuses any
+other value, and :class:`LocalChatModel` checks again on construction.
 """
 
 from __future__ import annotations
@@ -32,8 +30,8 @@ from typing import Any
 
 import ollama
 
-from garage_rag.config import Settings, get_settings
-from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError, is_loopback_url
+from garage_rag.config import Settings, get_settings, require_loopback
+from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError
 
 log = logging.getLogger(__name__)
 
@@ -91,16 +89,14 @@ class LocalChatModel:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unknown generation provider {self.provider!r}; expected one of {PROVIDERS}")
         self.model_ref = model_ref or settings.fact_model
-        self.host = settings.llama_host if self.provider == "llama_xpc" else settings.ollama_host
+        setting = "embedding.llama_host" if self.provider == "llama_xpc" else "embedding.ollama_host"
+        self.host = require_loopback(
+            settings.llama_host if self.provider == "llama_xpc" else settings.ollama_host, setting
+        )
         self._llama: LlamaXPCClient | None = None
         self._ollama: ollama.Client | None = None
 
     # ---- description ----------------------------------------------------
-
-    @property
-    def is_local(self) -> bool:
-        """Whether ``host`` is loopback. Always true for ``llama_xpc``."""
-        return is_loopback_url(self.host)
 
     def describe(self) -> str:
         return f"{self.provider}/{self.model_ref} at {self.host}"
@@ -126,7 +122,7 @@ class LocalChatModel:
 
     def _ollama_client(self) -> ollama.Client:
         if self._ollama is None:
-            self._ollama = ollama.Client(host=self.host)
+            self._ollama = ollama.Client(host=self.host, trust_env=False, follow_redirects=False)
         return self._ollama
 
     # ---- probing --------------------------------------------------------

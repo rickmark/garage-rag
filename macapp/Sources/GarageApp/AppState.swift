@@ -279,7 +279,6 @@ final class AppState: ObservableObject {
                     root: ds.root.isEmpty ? existing.root : ds.root,
                     corpusClass: ds.corpusClass.isEmpty ? existing.corpusClass : ds.corpusClass,
                     trust: ds.trust.isEmpty ? existing.trust : ds.trust,
-                    allowCloudEnrichment: ds.allowCloudEnrichment,
                     enabled: ds.enabled,
                     includeCode: existing.includeCode,
                     origin: .both,

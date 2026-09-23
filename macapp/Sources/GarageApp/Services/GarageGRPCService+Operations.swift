@@ -45,7 +45,6 @@ extension GarageGRPCService {
         request.kind = spec.kind
         request.corpusClass = spec.corpusClass
         request.trust = spec.trust
-        request.allowCloudEnrichment = spec.allowCloudEnrichment
         return try await call { try await $0.addSource(request, callOptions: $1) }
     }
 

@@ -49,12 +49,12 @@
       "properties": {
         "ollama_host": {
           "type": "string",
-          "description": "Base URL of the Ollama server that produces embeddings.",
+          "description": "Base URL of the Ollama server that produces embeddings. Must be loopback.",
           "default": "http://localhost:11434"
         },
         "lmstudio_host": {
           "type": "string",
-          "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1).",
+          "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1). Must be loopback.",
           "default": "http://localhost:1234/v1"
         },
         "llama_host": {
@@ -163,11 +163,6 @@
           "description": "Below this, escalate a PDF page from pypdf to pdfplumber.",
           "default": 32
         },
-        "ocr_min_confidence": {
-          "type": "number",
-          "description": "Mean Tesseract word confidence below which cloud OCR is considered.",
-          "default": 60.0
-        },
         "ocr_min_chars": {
           "type": "integer",
           "description": "Below this many characters an image is treated as having no text. Most images in a source tree are icons.",
@@ -193,29 +188,6 @@
           "type": "string",
           "description": "HTTP route the MCP endpoint is served on.",
           "default": "/mcp"
-        }
-      }
-    },
-    "cloud": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enable_ocr": {
-          "type": "boolean",
-          "description": "Allow the Claude vision fallback for unreadable images.",
-          "default": false
-        },
-        "model": {
-          "type": "string",
-          "description": "Model used for the vision OCR fallback.",
-          "default": "claude-opus-4-8"
-        },
-        "api_key_file": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Path to a file containing the Anthropic API key. Kept out of this file so the config itself holds no secrets."
         }
       }
     },
@@ -273,10 +245,6 @@
           "include_code": {
             "type": "boolean",
             "description": "Index source files as well as documents."
-          },
-          "allow_cloud_enrichment": {
-            "type": "boolean",
-            "description": "Permit the cloud OCR fallback for this source. Never honoured for communication sources."
           },
           "enabled": {
             "type": "boolean",

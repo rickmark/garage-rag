@@ -21,16 +21,6 @@ class SourceArgumentError(ValueError):
         self.param_hint = param_hint
 
 
-def _check_egress(slug: str, corpus_class: CorpusClass, allow_cloud_enrichment: bool) -> None:
-    # Egress guard, level 3: keyed on the class, since "is this a private
-    # conversation" is a property of what the content is, not how trusted it is.
-    if corpus_class is CorpusClass.COMMUNICATION and allow_cloud_enrichment:
-        raise SourceArgumentError(
-            f"{slug}: communication sources may never enable cloud enrichment",
-            "--allow-cloud-enrichment",
-        )
-
-
 @dataclass
 class AddSourceResult:
     slug: str
@@ -53,12 +43,10 @@ def add_source(
     kind: str = "filesystem",
     corpus_class: str = "document",
     trust: str = "authored",
-    allow_cloud_enrichment: bool = False,
 ) -> AddSourceResult:
     """Register a source root, or update the one already registered under ``slug``."""
     tier = TrustTier(trust)
     klass = CorpusClass(corpus_class)
-    _check_egress(slug, klass, allow_cloud_enrichment)
 
     expanded = Path(root).expanduser()
     if not expanded.exists():
@@ -71,7 +59,6 @@ def add_source(
             existing.kind = kind
             existing.default_trust = tier
             existing.default_class = klass
-            existing.allow_cloud_enrichment = allow_cloud_enrichment
         else:
             session.add(
                 Source(
@@ -80,7 +67,6 @@ def add_source(
                     root=str(expanded),
                     default_trust=tier,
                     default_class=klass,
-                    allow_cloud_enrichment=allow_cloud_enrichment,
                 )
             )
     return AddSourceResult(slug=slug, root=expanded, corpus_class=klass, trust=tier, created=existing is None)
@@ -179,9 +165,6 @@ def sync_sources(*, apply: bool = True, settings: Settings | None = None) -> Syn
     if not settings.sources:
         return result
 
-    for spec in settings.sources:
-        _check_egress(spec.slug, CorpusClass(spec.corpus_class), spec.allow_cloud_enrichment)
-
     with session_scope() as session:
         declared = {spec.slug for spec in settings.sources}
         for spec in settings.sources:
@@ -197,7 +180,6 @@ def sync_sources(*, apply: bool = True, settings: Settings | None = None) -> Syn
                             root=str(spec.expanded_root),
                             default_class=klass,
                             default_trust=tier,
-                            allow_cloud_enrichment=spec.allow_cloud_enrichment,
                             enabled=spec.enabled,
                             config={"include_code": spec.include_code},
                         )
@@ -210,7 +192,6 @@ def sync_sources(*, apply: bool = True, settings: Settings | None = None) -> Syn
                 or row.root != str(spec.expanded_root)
                 or row.default_class != klass
                 or row.default_trust != tier
-                or row.allow_cloud_enrichment != spec.allow_cloud_enrichment
                 or row.enabled != spec.enabled
                 or bool((row.config or {}).get("include_code", False)) != spec.include_code
             )
@@ -220,7 +201,6 @@ def sync_sources(*, apply: bool = True, settings: Settings | None = None) -> Syn
                     row.root = str(spec.expanded_root)
                     row.default_class = klass
                     row.default_trust = tier
-                    row.allow_cloud_enrichment = spec.allow_cloud_enrichment
                     row.enabled = spec.enabled
                     row.config = {**(row.config or {}), "include_code": spec.include_code}
                 result.updated.append(spec.slug)
@@ -272,7 +252,6 @@ def import_sources_into_config(path: Path | None = None) -> ImportSourcesResult:
                     **{"class": str(row.default_class)},
                     trust=str(row.default_trust),
                     include_code=bool((row.config or {}).get("include_code", False)),
-                    allow_cloud_enrichment=bool(row.allow_cloud_enrichment),
                     enabled=bool(row.enabled),
                 )
             )

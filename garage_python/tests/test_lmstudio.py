@@ -8,19 +8,19 @@ def test_uses_configured_lmstudio_token(monkeypatch) -> None:
     captured: dict[str, str] = {}
 
     class Client:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str, http_client) -> None:
             captured["base_url"] = base_url
             captured["api_key"] = api_key
 
     monkeypatch.setattr("garage_rag.embed.lmstudio.OpenAI", Client)
-    set_settings(Settings(lmstudio_host="http://lm-studio.example/v1"))
+    set_settings(Settings(lmstudio_host="http://127.0.0.1:4321/v1"))
     try:
         LMStudioEmbedder("text-embedding", api_token="lm-token")
     finally:
         reset_settings()
 
     assert captured == {
-        "base_url": "http://lm-studio.example/v1",
+        "base_url": "http://127.0.0.1:4321/v1",
         "api_key": "lm-token",
     }
 
@@ -29,7 +29,7 @@ def test_uses_placeholder_without_lmstudio_token(monkeypatch) -> None:
     captured: dict[str, str] = {}
 
     class Client:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str, http_client) -> None:
             captured["api_key"] = api_key
 
     monkeypatch.setattr("garage_rag.embed.lmstudio.OpenAI", Client)

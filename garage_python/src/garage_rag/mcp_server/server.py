@@ -35,13 +35,11 @@ from garage_rag.db.models import (
     Author,
     AuthorIdentity,
     Chunk,
-    CorpusClass,
     Document,
     DocumentAuthor,
     IngestState,
     Source,
 )
-from garage_rag.enrich.egress import assert_egress_allowed
 from garage_rag.enrich.generation import LocalChatModel
 from garage_rag.search.hybrid import SearchHit, corpus_overview
 from garage_rag.search.hybrid import search as run_search
@@ -524,8 +522,8 @@ def rag_stats() -> CorpusStats:
 # Both tools run on the local model named by facts.provider / facts.model (the
 # app's LlamaXPCService, or a local Ollama server). Retrieved chunks are
 # placed in the prompt verbatim; that is local inference, so communications
-# may appear there just as they are embedded locally -- the egress check below
-# only fires if ollama_host has been pointed at another machine.
+# may appear there just as they are embedded locally. Both hosts are loopback
+# by rule: the configuration and LocalChatModel refuse anything else.
 
 ASK_SYSTEM_PROMPT = (
     "You answer questions about the user's personal corpus using only the numbered "
@@ -608,11 +606,6 @@ def rag_ask(
     """
     hits, _ = _retrieve(question, limit=limit, mode=mode, corpus_class=corpus_class, trust=trust, source=source)
     model = LocalChatModel()
-    if not model.is_local:
-        # Only reachable by pointing ollama_host off-box: then communications
-        # must not be put in a prompt that leaves the machine.
-        for hit in hits:
-            assert_egress_allowed(CorpusClass(hit.corpus_class))
     reply = model.complete(build_ask_messages(question, hits), max_tokens=max_tokens, temperature=temperature)
     return AskResult(
         answer=reply.text,

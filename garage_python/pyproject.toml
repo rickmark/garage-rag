@@ -45,7 +45,6 @@ dependencies = [
     # only exposes packages reachable from [project.dependencies], so the py_test
     # targets can't resolve @pypi//pytest from an optional/dev group.
     "pytest>=9.1.1",
-    "anthropic>=1.0.0",
     # gRPC & Protobuf
     "grpcio>=1.68.0",
     "protobuf>=5.29.0",

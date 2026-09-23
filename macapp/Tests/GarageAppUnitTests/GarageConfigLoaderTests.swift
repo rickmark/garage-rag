@@ -12,7 +12,6 @@ final class GarageConfigLoaderTests: XCTestCase {
             root: "~/Dropbox",
             corpusClass: "document",
             trust: "authored",
-            allowCloudEnrichment: true,
             enabled: true,
             includeCode: false,
             origin: .config,
@@ -25,7 +24,6 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(source.root, "~/Dropbox")
         XCTAssertEqual(source.corpusClass, "document")
         XCTAssertEqual(source.trust, "authored")
-        XCTAssertTrue(source.allowCloudEnrichment)
         XCTAssertTrue(source.enabled)
         XCTAssertFalse(source.includeCode)
         XCTAssertEqual(source.origin, .config)
@@ -35,6 +33,7 @@ final class GarageConfigLoaderTests: XCTestCase {
     }
 
     func testLoadSourcesFromConfigJSON() throws {
+        // allow_cloud_enrichment is a retired key: a config that still carries it must load.
         let json = """
         {
             "$schema": "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json",
@@ -79,7 +78,6 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(dropbox.kind, "filesystem")
         XCTAssertEqual(dropbox.corpusClass, "document")
         XCTAssertEqual(dropbox.trust, "authored")
-        XCTAssertTrue(dropbox.allowCloudEnrichment)
         XCTAssertFalse(dropbox.includeCode)
         XCTAssertEqual(dropbox.origin, .config)
 
@@ -89,7 +87,6 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(dev.kind, "git")
         XCTAssertEqual(dev.corpusClass, "code")
         XCTAssertEqual(dev.trust, "authored")
-        XCTAssertFalse(dev.allowCloudEnrichment)
         XCTAssertTrue(dev.includeCode)
         XCTAssertEqual(dev.origin, .config)
     }

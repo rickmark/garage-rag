@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from garage_rag.config import Settings
+from garage_rag.config import NonLoopbackHost, Settings
 from garage_rag.enrich.generation import ChatReply, LocalChatModel, LocalModelUnavailable
 from garage_rag.xpc.llama_xpc import LlamaXPCError
 
@@ -23,13 +23,11 @@ class TestConstruction:
         assert model.provider == "llama_xpc"
         assert model.model_ref == "gemma2-2b"
         assert model.host == "http://127.0.0.1:8790"
-        assert model.is_local
 
     def test_ollama_uses_the_ollama_host(self) -> None:
         model = LocalChatModel(settings=Settings(fact_provider="ollama", fact_model="gemma2:2b"))
         assert model.provider == "ollama"
         assert model.host == "http://localhost:11434"
-        assert model.is_local
 
     def test_explicit_arguments_win(self) -> None:
         model = LocalChatModel(provider="ollama", model_ref="phi", settings=Settings())
@@ -39,9 +37,12 @@ class TestConstruction:
         with pytest.raises(ValueError, match="unknown generation provider"):
             LocalChatModel(provider="openai", settings=Settings())
 
-    def test_non_loopback_ollama_is_not_local(self) -> None:
-        model = LocalChatModel(settings=Settings(fact_provider="ollama", ollama_host="http://gpu-box:11434"))
-        assert not model.is_local
+    def test_non_loopback_ollama_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="loopback"):
+            Settings(fact_provider="ollama", ollama_host="http://gpu-box:11434")
+        settings = Settings.model_construct(fact_provider="ollama", ollama_host="http://gpu-box:11434")
+        with pytest.raises(NonLoopbackHost):
+            LocalChatModel(settings=settings)
 
 
 class TestLlamaXPC:

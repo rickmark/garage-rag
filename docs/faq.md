@@ -41,13 +41,14 @@ description: Frequently asked questions about Garage local RAG, privacy guarante
 <details>
   <summary>Does my data ever leave my Mac?</summary>
   <div class="faq-content">
-    <p>By default, <strong>never</strong>. Garage is engineered with four structural layers of egress prevention:</p>
+    <p><strong>No.</strong> Garage sends nothing off your Mac, and the guarantee is enforced by tests rather than by convention:</p>
     <ul>
-      <li><strong>Corpus Isolation:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is blocked at the type system level from reaching any network client.</li>
-      <li><strong>Single Egress Chokepoint:</strong> Validated by automated AST unit tests to guarantee no unauthorized network requests exist.</li>
-      <li><strong>Opt-In Cloud OCR:</strong> Cloud-based OCR escalation (if enabled) only sends image pixels when local Tesseract confidence is low, and only for sources explicitly opted in.</li>
-      <li><strong>Local Vector Processing:</strong> Embeddings are computed on your hardware using Ollama or LM Studio.</li>
+      <li><strong>No cloud AI client:</strong> An automated scan of every source file fails the build if any module imports a cloud AI SDK, and the dependency lockfile must contain none.</li>
+      <li><strong>Loopback-only model servers:</strong> Embeddings, fact extraction and answers run on the app's built-in llama.cpp, or on Ollama or LM Studio at a loopback address. Any other address is a configuration error.</li>
+      <li><strong>Local OCR:</strong> Text in images is recognized with Tesseract on your Mac. There is no cloud fallback.</li>
+      <li><strong>Communications, twice over:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is additionally withheld from any embedding provider that is not on this machine.</li>
     </ul>
+    <p>If you connect an MCP client such as Claude Desktop, what Garage returns to it is handled by that client under its own terms.</p>
   </div>
 </details>
 

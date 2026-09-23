@@ -496,27 +496,13 @@ def add_source(
         ),
     ] = "document",
     trust: Annotated[str, typer.Option(help="Default trust: authored | reference | received")] = "authored",
-    allow_cloud: Annotated[
-        bool,
-        typer.Option(
-            "--allow-cloud-enrichment",
-            help="Permit cloud OCR fallback for this source. Never valid for communications.",
-        ),
-    ] = False,
 ) -> None:
     """Register a source root to be walked."""
     from garage_rag.ops.sources import SourceArgumentError
     from garage_rag.ops.sources import add_source as register
 
     try:
-        result = register(
-            slug,
-            root,
-            kind=kind,
-            corpus_class=corpus_class,
-            trust=trust,
-            allow_cloud_enrichment=allow_cloud,
-        )
+        result = register(slug, root, kind=kind, corpus_class=corpus_class, trust=trust)
     except SourceArgumentError as exc:
         raise typer.BadParameter(str(exc), param_hint=exc.param_hint) from None
     if result.created:
@@ -555,7 +541,7 @@ def list_sources() -> None:
         console.print("[yellow]no sources registered[/yellow]")
         return
     table = Table()
-    for col in ("slug", "kind", "docs", "class", "trust", "cloud", "enabled", "root"):
+    for col in ("slug", "kind", "docs", "class", "trust", "enabled", "root"):
         table.add_column(col, justify="right" if col == "docs" else "left")
     for s in sources:
         table.add_row(
@@ -564,7 +550,6 @@ def list_sources() -> None:
             f"{doc_counts.get(s.id, 0):,}",
             str(s.default_class),
             str(s.default_trust),
-            "yes" if s.allow_cloud_enrichment else "no",
             "yes" if s.enabled else "no",
             s.root,
         )
@@ -1162,7 +1147,12 @@ def mcp_test(
     # 2. HTTP Endpoint test if available
     import urllib.request
 
+    from garage_rag.config import is_loopback_url
+
     console.print(f"\n[cyan]Testing HTTP endpoint:[/cyan] {target_url}")
+    if not is_loopback_url(target_url):
+        console.print("  [yellow]skipped[/yellow]: only an endpoint on this machine is probed")
+        return
     try:
         req = urllib.request.Request(
             target_url,

@@ -11,8 +11,6 @@ CREATE TABLE IF NOT EXISTS sources (
     root                    text        NOT NULL,
     default_class           corpus_class NOT NULL DEFAULT 'document',
     default_trust           trust_tier  NOT NULL,
-    -- Egress guard, level 3. Defaults false; stays false for messages/mail.
-    allow_cloud_enrichment  boolean     NOT NULL DEFAULT false,
     enabled                 boolean     NOT NULL DEFAULT true,
     expected_elements       bigint      NOT NULL DEFAULT 0,
     config                  jsonb       NOT NULL DEFAULT '{}'::jsonb,

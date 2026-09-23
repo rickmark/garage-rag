@@ -7,6 +7,8 @@ to Google and OpenAI. The request is the same one upstream sends: ``POST
 context and a five-minute ``keep_alive``; GPT-OSS models go through
 ``/api/chat`` with a JSON-only system instruction instead, because their
 response format conflicts with Ollama's JSON mode.
+
+Only a loopback ``model_url`` is accepted.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from garage_rag.config import require_loopback
 from garage_rag.enrich.langextract import base_model, exceptions, schema
 from garage_rag.enrich.langextract import types as core_types
 
@@ -59,10 +62,10 @@ class OllamaLanguageModel(base_model.BaseLanguageModel):
     ) -> None:
         super().__init__(constraint=schema.Constraint())
         self.model_id = model_id
-        self.model_url = model_url.rstrip("/")
+        self.model_url = require_loopback(model_url, "embedding.ollama_host").rstrip("/")
         self.format_type = core_types.FormatType.JSON
-        # No proxies: the environment's http_proxy must not decide where document text goes.
-        self._client = client or httpx.Client(timeout=timeout, trust_env=False)
+        # No proxies and no redirects: only this machine ever sees the document text.
+        self._client = client or httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False)
 
     def _options(self) -> dict[str, Any]:
         return {"keep_alive": DEFAULT_KEEP_ALIVE, "temperature": DEFAULT_TEMPERATURE, "num_ctx": DEFAULT_NUM_CTX}

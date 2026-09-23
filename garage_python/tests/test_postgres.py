@@ -172,6 +172,21 @@ class TestMigrations:
         ).scalars()
         assert "expected_items" not in set(columns)
 
+    def test_010_drops_the_cloud_enrichment_column(self, db: Session) -> None:
+        """A pre-010 database still has `sources.allow_cloud_enrichment`; a fresh
+        schema never creates it, so it is put back by hand."""
+        db.execute(text("ALTER TABLE sources ADD COLUMN allow_cloud_enrichment boolean NOT NULL DEFAULT false"))
+        _source(db, "docs")
+        migration = (sql_dir() / "010_drop_cloud_enrichment.sql").read_text(encoding="utf-8")
+        db.connection().exec_driver_sql(migration)
+        db.connection().exec_driver_sql(migration)  # and again: idempotent
+
+        columns = db.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name = 'sources'")
+        ).scalars()
+        assert "allow_cloud_enrichment" not in set(columns)
+        assert db.execute(text("SELECT slug FROM sources")).scalar_one() == "docs"
+
     def test_009_defaults_and_checks_distance(self, db: Session) -> None:
         db.execute(
             text(

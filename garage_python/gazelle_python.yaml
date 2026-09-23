@@ -3,7 +3,6 @@ manifest:
     PIL: pillow
     annotated_doc: annotated_doc
     annotated_types: annotated_types
-    anthropic: anthropic
     anyio: anyio
     attr: attrs
     attrs: attrs
@@ -12,7 +11,6 @@ manifest:
     charset_normalizer: charset_normalizer
     click: click
     cryptography: cryptography
-    docstring_parser: docstring_parser
     docx: python_docx
     dotenv: python_dotenv
     et_xmlfile: et_xmlfile

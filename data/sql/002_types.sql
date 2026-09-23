@@ -5,7 +5,8 @@
 --   code          -- source code, whether yours or vendored
 --   communication -- exchanged between people; never leaves this machine
 --
--- Drives chunking strategy, search filtering, and the cloud-egress block.
+-- Drives chunking strategy, search filtering, and the embedding guard that keeps
+-- communications off any provider not on this machine.
 DO $$ BEGIN
 CREATE TYPE corpus_class AS ENUM ('document', 'code', 'communication');
 EXCEPTION WHEN duplicate_object THEN NULL;

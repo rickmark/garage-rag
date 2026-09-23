@@ -2,7 +2,9 @@
 
 LM Studio exposes an OpenAI-compatible ``/v1/embeddings`` endpoint, so the
 standard ``openai`` Python SDK works out of the box -- just point ``base_url``
-at the local server. Local instances need no API key; authenticated instances
+at the local server. Only a loopback ``base_url`` is accepted, and the SDK's
+HTTP client ignores the environment's proxies and does not follow redirects, so
+the SDK can only ever reach this machine. Local instances need no API key; authenticated instances
 can provide one through ``GARAGE_LMSTUDIO_API_TOKEN`` or the configured token
 file. The SDK requires a non-empty key, so unauthenticated requests use a
 placeholder.
@@ -16,9 +18,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 
-from garage_rag.config import get_settings
+from garage_rag.config import get_settings, require_loopback
 from garage_rag.embed.base import Embedder, EmbeddingError
 
 log = logging.getLogger(__name__)
@@ -44,8 +46,10 @@ class LMStudioEmbedder(Embedder):
         settings = get_settings()
         self.model_ref = model_ref
         self._client = OpenAI(
-            base_url=base_url or settings.lmstudio_host,
+            base_url=require_loopback(base_url or settings.lmstudio_host, "embedding.lmstudio_host"),
             api_key=api_token or settings.read_lmstudio_api_token() or _PLACEHOLDER_KEY,
+            # No proxies and no redirects: only this machine ever sees the chunk text.
+            http_client=DefaultHttpxClient(trust_env=False, follow_redirects=False),
         )
 
     def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:

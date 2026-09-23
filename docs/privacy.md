@@ -1,106 +1,106 @@
 ---
 layout: default
 title: Privacy and macOS Permissions
-description: Multi-tier egress guards and macOS TCC security model.
+description: No cloud AI, loopback-only model servers, and the macOS TCC security model.
 ---
 
 # Privacy and macOS permissions
 
 ## The guarantee
 
-Content classified `corpus_class = 'communication'` never reaches a cloud API.
+No document content leaves this machine. Garage contains no cloud AI client,
+and every model server it talks to must be on loopback.
 
-This is enforced structurally, at four independent levels. Removing any one of
-them fails the test suite.
+This is enforced structurally, in layers that are each tested on their own
+(`garage_python/tests/test_egress_block.py`). Removing any one of them fails the
+test suite.
 
-### Level 1 — single chokepoint
+### Layer 1 — no cloud AI SDK
 
-`enrich/egress.py` is the only module that imports `anthropic` or constructs a
-client. `../garage_python/tests/test_egress_block.py` parses every source file's AST and asserts
-this, so a second client cannot appear unnoticed — including via a function-local
-import.
+No source file imports a cloud AI SDK: `anthropic`, `google.genai`,
+`google.generativeai`, `google.cloud`, `cohere`, `mistralai`, `boto3` and the
+like. The test parses every source file's AST, so a function-local or
+`importlib.import_module` import is caught too, and it checks that `uv.lock`
+contains none of them either. The vendored part of LangExtract (`enrich/langextract`)
+is scanned like the rest; upstream `langextract` is on the list, because its
+provider registry routes model ids to Google and OpenAI.
 
-### Level 2 — the type refuses to represent a forbidden send
+The `openai` SDK is the one exception, and only in `embed/lmstudio.py`: LM Studio
+serves an OpenAI-compatible API, and the SDK is its client. It is constructed with
+a loopback-checked `base_url` and an HTTP client that ignores proxy settings, so
+it can only reach this machine.
 
-`EgressRequest` *requires* a `corpus_class`, and validates it on construction:
+There used to be an optional Claude vision fallback for OCR. It has been removed:
+OCR is Tesseract only, on this machine, and the `cloud` settings section and the
+per-source `allow_cloud_enrichment` flag are retired (an older config that still
+has them loads with a warning).
 
-```python
-def __post_init__(self) -> None:
-    if self.corpus_class is CorpusClass.COMMUNICATION:
-        raise EgressBlocked(...)
-    if not self.source_allows_cloud:
-        raise EgressBlocked(...)
-```
+### Layer 2 — model servers are loopback, by rule
 
-There is no way to build a request without declaring what kind of content it
-carries, and no way to declare it a conversation and still send it. The class
-check runs **first**, so a mistake elsewhere fails closed.
+Three features post document text over HTTP to a model server:
 
-### Level 3 — per-source opt-in
-
-`sources.allow_cloud_enrichment` defaults to `false` in the schema. The CLI
-refuses to set it on a communication source at all:
-
-```
-$ garage add-source sms ~/Library/Messages --class communication --allow-cloud-enrichment
-Error: communication sources may never enable cloud enrichment
-```
-
-### Level 4 — global switch
-
-`cloud.enable_ocr` in `~/.garage.json` gates the entire path. Default `false`, in which case OCR is
-Tesseract-only and fully offline. It additionally requires `cloud.api_key_file`
-to name a readable key file, so forgetting the key fails closed rather than
-erroring mid-run.
-
-## What can leave, when enabled
-
-To a **cloud API**: only image bytes, only for OCR, only from sources explicitly
-opted in, and only when Tesseract's confidence falls below
-`extraction.ocr_min_confidence`. Document text, code, and communications are
-never sent to a cloud API. The only cloud client in the codebase is Anthropic's,
-constructed in `enrich/egress.py`.
-
-## Local inference endpoints
-
-Two features post document text over HTTP to a **configured local server**,
-which is assumed to be this machine:
-
-- **Embeddings** — chunk text goes to `ollama_host` (default
-  `http://localhost:11434`), `lmstudio_host` (default `http://localhost:1234/v1`)
-  or `llama_host` (default `http://127.0.0.1:8790`, the llama.cpp API served by
-  the app's own `LlamaXPCService`), depending on the registered model's provider.
-- **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
-  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. Only the local
-  part of LangExtract is shipped, vendored as `enrich/langextract`: upstream
-  chooses its backend by regex on the model name and would send a `gemini-*` or
-  `gpt-*` model id to Google or OpenAI, but that routing and those backends are
-  not vendored, and `enrich/facts.py` refuses a cloud model id outright.
-  `test_egress_block.py` asserts that no module imports upstream `langextract`
-  and that every extraction runs on one of the two local providers.
-
+- **Embeddings** — chunk text goes to `embedding.ollama_host` (default
+  `http://localhost:11434`), `embedding.lmstudio_host` (default
+  `http://localhost:1234/v1`) or `embedding.llama_host` (default
+  `http://127.0.0.1:8790`, the llama.cpp API served by the app's own
+  `LlamaXPCService`), depending on the registered model's provider.
+- **Facts** (`garage enrich-facts`) — document text goes to `ollama_host`, or to
+  `llama_host` with `--provider llama_xpc`.
 - **Answers** (`rag_ask` / `rag_generate` MCP tools, `garage ask`) — retrieved
-  excerpts and the question go to the model named by `facts.model` on
-  `facts.provider`: `llama_host` for `llama_xpc` (the default) or `ollama_host`
-  for `ollama`. Both are local inference servers; there is no cloud generation
-  path. Retrieved **communications can appear in that prompt**, exactly as they
-  are embedded locally, and never leave the machine: `llama_host` is loopback by
-  construction, and if `ollama_host` has been pointed off-box `rag_ask` runs
-  every retrieved chunk's class through `assert_egress_allowed` before building
-  the prompt, so a communication in the results aborts the call.
+  excerpts, communications included, and the question go to the model named by
+  `facts.model` on `facts.provider`.
 
-These hosts are not egress-guarded the way the cloud path is, because they are
-loopback by default and the guard would otherwise block local inference on your
-own messages. If you point `ollama_host` at another machine, fact extraction
-runs each document's class through `assert_egress_allowed` first, so
-communications are still never posted off-box. Embeddings are held to the same
-rule: when the model's provider is not on this machine (`ollama_host` or
-`lmstudio_host` pointed elsewhere), backfill, in-process or through the embed
-worker, leaves chunks of communication documents out. They stay unembedded for
-that model, and the backfill summary counts them as withheld. `llama_host` is different: it exists only for on-device
-inference, so `LlamaXPCClient` refuses to construct at all unless the host is
-loopback (`127.0.0.1`, `localhost` or `::1`) and never routes through an HTTP
-proxy, whatever `http_proxy` says.
+All three hosts must be loopback: `localhost` or a literal loopback address
+(`127.0.0.0/8`, `::1`). Any other value is a configuration error, so a config
+that points `ollama_host` at another machine does not load:
+
+```
+$ garage stats
+Config error: /Users/me/.garage.json: 1 validation error for Settings
+ollama_host
+  Value error, embedding.ollama_host must be a loopback URL (localhost,
+127.0.0.1 or ::1); got 'http://gpu-box:11434'. Document text is only ever sent
+to model servers on this machine.
+```
+
+Every client checks the URL again when it is built, for hosts passed in directly
+rather than through the configuration, and none of them follows the
+environment's `http_proxy` or a server's redirect. A host *name* other than
+`localhost` is refused even if it resolves to loopback today, because a DNS
+answer can change. The same rule covers the app's gRPC facade, which carries
+document text between the app's XPC workers and the Python service.
+
+### Layer 3 — a short list of network clients
+
+Only a listed set of modules may import an HTTP or socket client (`httpx`,
+`ollama`, `openai`, `urllib.request`, `grpc`, ...), and each of them enforces
+layer 2. A new one fails the test until it does too and is added to the list.
+
+### Layer 4 — local fact extraction
+
+Only the local part of LangExtract is shipped, vendored as `enrich/langextract`.
+Upstream chooses its backend by regex on the model name and would send a
+`gemini-*` or `gpt-*` model id to Google or OpenAI; that routing and those
+backends are not vendored, and `enrich/facts.py` refuses a cloud model id with a
+clear error. Every extraction runs on one of the two local providers.
+
+### What these layers do not cover — MCP clients
+
+The MCP server hands search results and document excerpts, communications
+included, to whichever client is connected to it. When that client is Claude
+Desktop or Claude Code, it sends what it receives to its own model provider
+under its own terms. Garage does not, but connecting such a client is a decision
+about where retrieved content goes; `rag_search` results carry each hit's
+`corpus_class` so a client can tell communications apart.
+
+### Behind the layers — communications and embedding
+
+Content classified `corpus_class = 'communication'` has one more guard, from
+before the loopback rule: backfill, in-process or through the embed worker,
+leaves chunks of communication documents out when a model's provider is not on
+this machine, and counts them as withheld. The loopback rule makes that
+unreachable; it stays as a second line should the rule ever be loosened
+(`test_embed_egress.py`).
 
 ## macOS permissions (TCC)
 
@@ -172,7 +172,8 @@ network you do not control.
 
 Everything stays in your local Postgres `rag` database: extracted text in
 `documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. No content
-leaves the machine except as described above.
+leaves the machine; the one way to expose it is to serve MCP over HTTP on a
+non-loopback address with `--allow-remote`, described above.
 
 The database is unencrypted at rest, as Postgres normally is. If you index
 private communications, the database file is as sensitive as the messages

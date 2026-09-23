@@ -23,9 +23,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Sequence
 from typing import Any, cast
-from urllib.parse import urlsplit
 
-from garage_rag.config import get_settings
+from garage_rag.config import get_settings, is_loopback_url
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +38,12 @@ __all__ = [
 # Where LlamaXPCService binds its HTTP API; mirrored by ``Settings.llama_host``.
 DEFAULT_LLAMA_HTTP_URL = "http://127.0.0.1:8790"
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface a 3xx as an error instead of following it somewhere else."""
 
-def is_loopback_url(url: str) -> bool:
-    """Whether ``url`` points at this machine. A bare ``host:port`` counts as a URL."""
-    if "://" not in url:
-        url = f"http://{url}"
-    host = (urlsplit(url).hostname or "").lower()
-    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        return None
 
 
 class LlamaXPCError(RuntimeError):
@@ -95,9 +91,9 @@ class LlamaXPCClient:
             )
         self.base_url = base_url
         self.timeout = timeout
-        # No proxies, ever: the host is loopback, and honouring ``http_proxy``
-        # would be the one way content could leave the machine.
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # No proxies and no redirects, ever: the host is loopback, and honouring
+        # ``http_proxy`` or a redirect are the ways content could leave the machine.
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     # ---- transport -------------------------------------------------------
 

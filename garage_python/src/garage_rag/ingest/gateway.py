@@ -29,7 +29,6 @@ class SourceContext:
     root: Path
     default_class: CorpusClass
     default_trust: TrustTier
-    allow_cloud_enrichment: bool
     run_id: int
     kind: str = "filesystem"
     source_slugs: list[str] = field(default_factory=list)
@@ -221,7 +220,6 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                 root=Path(src.root),
                 default_class=src.default_class,
                 default_trust=src.default_trust,
-                allow_cloud_enrichment=bool(src.allow_cloud_enrichment),
                 run_id=run.id,
                 kind=src.kind,
                 source_slugs=source_slugs,
@@ -583,7 +581,6 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             root=Path(resp.root),
             default_class=CorpusClass(resp.default_class),
             default_trust=TrustTier(resp.default_trust),
-            allow_cloud_enrichment=resp.allow_cloud_enrichment,
             run_id=resp.run_id,
             # Picks the scanner: without it sqlite/maildir sources were walked as folders.
             kind=resp.kind or "filesystem",

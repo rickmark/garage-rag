@@ -22,7 +22,7 @@ from pgvector import HalfVector
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from garage_rag.config import get_settings
+from garage_rag.config import get_settings, require_loopback
 from garage_rag.db.emb_tables import assert_safe_table
 from garage_rag.db.models import EmbeddingModel
 from garage_rag.db.registry import StoragePlan, truncate_vector
@@ -65,7 +65,9 @@ class OllamaEmbedder(Embedder):
     def __init__(self, model_ref: str, *, host: str | None = None) -> None:
         settings = get_settings()
         self.model_ref = model_ref
-        self._client = ollama.Client(host=host or settings.ollama_host)
+        url = require_loopback(host or settings.ollama_host, "embedding.ollama_host")
+        # The environment's proxies and a server's redirects must not decide where chunk text goes.
+        self._client = ollama.Client(host=url, trust_env=False, follow_redirects=False)
 
     def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
         response = self._client.embed(model=self.model_ref, input=texts)

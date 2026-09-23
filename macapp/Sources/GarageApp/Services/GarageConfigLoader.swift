@@ -9,7 +9,6 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
     public let root: String
     public let corpusClass: String
     public let trust: String
-    public let allowCloudEnrichment: Bool
     public let enabled: Bool
     public let includeCode: Bool
     public let origin: SourceOrigin
@@ -28,7 +27,6 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         root: String,
         corpusClass: String = "document",
         trust: String = "authored",
-        allowCloudEnrichment: Bool = false,
         enabled: Bool = true,
         includeCode: Bool = false,
         origin: SourceOrigin = .config,
@@ -40,7 +38,6 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
         self.root = root
         self.corpusClass = corpusClass
         self.trust = trust
-        self.allowCloudEnrichment = allowCloudEnrichment
         self.enabled = enabled
         self.includeCode = includeCode
         self.origin = origin
@@ -190,7 +187,6 @@ public struct GarageConfigFile: Codable {
         public let corpusClass: String?
         public let trust: String?
         public let includeCode: Bool?
-        public let allowCloudEnrichment: Bool?
         public let enabled: Bool?
 
         enum CodingKeys: String, CodingKey {
@@ -200,7 +196,6 @@ public struct GarageConfigFile: Codable {
             case corpusClass = "class"
             case trust
             case includeCode = "include_code"
-            case allowCloudEnrichment = "allow_cloud_enrichment"
             case enabled
         }
     }
@@ -580,7 +575,6 @@ public enum GarageConfigLoader {
                             root: entry.root,
                             corpusClass: entry.corpusClass ?? "document",
                             trust: entry.trust ?? "authored",
-                            allowCloudEnrichment: entry.allowCloudEnrichment ?? false,
                             enabled: entry.enabled ?? true,
                             includeCode: entry.includeCode ?? false,
                             origin: .config

@@ -530,7 +530,6 @@ class GarageRpcServicer(GarageServiceServicer):
                     kind=s.kind,
                     corpus_class=str(s.default_class),
                     trust_tier=str(s.default_trust),
-                    allow_cloud_enrichment=bool(s.allow_cloud_enrichment),
                     enabled=bool(s.enabled),
                     root=s.root,
                     document_count=doc_counts.get(s.id, 0),
@@ -630,7 +629,6 @@ class GarageRpcServicer(GarageServiceServicer):
             kind=request.kind or "filesystem",
             corpus_class=request.corpus_class or "document",
             trust=request.trust or "authored",
-            allow_cloud_enrichment=request.allow_cloud_enrichment,
         )
         return AddSourceResponse(
             slug=result.slug, root=str(result.root), created=result.created, message=result.message
@@ -1002,7 +1000,6 @@ class GarageRpcServicer(GarageServiceServicer):
             root=str(ctx.root),
             default_class=_enum_value(ctx.default_class),
             default_trust=_enum_value(ctx.default_trust),
-            allow_cloud_enrichment=ctx.allow_cloud_enrichment,
             run_id=ctx.run_id,
             source_slugs=ctx.source_slugs,
             kind=ctx.kind,

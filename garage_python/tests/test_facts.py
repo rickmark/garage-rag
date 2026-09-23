@@ -10,17 +10,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from garage_rag.config import Settings, reset_settings, set_settings
+from garage_rag.config import NonLoopbackHost, Settings, reset_settings, set_settings
 from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
 from garage_rag.enrich import langextract as lx
-from garage_rag.enrich.egress import EgressBlocked
 from garage_rag.enrich.facts import (
     DEFAULT_MODEL_ID,
     chunk_for_fact,
     extract_and_store_facts,
     extract_facts,
     facts_from_extractions,
-    is_loopback_url,
     refuse_cloud_model_id,
 )
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
@@ -183,21 +181,6 @@ def test_ollama_model_not_found_is_a_config_error() -> None:
         list(model.infer(["prompt"]))
 
 
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("http://localhost:11434", True),
-        ("http://127.0.0.1:11434", True),
-        ("http://127.1.2.3:11434", True),
-        ("http://[::1]:11434", True),
-        ("http://ollama.example:11434", False),
-        ("http://10.0.0.5:11434", False),
-    ],
-)
-def test_is_loopback_url(url: str, expected: bool) -> None:
-    assert is_loopback_url(url) is expected
-
-
 def test_extract_facts_routes_to_llama_xpc_when_requested(monkeypatch) -> None:
     captured: dict = {}
 
@@ -332,9 +315,10 @@ def test_extract_and_store_facts_empty_content_clears_stale_facts(monkeypatch) -
     assert not session.add_all.called
 
 
-def test_remote_ollama_host_refuses_communications(monkeypatch) -> None:
-    """A non-loopback ollama_host goes through the egress chokepoint."""
-    document = Document(id=9, content="hi", corpus_class=CorpusClass.COMMUNICATION)
+@pytest.mark.parametrize("corpus_class", [CorpusClass.COMMUNICATION, CorpusClass.DOCUMENT])
+def test_remote_ollama_host_is_refused_for_every_class(monkeypatch, corpus_class: CorpusClass) -> None:
+    """Off-box is not a policy decision per class any more: nothing goes there."""
+    document = Document(id=9, content="hi", corpus_class=corpus_class)
     called = False
 
     def fake_extract_facts(text, **kwargs):
@@ -344,29 +328,14 @@ def test_remote_ollama_host_refuses_communications(monkeypatch) -> None:
 
     monkeypatch.setattr("garage_rag.enrich.facts.extract_facts", fake_extract_facts)
     session = MagicMock()
-    set_settings(Settings(ollama_host="http://ollama.example:11434"))
-    try:
-        with pytest.raises(EgressBlocked):
-            extract_and_store_facts(session, document)
-    finally:
-        reset_settings()
+    with pytest.raises(NonLoopbackHost):
+        extract_and_store_facts(session, document, model_url="http://ollama.example:11434")
 
     assert not called
     assert not session.query.called
 
 
-def test_remote_ollama_host_allows_documents(monkeypatch) -> None:
-    document = Document(id=9, content="hi", corpus_class=CorpusClass.DOCUMENT)
-    monkeypatch.setattr("garage_rag.enrich.facts.extract_facts", lambda text, **kwargs: [])
-    session = MagicMock()
-    set_settings(Settings(ollama_host="http://ollama.example:11434"))
-    try:
-        assert extract_and_store_facts(session, document) == []
-    finally:
-        reset_settings()
-
-
-def test_loopback_ollama_host_skips_egress_check(monkeypatch) -> None:
+def test_loopback_ollama_host_takes_communications(monkeypatch) -> None:
     """Local inference is not egress; communications are fine on loopback."""
     document = Document(id=9, content="hi", corpus_class=CorpusClass.COMMUNICATION)
     monkeypatch.setattr("garage_rag.enrich.facts.extract_facts", lambda text, **kwargs: [])

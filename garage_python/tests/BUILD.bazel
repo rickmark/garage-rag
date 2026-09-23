@@ -47,15 +47,18 @@ py_test(
 py_test(
     name = "test_egress_block",
     srcs = ["test_egress_block.py"],
-    data = ["//data/sql:sql_schema"],
+    # The lockfile must list no cloud AI SDK.
+    data = ["//garage_python:uv.lock"],
     deps = [
-        "//garage_python/src/garage_rag",
+        # The subprocess check imports garage_rag.cli, which gazelle cannot see.
+        "//garage_python/src/garage_rag",  # keep
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/enrich",
-        "//garage_python/src/garage_rag/ops",
+        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
-        "@pypi//typer",
     ],
 )
 

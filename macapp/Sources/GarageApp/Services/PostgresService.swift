@@ -661,32 +661,30 @@ final class PostgresService: ObservableObject {
     func listRegisteredSources() async throws -> [RegisteredSource] {
         try requireRunning()
         let sql = """
-        SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.allow_cloud_enrichment, s.enabled, count(d.id), coalesce(s.expected_elements, 0)
+        SELECT s.slug, s.kind, s.root, s.default_class::text, s.default_trust::text, s.enabled, count(d.id), coalesce(s.expected_elements, 0)
         FROM sources s
         LEFT JOIN documents d ON d.source_id = s.id
-        GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.allow_cloud_enrichment, s.enabled, s.expected_elements
+        GROUP BY s.id, s.slug, s.kind, s.root, s.default_class, s.default_trust, s.enabled, s.expected_elements
         ORDER BY s.id;
         """
         let rows = try await commandRunner().query(sql)
         var sources: [RegisteredSource] = []
         for parts in rows {
-            guard parts.count >= 7 else { continue }
+            guard parts.count >= 6 else { continue }
             let slug = parts[0]
             let kind = parts[1]
             let root = parts[2]
             let corpusClass = parts[3]
             let trust = parts[4]
-            let allowCloud = parts[5] == "t" || parts[5] == "true"
-            let enabled = parts[6] == "t" || parts[6] == "true"
-            let docCount = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
-            let expectedElements = parts.count >= 9 ? (Int(parts[8]) ?? 0) : 0
+            let enabled = parts[5] == "t" || parts[5] == "true"
+            let docCount = parts.count >= 7 ? (Int(parts[6]) ?? 0) : 0
+            let expectedElements = parts.count >= 8 ? (Int(parts[7]) ?? 0) : 0
             sources.append(RegisteredSource(
                 slug: slug,
                 kind: kind,
                 root: root,
                 corpusClass: corpusClass,
                 trust: trust,
-                allowCloudEnrichment: allowCloud,
                 enabled: enabled,
                 includeCode: false,
                 origin: .database,

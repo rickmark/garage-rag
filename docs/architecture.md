@@ -53,7 +53,7 @@ pay for `pdfplumber` and `openpyxl` in every worker.
 | Markdown | `text.py` | YAML frontmatter split off; malformed frontmatter never costs the body |
 | PDF | `pdf.py` | `pypdf` first, escalating to `pdfplumber` **per page** when a page yields little text or holds tables |
 | Office | `office.py` | `python-docx` / `python-pptx` / `openpyxl`; headings preserved as Markdown |
-| Images | `image.py` | Tesseract, escalating to Claude only when confidence is low *and* the source permits it |
+| Images | `image.py` | Tesseract, on this machine; no cloud fallback |
 | Code | `text.py` | Verbatim — indentation is meaningful |
 
 ### 4. Quality gate (`extract/quality.py`)
@@ -149,8 +149,9 @@ prompt and no retrieval. The model is `LocalChatModel` (`enrich/generation.py`),
 built from `facts.provider` / `facts.model`: `llama_xpc` posts to the app's
 `LlamaXPCService` on `llama_host` (the `model` field of each request selects
 among the models the engine holds), `ollama` to a local Ollama server on
-`ollama_host`. Neither is a cloud API; retrieved communications may appear in the
-prompt but never leave the machine (see `docs/privacy.md`). `garage ask` is the
+`ollama_host`, both loopback by rule. Neither is a cloud API; retrieved
+communications may appear in the prompt but never leave the machine (see
+`docs/privacy.md`). `garage ask` is the
 CLI front door to both tools, with `--json` for the app.
 
 ## Idempotency
