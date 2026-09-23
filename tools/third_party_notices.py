@@ -53,16 +53,16 @@ class Component:
 
 
 # Keep in sync with ext/*.MODULE.bazel and the swift_proto deps of rules_swift (MODULE.bazel).
-# Components that are built but not shipped in the app (e.g. //ext/llama_cpp) are omitted.
+# Components that are built but not shipped in the app are omitted.
 NATIVE_COMPONENTS: tuple[Component, ...] = (
     Component(
         "CPython",
-        "3.13.2",
+        "3.13.15",
         "PSF-2.0 (and bundled third-party licenses)",
         "https://www.python.org/",
         (
-            f"{RAW}/python/cpython/v3.13.2/LICENSE",
-            f"{RAW}/python/cpython/v3.13.2/Doc/license.rst",
+            f"{RAW}/python/cpython/v3.13.15/LICENSE",
+            f"{RAW}/python/cpython/v3.13.15/Doc/license.rst",
         ),
     ),
     Component(
@@ -88,10 +88,10 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
     ),
     Component(
         "OpenSSL",
-        "3.4.1",
+        "3.4.7",
         "Apache-2.0",
         "https://www.openssl.org/",
-        (f"{RAW}/openssl/openssl/openssl-3.4.1/LICENSE.txt",),
+        (f"{RAW}/openssl/openssl/openssl-3.4.7/LICENSE.txt",),
     ),
     Component(
         "zlib",
@@ -106,6 +106,13 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "GPL-3.0-or-later",
         "https://tiswww.case.edu/php/chet/readline/rltop.html",
         (f"{RAW}/spdx/license-list-data/v3.25.0/text/GPL-3.0-or-later.txt",),
+    ),
+    Component(
+        "llama.cpp (includes ggml)",
+        "0.4.0",
+        "MIT",
+        "https://github.com/ggml-org/llama.cpp",
+        (f"{RAW}/ggml-org/llama.cpp/v0.4.0/LICENSE",),
     ),
     Component(
         "PythonKit",
