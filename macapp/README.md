@@ -151,9 +151,10 @@ Postgres resolves relative to `argv[0]` at runtime. That's genuinely
 relocatable — verified by building it, copying the tree to an unrelated path,
 and running `CREATE EXTENSION vector` there with zero path overrides. The Bazel
 build (`//ext/postgres`, a `rules_foreign_cc` `configure_make`) configures with
-`--with-icu --with-readline --with-zlib --with-template=darwin --disable-rpath`
-as an arm64 binary; ICU, readline and zlib come from the
-static libraries under `//ext`, so the result still depends on nothing but macOS
+`--with-icu --with-libedit-preferred --with-zlib --with-template=darwin --disable-rpath`
+as an arm64 binary; ICU and zlib come from the
+libraries under `//ext` and line editing from the SDK's libedit (not GPL-3.0
+GNU Readline), so the result still depends on nothing but macOS
 system libraries. The one thing left to fix up is `libpq.dylib`'s own hardcoded
 install name for the client tools (`//macapp/externals:libpq`).
 

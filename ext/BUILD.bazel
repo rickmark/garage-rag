@@ -23,12 +23,6 @@ alias(
 )
 
 alias(
-    name = "libreadline",
-    actual = "//ext/libreadline:libreadline",
-    visibility = ["//visibility:public"],
-)
-
-alias(
     name = "libzlib",
     actual = "//ext/libzlib:libzlib",
     visibility = ["//visibility:public"],
