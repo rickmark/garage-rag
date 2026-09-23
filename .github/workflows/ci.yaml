@@ -56,15 +56,20 @@ jobs:
             bazel-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Point Bazel at the caches
         # user.bazelrc is git-ignored and try-imported last by .bazelrc.
-        # -MaxFDLimit: on macOS the JVM otherwise caps Bazel's open files at 10240
-        # whatever ulimit allows (see the test step).
+        #
+        # Writing the site-packages tree artifacts (tens of thousands of files) into
+        # the disk cache ran Bazel out of file descriptors ("Too many open files"),
+        # even at 65536. The actions that produce them only copy and sign files, so
+        # they stay out of the cache (no-cache; no-remote-cache still uses the disk
+        # cache) and simply re-run on each fresh runner.
         run: |
           echo "common --disk_cache=$HOME/.cache/bazel-disk --repository_cache=$HOME/.cache/bazel-repo" >> user.bazelrc
+          echo "common --modify_execution_info=^(PythonSitePackages|CopyToDirectory|Codesign)\$=+no-cache" >> user.bazelrc
           echo "startup --host_jvm_args=-XX:-MaxFDLimit" >> user.bazelrc
+          cat user.bazelrc
       - run: |
-          # Hashing and caching the site-packages tree artifacts (thousands of
-          # files each) ran Bazel out of file descriptors ("Too many open files")
-          # at the runner's default limit.
+          # Headroom for the rest: the runner's shell default is 256, and on macOS
+          # the JVM caps Bazel at 10240 unless told not to (-MaxFDLimit above).
           ulimit -n 65536 2>/dev/null || ulimit -n "$(sysctl -n kern.maxfilesperproc)"
           echo "open file limit: $(ulimit -n)"
           aspect test --task:name test -- //...
