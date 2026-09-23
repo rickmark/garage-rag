@@ -721,3 +721,121 @@ $ GIT_CONFIG_GLOBAL=/dev/null GARAGE_TEST_DATABASE_URL=postgresql://localhost:54
 to `second_machine_build`, which was not modified. `garage_python/.venv` now exists (gitignored). No
 `garage*` databases remain on the Homebrew server. The app's 14824 cluster was never touched.
 Unzipped copies of the app sit in the session scratchpad only.
+
+# Check of 898c0e6
+
+Second-machine validation of `898c0e6` ("Close SwiftUI sheets through their state before
+quitting"), which was the head of PR #15 when this was requested. **The branch has since moved on
+by one commit**, to `97e3dd2` ("Bound stalled placeholder reads; decode captured output across pipe
+reads"), and that commit was not checked here. Same machine: Apple M3 Max (`Mac15,9`) · macOS 27.0
+(26A428) · Xcode 27.0 (27A266a) · Bazel 9.2.0 through the aspect launcher 2026.38.20. The check ran
+in a fresh detached worktree (`~/Developer/garage-pr15`), with a cold output base.
+
+2026-09-23 19:11–19:40 UTC. No notarize, installer, pkgbuild, install target, `xcarchive_open` or
+upload, and nothing was copied into `/Applications`. The tests used Homebrew's server
+(`GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres`, PostgreSQL 18.4, pgvector 0.8.6),
+not the app's cluster on 14824. No TCC prompt was accepted, and Reset Database was not run.
+
+| Step | Result |
+|---|---|
+| 1. `aspect test //... --bazel-flag=--test_output=errors` | **PASS**: 31/31 targets, 643.8 s wall (cold) |
+| 2. venv `pytest -q` | **PASS**: 597 passed, 0 skipped, 44.9 s |
+| 3. Developer ID app: build, launch, services | **PASS** (build 225, all three listeners up in 10 s) |
+| 3. Migration, with a backup first | **Not observable**: this Mac had already migrated, see below |
+| 3. Database page, masked password, ⌘Q with the splash up | **Not run**: no accessibility access (see below) |
+
+## 1. `aspect test //...`: PASS, 31/31
+
+Started 19:11:44Z, finished 19:22:28Z: `real 643.83` s, which includes building everything from
+a cold output base. Exit 0.
+
+```
+//bazel:preset.update_test                                               PASSED in 0.3s
+//ext/python:python_framework_codesign_test                              PASSED in 15.4s
+//garage_python/tests:test_attribution                                   PASSED in 1.7s
+//garage_python/tests:test_chunking                                      PASSED in 2.7s
+//garage_python/tests:test_cli_serve                                     PASSED in 3.6s
+//garage_python/tests:test_config                                        PASSED in 1.4s
+//garage_python/tests:test_dedicated_rpcs                                PASSED in 1.4s
+//garage_python/tests:test_egress_block                                  PASSED in 6.3s
+//garage_python/tests:test_embed_egress                                  PASSED in 1.7s
+//garage_python/tests:test_embed_xpc                                     PASSED in 1.7s
+//garage_python/tests:test_facts                                         PASSED in 10.4s
+//garage_python/tests:test_generation                                    PASSED in 1.3s
+//garage_python/tests:test_grpc_documents                                PASSED in 1.5s
+//garage_python/tests:test_grpc_operations                               PASSED in 1.6s
+//garage_python/tests:test_grpc_serialization                            PASSED in 2.6s
+//garage_python/tests:test_grpc_server                                   PASSED in 3.4s
+//garage_python/tests:test_ingest_gateway                                PASSED in 2.0s
+//garage_python/tests:test_ingest_xpc                                    PASSED in 1.6s
+//garage_python/tests:test_llama_embedder                                PASSED in 3.3s
+//garage_python/tests:test_llama_xpc                                     PASSED in 11.7s
+//garage_python/tests:test_lmstudio                                      PASSED in 2.2s
+//garage_python/tests:test_mcp_install                                   PASSED in 5.4s
+//garage_python/tests:test_mcp_server                                    PASSED in 3.3s
+//garage_python/tests:test_migrate                                       PASSED in 1.6s
+//garage_python/tests:test_model_catalog                                 PASSED in 3.2s
+//garage_python/tests:test_postgres                                      PASSED in 4.8s
+//garage_python/tests:test_registry_dims                                 PASSED in 3.2s
+//garage_python/tests:test_scanner                                       PASSED in 2.4s
+//macapp/Tests/GarageAppUITests:GarageAppUITests                         PASSED in 4.3s
+//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests                     PASSED in 58.7s
+//macapp/Tests/LlamaClientTests:LlamaClientTests                         PASSED in 3.8s
+
+Executed 31 out of 31 tests: 31 tests pass.
+```
+
+`GarageAppUnitTests` ran **241 tests, 0 failures**. `test_postgres` ran against the Homebrew
+server, not skipped. `python_framework_codesign_test` passed under the default sandboxed run.
+
+## 2. venv pytest: PASS, 597
+
+`uv sync` in `garage_python`, then `GIT_CONFIG_GLOBAL=/dev/null pytest -q` with the same
+`GARAGE_TEST_DATABASE_URL`: **597 passed in 44.93 s**, none skipped, exit 0. No workaround was
+needed this time.
+
+## 3. Developer ID app
+
+**Build.** `aspect build //macapp/package:GarageApp` exited 0 (4,478 actions, about 10 min cold).
+Extracted with `ditto -x -k` to `~/GarageTest/Garage.app`: **version 0.9, build 225**.
+- `codesign --verify --deep --strict` passes.
+- Authority `Developer ID Application: Richard Penwell (DWVXMLB45Y)`.
+- `spctl -a` says `accepted, source=Developer ID`.
+
+No other Garage.app was running, and nothing listened on 14824, 8787 or 50051 beforehand.
+
+**Migration: already done on this Mac, so it could not be watched.**
+- `~/Library/Application Support/GarageApp` was already a link into the group container, dated
+  09:57 local. That was from an earlier launch today of `claude/adoring-ritchie-c084cj` code, on
+  the working checkout.
+- The backup was still taken before launch: `ditto` of the group-container folder, which is what
+  the link points at, to **`~/GarageBackup-2026-09-23/GarageApp`** (3.0 GB: `models` 2.7 GB,
+  `pgdata` 324 MB, `logs` empty).
+- After launch the link was unchanged (same target, same 09:57 timestamp), so there was no second
+  migration and no data move.
+- Before launch, `pg_controldata` reported **`in production`** with no postmaster running: the
+  cluster had not been shut down cleanly after its last use. The likely cause is a debug instance
+  killed earlier today. Postgres started on it anyway (see below).
+
+**Launch and services: PASS.** `open ~/GarageTest/Garage.app` at 19:34:28Z. By 19:34:38Z, 10 s
+later, all three were listening:
+
+```
+postgres  46610  127.0.0.1:14824, [::1]:14824
+GarageMCP 46606  127.0.0.1:8787
+GarageXPC 46607  127.0.0.1:50051
+```
+
+The postmaster's parent is the app (46583), and it runs from the bundle:
+`~/GarageTest/Garage.app/Contents/Resources/postgres/bin/postgres -D ~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata -p 14824 -c listen_addresses=localhost …`.
+
+**Not run: Database page paths, `••••••` masking, ⌘Q with the splash up, `pg_controldata` after
+quit.**
+- The session's host process has no accessibility access here:
+  `osascript is not allowed assistive access (-1728)`. So I could neither read the window nor send
+  ⌘Q.
+- Granting it means accepting a TCC prompt, which these instructions rule out. Screen recording is
+  also missing, and granting it would restart the host app.
+- These four checks need a person at the Mac, or an accessibility grant decided by the user.
+- **The app was left running** (pid 46583) for that. Quit it with ⌘Q, then run
+  `pg_controldata "…/pgdata" | grep state`, which should say `shut down`.
