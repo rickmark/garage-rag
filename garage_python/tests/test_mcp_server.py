@@ -529,6 +529,14 @@ class TestServerLifecycle:
                 assert "database connection: postgresql+psycopg:///rag" in caplog.text
                 assert "7 sources registered" in caplog.text
 
+    def test_log_startup_survives_an_unreachable_database(self, caplog: pytest.LogCaptureFixture) -> None:
+        with (
+            patch("garage_rag.mcp_server.server.session_scope", side_effect=ConnectionRefusedError("refused")),
+            caplog.at_level(logging.INFO),
+        ):
+            _log_startup()
+        assert "could not query the database during start-up: refused" in caplog.text
+
     def test_serve_stdio(self) -> None:
         with (
             patch("garage_rag.mcp_server.server._log_startup"),
@@ -536,6 +544,16 @@ class TestServerLifecycle:
         ):
             serve("stdio")
             mock_mcp_run.assert_called_once_with()
+
+    def test_serve_stdio_answers_without_touching_the_database(self) -> None:
+        """A stdio client waits on `initialize`; nothing may connect before the server runs."""
+        with (
+            patch("garage_rag.mcp_server.server.session_scope") as scope,
+            patch("garage_rag.mcp_server.server.mcp.run") as mock_mcp_run,
+        ):
+            serve("stdio")
+        scope.assert_not_called()
+        mock_mcp_run.assert_called_once_with()
 
     def test_serve_unsupported_transport(self) -> None:
         with (

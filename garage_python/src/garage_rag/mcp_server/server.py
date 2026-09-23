@@ -665,11 +665,23 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def _log_startup() -> None:
+def _log_startup(*, query_database: bool = True) -> None:
+    """Log the database the tools read and, if asked, how many sources it holds.
+
+    Never fatal: the database may still be starting (the bundled ``garage-mcp``
+    opens Garage.app without waiting for it), and each tool reports its own
+    connection error when called.
+    """
     settings = get_settings()
     log.info("database connection: %s", redact_url(settings.database_url))
-    with session_scope() as session:
-        count = session.query(Source).count()
+    if not query_database:
+        return
+    try:
+        with session_scope() as session:
+            count = session.query(Source).count()
+    except Exception as exc:
+        log.warning("could not query the database during start-up: %s", exc)
+        return
     log.info("%d sources registered", count)
 
 
@@ -750,7 +762,9 @@ def serve(
     """
     settings = get_settings()
     log.info("garage-rag MCP server starting (transport=%s)", transport)
-    _log_startup()
+    # On stdio the client waits for `initialize`; a connection attempt to a
+    # Postgres that is still starting must not sit in front of it.
+    _log_startup(query_database=transport != "stdio")
 
     if transport == "stdio":
         # stdio is the default and the call blocks.
@@ -854,10 +868,7 @@ def start_background_server(
 
         _active_server_error = None
         log.info("garage-rag MCP server starting (transport=streamable-http, embedded)")
-        try:
-            _log_startup()
-        except Exception as exc:  # the database may not be reachable yet; not fatal
-            log.warning("could not query the database during start-up: %s", exc)
+        _log_startup()
 
         security = _http_security(host, port, allowed_origins, allowed_hosts)
         _warn_if_not_loopback(host)
