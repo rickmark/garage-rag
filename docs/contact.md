@@ -15,8 +15,8 @@ We welcome questions, bug reports, feature suggestions, and security vulnerabili
 ### 1. Bug Reports & Issues
 If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `garage` CLI:
 
-**From inside GarageApp (recommended)**: choose **Help → Report a Bug…** (⇧⌘B), pick **Report a Bug…**
-from the menu bar, or click **Report a Bug** in the **Logs** view to start with the log stream you are
+**From inside GarageApp (recommended)**: choose **Help → Report a Bug…** (⇧⌘B), click the ladybug tab on
+the right edge of the main window, pick **Report a Bug…** from the menu bar, or click **Report a Bug** in the **Logs** view to start with the log stream you are
 already looking at. Describe what happened and Garage assembles the rest — version, macOS build,
 database and helper service state, corpus counts, registered models, and optionally the most recent log
 lines.

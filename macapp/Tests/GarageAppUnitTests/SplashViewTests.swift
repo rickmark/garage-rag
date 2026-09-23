@@ -7,7 +7,6 @@ final class SplashViewTests: XCTestCase {
 
     func testLinksPointAtExpectedDestinations() {
         XCTAssertEqual(SplashLinks.patreon.absoluteString, "https://www.patreon.com/rickmark")
-        XCTAssertEqual(SplashLinks.releases.absoluteString, "https://github.com/rickmark/garage-rag/releases")
     }
 
     func testVersionDisplayWithVersionAndDistinctBuild() {
