@@ -134,6 +134,39 @@ while IFS= read -r link; do
     esac
 done < <(find "$STAGE_DIR" -type l)
 
+# Put back a versioned framework's links. The darwin sandbox hands a tree artifact
+# over with them resolved (Versions/Current a real copy of the version, top-level
+# Python/Resources/Headers copies too), and codesign rejects that layout as an
+# ambiguous bundle. Rebuild Versions/Current -> <version> and each top-level entry
+# -> Versions/Current/<entry>; outside the sandbox this recreates the same links.
+while IFS= read -r fw; do
+    versions="$fw/Versions"
+    [ -d "$versions" ] || continue
+    version=""
+    if [ -L "$versions/Current" ]; then
+        version="$(readlink "$versions/Current")"
+    else
+        candidates=()
+        for d in "$versions"/*/; do
+            n="$(basename "$d")"
+            [ "$n" = "Current" ] || candidates+=("$n")
+        done
+        if [ "${{#candidates[@]}}" -eq 1 ]; then
+            version="${{candidates[0]}}"
+        fi
+    fi
+    [ -n "$version" ] && [ -d "$versions/$version" ] || continue
+    rm -rf "$versions/Current"
+    ln -s "$version" "$versions/Current"
+    for entry in "$versions/$version"/*; do
+        top="$fw/$(basename "$entry")"
+        if [ -e "$top" ] || [ -L "$top" ]; then
+            rm -rf "$top"
+            ln -s "Versions/Current/$(basename "$entry")" "$top"
+        fi
+    done
+done < <(find "$STAGE_DIR" -maxdepth 3 -type d -name "*.framework")
+
 should_exclude() {{
     local file_path="$1"
     for pat in "${{exclude_patterns[@]+"${{exclude_patterns[@]}}"}}"; do
