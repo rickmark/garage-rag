@@ -8,11 +8,13 @@ in the .app was signed. `ditto` keeps symlinks, and the action verifies the
 archived app's signature so a broken one fails the build, not the upload.
 """
 
-load("@rules_apple//apple:providers.bzl", "AppleBundleInfo")
+load("@rules_apple//apple:providers.bzl", "AppleBundleInfo", "AppleDsymBundleInfo")
 
 _ASSEMBLE = """set -euo pipefail
 bundle="$1"
 out="$2"
+shift 2
+# The rest: the app's dSYM bundles (--apple_generate_dsym), for crash symbolication.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -37,9 +39,16 @@ if ! codesign --verify --deep --strict --verbose=2 "$archived"; then
     exit 1
 fi
 
+for dsym in "$@"; do
+    ditto "$dsym" "$out/dSYMs/$(basename "$dsym")"
+done
+
 plist="$archived/Contents/Info.plist"
 read_key() { plutil -extract "$1" raw -o - "$plist" 2>/dev/null || true; }
-identity="$(codesign -dvv "$archived" 2>&1 | sed -n 's/^Authority=//p' | head -n 1)"
+details="$(codesign -dvv "$archived" 2>&1)"
+identity="$(printf '%s\\n' "$details" | sed -n 's/^Authority=//p' | head -n 1)"
+team="$(printf '%s\\n' "$details" | sed -n 's/^TeamIdentifier=//p' | head -n 1)"
+executable="$archived/Contents/MacOS/$(read_key CFBundleExecutable)"
 info="$out/Info.plist"
 plutil -create xml1 "$info"
 plutil -insert ArchiveVersion -integer 2 "$info"
@@ -52,19 +61,31 @@ plutil -insert ApplicationProperties.CFBundleIdentifier -string "$(read_key CFBu
 plutil -insert ApplicationProperties.CFBundleShortVersionString -string "$(read_key CFBundleShortVersionString)" "$info"
 plutil -insert ApplicationProperties.CFBundleVersion -string "$(read_key CFBundleVersion)" "$info"
 plutil -insert ApplicationProperties.SigningIdentity -string "$identity" "$info"
+if [ -n "$team" ] && [ "$team" != "not set" ]; then
+    plutil -insert ApplicationProperties.Team -string "$team" "$info"
+fi
+plutil -insert ApplicationProperties.Architectures -array "$info"
+for arch in $(lipo -archs "$executable"); do
+    plutil -insert ApplicationProperties.Architectures -string "$arch" -append "$info"
+done
 """
 
 def _signed_xcarchive_impl(ctx):
     info = ctx.attr.bundle[AppleBundleInfo]
+    dsyms = ctx.attr.bundle[AppleDsymBundleInfo].transitive_dsyms if AppleDsymBundleInfo in ctx.attr.bundle else depset()
     out = ctx.actions.declare_directory(ctx.label.name + "/" + info.bundle_name + ".xcarchive")
+    args = ctx.actions.args()
+    args.add(info.archive)
+    args.add(out.path)
+    args.add_all(dsyms, expand_directories = False)
     ctx.actions.run_shell(
-        inputs = [info.archive],
+        inputs = depset([info.archive], transitive = [dsyms]),
         outputs = [out],
-        arguments = [info.archive.path, out.path],
+        arguments = [args],
         command = _ASSEMBLE,
         mnemonic = "XcarchiveAssemble",
         progress_message = "Assembling %s.xcarchive" % info.bundle_name,
-        # ditto, codesign and PlistBuddy are macOS tools.
+        # ditto, codesign, lipo and plutil are macOS tools.
         execution_requirements = {"no-remote": "1", "requires-darwin": "1"},
     )
     return [DefaultInfo(files = depset([out]))]
