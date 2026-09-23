@@ -12,6 +12,5 @@ py_library(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "@pypi//httpx",
-        "@pypi//ollama",
     ],
 )

@@ -1,7 +1,7 @@
 """The single point through which anything leaves this process over the network.
 
 This is the only module allowed to import an outbound network client library
-(``httpx``, ``urllib.request``, the ``ollama`` SDK, ...); ``tests/test_egress_block.py``
+(``httpx``, ``urllib.request``, ...); ``tests/test_egress_block.py``
 scans every source file's AST, function-local imports included, and fails if
 another module does. Every outbound client is therefore built here, and every one
 is checked before it is built:
@@ -29,7 +29,7 @@ Postgres. The gRPC *client* of the app's facade checks its address with
 
 Public API: :func:`check_destination`, :func:`allows_communications`,
 :func:`approved_destinations`, :func:`is_loopback_url`, the client builders
-:func:`http_client`, :func:`ollama_client` and :func:`url_opener`, and the
+:func:`http_client` and :func:`url_opener`, and the
 exceptions :class:`EgressBlocked`, :data:`TransportError` and
 :data:`TransportTimeout`.
 """
@@ -44,7 +44,6 @@ from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 import httpx
-import ollama
 
 from garage_rag.config import Settings, get_settings, is_loopback_url
 from garage_rag.db.models import CorpusClass
@@ -61,7 +60,6 @@ __all__ = [
     "check_destination",
     "http_client",
     "is_loopback_url",
-    "ollama_client",
     "url_opener",
 ]
 
@@ -178,21 +176,6 @@ def http_client(
         base_url=base_url.rstrip("/"),
         timeout=timeout,
         headers=dict(headers or {}),
-        trust_env=False,
-        follow_redirects=False,
-        event_hooks={"request": [_pinned_hook(purpose, origin)]},
-    )
-
-
-def ollama_client(
-    *, purpose: str, host: str, corpus_class: CorpusClass | None = None, settings: Settings | None = None
-) -> ollama.Client:
-    """An ``ollama.Client`` for ``host``, after :func:`check_destination`, hardened like :func:`http_client`."""
-    check_destination(host, purpose=purpose, corpus_class=corpus_class, settings=settings)
-    origin = _origin(host)
-    assert origin is not None
-    return ollama.Client(
-        host=host,
         trust_env=False,
         follow_redirects=False,
         event_hooks={"request": [_pinned_hook(purpose, origin)]},

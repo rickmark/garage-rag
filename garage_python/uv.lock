@@ -134,7 +134,6 @@ dependencies = [
     { name = "grpcio", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "httpx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mcp", extra = ["cli"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "ollama", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "openpyxl", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pdfplumber", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pgvector", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -169,9 +168,8 @@ requires-dist = [
     { name = "cryptography", specifier = "<44.0.0" },
     { name = "grpcio", specifier = ">=1.68.0" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.68.0" },
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", extras = ["cli"], specifier = "==2.1.0" },
-    { name = "ollama", specifier = ">=0.6.1" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
     { name = "pgvector", specifier = ">=0.5,<0.6" },
@@ -408,19 +406,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
-]
-
-[[package]]
-name = "ollama"
-version = "0.6.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "pydantic", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/72/5f12423b6b39ca8430fbe56f77fcf4ef60f63067c7c4a2e30e200ed9ec16/ollama-0.6.2.tar.gz", hash = "sha256:936d55daa684f474364c098611c933626f8d6c7d67065c5b7ae0c477b508b07f", size = 53145, upload-time = "2026-04-29T21:21:15.018Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/ab/d6722beeb2d10f7a3b9ff49375708904fde18f82b5609a0bc4aeb5996a4d/ollama-0.6.2-py3-none-any.whl", hash = "sha256:3ad7daab28e5a973445c36a73882a3ef698c2ebb00e21e308652741577509f7d", size = 15115, upload-time = "2026-04-29T21:21:13.794Z" },
 ]
 
 [[package]]

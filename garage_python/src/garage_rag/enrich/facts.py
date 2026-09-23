@@ -1,27 +1,38 @@
 """Fact extraction: distills a document into a list of atomic facts.
 
 Uses LangExtract (https://github.com/google/langextract) against a local model
--- the Ollama server ``garage_rag.embed.ollama`` already talks to, or the app's
-LlamaXPCService -- so, like the rest of local inference in this project,
-document content never leaves the machine.
+-- the app's LlamaXPCService, a local Ollama or a local LM Studio, whichever
+``facts.provider`` names -- so, like the rest of local inference in this
+project, document content never leaves the machine.
 
 Only the part of LangExtract that runs prompts through a caller-built model is
 used, vendored as :mod:`garage_rag.enrich.langextract`. Upstream's
 ``lx.extract(model_id=...)`` chose a backend by regex on the model name, sending
 ``gemini*`` to Google's API and ``gpt-*``/``o1*`` to OpenAI; that routing and
 those backends are not vendored, so there is no code path to a cloud model. The
-backend here is always one of the two local providers
-(:mod:`garage_rag.enrich.ollama_provider`,
-:mod:`garage_rag.enrich.llama_xpc_provider`), and a model id that names a cloud
-model is refused outright (:func:`refuse_cloud_model_id`) rather than passed to
-a local server that could never serve it.
+model here is always :class:`~garage_rag.enrich.local_provider.LocalLanguageModel`
+(built by :func:`facts_language_model`), which posts each prompt to the
+server's ``/v1/chat/completions`` through :class:`garage_rag.inference.InferenceClient`,
+and a model id that names a cloud model is refused outright
+(:func:`refuse_cloud_model_id`) rather than passed to a local server that could
+never serve it.
 
-The Ollama host itself is configurable (``ollama_host``) and may be another
-machine. Its client is built through the egress guard
-(:mod:`garage_rag.net.egress`), and :func:`extract_and_store_facts` runs the
-document's class through :func:`~garage_rag.net.egress.check_destination` before
-it touches the document's stored facts, so a communication is never posted to a
-host that is not loopback.
+Ollama used to go through LangExtract's own Ollama provider on
+``/api/generate``. On the M3 probe, the same model on Ollama's ``/v1`` through
+this provider produced the same grounded facts, and it keeps every backend on
+one client, so Ollama uses it too, with the JSON mode and temperature (0.1)
+that provider sent. (What ``/v1`` cannot carry: ``num_ctx`` -- Ollama's default
+context, larger than the old 2048, applies -- ``think: false`` and
+``keep_alive``, which defaults to the same five minutes.) GPT-OSS models get no
+JSON mode, which conflicts with their response format, and a JSON-only system
+instruction instead, as before.
+
+The Ollama and LM Studio hosts are configurable (``ollama_host``,
+``lmstudio_host``) and may be other machines. Every client is built through the
+egress guard (:mod:`garage_rag.net.egress`), and :func:`extract_and_store_facts`
+runs the document's class through
+:func:`~garage_rag.net.egress.check_destination` before it touches the stored
+facts, so a communication is never posted to a host that is not loopback.
 
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
@@ -48,10 +59,10 @@ from sqlalchemy.orm import Session
 from garage_rag.config import get_settings
 from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
 from garage_rag.enrich import langextract as lx
-from garage_rag.enrich.langextract.base_model import BaseLanguageModel
-from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
-from garage_rag.enrich.ollama_provider import OllamaLanguageModel
+from garage_rag.enrich.local_provider import LocalLanguageModel
+from garage_rag.inference import Backend, BackendKind, InferenceClient
 from garage_rag.net import egress
+from garage_rag.xpc.llama_xpc import LlamaXPCClient
 
 log = logging.getLogger(__name__)
 
@@ -63,11 +74,11 @@ log = logging.getLogger(__name__)
 # name, pulled with `ollama pull gemma2:2b`.
 DEFAULT_MODEL_ID = "gemma2:2b"
 
-# Fact-distillation backends. "ollama" talks to a local Ollama server;
-# "llama_xpc" routes through LlamaXPCLanguageModel, which posts to the
-# llama.cpp HTTP API the app's LlamaXPCService serves on loopback
-# (``llama_host``) -- see that module's docstring.
-FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
+# Fact-distillation backends, all local inference servers reached through
+# LocalLanguageModel: "llama_xpc" is the llama.cpp HTTP API the app's
+# LlamaXPCService serves on loopback (``llama_host``); "ollama" and
+# "lmstudio" are local servers on ``ollama_host`` / ``lmstudio_host``.
+FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc", "lmstudio")
 DEFAULT_PROVIDER = "ollama"
 
 
@@ -106,7 +117,7 @@ def refuse_cloud_model_id(model_id: str) -> None:
     if any(re.match(pattern, model_id, re.IGNORECASE) for pattern in CLOUD_MODEL_PATTERNS):
         raise ValueError(
             f"{model_id!r} names a cloud-hosted model; fact distillation runs only on local models "
-            f"(facts.provider {' or '.join(FACT_DISTIL_PROVIDERS)})"
+            f"(facts.provider {', '.join(FACT_DISTIL_PROVIDERS)})"
         )
 
 
@@ -144,9 +155,64 @@ EXAMPLES = [
 ]
 
 
-def resolve_model_url(model_url: str | None = None) -> str:
-    """The Ollama endpoint fact extraction will post to."""
-    return model_url or get_settings().ollama_host
+# What LangExtract's own Ollama provider sent (``format: "json"`` and its
+# default temperature), kept so moving Ollama onto ``/v1`` changes only the
+# route. Ollama's ``/v1`` accepts ``json_object``; LM Studio refuses it, and
+# LlamaXPCService never had it, so those two stay prompt-only as before.
+OLLAMA_RESPONSE_FORMAT = {"type": "json_object"}
+OLLAMA_TEMPERATURE = 0.1
+# GPT-OSS's response format conflicts with JSON mode; it gets this instead.
+GPT_OSS_SYSTEM_PROMPT = (
+    "Output a single JSON object matching the requested extraction format. "
+    "Do not include code fences, prose, or reasoning."
+)
+
+
+def _is_gpt_oss_model(model_id: str) -> bool:
+    normalized = model_id.lower()
+    return normalized == "gpt-oss" or (normalized.startswith("gpt-oss:") and len(normalized) > len("gpt-oss:"))
+
+
+def fact_backend(provider: str, model_url: str | None = None) -> Backend:
+    """The server a fact-distillation run posts to; ``model_url`` overrides the configured host."""
+    if provider not in FACT_DISTIL_PROVIDERS:
+        raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
+    return Backend.from_settings(provider, base_url=model_url)
+
+
+def facts_language_model(
+    provider: str,
+    model_id: str,
+    model_url: str | None = None,
+    *,
+    corpus_class: CorpusClass | None = None,
+) -> LocalLanguageModel:
+    """The LangExtract model for ``provider``, always a :class:`LocalLanguageModel`.
+
+    This is the only thing ``lx.extract`` is ever given as its model. Its client
+    is built through the egress guard, which raises
+    :class:`~garage_rag.net.egress.EgressBlocked` for a server that is not
+    approved, or for a communication (``corpus_class``) going to one that is not
+    loopback.
+    """
+    backend = fact_backend(provider, model_url)
+    if backend.kind is BackendKind.LLAMA_XPC:
+        return LocalLanguageModel(model_id, LlamaXPCClient(backend.base_url))
+    if backend.kind is BackendKind.OLLAMA:
+        if _is_gpt_oss_model(model_id):
+            return LocalLanguageModel(
+                model_id,
+                InferenceClient(backend, corpus_class=corpus_class),
+                temperature=OLLAMA_TEMPERATURE,
+                system_prompt=GPT_OSS_SYSTEM_PROMPT,
+            )
+        return LocalLanguageModel(
+            model_id,
+            InferenceClient(backend, corpus_class=corpus_class),
+            temperature=OLLAMA_TEMPERATURE,
+            response_format=OLLAMA_RESPONSE_FORMAT,
+        )
+    return LocalLanguageModel(model_id, InferenceClient(backend, corpus_class=corpus_class))
 
 
 def extract_facts(
@@ -164,25 +230,22 @@ def extract_facts(
     out here rather than stored, since such a fact cannot be traced back to
     the source text.
 
-    ``provider`` selects the inference backend: "ollama" (default) posts to a
-    local Ollama server through :class:`OllamaLanguageModel`; "llama_xpc" runs
-    the prompt through :class:`LlamaXPCLanguageModel`, which posts to the app's
-    LlamaXPCService on loopback. Both emit JSON. A cloud model id is refused
-    (:func:`refuse_cloud_model_id`). ``corpus_class`` is the class of ``text``
-    when known; the egress guard refuses to send a communication to an Ollama
-    host that is not loopback.
+    ``provider`` selects the local server ("ollama", "llama_xpc" or
+    "lmstudio"); the model object comes from :func:`facts_language_model`. A
+    cloud model id is refused (:func:`refuse_cloud_model_id`). ``corpus_class``
+    is the class of ``text`` when known; the egress guard refuses to send a
+    communication to a server that is not loopback.
     """
     if provider not in FACT_DISTIL_PROVIDERS:
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
     refuse_cloud_model_id(model_id)
 
-    if provider == "llama_xpc":
-        model: BaseLanguageModel = LlamaXPCLanguageModel(model_id=model_id)
-    else:
-        model = OllamaLanguageModel(
-            model_id=model_id, model_url=resolve_model_url(model_url), corpus_class=corpus_class
-        )
-    result = lx.extract(text_or_documents=text, prompt_description=PROMPT, examples=EXAMPLES, model=model)
+    result = lx.extract(
+        text_or_documents=text,
+        prompt_description=PROMPT,
+        examples=EXAMPLES,
+        model=facts_language_model(provider, model_id, model_url, corpus_class=corpus_class),
+    )
     return [e for e in result.extractions if e.char_interval is not None]
 
 
@@ -253,14 +316,17 @@ def extract_and_store_facts(
     gets a ``chunks`` row appended after the document's existing chunks, ready
     for ``embed.ollama.backfill_model`` to pick up.
 
-    The destination is checked with the document's class before anything is
-    deleted: an unapproved host, or a communication bound for a host that is
-    not loopback, raises :class:`~garage_rag.net.egress.EgressBlocked`.
+    The document's class goes through the egress guard before anything is
+    deleted: a server that is not approved, or a communication for a server
+    that is not loopback, raises :class:`~garage_rag.net.egress.EgressBlocked`.
     """
-    if provider == "ollama":
-        egress.check_destination(
-            resolve_model_url(model_url), purpose="facts:ollama", corpus_class=document.corpus_class
-        )
+    backend = fact_backend(provider, model_url)
+    egress.check_destination(
+        backend.base_url,
+        purpose=f"facts:{provider}",
+        corpus_class=document.corpus_class,
+        loopback_only=backend.kind is BackendKind.LLAMA_XPC,
+    )
 
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     if not document.content:

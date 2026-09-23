@@ -495,7 +495,7 @@ class TestFactsSection:
     def test_schema_lists_the_provider_choices(self) -> None:
         entry = json_schema()["properties"]["facts"]["properties"]["provider"]
         assert entry["type"] == "string"
-        assert entry["enum"] == ["llama_xpc", "ollama"]
+        assert entry["enum"] == ["llama_xpc", "ollama", "lmstudio"]
         assert entry["default"] == "llama_xpc"
 
 

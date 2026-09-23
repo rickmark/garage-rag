@@ -16,6 +16,7 @@ py_library(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/xpc",

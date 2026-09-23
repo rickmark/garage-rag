@@ -32,7 +32,6 @@ manifest:
     mcp_types: mcp_types
     mdurl: mdurl
     multipart: python_multipart
-    ollama: ollama
     openpyxl: openpyxl
     opentelemetry: opentelemetry_api
     packaging: packaging

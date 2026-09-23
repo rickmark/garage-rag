@@ -10,6 +10,6 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//garage_python/src/garage_rag/config",
-        "//garage_python/src/garage_rag/net",
+        "//garage_python/src/garage_rag/inference",
     ],
 )

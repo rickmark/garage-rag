@@ -98,16 +98,21 @@ An optional pass over stored documents, run as `garage enrich-facts` or the
 `EnrichFacts` streaming RPC (the app's Enrich Facts action), not part of ingest
 itself. [LangExtract](https://github.com/google/langextract) is pointed at the
 local model named by `facts.model` on `facts.provider` (default: the app's
-`gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` is the other
-option, and `--model`/`--provider` override both) with a deliberately generic prompt —
-the module has no notion of what kind of document it is given — and asks for
-every standalone claim in the document's own wording. Only the local part of
-LangExtract is used, vendored as `enrich/langextract` (prompting, chunking,
-parsing and alignment); the model is always one of two local providers,
-`enrich/ollama_provider.py` or `enrich/llama_xpc_provider.py`. Upstream's
+`gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` and `lmstudio`
+with e.g. `google/gemma-3-4b` are the others, and `--model`/`--provider`
+override both) with a deliberately generic prompt — the module has no notion of
+what kind of document it is given — and asks for every standalone claim in the
+document's own wording. Only the local part of LangExtract is used, vendored as
+`enrich/langextract` (prompting, chunking, parsing and alignment). Upstream's
 provider registry, which routes `gemini*`/`gpt-*` model ids to Google and
-OpenAI, is not vendored, and a cloud model id is refused with an error. Like the
-rest of local inference, content never leaves the machine.
+OpenAI, is not vendored, and a cloud model id is refused with an error. The
+model is always `facts_language_model(...)`, a `LocalLanguageModel`
+(`enrich/local_provider.py`) that posts each prompt to the server's
+`/v1/chat/completions` through the [inference client](#local-inference-client).
+Like the rest of local inference, content never leaves the machine. Ollama
+keeps the JSON mode and temperature (0.1) that LangExtract's own Ollama provider
+sent (GPT-OSS models get a JSON-only system instruction instead); LM Studio and
+`llama_xpc` are prompt-only, since LM Studio refuses `json_object`.
 
 Each fact lands in `facts` grounded to the exact span of `documents.content`
 it came from; a fact the extractor cannot locate is dropped rather than stored.
@@ -146,13 +151,15 @@ trimmed to ~1,200 characters), and asks the model to answer from them citing
 `[n]`; the result carries the answer plus one `Citation` per excerpt so a client
 can resolve `[n]` back to a document. `rag_generate` is the same model with a raw
 prompt and no retrieval. The model is `LocalChatModel` (`enrich/generation.py`),
-built from `facts.provider` / `facts.model`: `llama_xpc` posts to the app's
-`LlamaXPCService` on `llama_host` (the `model` field of each request selects
-among the models the engine holds), `ollama` to a local Ollama server on
-`ollama_host`, both through the egress guard. Neither is a cloud API; retrieved
-communications may appear in the prompt but never leave the machine: `rag_ask`
-runs each excerpt's class through the guard, which refuses a communication for
-a host that is not loopback (see `docs/privacy.md`). `garage ask` is the
+built from `facts.provider` / `facts.model`, which posts to `/v1/chat/completions`
+through the [inference client](#local-inference-client): `llama_xpc` to the
+app's `LlamaXPCService` on `llama_host` (the `model` field of each request
+selects among the models the engine holds), `ollama` to the Ollama server on
+`ollama_host`, `lmstudio` to the LM Studio server on `lmstudio_host`, all
+through the egress guard. None is a cloud API; retrieved communications may
+appear in the prompt but never leave the machine: `rag_ask` runs each excerpt's
+class through the guard, which refuses a communication for a host that is not
+loopback (see `docs/privacy.md`). `garage ask` is the
 CLI front door to both tools, with `--json` for the app.
 
 ## Idempotency
@@ -200,3 +207,49 @@ The `llama_xpc` provider (embeddings and, with `--provider llama_xpc`, facts)
 talks to the app's `LlamaXPCService` over loopback HTTP (`llama_host`, a
 llama-server-compatible API); the app loads and unloads models over XPC, so
 the Python side is a plain client with no model lifecycle of its own.
+
+## Local inference client
+
+`garage_rag/inference/` is the one HTTP client for the three local inference
+servers — LM Studio, Ollama and the app's `LlamaXPCService` — used by the
+embedders (`embed/ollama.py`, `embed/lmstudio.py`, `embed/llama_xpc.py`),
+`LocalChatModel` and the LangExtract provider. There is no `ollama` or `openai`
+package behind it; it is httpx and a few hundred lines.
+
+- **`Backend`** — `kind` (`lmstudio` | `ollama` | `llama_xpc`), `base_url` (the
+  server root: a trailing `/v1`, as `lmstudio_host` carries, is dropped and
+  added back per route), optional bearer `token` (LM Studio's, from
+  `GARAGE_LMSTUDIO_API_TOKEN` or `embedding.lmstudio_api_token_file`), timeouts.
+  `Backend.from_settings(kind)` builds it from the configuration.
+- **`InferenceClient`** — `embed(texts, model)`, `chat(messages, model,
+  max_tokens=, temperature=, response_format=)` and `list_models()` /
+  `has_model()` on every backend, all on the OpenAI-compatible `/v1` routes
+  except Ollama embeddings (below). For LM Studio, model management on its
+  native REST API: `lmstudio_models()` (`GET /api/v1/models`: type, loaded
+  instances, max context), `load_model()` (reads the applied `load_config`
+  back, since `context_length` can be ignored), `unload_model()` and
+  `download_model()` (starts a download and returns the job; polling is not
+  implemented until the status route is confirmed). `LlamaXPCClient`
+  (`xpc/llama_xpc.py`) is a subclass adding llama-server's own routes (health,
+  props, tokenizer, raw completion, rerank).
+- **Errors** are all `InferenceError`, with a `status_code`: unreachable (503),
+  non-2xx (`InferenceHTTPError`, with the server's message and error `type`;
+  `InferenceAuthError` for 401/403), **a 2xx whose body is `{"error": …}`**
+  (`InferenceErrorBody` — LM Studio answers unknown routes with HTTP 200 and
+  an error body), a reply that is not the promised JSON (502), an operation
+  the backend does not have (501) and a refused destination (400).
+- **What it never does:** send `dimensions` (LM Studio ignores it; Garage
+  truncates vectors itself), or add a `response_format` of its own (LM Studio
+  rejects `json_object` with HTTP 400; `json_schema_format()` builds the
+  `json_schema` form every backend accepts).
+- **Ollama embeddings stay on `/api/embed`**, the route the `ollama` package
+  used, so stored vectors are reproduced exactly. `Backend.ollama_embed_route =
+  "openai"` switches to `/v1/embeddings` once `tests/test_inference_live.py`
+  has shown the two agree on a real embedding model.
+- **Transport.** `inference/transport.py` imports no HTTP library:
+  `open_transport()` takes its client from the egress guard,
+  `egress.http_client`. That approves loopback or the origin configured for the
+  backend (`llama_xpc` is loopback only), refuses a communication for a host
+  that is not loopback when the client is built with `corpus_class`, ignores
+  proxy variables, never follows a redirect and refuses any other origin. A
+  refusal is `InferenceRefused`, which is also an `EgressBlocked`.

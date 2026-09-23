@@ -291,7 +291,8 @@ class Settings(BaseModel):
     lmstudio_host: str = Field(
         default="http://localhost:1234/v1",
         description=(
-            "Base URL of the LM Studio OpenAI-compatible API (include /v1). May be another machine; "
+            "Base URL of the LM Studio OpenAI-compatible API (include /v1); embeddings, fact "
+            "distillation, answers, and model management under /api/v1. May be another machine; "
             "communications are only ever sent to a loopback host."
         ),
     )
@@ -401,16 +402,18 @@ class Settings(BaseModel):
             "Slug or alias of the local model used for fact distillation "
             "('garage enrich-facts') and for the rag_ask / rag_generate MCP tools. "
             "For llama_xpc this is the alias the app loaded the model under (the "
-            "'fact_distil' preset slug); for ollama it is the Ollama model name."
+            "'fact_distil' preset slug); for ollama it is the Ollama model name; for "
+            "lmstudio it is the LM Studio model key (e.g. 'google/gemma-3-4b')."
         ),
     )
-    fact_provider: Literal["llama_xpc", "ollama"] = Field(
+    fact_provider: Literal["llama_xpc", "ollama", "lmstudio"] = Field(
         default="llama_xpc",
         description=(
-            "Which local inference server runs fact distillation and rag_ask. "
-            "Both stay on this machine: 'llama_xpc' is the app's LlamaXPCService "
-            "(llama.cpp on embedding.llama_host, loopback only); 'ollama' is a local "
-            "Ollama server on embedding.ollama_host."
+            "Which inference server runs fact distillation and rag_ask: 'llama_xpc' is the "
+            "app's LlamaXPCService (llama.cpp on embedding.llama_host, loopback only); "
+            "'ollama' is the Ollama server on embedding.ollama_host; 'lmstudio' is the "
+            "LM Studio server on embedding.lmstudio_host, which loads the model on first "
+            "use. Communications are only ever sent to a loopback host."
         ),
     )
 

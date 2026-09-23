@@ -3,9 +3,10 @@
 Call :func:`get_embedder` with a provider name and model reference to get the
 right backend without the caller knowing which SDK is behind it.
 
-Backends are imported lazily: each one pulls in its own SDK (``ollama``,
-``openai``, the XPC bridge), and a process that only ever talks to one of them
-should not pay to import the others.
+Backends are imported lazily; all of them talk HTTP through
+:mod:`garage_rag.inference`, but ``embed.ollama`` also carries the backfill
+machinery (SQLAlchemy, pgvector) that a caller asking for another backend
+need not import.
 """
 
 from __future__ import annotations

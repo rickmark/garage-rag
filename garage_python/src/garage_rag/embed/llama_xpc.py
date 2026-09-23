@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from garage_rag.embed.base import Embedder, EmbeddingError
+from garage_rag.inference import InferenceClient
 from garage_rag.xpc.llama_xpc import LlamaXPCClient
 
 __all__ = ["EmbeddingError", "LlamaXPCEmbedder"]
@@ -24,10 +25,10 @@ class LlamaXPCEmbedder(Embedder):
     def __init__(
         self,
         model_ref: str = "default",
-        client: LlamaXPCClient | None = None,
+        client: InferenceClient | None = None,
     ) -> None:
         self.model_ref = model_ref
         self.client = client or LlamaXPCClient()
 
     def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
-        return self.client.embed_texts(texts, model=self.model_ref)
+        return self.client.embed(texts, self.model_ref)

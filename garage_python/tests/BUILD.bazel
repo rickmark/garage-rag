@@ -57,6 +57,7 @@ py_test(
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/mcp_server",
         "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/service",
@@ -86,7 +87,9 @@ py_test(
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/net",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
 )
@@ -97,6 +100,7 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
@@ -109,6 +113,7 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/inference",
         "@pypi//pytest",
     ],
 )
@@ -237,6 +242,7 @@ py_test(
     srcs = ["test_llama_xpc.py"],
     deps = [
         "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
@@ -331,6 +337,27 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_inference_client",
+    srcs = ["test_inference_client.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/net",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_inference_live",
+    srcs = ["test_inference_live.py"],
+    deps = [
+        "//garage_python/src/garage_rag/inference",
+        "@pypi//pytest",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
@@ -349,6 +376,8 @@ test_suite(
         ":test_grpc_operations",
         ":test_grpc_serialization",
         ":test_grpc_server",
+        ":test_inference_client",
+        ":test_inference_live",
         ":test_ingest_gateway",
         ":test_ingest_xpc",
         ":test_llama_embedder",

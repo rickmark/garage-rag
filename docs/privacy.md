@@ -23,12 +23,12 @@ client library (`httpx`, `urllib.request`, `requests`, raw `socket`, ...) or a
 library that opens its own connections (the `ollama` SDK). Every outbound client
 is built there, after its destination is checked:
 
-- `egress.http_client(purpose=..., base_url=...)` — an `httpx` client (LM Studio
-  embeddings, fact extraction on Ollama);
-- `egress.ollama_client(purpose=..., host=...)` — the `ollama` SDK's client
-  (Ollama embeddings, answers);
-- `egress.url_opener(purpose=..., base_url=...)` — a stdlib client (the app's
-  `LlamaXPCService`, the `mcp-test` probe).
+- `egress.http_client(purpose=..., base_url=...)` — an `httpx` client. Every
+  model server (LM Studio, Ollama and the app's `LlamaXPCService`: embeddings,
+  fact extraction, answers, LM Studio model management) is reached through
+  Garage's own client, `garage_rag/inference`, whose transport is built here;
+- `egress.url_opener(purpose=..., base_url=...)` — a stdlib client (the
+  `mcp-test` probe).
 
 The test parses every source file's AST, so a function-local or
 `importlib.import_module` import is caught too. Inbound and local infrastructure
@@ -41,8 +41,9 @@ address with the guard (loopback only).
 
 No source file imports a cloud AI SDK (`anthropic`, `openai`, `google.genai`,
 `google.cloud`, `cohere`, `mistralai`, `boto3`, upstream `langextract` and the
-like), and `uv.lock` contains none. LM Studio's OpenAI-compatible
-`/v1/embeddings` is one POST, made with the guard's `httpx` client.
+like), and `uv.lock` contains none. Neither the `openai` nor the `ollama`
+package is a dependency: LM Studio's and Ollama's HTTP APIs are a few JSON
+routes, made by `garage_rag/inference` with the guard's `httpx` client.
 
 There used to be an optional Claude vision fallback for OCR. It has been removed:
 OCR is Tesseract only, on this machine, and the `cloud` settings section and the
@@ -78,10 +79,10 @@ that is not loopback, even an approved one. The guard checks this before
 anything else when the caller says what it is sending:
 
 - **Facts** (`garage enrich-facts`) pass each document's class, so a message is
-  never posted to an off-box Ollama; the refusal comes before the document's
+  never posted to an off-box Ollama or LM Studio; the refusal comes before the document's
   stored facts are touched.
 - **Answers** (`rag_ask`) run every retrieved excerpt's class through the guard
-  before building a prompt for an off-box Ollama, so a communication in the
+  before building a prompt for an off-box Ollama or LM Studio, so a communication in the
   results aborts the call.
 - **Embeddings** — backfill, in-process or through the embed worker, asks
   `egress.allows_communications` and leaves chunks of communication documents
@@ -95,7 +96,8 @@ Only the local part of LangExtract is shipped, vendored as `enrich/langextract`.
 Upstream chooses its backend by regex on the model name and would send a
 `gemini-*` or `gpt-*` model id to Google or OpenAI; that routing and those
 backends are not vendored, and `enrich/facts.py` refuses a cloud model id with a
-clear error. Every extraction runs on one of the two local providers.
+clear error. Every extraction runs on `LocalLanguageModel`, Garage's own
+provider, through the same loopback-only client.
 
 ### What these layers do not cover — MCP clients
 

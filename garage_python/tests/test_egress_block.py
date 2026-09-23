@@ -7,7 +7,7 @@ them fails the suite:
 
 1. **One choke point.** ``garage_rag/net/egress.py`` is the only module that
    imports an outbound network client library, or a library that opens its own
-   connections (``ollama``). The AST scan covers function-local and
+   connections (such as the ``ollama`` SDK). The AST scan covers function-local and
    ``importlib`` imports. Inbound and local infrastructure -- the gRPC server and
    stubs, the MCP server's uvicorn, psycopg -- are exceptions, listed by file in
    :data:`INBOUND_OR_LOCAL`.
@@ -21,7 +21,11 @@ them fails the suite:
 5. **Every caller goes through the guard** (:data:`CALLERS`), checked both by
    reading the source and by building each client against a refused host.
 6. **Local fact extraction.** Only the local part of LangExtract is vendored, and
-   every extraction runs on one of the two local providers.
+   every extraction runs on ``LocalLanguageModel`` through the inference client.
+
+Every model server -- LM Studio, Ollama, the app's LlamaXPCService -- is reached
+through ``garage_rag.inference``, whose transport gets its client from
+``egress.http_client``.
 
 The backfill filter that withholds communication chunks from an off-box
 embedding provider is tested in ``test_embed_egress.py``.
@@ -139,14 +143,14 @@ CLOUD_AI_DISTRIBUTIONS = frozenset(
 
 # Every module that sends content out, and what it goes through.
 CALLERS = {
-    "embed/ollama.py": "egress.ollama_client",
-    "embed/lmstudio.py": "egress.http_client",
+    "inference/transport.py": "egress.http_client",
+    "embed/ollama.py": "InferenceClient(",
+    "embed/lmstudio.py": "InferenceClient(",
     "embed/factory.py": "allows_communications",
-    "enrich/generation.py": "egress.ollama_client",
-    "enrich/ollama_provider.py": "egress.http_client",
+    "enrich/generation.py": "egress.check_destination",
     "enrich/facts.py": "egress.check_destination",
     "mcp_server/server.py": "egress.check_destination",
-    "xpc/llama_xpc.py": "egress.url_opener",
+    "xpc/llama_xpc.py": "class LlamaXPCClient(InferenceClient)",
     "service/client.py": "egress.check_destination",
     "cli.py": "egress.url_opener",
 }
@@ -215,12 +219,12 @@ class TestChokePoint:
                     offenders.append(f"{relative}: {module}")
         assert not offenders, (
             f"network library imported outside {EGRESS_MODULE}: {offenders}. Build the client with "
-            "garage_rag.net.egress (http_client / ollama_client / url_opener) instead."
+            "garage_rag.net.egress (http_client / url_opener) instead."
         )
 
     def test_the_egress_module_is_where_clients_come_from(self) -> None:
         imported = _imported_modules(SRC / EGRESS_MODULE)
-        for library in ("httpx", "ollama", "urllib.request"):
+        for library in ("httpx", "urllib.request"):
             assert library in imported
 
     def test_the_inbound_exceptions_are_still_accurate(self) -> None:
@@ -424,11 +428,26 @@ class TestEveryCallerGoesThroughTheGuard:
         with pytest.raises(EgressBlocked):
             LMStudioEmbedder("text-embedding", base_url="https://api.openai.com/v1")
 
-    def test_fact_provider(self) -> None:
-        from garage_rag.enrich.ollama_provider import OllamaLanguageModel
+    @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "llama_xpc"])
+    def test_fact_provider(self, provider: str) -> None:
+        from garage_rag.enrich.facts import facts_language_model
 
         with pytest.raises(EgressBlocked):
-            OllamaLanguageModel("gemma2:2b", "http://gpu-box:11434")
+            facts_language_model(provider, "gemma2:2b", "http://gpu-box:11434")
+
+    @pytest.mark.parametrize("kind", ["ollama", "lmstudio", "llama_xpc"])
+    def test_inference_client(self, kind: str) -> None:
+        from garage_rag.inference import Backend, InferenceClient
+
+        with pytest.raises(EgressBlocked):
+            InferenceClient(Backend(kind, "http://gpu-box:1234/v1"))
+
+    def test_inference_client_applies_the_content_rule(self, off_box_settings) -> None:
+        from garage_rag.inference import Backend, InferenceClient
+
+        InferenceClient(Backend("ollama", OFF_BOX_OLLAMA), corpus_class=CorpusClass.DOCUMENT)
+        with pytest.raises(EgressBlocked, match="communications may never"):
+            InferenceClient(Backend("lmstudio", OFF_BOX_LMSTUDIO), corpus_class=CorpusClass.COMMUNICATION)
 
     def test_chat_model(self) -> None:
         from garage_rag.enrich.generation import LocalChatModel
@@ -523,17 +542,26 @@ class TestNoRedirects:
         from garage_rag.embed.lmstudio import LMStudioEmbedder
 
         url, hits = redirecting_server
-        with patch("garage_rag.embed.lmstudio.time.sleep"), pytest.raises(Exception):  # noqa: B017
+        with patch("garage_rag.inference.client.time.sleep"), pytest.raises(Exception):  # noqa: B017
             LMStudioEmbedder("m", base_url=f"{url}/v1").embed(["secret text"])
         assert hits == []
 
-    def test_fact_provider(self, redirecting_server) -> None:
+    @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "llama_xpc"])
+    def test_fact_provider(self, redirecting_server, provider: str) -> None:
+        from garage_rag.enrich.facts import facts_language_model
         from garage_rag.enrich.langextract.exceptions import InferenceRuntimeError
-        from garage_rag.enrich.ollama_provider import OllamaLanguageModel
 
         url, hits = redirecting_server
         with pytest.raises(InferenceRuntimeError):
-            list(OllamaLanguageModel("m", url).infer(["secret text"]))
+            list(facts_language_model(provider, "m", url).infer(["secret text"]))
+        assert hits == []
+
+    def test_lmstudio_model_management(self, redirecting_server) -> None:
+        from garage_rag.inference import Backend, InferenceClient, InferenceHTTPError
+
+        url, hits = redirecting_server
+        with pytest.raises(InferenceHTTPError):
+            InferenceClient(Backend("lmstudio", url)).load_model("m")
         assert hits == []
 
     def test_llama_client(self, redirecting_server) -> None:
@@ -541,7 +569,7 @@ class TestNoRedirects:
 
         url, hits = redirecting_server
         with pytest.raises(LlamaXPCError):
-            LlamaXPCClient(url, timeout=5).chat_completion([{"role": "user", "content": "secret text"}], model="m")
+            LlamaXPCClient(url, timeout=5).chat([{"role": "user", "content": "secret text"}], "m")
         with pytest.raises(LlamaXPCError):
             LlamaXPCClient(url, timeout=5).list_models()
         assert hits == []
@@ -561,10 +589,10 @@ class TestFactExtractionStaysLocal:
     ``model_id`` (``gemini*`` -> Google, ``gpt-*`` -> OpenAI). Only the local
     part is vendored (``enrich/langextract``); no module imports the upstream
     package, the vendored copy has no provider routing, and every extraction
-    runs on a model built from one of the two local providers.
+    runs on ``LocalLanguageModel``, built by ``facts_language_model``.
     """
 
-    LOCAL_MODELS = {"OllamaLanguageModel", "LlamaXPCLanguageModel"}
+    LOCAL_MODELS = {"LocalLanguageModel"}
 
     def test_vendored_langextract_has_no_provider_routing(self) -> None:
         vendored = SRC / "enrich" / "langextract"
@@ -582,15 +610,34 @@ class TestFactExtractionStaysLocal:
         ]
         assert calls, "expected an lx.extract(...) call in enrich/facts.py"
         for call in calls:
-            keywords = {kw.arg for kw in call.keywords}
+            keywords = {kw.arg: kw.value for kw in call.keywords}
             assert "model" in keywords, f"line {call.lineno}: lx.extract must be given model="
             assert None not in keywords, f"line {call.lineno}: **kwargs could smuggle other options in"
+            model = keywords["model"]
+            assert (
+                isinstance(model, ast.Call)
+                and isinstance(model.func, ast.Name)
+                and model.func.id == "facts_language_model"
+            ), f"line {call.lineno}: lx.extract must be given model=facts_language_model(...)"
         constructed = {
             node.func.id
             for node in ast.walk(tree)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.endswith("LanguageModel")
         }
         assert constructed == self.LOCAL_MODELS
+
+    @pytest.mark.parametrize("provider", ["ollama", "llama_xpc", "lmstudio"])
+    def test_facts_language_model_is_always_the_local_provider(self, provider: str) -> None:
+        from garage_rag.enrich.facts import facts_language_model
+        from garage_rag.enrich.local_provider import LocalLanguageModel
+
+        set_settings(Settings())
+        try:
+            model = facts_language_model(provider, "gemma2:2b")
+        finally:
+            reset_settings()
+        assert type(model) is LocalLanguageModel
+        assert model.client.backend.is_local
 
 
 def test_guards_do_not_need_a_database_driver() -> None:

@@ -22,6 +22,16 @@ common --@aspect_rules_py//py/private/interpreter:python_version=3.13
 # Postgres" in CLAUDE.md.
 test --test_env=GARAGE_TEST_DATABASE_URL
 
+# garage_python/tests/test_inference_live.py runs against a real LM Studio / Ollama
+# when these name a model (and skips otherwise); see that file's docstring.
+test --test_env=GARAGE_TEST_OLLAMA_EMBED_MODEL
+test --test_env=GARAGE_TEST_OLLAMA_URL
+test --test_env=GARAGE_TEST_LMSTUDIO_EMBED_MODEL
+test --test_env=GARAGE_TEST_LMSTUDIO_CHAT_MODEL
+test --test_env=GARAGE_TEST_LMSTUDIO_URL
+test --test_env=GARAGE_TEST_LMSTUDIO_AUTH_ON
+test --test_env=GARAGE_LMSTUDIO_API_TOKEN
+
 # Load settings & overrides specific to the current user from `user.bazelrc`.
 # That file is git-ignored so settings aren't shared with team members. This is
 # the last statement in this config so user settings can override flags set

@@ -213,11 +213,21 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   → path convention (`pathrules.py`, data-driven table) → source default. See `docs/attribution.md`.
 - **Store** — chunks are model-agnostic; see the schema section below.
 - **Distill facts** (`enrich/facts.py`, `garage enrich-facts`, `EnrichFacts` RPC) — optional
-  post-ingest pass: LangExtract (only its local part, vendored as `enrich/langextract`) against a
-  local model (`llama_xpc` or Ollama) distills each document into atomic,
-  span-grounded `facts` rows; every fact also gets its own `chunks` row (`chunks.fact_id`,
-  `chunker = 'facts:...'`), so the ordinary backfill embeds facts under every model with no
-  fact-specific path. Schema in `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
+  post-ingest pass: LangExtract (only its local part, vendored as `enrich/langextract`), driven
+  through Garage's own `LocalLanguageModel` (`enrich/local_provider.py`) against the local server
+  `facts.provider` names, distills each document into atomic, span-grounded `facts` rows; every
+  fact also gets its own `chunks` row (`chunks.fact_id`, `chunker = 'facts:...'`), so the ordinary
+  backfill embeds facts under every model with no fact-specific path. Schema in
+  `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
+- **Local inference** (`inference/`) — the one HTTP client (httpx; no `ollama`/`openai` packages)
+  for LM Studio, Ollama and the app's `LlamaXPCService`: embeddings, chat and model listing on the
+  OpenAI-compatible `/v1` routes (Ollama embeddings stay on `/api/embed`), plus LM Studio model
+  management on its native `/api/v1` REST API. Every embedder, `LocalChatModel` and the facts
+  provider go through it; `xpc/llama_xpc.py`'s `LlamaXPCClient` is a subclass. A 2xx reply whose
+  body is `{"error": ...}` is an error (LM Studio answers unknown routes that way).
+  `inference/transport.py` takes its client from the egress guard (`egress.http_client`): loopback
+  or the configured host, `llama_xpc` loopback only, and a client given `corpus_class` refuses a
+  communication for a host that is not loopback.
 - **Search** (`search/hybrid.py`) — Reciprocal Rank Fusion over pgvector KNN and Postgres FTS
   (`k=60`, 200 candidates/engine). Keyword side ORs terms rather than ANDing, favoring recall since
   RRF (not the keyword match itself) decides final ordering.
@@ -267,8 +277,10 @@ is tested on its own in `tests/test_egress_block.py`, so removing one fails the 
 
 1. **One choke point.** `net/egress.py` is the only module that imports an outbound network client
    library (`httpx`, `urllib.request`, `requests`, `socket`, ...) or a library that opens its own
-   connections (`ollama`). Callers get clients from it: `egress.http_client(purpose=, base_url=)`,
-   `egress.ollama_client(purpose=, host=)`, `egress.url_opener(purpose=, base_url=)`. An AST scan
+   connections (such as the `ollama` SDK, no longer a dependency). Callers get clients from it:
+   `egress.http_client(purpose=, base_url=)`, `egress.url_opener(purpose=, base_url=)`. Every model
+   server (LM Studio, Ollama, `llama_xpc`) is reached through `garage_rag/inference`, whose
+   transport takes its client from `egress.http_client`. An AST scan
    (function-local and `importlib` imports included) enforces this; inbound/local infrastructure
    (gRPC server and stubs, the facade's gRPC client, uvicorn, psycopg) is listed file by file in
    `INBOUND_OR_LOCAL`, not matched by pattern.
@@ -301,7 +313,7 @@ drift. Unknown keys are a hard error, not a silent ignore (retired keys listed i
 are warned about and skipped). The JSON Schema is generated from this module (`garage config
 schema --publish`) and committed at `data/schema/garage.schema.json` — **regenerate it whenever a
 setting is added, renamed, or documented**; a test enforces every field is documented. The `facts`
-section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) names the model behind
+section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) names the model behind
 `enrich-facts` and the `rag_ask`/`rag_generate` MCP tools; `garage config set SECTION.KEY VALUE` /
 `garage config get SECTION.KEY` edit and read single settings without touching the JSON by hand.
 

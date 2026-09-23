@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from garage_rag.config import Settings, reset_settings, set_settings
+from garage_rag.inference import InferenceUnsupported
 from garage_rag.xpc.llama_xpc import (
     DEFAULT_LLAMA_HTTP_URL,
     LlamaXPCClient,
@@ -331,17 +332,15 @@ def test_get_props(client: LlamaXPCClient, fake_server: FakeServer) -> None:
 
 
 def test_list_models(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    models = client.list_models()
-    assert models["object"] == "list"
-    assert [m["id"] for m in models["data"]] == [ALIAS]
+    assert client.list_models() == [ALIAS]
     assert fake_server.state.requests == [("GET", "/v1/models", None)]
 
 
 # ---- embeddings --------------------------------------------------------------
 
 
-def test_embed_texts_wire_format_and_ordering(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    vectors = client.embed_texts(["alpha", "beta", "gamma"], model=ALIAS)
+def test_embed_wire_format_and_ordering(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+    vectors = client.embed(["alpha", "beta", "gamma"], ALIAS)
     assert fake_server.state.requests == [
         ("POST", "/v1/embeddings", {"input": ["alpha", "beta", "gamma"], "model": ALIAS}),
     ]
@@ -349,44 +348,39 @@ def test_embed_texts_wire_format_and_ordering(client: LlamaXPCClient, fake_serve
     assert vectors == [_vector(0, 4), _vector(1, 4), _vector(2, 4)]
 
 
-def test_embed_texts_dimensions_passthrough(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    vectors = client.embed_texts(["alpha"], dimensions=8)
-    assert fake_server.state.requests == [("POST", "/v1/embeddings", {"input": ["alpha"], "dimensions": 8})]
-    assert len(vectors) == 1
-    assert len(vectors[0]) == 8
-
-
-def test_embed_texts_omits_model_when_unset(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    client.embed_texts(["alpha"])
+def test_embed_omits_model_when_unset(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+    """Never ``dimensions`` either: Garage truncates on its side, servers are not trusted to."""
+    client.embed(["alpha"])
     _, _, body = fake_server.state.requests[0]
     assert body == {"input": ["alpha"]}
 
 
-def test_embed_texts_empty_batch_sends_nothing(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    assert client.embed_texts([]) == []
+def test_embed_empty_batch_sends_nothing(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+    assert client.embed([]) == []
     assert fake_server.state.requests == []
 
 
-def test_embed_texts_no_model_is_503(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+def test_embed_no_model_is_503(client: LlamaXPCClient, fake_server: FakeServer) -> None:
     fake_server.state.mode = "no_model"
     with pytest.raises(LlamaXPCError, match="no model loaded") as info:
-        client.embed_texts(["alpha"])
+        client.embed(["alpha"])
     assert info.value.status_code == 503
 
 
-def test_embed_texts_server_error_is_500_with_message(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+def test_embed_server_error_is_500_with_message(client: LlamaXPCClient, fake_server: FakeServer) -> None:
     fake_server.state.mode = "error"
     with pytest.raises(LlamaXPCError, match="boom") as info:
-        client.embed_texts(["alpha"])
+        client.embed(["alpha"])
     assert info.value.status_code == 500
 
 
 def test_non_json_reply_raises(client: LlamaXPCClient, fake_server: FakeServer) -> None:
     fake_server.state.mode = "not_json"
-    with pytest.raises(LlamaXPCError, match="non-JSON"):
+    with pytest.raises(LlamaXPCError, match="non-JSON") as info:
         client.get_props()
+    assert info.value.status_code == 502
     with pytest.raises(LlamaXPCError, match="non-JSON"):
-        client.embed_texts(["alpha"])
+        client.embed(["alpha"])
 
 
 def test_unknown_route_is_404(client: LlamaXPCClient) -> None:
@@ -398,9 +392,9 @@ def test_unknown_route_is_404(client: LlamaXPCClient) -> None:
 # ---- generation --------------------------------------------------------------
 
 
-def test_chat_completion(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+def test_chat(client: LlamaXPCClient, fake_server: FakeServer) -> None:
     messages = [{"role": "system", "content": "be terse"}, {"role": "user", "content": "hi"}]
-    resp = client.chat_completion(messages, model="gemma", max_tokens=16, temperature=0.2)
+    result = client.chat(messages, "gemma", max_tokens=16, temperature=0.2)
     assert fake_server.state.requests == [
         (
             "POST",
@@ -408,14 +402,14 @@ def test_chat_completion(client: LlamaXPCClient, fake_server: FakeServer) -> Non
             {"messages": messages, "model": "gemma", "max_tokens": 16, "temperature": 0.2},
         )
     ]
-    assert resp["object"] == "chat.completion"
-    assert resp["model"] == "gemma"
-    assert resp["choices"][0]["message"] == {"role": "assistant", "content": "echo: hi"}
-    assert resp["choices"][0]["finish_reason"] == "stop"
+    assert result.raw["object"] == "chat.completion"
+    assert result.model == "gemma"
+    assert result.text == "echo: hi"
+    assert result.finish_reason == "stop"
 
 
-def test_chat_completion_minimal_body(client: LlamaXPCClient, fake_server: FakeServer) -> None:
-    client.chat_completion([{"role": "user", "content": "hi"}])
+def test_chat_minimal_body(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+    client.chat([{"role": "user", "content": "hi"}])
     _, _, body = fake_server.state.requests[0]
     assert body == {"messages": [{"role": "user", "content": "hi"}]}
 
@@ -460,7 +454,7 @@ def test_rerank_omits_top_n_when_unset(client: LlamaXPCClient, fake_server: Fake
 def test_generation_errors_carry_status(client: LlamaXPCClient, fake_server: FakeServer) -> None:
     fake_server.state.mode = "error"
     for call in (
-        lambda: client.chat_completion([{"role": "user", "content": "x"}]),
+        lambda: client.chat([{"role": "user", "content": "x"}]),
         lambda: client.completion("x"),
         lambda: client.tokenize("x"),
         lambda: client.detokenize([1]),
@@ -477,5 +471,17 @@ def test_stub_engine_is_gone() -> None:
 
     assert not hasattr(module, "LlamaServiceEngine")
     assert not hasattr(module, "DEFAULT_LLAMA_XPC_SERVICE_NAME")
-    assert not hasattr(LlamaXPCClient, "load_model")
-    assert not hasattr(LlamaXPCClient, "unload_model")
+
+
+def test_model_management_is_not_an_http_operation(client: LlamaXPCClient, fake_server: FakeServer) -> None:
+    """Loading happens over NSXPC from the app; the LM Studio routes are refused without a request."""
+    for call in (
+        lambda: client.load_model(ALIAS),
+        lambda: client.unload_model(ALIAS),
+        lambda: client.download_model(ALIAS),
+        lambda: client.lmstudio_models(),
+    ):
+        with pytest.raises(InferenceUnsupported) as info:
+            call()
+        assert info.value.status_code == 501
+    assert fake_server.state.requests == []
