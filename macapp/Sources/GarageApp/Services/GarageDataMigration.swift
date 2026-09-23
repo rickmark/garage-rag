@@ -39,7 +39,36 @@ enum GarageDataMigration {
         for (name, reason) in outcome.skipped.sorted(by: { $0.key < $1.key }) {
             logger.warning("Left \(name, privacy: .public) in \(GarageAppGroup.legacyDataDirectory.path, privacy: .public): \(reason, privacy: .public)")
         }
+        if !GarageAppGroup.isSandboxed, !outcome.linkedLegacyDirectory,
+           linkLegacyDirectory(GarageAppGroup.legacyDataDirectory, to: shared) {
+            logger.notice("Linked \(GarageAppGroup.legacyDataDirectory.path, privacy: .public) to the shared data folder \(shared.path, privacy: .public)")
+        }
         return outcome
+    }
+
+    /// Unsandboxed (Developer ID) builds: keep `~/Library/Application Support/GarageApp` as a link to
+    /// the shared folder, which otherwise sits out of sight in `~/Library/Group Containers`, so Finder,
+    /// Terminal and support instructions that name the familiar path still land on the data. The
+    /// migration leaves this link when it empties an old folder; this also makes it on a fresh
+    /// install. It only fills a vacancy: a folder still there (data another build left behind) or any
+    /// other link, even a dangling one, is left alone. Returns whether it made the link.
+    @discardableResult
+    static func linkLegacyDirectory(_ legacy: URL, to shared: URL, fileManager: FileManager = .default) -> Bool {
+        let legacy = legacy.standardizedFileURL
+        let shared = shared.standardizedFileURL
+        guard legacy.resolvingSymlinksInPath() != shared.resolvingSymlinksInPath(),
+              (try? fileManager.attributesOfItem(atPath: legacy.path)) == nil else {
+            return false
+        }
+        do {
+            try fileManager.createDirectory(at: shared, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.createSymbolicLink(at: legacy, withDestinationURL: shared)
+            return true
+        } catch {
+            logger.warning("Could not link \(legacy.path, privacy: .public) to the shared folder: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     static func migrate(from legacy: URL, to shared: URL, fileManager: FileManager = .default) -> Outcome {

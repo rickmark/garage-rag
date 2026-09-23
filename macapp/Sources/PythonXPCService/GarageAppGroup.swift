@@ -17,13 +17,22 @@ public enum GarageAppGroup {
     /// are not; on macOS 15+ touching a group container without it can prompt the user, so they
     /// never try.
     public static let isEntitled: Bool = {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let value = SecTaskCopyValueForEntitlement(task, "com.apple.security.application-groups" as CFString, nil),
-              let groups = value as? [String] else {
+        guard let groups = entitlementValue("com.apple.security.application-groups") as? [String] else {
             return false
         }
         return groups.contains(identifier)
     }()
+
+    /// True in the App Sandbox (the App Store build). An unsandboxed build (Developer ID) can also
+    /// reach the per-user Application Support folder, the one people and support instructions look in.
+    public static let isSandboxed: Bool = {
+        (entitlementValue("com.apple.security.app-sandbox") as? Bool) == true
+    }()
+
+    private static func entitlementValue(_ key: String) -> Any? {
+        guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+        return SecTaskCopyValueForEntitlement(task, key as CFString, nil)
+    }
 
     /// `<group container>/Library/Application Support/GarageApp`, or nil when this process has no
     /// entitlement for the group.

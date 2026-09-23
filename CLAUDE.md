@@ -283,7 +283,10 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
   (`macapp/externals/GarageAppGroup.entitlements`). Unentitled builds (locally signed, tests) use
   `~/Library/Application Support/GarageApp`. At launch `GarageDataMigration` renames an older build's
   per-user folder into the group container and leaves a symlink behind. It never copies, deletes or
-  overwrites anything, and it skips a `pgdata` a running postmaster still holds.
+  overwrites anything, and it skips a `pgdata` a running postmaster still holds. Unsandboxed
+  (Developer ID) builds also keep `~/Library/Application Support/GarageApp` as a link to the group
+  folder on a fresh install, so the familiar path reaches the data; a folder or other link already
+  there is left alone.
 - `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which

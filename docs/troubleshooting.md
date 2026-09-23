@@ -167,6 +167,9 @@ When diagnosing issues, check the relevant logs:
 - **MCP Server Logs**:
   `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
 
+With the direct-download (Developer ID) build, `~/Library/Application Support/GarageApp` is a shortcut
+to the same folder, so `~/Library/Application Support/GarageApp/logs/` works too.
+
 <div class="callout callout-info">
   <div class="callout-title">Need to Submit Logs for Support?</div>
   <p>Read our <a href="{{ '/contact.html' | relative_url }}">Contact & Log Sanitization Guide</a> to ensure your personal notes or confidential documents are removed before sharing log snippets.</p>

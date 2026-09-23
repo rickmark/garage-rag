@@ -121,6 +121,37 @@ final class GarageDataMigrationTests: XCTestCase {
         XCTAssertFalse(GarageDataMigration.hasUnmigratedCluster(legacy: legacy, shared: legacy))
     }
 
+    func testLinksTheUnsandboxedPathOnAFreshInstall() throws {
+        try fm.removeItem(at: legacy)
+
+        XCTAssertTrue(GarageDataMigration.linkLegacyDirectory(legacy, to: shared))
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: legacy.path), shared.standardizedFileURL.path)
+        try write("garage.json", in: shared, "{}")
+        XCTAssertEqual(read("garage.json", in: legacy), "{}")
+    }
+
+    func testAnExistingLinkIsLeftAsIs() throws {
+        try write("pgdata/PG_VERSION", in: legacy, "18")
+        XCTAssertTrue(GarageDataMigration.migrate(from: legacy, to: shared).linkedLegacyDirectory)
+
+        XCTAssertFalse(GarageDataMigration.linkLegacyDirectory(legacy, to: shared))
+
+        let elsewhere = root.appendingPathComponent("elsewhere", isDirectory: true)
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try fm.removeItem(at: legacy)
+        try fm.createSymbolicLink(at: legacy, withDestinationURL: elsewhere)
+        XCTAssertFalse(GarageDataMigration.linkLegacyDirectory(legacy, to: shared))
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: legacy.path), elsewhere.path)
+    }
+
+    func testAFolderStillThereIsNotReplacedByALink() throws {
+        try write("pgdata/PG_VERSION", in: legacy, "the other build's")
+
+        XCTAssertFalse(GarageDataMigration.linkLegacyDirectory(legacy, to: shared))
+        XCTAssertEqual(read("pgdata/PG_VERSION", in: legacy), "the other build's")
+        XCTAssertNil(try? fm.destinationOfSymbolicLink(atPath: legacy.path))
+    }
+
     func testAppGroupIdentifierIsTeamPrefixed() {
         // The macOS form: a Developer ID build may use it without a provisioning profile.
         XCTAssertTrue(GarageAppGroup.identifier.hasPrefix("DWVXMLB45Y."))
