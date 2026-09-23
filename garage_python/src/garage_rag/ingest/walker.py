@@ -85,6 +85,21 @@ def is_dependency_path(path_str: str) -> bool:
     return any(fragment.lower() in lowered for fragment in DEPENDENCY_PATH_FRAGMENTS)
 
 
+def is_dependency_dir(path: Path, root: Path) -> bool:
+    """Whether ``path`` is a package-manager cache below the source ``root``.
+
+    Only the part below ``root`` is matched: the root itself may sit under such a
+    path (Bazel's output base on macOS is ``~/Library/Caches/bazel``, and a user may
+    add a source that lives in a cache on purpose), and pruning on an ancestor
+    would silently index nothing at all.
+    """
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return relative != "." and is_dependency_path(f"/{relative}/")
+
+
 def _is_hidden(name: str) -> bool:
     # Dotfiles are configuration or caches, not writing. The few exceptions
     # (dotfile repos) are not worth the noise of indexing every .DS_Store.
@@ -119,7 +134,7 @@ def walk(
         current = Path(dirpath)
 
         # Whole dependency caches: stop descending entirely.
-        if is_dependency_path(dirpath):
+        if is_dependency_dir(current, root):
             log.debug("Walker pruning dependency path: %s", dirpath)
             dirnames[:] = []
             tally.skipped_excluded_dir += 1

@@ -101,6 +101,24 @@ def test_scan_filesystem_exclude_prefixes_prune_subtrees(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
+def test_a_root_under_a_cache_path_is_still_walked(tmp_path: Path) -> None:
+    """Dependency-cache fragments ("Library/Caches", "go/pkg/mod") prune subtrees
+    below the source root, never the root's own ancestors. Bazel's output base on
+    macOS is ~/Library/Caches/bazel, so matching the absolute path made every
+    walk and scan under Bazel count nothing."""
+    from garage_rag.ingest.walker import walk
+
+    root = tmp_path / "Library" / "Caches" / "bazel" / "notes"
+    (root / "sub").mkdir(parents=True)
+    (root / "go" / "pkg" / "mod").mkdir(parents=True)
+    (root / "a.md").write_text("# one\n\ntext\n")
+    (root / "sub" / "b.md").write_text("# two\n\ntext\n")
+    (root / "go" / "pkg" / "mod" / "dep.md").write_text("# a dependency's readme\n")
+
+    assert sorted(c.path.name for c in walk(root)) == ["a.md", "b.md"]
+    assert scan_filesystem(root).item_count == 2
+
+
 def test_scan_git_repository(tmp_path: Path) -> None:
     # Initialize a git repository
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)

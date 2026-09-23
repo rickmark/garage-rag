@@ -36,7 +36,7 @@ from garage_rag.ingest.classify import is_code_path
 from garage_rag.ingest.walker import (
     _is_hidden,
     default_exclude_prefixes,
-    is_dependency_path,
+    is_dependency_dir,
     is_diagnostic_dir,
     is_diagnostic_file,
 )
@@ -131,7 +131,7 @@ def scan_filesystem(
                 if d not in DEFAULT_EXCLUDE_DIRS
                 and not _is_hidden(d)
                 and not is_diagnostic_dir(d)
-                and not is_dependency_path(str(parent / d))
+                and not is_dependency_dir(parent / d, root)
             ]
 
             if exclude_prefixes and parent != root:
