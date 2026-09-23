@@ -1,63 +1,56 @@
-"""The local OCR pass: which tesseract it runs and what image it hands over."""
+"""The local OCR pass in garage_rag.extract.image: gating and word filtering."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import pytesseract
 from PIL import Image
 
 from garage_rag.extract import image as image_extract
+from garage_rag.extract import tesseract
+from garage_rag.extract.base import ExtractionError
 
 
-@pytest.fixture
-def captured(monkeypatch):
-    """Replaces pytesseract.image_to_data, recording the image it was given."""
-    seen: dict[str, object] = {}
-
-    def fake_image_to_data(img, output_type=None):
-        seen["format"] = img.format
-        seen["mode"] = img.mode
-        seen["cmd"] = pytesseract.pytesseract.tesseract_cmd
-        return {"text": ["Hello", "", "world"], "conf": ["90", "-1", "80"]}
-
-    monkeypatch.setattr(pytesseract, "image_to_data", fake_image_to_data)
-    monkeypatch.setattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract")
-    return seen
-
-
-def _write(tmp_path: Path, name: str, fmt: str, mode: str = "RGB") -> Path:
+def _write(tmp_path: Path, name: str, size: tuple[int, int] = (400, 300)) -> Path:
     path = tmp_path / name
-    Image.new(mode, (400, 300), "white").save(path, format=fmt)
+    Image.new("RGB", size, "white").save(path)
     return path
 
 
-def test_bundled_tesseract_is_used_when_exported(monkeypatch, tmp_path, captured):
-    monkeypatch.setenv("GARAGE_TESSERACT_CMD", "/Applications/Garage.app/Contents/Resources/tesseract/bin/tesseract")
-    text, confidence = image_extract._tesseract(_write(tmp_path, "shot.png", "PNG"))
+def test_joins_readable_words_and_averages_their_confidence(monkeypatch, tmp_path):
+    words = [
+        tesseract.Word("Hello", 90.0),
+        tesseract.Word("  ", 50.0),
+        tesseract.Word("?", -1.0),
+        tesseract.Word("world", 80.0),
+    ]
+    monkeypatch.setattr(tesseract, "recognize", lambda image: words)
 
-    assert captured["cmd"] == "/Applications/Garage.app/Contents/Resources/tesseract/bin/tesseract"
+    text, confidence = image_extract._tesseract(_write(tmp_path, "shot.png"))
+
     assert text == "Hello world"
     assert confidence == pytest.approx(85.0)
 
 
-def test_path_lookup_is_left_alone_without_the_variable(monkeypatch, tmp_path, captured):
-    monkeypatch.delenv("GARAGE_TESSERACT_CMD", raising=False)
-    image_extract._tesseract(_write(tmp_path, "shot.png", "PNG"))
-
-    assert captured["cmd"] == "tesseract"
+def test_nothing_readable_is_zero_confidence(monkeypatch, tmp_path):
+    monkeypatch.setattr(tesseract, "recognize", lambda image: [])
+    assert image_extract._tesseract(_write(tmp_path, "blank.png")) == ("", 0.0)
 
 
-@pytest.mark.parametrize(
-    ("name", "fmt", "mode"),
-    [("photo.jpg", "JPEG", "RGB"), ("anim.gif", "GIF", "P"), ("shot.png", "PNG", "RGB")],
-)
-def test_tesseract_is_always_handed_a_png(monkeypatch, tmp_path, captured, name, fmt, mode):
-    # pytesseract saves a format-less image as PNG, the only codec the bundled
-    # Leptonica is built with.
-    monkeypatch.delenv("GARAGE_TESSERACT_CMD", raising=False)
-    image_extract._tesseract(_write(tmp_path, name, fmt, mode))
+def test_icons_are_rejected_before_ocr(monkeypatch, tmp_path):
+    def fail(image):
+        raise AssertionError("OCR must not run on an icon")
 
-    assert captured["format"] is None
-    assert captured["mode"] in {"1", "L", "RGB", "RGBA"}
+    monkeypatch.setattr(tesseract, "recognize", fail)
+    with pytest.raises(ExtractionError, match="too small"):
+        image_extract._tesseract(_write(tmp_path, "icon.png", (64, 64)))
+
+
+def test_library_failures_become_extraction_errors(monkeypatch, tmp_path):
+    def unavailable(image):
+        raise tesseract.TesseractUnavailable("libtesseract not found")
+
+    monkeypatch.setattr(tesseract, "recognize", unavailable)
+    with pytest.raises(ExtractionError, match="libtesseract not found"):
+        image_extract._tesseract(_write(tmp_path, "shot.png"))

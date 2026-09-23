@@ -1,5 +1,0 @@
-filegroup(
-    name = "libpng_source",
-    srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
-)

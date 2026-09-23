@@ -154,9 +154,9 @@ public final class GaragePythonRuntime: @unchecked Sendable {
     /// and exported by the runtime itself once the bundled copy has been resolved, so `garage_rag` (and the
     /// ctypes hook installed at start-up) always point psycopg at the signed library inside the bundle.
     public static let libpqPathEnvironmentKey = "GARAGE_LIBPQ_PATH"
-    /// The bundled `tesseract` executable, for garage_rag.extract.image (pytesseract's `tesseract_cmd`).
-    public static let tesseractCommandEnvironmentKey = "GARAGE_TESSERACT_CMD"
-    /// Where Tesseract looks for `eng.traineddata`; read by the tesseract process itself.
+    /// The bundled `libtesseract.dylib`, loaded in-process by garage_rag.extract.tesseract through ctypes.
+    public static let libtesseractPathEnvironmentKey = "GARAGE_LIBTESSERACT_PATH"
+    /// Where libtesseract looks for `eng.traineddata`.
     public static let tessdataPrefixEnvironmentKey = "TESSDATA_PREFIX"
 
     public init() {
@@ -389,25 +389,26 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         return nil
     }
 
-    /// Exports the bundled Tesseract (`Contents/Resources/tesseract`) to Python: the executable through
-    /// `GARAGE_TESSERACT_CMD` and its language data through `TESSDATA_PREFIX`. XPC services start with a
-    /// minimal PATH, so pytesseract's default lookup of `tesseract` finds nothing and every image fails
-    /// with "tesseract is not installed". Values already in the environment win, so a developer can point
-    /// at another build.
+    /// Exports the bundled Tesseract to Python: `Contents/Frameworks/libtesseract.dylib` through
+    /// `GARAGE_LIBTESSERACT_PATH` and `Contents/Resources/tesseract/tessdata` through `TESSDATA_PREFIX`.
+    /// Only files inside the (signed) bundle are offered, as for libpq: library validation rejects a
+    /// Homebrew copy signed by another Team ID. Values already in the environment win, so a developer
+    /// can point at another build.
     private func exportBundledTesseract(appBundleURL: URL?) {
         let environment = ProcessInfo.processInfo.environment
         guard let bundle = appBundleURL else { return }
-        let root = bundle.appendingPathComponent("Contents/Resources/tesseract", isDirectory: true)
-        let executable = root.appendingPathComponent("bin/tesseract")
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-            logger.warning("Bundled tesseract not found at '\(executable.path, privacy: .public)'; image OCR will fail")
+        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+        let library = contents.appendingPathComponent("Frameworks/libtesseract.dylib")
+        guard FileManager.default.fileExists(atPath: library.path) else {
+            logger.warning("Bundled libtesseract not found at '\(library.path, privacy: .public)'; image OCR will fail")
             return
         }
-        if environment[Self.tesseractCommandEnvironmentKey]?.isEmpty ?? true {
-            setenv(Self.tesseractCommandEnvironmentKey, executable.path, 1)
+        if environment[Self.libtesseractPathEnvironmentKey]?.isEmpty ?? true {
+            setenv(Self.libtesseractPathEnvironmentKey, library.path, 1)
         }
         if environment[Self.tessdataPrefixEnvironmentKey]?.isEmpty ?? true {
-            setenv(Self.tessdataPrefixEnvironmentKey, root.appendingPathComponent("tessdata", isDirectory: true).path, 1)
+            let tessdata = contents.appendingPathComponent("Resources/tesseract/tessdata", isDirectory: true)
+            setenv(Self.tessdataPrefixEnvironmentKey, tessdata.path, 1)
         }
     }
 

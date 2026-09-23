@@ -16,7 +16,6 @@ tiny images are rejected before Tesseract runs.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from garage_rag.config import get_settings
@@ -48,23 +47,12 @@ def _open_image(path: Path):
 def _tesseract(path: Path) -> tuple[str, float]:
     """Run Tesseract, returning ``(text, mean_word_confidence)``.
 
-    Confidence comes from the per-word data rather than the plain text call:
+    Confidence comes from the per-word results rather than the plain text:
     "returned something" and "returned something legible" are different, and only
-    the word data distinguishes them.
+    the word data distinguishes them. Tesseract runs in-process through its C API
+    (:mod:`garage_rag.extract.tesseract`); nothing is spawned.
     """
-    import pytesseract
-    from pytesseract import Output
-
-    # The app bundles its own tesseract and says where (GarageApp's Python runtime
-    # exports it, and TESSDATA_PREFIX for its language data); anywhere else,
-    # pytesseract's PATH lookup applies.
-    bundled = os.environ.get("GARAGE_TESSERACT_CMD")
-    if bundled:
-        pytesseract.pytesseract.tesseract_cmd = bundled
-
-    # Tesseract is internally multi-threaded. Inside a process pool that
-    # oversubscribes the CPU and slows everything down.
-    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    from garage_rag.extract import tesseract
 
     image = _open_image(path)
     width, height = image.size
@@ -73,33 +61,20 @@ def _tesseract(path: Path) -> tuple[str, float]:
     if width < MIN_OCR_WIDTH or height < MIN_OCR_HEIGHT:
         raise ExtractionError(f"image too small to hold text ({width}x{height}): {path}")
 
-    # pytesseract writes the image to a temp file in its original format. The
-    # bundled Leptonica reads PNG only, so hand it an image with no format of its
-    # own, which pytesseract saves as PNG. GIF and WebP inputs take the same path.
-    if image.mode not in ("1", "L", "RGB", "RGBA"):
-        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-    else:
-        image = image.copy()
     try:
-        data = pytesseract.image_to_data(image, output_type=Output.DICT)
+        recognized = tesseract.recognize(image)
     except Exception as exc:  # noqa: BLE001
         raise ExtractionError(f"tesseract failed on {path}: {exc}") from exc
 
     words: list[str] = []
     confidences: list[float] = []
-    for word, conf in zip(data.get("text", []), data.get("conf", []), strict=False):
-        cleaned = (word or "").strip()
-        if not cleaned:
-            continue
-        try:
-            value = float(conf)
-        except (TypeError, ValueError):
-            continue
-        # -1 marks a region Tesseract found but could not read.
-        if value < 0:
+    for word in recognized:
+        cleaned = word.text.strip()
+        # A negative confidence marks a region Tesseract found but could not read.
+        if not cleaned or word.confidence < 0:
             continue
         words.append(cleaned)
-        confidences.append(value)
+        confidences.append(word.confidence)
 
     text = " ".join(words)
     mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
