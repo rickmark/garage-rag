@@ -141,7 +141,9 @@ struct FirstRunView: View {
     private var headerSubtitle: String {
         switch coordinator.step {
         case .settingUp:
-            "Garage is starting its private database and background services. This only takes a moment the first time."
+            coordinator.isAfterDatabaseReset
+                ? "The database was reset. Garage is creating a new, empty one and will register the sources in garage.json again."
+                : "Garage is starting its private database and background services. This only takes a moment the first time."
         case .selectData:
             "Choose what Garage should index. You can add, remove or fine-tune sources any time from the Sources page."
         case .selectModels:

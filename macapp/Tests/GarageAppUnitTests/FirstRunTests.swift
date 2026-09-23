@@ -227,6 +227,31 @@ final class FirstRunTests: XCTestCase {
     }
 
     @MainActor
+    func testAfterDatabaseResetRunsEvenWhenCompletedAndClearsOnSkip() {
+        let coordinator = FirstRunCoordinator(defaults: makeDefaults())
+        coordinator.begin()
+        coordinator.finish()
+        XCTAssertTrue(coordinator.hasCompleted)
+
+        // A reset reopens the assistant even though it was completed before,
+        // and says so on its first page.
+        coordinator.begin(afterDatabaseReset: true)
+        XCTAssertTrue(coordinator.isActive)
+        XCTAssertTrue(coordinator.isAfterDatabaseReset)
+        XCTAssertEqual(coordinator.step, .settingUp)
+
+        // Skipping lands on the main window and leaves reset mode behind, so a
+        // later "Setup Assistant…" is an ordinary run.
+        coordinator.skip()
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertFalse(coordinator.isAfterDatabaseReset)
+        XCTAssertTrue(coordinator.hasCompleted)
+
+        coordinator.begin(force: true)
+        XCTAssertFalse(coordinator.isAfterDatabaseReset)
+    }
+
+    @MainActor
     func testSourceSelectionIgnoresUnavailableTemplatesAndDedupesCustomFolders() {
         let coordinator = FirstRunCoordinator(defaults: makeDefaults())
         let available = FirstRunSourceTemplate(
