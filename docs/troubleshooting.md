@@ -60,6 +60,17 @@ rm -f ~/Library/Application\ Support/GarageApp/pgdata/postmaster.pid
 
 **Solution**: Ensure `LC_ALL=C` is exported in the environment before launching postgres (handled automatically by `GarageApp`).
 
+### Starting over with an empty database
+
+**Database → Reset Database…** deletes everything Garage built from your files and nothing else:
+- **Deleted:** the search index (documents, chunks and embeddings), facts, the conversation memory
+  imported from Messages and Mail, and the source, model, author and ingest records.
+- **Kept:** your original files, downloaded model files, logs, `garage.json` and the Keychain password.
+
+Garage stops its services, deletes the database folder and relaunches itself to create a new database.
+The sources in `garage.json` are registered again automatically. Register your embedding models on the
+Models page, then run ingest to rebuild the index.
+
 ---
 
 <h2 id="tcc-permissions">2. macOS Permissions (TCC) & Protected Files</h2>

@@ -546,36 +546,25 @@ final class PostgresService: ObservableObject {
         try? FileManager.default.removeItem(at: pidFile)
     }
 
-    /// Drops and recreates the app's private database when running, or
-    /// re-initializes the database cluster from scratch if stopped or failed.
-    /// Preserves the Keychain-managed superuser credential.
-    func resetDatabase() async throws {
-        // Never drop the developer's live database or pgdata directory from a unit test run.
+    /// Deletes the cluster directory for "Reset Database". Postgres must already be stopped: while a
+    /// postmaster still runs from it, nothing is deleted. The Keychain password stays, so the next
+    /// `start()` initializes a new cluster with the same credential.
+    func deleteClusterForReset() async throws {
+        // Paths.pgDataDir is the developer's live cluster; unit tests must never delete it.
         guard !isRunningInTestEnvironment else { return }
-        if status == .running || status == .needsMigration {
-            let runner = try commandRunner()
-            try await dropDatabase(runner: runner)
-            try await createDatabase(runner: runner)
-            appendLog(LogLine(stream: .stdout, text: "reset database \(databaseName)", source: "postgres"))
-            let pending = (try? await fetchPendingMigrations()) ?? []
-            self.pendingMigrations = pending
-            if !pending.isEmpty {
-                status = .needsMigration
-            } else {
-                status = .running
-            }
-        } else {
-            runner.terminate()
-            for _ in 0..<20 where runner.isRunning {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-            if FileManager.default.fileExists(atPath: Paths.pgDataDir.path) {
-                try FileManager.default.removeItem(at: Paths.pgDataDir)
-            }
-            status = .stopped
-            try await start()
-            appendLog(LogLine(stream: .stdout, text: "re-initialized and reset database cluster \(databaseName)", source: "postgres"))
+        let pgdata = Paths.pgDataDir
+        if let pid = GarageDataMigration.runningPostmaster(in: pgdata) {
+            throw PostgresError.other("Postgres (pid \(pid)) is still running from \(pgdata.path); nothing was deleted.")
         }
+        if FileManager.default.fileExists(atPath: pgdata.path) {
+            // Off the main actor: a large cluster is many thousands of files.
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.removeItem(at: pgdata)
+            }.value
+        }
+        pendingMigrations = []
+        status = .stopped
+        appendLog(LogLine(stream: .stdout, text: "deleted database cluster \(pgdata.path) for a reset", source: "postgres"))
     }
 
     /// Writes a portable PostgreSQL custom-format dump of the app's database.

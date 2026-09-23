@@ -1,4 +1,5 @@
 import XCTest
+import PythonXPCService
 import SwiftUI
 import IngestClient
 import ModelDownloadClient
@@ -169,14 +170,37 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testResetDatabaseUpdatesState() async {
+    func testResetDatabaseStopsServicesButNeitherDeletesNorRelaunchesInTests() async {
         let state = AppState()
         XCTAssertEqual(state.postgres.status, .stopped)
-        await state.resetDatabase()
-        // PostgresService.resetDatabase() is a no-op under XCTest, so the stopped cluster stays untouched.
+        await state.resetDatabaseAndRelaunch()
+        // Under XCTest the cluster is never deleted and the test host never relaunched.
         XCTAssertEqual(state.postgres.status, .stopped)
-        XCTAssertEqual(state.lastCommandSucceeded, true)
+        XCTAssertFalse(state.isResettingDatabase)
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
+    }
+
+    func testDatabaseResetParentIsReadFromTheLaunchArguments() {
+        XCTAssertEqual(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "4242"]), 4242)
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp"]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "zero"]))
+        XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "0"]))
+    }
+
+    func testWaitForExitReturnsAtOnceForAProcessThatIsGone() async {
+        let started = Date()
+        // Above macOS's pid ceiling, so no such process.
+        await AppState.waitForExit(of: 999_999, timeout: 5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
+    func testWaitForExitGivesUpAtTheTimeout() async {
+        let started = Date()
+        await AppState.waitForExit(of: getpid(), timeout: 0.3)
+        let waited = Date().timeIntervalSince(started)
+        XCTAssertGreaterThanOrEqual(waited, 0.3)
+        XCTAssertLessThan(waited, 2)
     }
 
     @MainActor

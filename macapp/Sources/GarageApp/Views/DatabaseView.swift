@@ -179,7 +179,14 @@ struct DatabaseView: View {
                                 .disabled(!isPostgresActive)
                             Button("Reset Database…") { showResetConfirmation = true }
                                 .tint(.red)
-                                .disabled(appState.postgres.status == .starting || appState.postgres.status == .stopping)
+                                .disabled(
+                                    appState.isResettingDatabase
+                                        || appState.postgres.status == .starting
+                                        || appState.postgres.status == .stopping
+                                )
+                            if appState.isResettingDatabase {
+                                ProgressView().controlSize(.small)
+                            }
                         }
                     }
                     .padding(8)
@@ -193,15 +200,9 @@ struct DatabaseView: View {
         .onAppear {
             appState.checkPendingMigrations()
         }
-        .alert("Reset Garage database?", isPresented: $showResetConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset Database", role: .destructive) {
-                Task {
-                    await appState.resetDatabase()
-                }
-            }
-        } message: {
-            Text("This permanently deletes all Garage schemas, sources, and indexed data. The Postgres cluster and its Keychain password are kept.")
+        .sheet(isPresented: $showResetConfirmation) {
+            DatabaseResetSheet()
+                .environmentObject(appState)
         }
     }
 

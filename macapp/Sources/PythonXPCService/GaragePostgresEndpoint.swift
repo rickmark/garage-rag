@@ -87,4 +87,8 @@ public enum GaragePostgresEndpoint {
 public enum GarageAppLaunch {
     /// Start the services and stay in the menu bar without opening the main window.
     public static let backgroundArgument = "--background"
+
+    /// `--after-database-reset <pid>`: the app instance `pid` deleted the database and launched this
+    /// one to create a new one. This instance starts nothing until `pid` has quit.
+    public static let databaseResetArgument = "--after-database-reset"
 }

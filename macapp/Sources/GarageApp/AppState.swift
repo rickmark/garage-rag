@@ -1,8 +1,10 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Combine
 import OSLog
 import IngestClient
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "AppState")
 
@@ -68,6 +70,8 @@ final class AppState: ObservableObject {
     }
 
     private var commandInProgress = false
+    /// True from the moment "Reset Database" starts stopping services until this instance quits.
+    @Published private(set) var isResettingDatabase = false
     private var hasLaunched = false
     private var hasTerminated = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
@@ -137,6 +141,44 @@ final class AppState: ObservableObject {
     func launch() {
         guard !hasLaunched else { return }
         hasLaunched = true
+        let arguments = CommandLine.arguments
+        guard arguments.contains(GarageAppLaunch.databaseResetArgument) else {
+            launchServices(startsPostgres: autoStartPostgres)
+            return
+        }
+        lastCommandOutput = "Creating a new database…"
+        Task {
+            // The instance that deleted the database quits right after launching this one, and its
+            // quit path stops Postgres by pid file and XPC services by executable name. Start
+            // nothing of our own until it is gone.
+            if let parent = Self.databaseResetParent(in: arguments) {
+                await Self.waitForExit(of: parent, timeout: 30)
+            }
+            launchServices(startsPostgres: false)
+            await startPostgres()
+            await finishDatabaseReset()
+        }
+    }
+
+    /// The pid after `--after-database-reset`, when this instance was launched by a reset.
+    nonisolated static func databaseResetParent(in arguments: [String]) -> pid_t? {
+        guard let flag = arguments.firstIndex(of: GarageAppLaunch.databaseResetArgument),
+              flag + 1 < arguments.count,
+              let pid = pid_t(arguments[flag + 1]), pid > 0 else {
+            return nil
+        }
+        return pid
+    }
+
+    /// Returns once `pid` has exited, or after `timeout` seconds.
+    nonisolated static func waitForExit(of pid: pid_t, timeout: TimeInterval) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline, kill(pid, 0) == 0 || errno == EPERM {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+    }
+
+    private func launchServices(startsPostgres: Bool) {
         // Before anything reads the data folder's contents or starts Postgres / an XPC service.
         GarageDataMigration.runAtLaunch()
         fetchPresetModels()
@@ -149,7 +191,7 @@ final class AppState: ObservableObject {
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
-        guard autoStartPostgres else { return }
+        guard startsPostgres else { return }
         Task { await startPostgres() }
     }
 
@@ -309,27 +351,94 @@ final class AppState: ObservableObject {
         xpcServices.terminateAll()
     }
 
-    func resetDatabase() async {
+    /// "Reset Database": stops every service, deletes the Postgres cluster, and relaunches the app,
+    /// which creates a new, empty database (`finishDatabaseReset`). Only what Garage built goes: the
+    /// sources' own files, downloaded model files, logs, garage.json and the Keychain password stay.
+    func resetDatabaseAndRelaunch() async {
+        guard !isResettingDatabase else { return }
+        isResettingDatabase = true
+        lastCommandOutput = "Stopping Garage's services…"
+
+        scheduledMaintenanceTask?.cancel()
+        scheduledMaintenanceTask = nil
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = nil
+        garage.cancel()
+        backfill.cancel()
+        enrichFacts.cancel()
+        await mcp.stop()
+        await grpc.stop()
+        await postgres.stop()
+        // Anything still holding pgdata: an orphaned postmaster from an earlier run.
+        await PostgresService.stopAnyRunningInstance()
+        xpcServices.terminateAll()
+
         do {
-            try await postgres.resetDatabase()
-            if postgres.status == .running || postgres.status == .needsMigration {
-                try await postgres.applyMigrations()
-                if postgres.status == .running {
-                    // Re-register the sources garage.json declares; this runs over gRPC, so the
-                    // service comes up first.
-                    try? await grpc.start()
-                    await runOperation { try await $0.syncSources().message }
-                    try? await mcp.start()
+            try await postgres.deleteClusterForReset()
+        } catch {
+            isResettingDatabase = false
+            lastCommandSucceeded = false
+            lastCommandOutput = "Reset stopped: \(error.localizedDescription) Restarting the services."
+            xpcServices.startStreamingAllServices()
+            configureScheduledMaintenance()
+            await startPostgres()
+            return
+        }
+        // Never relaunch the test host.
+        guard !isRunningInTestEnvironment else {
+            isResettingDatabase = false
+            return
+        }
+        lastCommandOutput = "Database deleted. Relaunching Garage to create a new one…"
+        relaunchAfterDatabaseReset()
+    }
+
+    private func relaunchAfterDatabaseReset() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = [GarageAppLaunch.databaseResetArgument, String(getpid())]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            let failure = error?.localizedDescription
+            Task { @MainActor in
+                guard let failure else {
+                    NSApp.terminate(nil)
+                    return
                 }
-                await fetchRegisteredModels()
-                await fetchRegisteredSources()
-                await fetchCorpusStats()
+                // No second instance: create the new database in this one instead.
+                logger.error("Relaunch after reset failed: \(failure, privacy: .public)")
+                self.isResettingDatabase = false
+                await self.startPostgres()
+                await self.finishDatabaseReset()
             }
-            lastCommandSucceeded = true
-            lastCommandOutput = "Database reset successfully."
+        }
+    }
+
+    /// Second half of a reset, once Postgres has initialized a new cluster: apply the schema,
+    /// start the gRPC and MCP services, and register the sources garage.json declares again.
+    func finishDatabaseReset() async {
+        do {
+            if postgres.status == .needsMigration {
+                try await postgres.applyMigrations()
+            }
+            guard postgres.status == .running else {
+                throw PostgresError.other("Postgres did not start with the new database; see the Database page.")
+            }
+            try? await grpc.start()
+            try? await mcp.start()
+            let synced = await runOperation { try await $0.syncSources().message }
+            await fetchRegisteredModels()
+            await fetchRegisteredSources()
+            await fetchCorpusStats()
+            lastCommandSucceeded = synced
+            lastCommandOutput = synced
+                ? "Database reset: a new, empty database was created and the sources in garage.json were "
+                    + "registered again. Register your embedding models on the Models page, then run ingest to "
+                    + "rebuild the index."
+                : "Database reset: a new database was created, but registering the sources from garage.json "
+                    + "failed: \(lastCommandOutput)"
         } catch {
             lastCommandSucceeded = false
-            lastCommandOutput = "Failed to reset database: \(error.localizedDescription)"
+            lastCommandOutput = "Database reset: the new database could not be set up: \(error.localizedDescription)"
         }
     }
 

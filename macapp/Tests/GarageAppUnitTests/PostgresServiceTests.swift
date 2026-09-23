@@ -118,11 +118,11 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testResetDatabaseWhenStoppedIsNoOpInTests() async throws {
-        // resetDatabase() re-initializes the live pgdata directory when stopped; under XCTest it must not touch it.
+    func testDeleteClusterForResetIsANoOpInTests() async throws {
+        // deleteClusterForReset() removes the live pgdata directory; under XCTest it must not touch it.
         let service = PostgresService()
         XCTAssertEqual(service.status, .stopped)
-        try await service.resetDatabase()
+        try await service.deleteClusterForReset()
         XCTAssertEqual(service.status, .stopped)
         XCTAssertTrue(service.pendingMigrations.isEmpty)
     }
