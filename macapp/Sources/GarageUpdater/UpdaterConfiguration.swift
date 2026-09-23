@@ -14,7 +14,7 @@ public enum UpdaterInfoPlistKey {
 /// A build still carrying the placeholder can't verify anything it downloads —
 /// the updater reports itself unconfigured rather than checking the feed and
 /// then failing on the signature.
-public let updaterPublicKeyPlaceholder = "9uPTXe1BBLOmWFkrBm0fPMn9Y16BR57aI3ulI/GhNXg="
+public let updaterPublicKeyPlaceholder = "REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY"
 
 /// The appcast feed and the public key its entries are signed with.
 public struct UpdaterConfiguration: Equatable, Sendable {
