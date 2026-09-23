@@ -1108,6 +1108,73 @@ the request.
   `OllamaLanguageModel` on `/api/generate`. Section 4(b) shows `LlamaXPCLanguageModel` on Ollama's
   `/v1` does the same job, faster.
 
+## 6. Addendum: LM Studio's native REST v1 (model management)
+
+Same LM Studio 0.4.25+1, 20:40–20:50 UTC. Token auth is **off** on this install (see 6.4). Nothing
+was downloaded. The two models loaded here were already on disk, and both were unloaded again: the
+final `GET /api/v1/models` shows no loaded instances.
+
+Note: `~/GarageTest/` (the probe scripts, their `*.out` files, and the 898c0e6 test app) was deleted
+by someone else during this addendum. The last check (6.2's `context_length` re-run) was run from
+this session's scratch directory instead. The results above were recorded before that.
+
+**6.1 `GET /api/v1/models`: HTTP 200**, `{"models": [...]}`, one item per downloaded model:
+```
+{"type","publisher","key","display_name","architecture","quantization":{"name","bits_per_weight"},
+ "size_bytes","params_string","loaded_instances":[{"id","config":{...}}],"max_context_length",
+ "format","capabilities":{"vision","trained_for_tool_use","reasoning"},"description","variants",
+ "selected_variant"}
+```
+- It gives what `/v1/models` doesn't: the **type** (`"llm"` or `"embedding"`), **what is loaded**
+  (`loaded_instances`, each with its `id` and live `config`, plus `remaining_ttl_seconds` for a JIT
+  load), and **`max_context_length`**.
+- Example: `{"key":"text-embedding-nomic-embed-text-v1.5","type":"embedding","max_context_length":2048,"format":"gguf","quantization":{"name":"Q4_K_M","bits_per_weight":4}}`.
+
+**6.2 `POST /api/v1/models/load` with `echo_load_config: true`: HTTP 200.** The shape matches the
+owner's description:
+
+| Model | Reply | Time |
+|---|---|---|
+| `text-embedding-nomic-embed-text-v1.5` | `{"type":"embedding","instance_id":"text-embedding-nomic-embed-text-v1.5","load_time_seconds":0.231,"status":"loaded","load_config":{"context_length":2048}}` | 0.2 s |
+| `google/gemma-3-4b` (MLX), `context_length: 8192` | `{"type":"llm","instance_id":"google/gemma-3-4b","load_time_seconds":7.248,"status":"loaded","load_config":{"context_length":131072,"parallel":4,"reasoning_budget_message":""}}` | 7.3 s |
+| `google/gemma-3-4b`, again with `context_length: 16384` | same, `load_config.context_length` **131072** (also in `loaded_instances[].config` while loaded) | 5.7 s |
+
+- **`context_length` was not applied to this MLX model.** It loaded at its 131072 maximum both
+  times, with no error.
+- Whether GGUF LLMs honour it is untested: the only GGUF LLMs here are the 17B–70B ones.
+- The GGUF embedding model loaded at its own 2048 maximum.
+- A client should read `load_config` back rather than assume the request was honoured.
+
+**6.3 `POST /api/v1/models/unload` with `{"instance_id": …}`: HTTP 200, `{"instance_id": "<id>"}`**,
+exactly the documented shape. 0.0 s for the embedding model and 0.6 s for gemma. An unknown instance
+gets a proper **HTTP 404** `{"error":{"type":"model_not_found","message":"Model with instance identifier 'no-such-instance' is not loaded."}}`,
+unlike the OpenAI-compatible side's HTTP 200 for unknown routes (section 1). The `instance_id`
+returned by load equals the model key here.
+
+**6.4 Auth: not testable with auth on without changing LM Studio's settings, so not done.** With
+token auth **off** (this install), `GET /api/v1/models` returned HTTP 200 with no token, **and HTTP
+200 with a wrong bearer token**. The server doesn't validate a token it isn't configured to require.
+So sending the token is harmless when auth is off. What an unauthenticated call returns with auth on
+still needs checking, by someone who switches auth on.
+
+**6.5 JIT on the OpenAI-compatible routes: yes, both load on demand.** With nothing loaded:
+- `POST /v1/embeddings` for `text-embedding-nomic-embed-text-v1.5` → HTTP 200, 768 dims, 0.2 s.
+  The embedding model did not show in `loaded_instances` afterwards.
+- `POST /v1/chat/completions` for `google/gemma-3-4b` → HTTP 200, `"OK."`, 6.1 s. gemma then showed
+  as loaded with `remaining_ttl_seconds: 3600`.
+
+So a client doesn't have to call `models/load` first. It would call it to choose load settings, or to
+load ahead of time so the first request isn't slow.
+
+**A minimal HTTP client can cover LM Studio's model management: yes, as far as tested.** Three JSON
+routes do it, with the same base URL and optional bearer token as `/v1`, and no websockets or
+`lmstudio` SDK:
+- `GET /api/v1/models`: list, type, loaded state, maximum context;
+- `POST /api/v1/models/load`;
+- `POST /api/v1/models/unload`.
+
+Caveats: `context_length` may be ignored (6.2), and the auth-on behaviour is unverified (6.4).
+
 ## Verdicts
 
 **(i) One `/v1` client for LM Studio, Ollama and `llama_xpc` embeddings with identical vectors: yes
