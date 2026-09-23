@@ -101,10 +101,13 @@ local model named by `facts.model` on `facts.provider` (default: the app's
 `gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` is the other
 option, and `--model`/`--provider` override both) with a deliberately generic prompt —
 the module has no notion of what kind of document it is given — and asks for
-every standalone claim in the document's own wording. `model_id`/`model_url`
-are always passed explicitly because `lx.extract` otherwise defaults to a cloud
-Gemini model; like the rest of local inference, content never leaves the
-machine.
+every standalone claim in the document's own wording. Only the local part of
+LangExtract is used, vendored as `enrich/langextract` (prompting, chunking,
+parsing and alignment); the model is always one of two local providers,
+`enrich/ollama_provider.py` or `enrich/llama_xpc_provider.py`. Upstream's
+provider registry, which routes `gemini*`/`gpt-*` model ids to Google and
+OpenAI, is not vendored, and a cloud model id is refused with an error. Like the
+rest of local inference, content never leaves the machine.
 
 Each fact lands in `facts` grounded to the exact span of `documents.content`
 it came from; a fact the extractor cannot locate is dropped rather than stored.

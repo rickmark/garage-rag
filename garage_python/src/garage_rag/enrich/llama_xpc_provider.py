@@ -3,10 +3,9 @@
 `LlamaXPCClient` (`garage_rag.xpc.llama_xpc`) is an HTTP client of the
 llama-server-compatible API the app's LlamaXPCService serves on loopback
 (`settings.llama_host`), so this provider posts each prompt to its
-`/v1/chat/completions` route rather than to a caller-supplied `base_url`
-like LangExtract's built-in Ollama/OpenAI providers do. Everything else
-(prompting, few-shot examples, JSON parsing, grounding) is still
-LangExtract's; only the transport is swapped. The client refuses any
+`/v1/chat/completions` route. Everything else (prompting, few-shot examples,
+JSON parsing, grounding) is the vendored LangExtract's
+(`garage_rag.enrich.langextract`); only the transport is ours. The client refuses any
 non-loopback host, so content handed to it never leaves the machine.
 """
 
@@ -16,9 +15,8 @@ import dataclasses
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from langextract.core import base_model, schema
-from langextract.core import types as core_types
-
+from garage_rag.enrich.langextract import base_model, schema
+from garage_rag.enrich.langextract import types as core_types
 from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError
 
 

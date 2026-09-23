@@ -1,20 +1,20 @@
 """Fact extraction: distills a document into a list of atomic facts.
 
-Uses LangExtract (https://github.com/google/langextract) against the local
-Ollama server -- the same server ``garage_rag.embed.ollama`` already talks
-to -- so, like the rest of local inference in this project, document content
-never leaves the machine.
+Uses LangExtract (https://github.com/google/langextract) against a local model
+-- the Ollama server ``garage_rag.embed.ollama`` already talks to, or the app's
+LlamaXPCService -- so, like the rest of local inference in this project,
+document content never leaves the machine.
 
-That only holds because the provider is pinned. When ``lx.extract`` is given a
-bare ``model_id`` it picks the backend by *regex on the model name*: anything
-matching ``gemini*`` goes to Google's API, ``gpt-*``/``o1*`` to OpenAI, each
-reading an API key from the environment. So ``--model gemini-2.5-flash`` would
-have posted document text -- communications included -- to a cloud API with
-no egress check in between. This module therefore never passes ``model_id``
-to ``lx.extract``; it builds an explicit ``ModelConfig`` naming
-``OllamaLanguageModel`` (see :func:`ollama_model_config`), so the model name
-is only ever interpreted by the local Ollama server. ``test_egress_block``
-asserts this structurally.
+Only the part of LangExtract that runs prompts through a caller-built model is
+used, vendored as :mod:`garage_rag.enrich.langextract`. Upstream's
+``lx.extract(model_id=...)`` chose a backend by regex on the model name, sending
+``gemini*`` to Google's API and ``gpt-*``/``o1*`` to OpenAI; that routing and
+those backends are not vendored, so there is no code path to a cloud model. The
+backend here is always one of the two local providers
+(:mod:`garage_rag.enrich.ollama_provider`,
+:mod:`garage_rag.enrich.llama_xpc_provider`), and a model id that names a cloud
+model is refused outright (:func:`refuse_cloud_model_id`) rather than passed to
+a local server that could never serve it.
 
 The Ollama host itself is configurable (``ollama_host``). It is assumed to be
 loopback; when it is not, :func:`extract_and_store_facts` runs the document's
@@ -37,16 +37,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import textwrap
 
-import langextract as lx
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
 from garage_rag.db.models import Chunk, Document, Fact
+from garage_rag.enrich import langextract as lx
 from garage_rag.enrich.egress import assert_egress_allowed
+from garage_rag.enrich.langextract.base_model import BaseLanguageModel
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
+from garage_rag.enrich.ollama_provider import OllamaLanguageModel
 from garage_rag.xpc.llama_xpc import is_loopback_url
 
 log = logging.getLogger(__name__)
@@ -77,9 +80,33 @@ def configured_backend(model_id: str | None = None, provider: str | None = None)
     return model_id or settings.fact_model, provider or settings.fact_provider
 
 
-# LangExtract's registered class name for its Ollama backend. Passing it as an
-# explicit ``provider`` bypasses model-id pattern matching entirely.
-OLLAMA_PROVIDER = "OllamaLanguageModel"
+# Model ids upstream LangExtract routed to a cloud API (its Gemini and OpenAI
+# provider patterns), plus Anthropic's. ``gpt-oss`` is an open-weights model
+# served by Ollama and does not match.
+CLOUD_MODEL_PATTERNS = (
+    r"^gemini",
+    r"^gpt-3\.5",
+    r"^gpt-4",
+    r"^gpt4\.",
+    r"^gpt-5",
+    r"^gpt5\.",
+    r"^o[1-9]",
+    r"^claude",
+)
+
+
+def refuse_cloud_model_id(model_id: str) -> None:
+    """Raise ``ValueError`` if ``model_id`` names a cloud-hosted model.
+
+    Fact distillation only runs on local models, so such an id is a
+    configuration mistake; failing with a clear message beats a model-not-found
+    error from the local server.
+    """
+    if any(re.match(pattern, model_id, re.IGNORECASE) for pattern in CLOUD_MODEL_PATTERNS):
+        raise ValueError(
+            f"{model_id!r} names a cloud-hosted model; fact distillation runs only on local models "
+            f"(facts.provider {' or '.join(FACT_DISTIL_PROVIDERS)})"
+        )
 
 
 PROMPT = textwrap.dedent("""\
@@ -121,20 +148,6 @@ def resolve_model_url(model_url: str | None = None) -> str:
     return model_url or get_settings().ollama_host
 
 
-def ollama_model_config(model_id: str, model_url: str) -> lx.factory.ModelConfig:
-    """Build the LangExtract config that pins inference to the local Ollama server.
-
-    ``provider`` is the load-bearing field: with it set, LangExtract resolves
-    the backend by name and never consults its model-id regexes, so a
-    cloud-looking ``model_id`` is just a string Ollama will fail to find.
-    """
-    return lx.factory.ModelConfig(
-        model_id=model_id,
-        provider=OLLAMA_PROVIDER,
-        provider_kwargs={"model_url": model_url, "format_type": lx.data.FormatType.JSON},
-    )
-
-
 def extract_facts(
     text: str,
     *,
@@ -149,38 +162,21 @@ def extract_facts(
     out here rather than stored, since such a fact cannot be traced back to
     the source text.
 
-    ``provider`` selects the inference backend: "ollama" (default) talks to a
-    local Ollama server via LangExtract's built-in provider, pinned explicitly
-    (see the module docstring); "llama_xpc" runs the prompt through
-    ``LlamaXPCLanguageModel``, which posts to the app's LlamaXPCService on
-    loopback. Neither path ever hands ``lx.extract`` a bare ``model_id``.
-
-    ``use_schema_constraints`` is off because both backends already emit JSON
-    (that is all the example-derived constraint would set for them), and
-    leaving it on makes LangExtract warn on every call that the constraint is
-    ignored/redundant when ``model``/``config`` is given.
+    ``provider`` selects the inference backend: "ollama" (default) posts to a
+    local Ollama server through :class:`OllamaLanguageModel`; "llama_xpc" runs
+    the prompt through :class:`LlamaXPCLanguageModel`, which posts to the app's
+    LlamaXPCService on loopback. Both emit JSON. A cloud model id is refused
+    (:func:`refuse_cloud_model_id`).
     """
     if provider not in FACT_DISTIL_PROVIDERS:
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
+    refuse_cloud_model_id(model_id)
 
     if provider == "llama_xpc":
-        result = lx.extract(
-            text_or_documents=text,
-            prompt_description=PROMPT,
-            examples=EXAMPLES,
-            model=LlamaXPCLanguageModel(model_id=model_id),
-            use_schema_constraints=False,
-            show_progress=False,
-        )
+        model: BaseLanguageModel = LlamaXPCLanguageModel(model_id=model_id)
     else:
-        result = lx.extract(
-            text_or_documents=text,
-            prompt_description=PROMPT,
-            examples=EXAMPLES,
-            config=ollama_model_config(model_id, resolve_model_url(model_url)),
-            use_schema_constraints=False,
-            show_progress=False,
-        )
+        model = OllamaLanguageModel(model_id=model_id, model_url=resolve_model_url(model_url))
+    result = lx.extract(text_or_documents=text, prompt_description=PROMPT, examples=EXAMPLES, model=model)
     return [e for e in result.extractions if e.char_interval is not None]
 
 

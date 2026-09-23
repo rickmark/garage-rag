@@ -79,7 +79,7 @@ py_test(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
-        "@pypi//langextract",
+        "//garage_python/src/garage_rag/enrich/langextract",
         "@pypi//pytest",
     ],
 )

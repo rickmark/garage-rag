@@ -1,15 +1,10 @@
 manifest:
   modules_mapping:
     PIL: pillow
-    absl: absl_py
-    aiohappyeyeballs: aiohappyeyeballs
-    aiohttp: aiohttp
-    aiosignal: aiosignal
     annotated_doc: annotated_doc
     annotated_types: annotated_types
     anthropic: anthropic
     anyio: anyio
-    async_timeout: async_timeout
     attr: attrs
     attrs: attrs
     certifi: certifi
@@ -17,37 +12,11 @@ manifest:
     charset_normalizer: charset_normalizer
     click: click
     cryptography: cryptography
-    dateutil: python_dateutil
-    distro: distro
     docstring_parser: docstring_parser
     docx: python_docx
     dotenv: python_dotenv
     et_xmlfile: et_xmlfile
-    exceptiongroup: exceptiongroup
-    frozenlist: frozenlist
-    google.api: googleapis_common_protos
-    google.api_core: google_api_core
-    google.auth: google_auth
-    google.cloud.client: google_cloud_core
-    google.cloud.common_resources_pb2: googleapis_common_protos
-    google.cloud.environment_vars: google_cloud_core
-    google.cloud.exceptions: google_cloud_core
-    google.cloud.extended_operations_pb2: googleapis_common_protos
-    google.cloud.location: googleapis_common_protos
-    google.cloud.obsolete: google_cloud_core
-    google.cloud.operation: google_cloud_core
-    google.cloud.storage: google_cloud_storage
-    google.cloud.version: google_cloud_core
-    google.gapic: googleapis_common_protos
-    google.genai: google_genai
-    google.logging: googleapis_common_protos
-    google.longrunning: googleapis_common_protos
-    google.oauth2: google_auth
     google.protobuf: protobuf
-    google.resumable_media: google_resumable_media
-    google.rpc: googleapis_common_protos
-    google.type: googleapis_common_protos
-    google_crc32c: google_crc32c
     grpc: grpcio
     h11: h11
     httpcore: httpcore
@@ -60,36 +29,26 @@ manifest:
     jsonschema: jsonschema
     jsonschema_specifications: jsonschema_specifications
     jwt: pyjwt
-    langextract: langextract
     lxml: lxml
     markdown_it: markdown_it_py
     mcp: mcp
     mcp_types: mcp_types
     mdurl: mdurl
-    ml_collections: ml_collections
-    more_itertools: more_itertools
-    multidict: multidict
     multipart: python_multipart
-    numpy: numpy
     ollama: ollama
     openai: openai
     openpyxl: openpyxl
     opentelemetry: opentelemetry_api
     packaging: packaging
-    pandas: pandas
     pdfminer: pdfminer_six
     pdfminer_six_20260107: pdfminer_six
     pdfplumber: pdfplumber
     pgvector: pgvector
     pluggy: pluggy
     pptx: python_pptx
-    propcache: propcache
-    proto: proto_plus
     psycopg: psycopg
     psycopg_pool: psycopg_pool
     py: pytest
-    pyasn1: pyasn1
-    pyasn1_modules: pyasn1_modules
     pycparser: pycparser
     pydantic: pydantic
     pydantic_core: pydantic_core
@@ -104,27 +63,20 @@ manifest:
     python_multipart: python_multipart
     referencing: referencing
     regex: regex
-    requests: requests
     rich: rich
     rpds: rpds_py
     shellingham: shellingham
-    six: six
     sniffio: sniffio
     sqlalchemy: sqlalchemy
     sse_starlette: sse_starlette
     starlette: starlette
-    tenacity: tenacity
-    tqdm: tqdm
     truststore: truststore
     typer: typer
     typing_extensions: typing_extensions
     typing_inspection: typing_inspection
-    urllib3: urllib3
     uvicorn: uvicorn
-    websockets: websockets
     xlsxwriter: xlsxwriter
     xlsxwriter_3: xlsxwriter
     yaml: pyyaml
-    yarl: yarl
   pip_repository:
     name: pypi

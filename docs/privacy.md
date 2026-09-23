@@ -71,12 +71,13 @@ which is assumed to be this machine:
   or `llama_host` (default `http://127.0.0.1:8790`, the llama.cpp API served by
   the app's own `LlamaXPCService`), depending on the registered model's provider.
 - **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
-  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. The LangExtract
-  provider is **pinned to Ollama** by an explicit
-  `ModelConfig(provider="OllamaLanguageModel")`; without that pin LangExtract
-  chooses its backend by regex on the model name, and a `gemini-*` or `gpt-*`
-  model id would have been sent to Google or OpenAI with an API key from the
-  environment. `test_egress_block.py` asserts the pin structurally.
+  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. Only the local
+  part of LangExtract is shipped, vendored as `enrich/langextract`: upstream
+  chooses its backend by regex on the model name and would send a `gemini-*` or
+  `gpt-*` model id to Google or OpenAI, but that routing and those backends are
+  not vendored, and `enrich/facts.py` refuses a cloud model id outright.
+  `test_egress_block.py` asserts that no module imports upstream `langextract`
+  and that every extraction runs on one of the two local providers.
 
 - **Answers** (`rag_ask` / `rag_generate` MCP tools, `garage ask`) — retrieved
   excerpts and the question go to the model named by `facts.model` on

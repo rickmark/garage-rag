@@ -18,9 +18,9 @@ dependencies = [
     # document extraction (all permissive licenses; PyMuPDF avoided due to AGPL)
     "pypdf>=6.16",
     "pdfplumber>=0.11.10",
-    # Not imported directly: pulled in transitively by pdfminer-six (pdfplumber)
-    # and google-auth (langextract). Pinned without recorded reason since the
-    # initial import; keep the ceiling until someone verifies 44+ against both.
+    # Not imported directly: pulled in transitively by pdfminer-six (pdfplumber).
+    # Pinned without recorded reason since the initial import; keep the ceiling
+    # until someone verifies 44+ against it.
     "cryptography<44.0.0",
     "python-docx>=1.2",
     "python-pptx>=1.0.2",
@@ -28,8 +28,10 @@ dependencies = [
     # OCR
     "pytesseract>=0.3.13",
     "pillow>=11.0",
-    # fact extraction from documents (https://github.com/google/langextract)
-    "langextract>=1.7.0",
+    # fact extraction: the vendored LangExtract subset (garage_rag/enrich/langextract)
+    # needs regex for its tokenizer; the Ollama provider posts with httpx.
+    "regex>=2023.0.0",
+    "httpx>=0.27",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
     "mcp[cli]==2.1.0",
     # HTTP transport for garage-mcp (mcp_server/server.py imports it directly)
@@ -77,7 +79,8 @@ environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+# Vendored third-party code keeps its upstream style (see its __init__ docstring).
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi", "src/garage_rag/enrich/langextract"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -93,7 +96,7 @@ filterwarnings = ["error::DeprecationWarning"]
 # Generated protobuf stubs are excluded from type checking, as they are from Ruff
 # above. `exclude` lives under `src` for ty; a top-level `[tool.ty] exclude` is a
 # hard config error that makes ty exit non-zero before it checks anything.
-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi", "src/garage_rag/enrich/langextract"]
 
 [tool.ty.rules]
 unresolved-import = "ignore"

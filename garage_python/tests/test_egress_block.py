@@ -22,7 +22,7 @@ from garage_rag.enrich.egress import (
 SRC = Path(__file__).resolve().parent.parent / "src" / "garage_rag"
 # The only module permitted to touch the Anthropic SDK.
 EGRESS_MODULE = SRC / "enrich" / "egress.py"
-# The one module that hands document text to LangExtract.
+# The one module that hands document text to (vendored) LangExtract.
 FACTS_MODULE = SRC / "enrich" / "facts.py"
 
 
@@ -105,64 +105,58 @@ class TestChokepoint:
 
 
 class TestFactExtractionStaysLocal:
-    """LangExtract picks a *cloud* backend by regex on ``model_id`` when no
-    provider is given (``gemini*`` -> Google, ``gpt-*`` -> OpenAI). The facts
-    module must therefore never call ``lx.extract`` with a bare ``model_id``;
-    every call names the backend explicitly, and the Ollama config is built
-    with the Ollama provider class.
+    """Upstream LangExtract picks a *cloud* backend by regex on ``model_id``
+    (``gemini*`` -> Google, ``gpt-*`` -> OpenAI). Only the local part is vendored
+    (``enrich/langextract``); these tests keep it that way: no module imports the
+    upstream package, the vendored copy has no provider routing, and every
+    extraction runs on a model built from one of the two local providers.
     """
 
+    LOCAL_MODELS = {"OllamaLanguageModel", "LlamaXPCLanguageModel"}
+
     @staticmethod
-    def _calls_to(tree: ast.AST, attr: str) -> list[ast.Call]:
-        return [
+    def _imports_upstream_langextract(path: Path) -> bool:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "langextract" for a in node.names):
+                return True
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and (node.module or "").split(".")[0] == "langextract"
+            ):
+                return True
+        return False
+
+    def test_no_module_imports_upstream_langextract(self) -> None:
+        offenders = [p.relative_to(SRC).as_posix() for p in SRC.rglob("*.py") if self._imports_upstream_langextract(p)]
+        assert not offenders, f"import garage_rag.enrich.langextract, not upstream langextract: {offenders}"
+
+    def test_vendored_langextract_has_no_provider_routing(self) -> None:
+        vendored = SRC / "enrich" / "langextract"
+        names = {p.stem for p in vendored.rglob("*.py")}
+        assert not names & {"factory", "providers", "router", "gemini", "openai", "io"}
+        source = "\n".join(p.read_text(encoding="utf-8") for p in vendored.rglob("*.py"))
+        assert "model_id" not in source.split("def extract(")[1].split(")")[0]
+
+    def test_every_extract_call_is_given_a_local_model(self) -> None:
+        tree = ast.parse(FACTS_MODULE.read_text(encoding="utf-8"), filename=str(FACTS_MODULE))
+        calls = [
             node
             for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == attr
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "extract"
         ]
-
-    @staticmethod
-    def _keywords(call: ast.Call) -> dict[str, ast.expr]:
-        return {kw.arg: kw.value for kw in call.keywords if kw.arg is not None}
-
-    def test_every_lx_extract_call_names_its_backend(self) -> None:
-        tree = ast.parse(FACTS_MODULE.read_text(encoding="utf-8"), filename=str(FACTS_MODULE))
-        calls = self._calls_to(tree, "extract")
-        assert calls, "expected at least one lx.extract(...) call in enrich/facts.py"
+        assert calls, "expected an lx.extract(...) call in enrich/facts.py"
         for call in calls:
-            keywords = self._keywords(call)
-            assert "model_id" not in keywords and "model_url" not in keywords, (
-                f"line {call.lineno}: lx.extract must not be given a bare model_id -- "
-                "LangExtract would route cloud-looking model names to a cloud API"
-            )
-            assert "model" in keywords or "config" in keywords, (
-                f"line {call.lineno}: lx.extract must be given an explicit model= or config="
-            )
-            assert not any(kw.arg is None for kw in call.keywords), (
-                f"line {call.lineno}: **kwargs could smuggle a model_id past this check"
-            )
-
-    def test_model_config_pins_the_ollama_provider(self) -> None:
-        tree = ast.parse(FACTS_MODULE.read_text(encoding="utf-8"), filename=str(FACTS_MODULE))
-        configs = self._calls_to(tree, "ModelConfig")
-        assert configs, "expected lx.factory.ModelConfig(...) in enrich/facts.py"
-        for call in configs:
-            provider = self._keywords(call).get("provider")
-            assert provider is not None, f"line {call.lineno}: ModelConfig without an explicit provider"
-            # Either the literal, or the module constant that holds it.
-            if isinstance(provider, ast.Constant):
-                assert provider.value == "OllamaLanguageModel"
-            else:
-                assert isinstance(provider, ast.Name) and provider.id == "OLLAMA_PROVIDER"
-
-        constants = {
-            node.targets[0].id: node.value.value
+            keywords = {kw.arg for kw in call.keywords}
+            assert "model" in keywords, f"line {call.lineno}: lx.extract must be given model="
+            assert None not in keywords, f"line {call.lineno}: **kwargs could smuggle other options in"
+        constructed = {
+            node.func.id
             for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and isinstance(node.value, ast.Constant)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.endswith("LanguageModel")
         }
-        assert constants.get("OLLAMA_PROVIDER") == "OllamaLanguageModel"
+        assert constructed == self.LOCAL_MODELS
 
 
 class TestCommunicationSourcesStayLocal:

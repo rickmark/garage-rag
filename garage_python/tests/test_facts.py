@@ -1,25 +1,30 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import sys
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock
 
-import langextract as lx
 import pytest
 
 from garage_rag.config import Settings, reset_settings, set_settings
 from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
+from garage_rag.enrich import langextract as lx
 from garage_rag.enrich.egress import EgressBlocked
 from garage_rag.enrich.facts import (
     DEFAULT_MODEL_ID,
-    OLLAMA_PROVIDER,
     chunk_for_fact,
     extract_and_store_facts,
     extract_facts,
     facts_from_extractions,
     is_loopback_url,
-    ollama_model_config,
+    refuse_cloud_model_id,
 )
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
+from garage_rag.enrich.ollama_provider import OllamaLanguageModel
 
 
 def _extraction(text: str, *, start: int, end: int, attributes: dict | None = None) -> lx.data.Extraction:
@@ -45,58 +50,137 @@ def test_extract_facts_stays_local_and_drops_ungrounded(monkeypatch) -> None:
         return Result()
 
     monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
-    set_settings(Settings(ollama_host="http://ollama.example:11434"))
+    set_settings(Settings(ollama_host="http://127.0.0.1:11434"))
     try:
         extractions = extract_facts("Acme Corp was founded in 1998.")
     finally:
         reset_settings()
 
     assert extractions == [grounded]
-    # Never a bare model_id: LangExtract would pick the backend by regex on it.
-    assert "model_id" not in captured
-    assert "model_url" not in captured
-    config = captured["config"]
-    assert isinstance(config, lx.factory.ModelConfig)
-    assert config.provider == OLLAMA_PROVIDER == "OllamaLanguageModel"
-    assert config.model_id == DEFAULT_MODEL_ID
-    assert config.provider_kwargs["model_url"] == "http://ollama.example:11434"
+    model = captured["model"]
+    assert isinstance(model, OllamaLanguageModel)
+    assert model.model_id == DEFAULT_MODEL_ID
+    assert model.model_url == "http://127.0.0.1:11434"
     assert captured["prompt_description"]
     assert captured["examples"]
 
 
-def test_cloud_looking_model_id_still_pinned_to_ollama(monkeypatch) -> None:
-    """``--model gemini-2.5-flash`` must not become a Gemini API call."""
-    captured: dict = {}
+@pytest.mark.parametrize(
+    "model_id", ["gemini-2.5-flash", "Gemini-Pro", "gpt-4o", "gpt-5", "gpt-3.5-turbo", "o1-mini", "o3", "claude-x"]
+)
+@pytest.mark.parametrize("provider", ["ollama", "llama_xpc"])
+def test_cloud_model_id_is_refused(monkeypatch, model_id: str, provider: str) -> None:
+    """``--model gemini-2.5-flash`` is a clear error, never a request to anything."""
 
-    class Result:
-        extractions: list = []
+    def fail(**kwargs):
+        raise AssertionError("extract must not run for a cloud model id")
 
-    def fake_extract(**kwargs):
-        captured.update(kwargs)
-        return Result()
+    monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fail)
+    with pytest.raises(ValueError, match="cloud-hosted model"):
+        extract_facts("some text", model_id=model_id, provider=provider)
 
-    monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
-    set_settings(Settings())
+
+@pytest.mark.parametrize("model_id", [DEFAULT_MODEL_ID, "gemma2-2b", "gpt-oss:20b", "llama3.2:1b", "qwen2.5:7b"])
+def test_local_model_ids_are_accepted(model_id: str) -> None:
+    refuse_cloud_model_id(model_id)
+
+
+def test_upstream_langextract_is_never_imported() -> None:
+    """The vendored subset stands alone; upstream's package routes to Google and OpenAI."""
+    import garage_rag.enrich.facts  # noqa: F401
+
+    assert not [name for name in sys.modules if name == "langextract" or name.startswith("langextract.")]
+
+
+# ---- end to end, against fake local servers ---------------------------------
+
+_DOCUMENT = "Acme Corp was founded in 1998 by Jane Doe. The company is headquartered in Austin, Texas."
+_ANSWER = json.dumps(
+    {
+        "extractions": [
+            {"fact": "Acme Corp was founded in 1998 by Jane Doe."},
+            {"fact": "The company is headquartered in Austin, Texas."},
+            {"fact": "Something the document never says."},
+        ]
+    }
+)
+
+
+@pytest.fixture
+def local_model_server() -> Iterator[tuple[str, list[tuple[str, dict]]]]:
+    """A loopback server answering both Ollama's and llama-server's routes."""
+    requests: list[tuple[str, dict]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            requests.append((self.path, body))
+            if self.path == "/api/generate":
+                reply = {"response": _ANSWER, "done": True}
+            elif self.path == "/api/chat":
+                reply = {"message": {"role": "assistant", "content": _ANSWER}, "done": True}
+            else:
+                reply = {"choices": [{"message": {"role": "assistant", "content": _ANSWER}}]}
+            data = json.dumps(reply).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    set_settings(Settings(ollama_host=url, llama_host=url))
     try:
-        extract_facts("some text", model_id="gemini-2.5-flash")
+        yield url, requests
     finally:
         reset_settings()
-
-    assert captured["config"].provider == "OllamaLanguageModel"
-    assert captured["config"].model_id == "gemini-2.5-flash"
-    assert "model_id" not in captured
+        server.shutdown()
+        server.server_close()
 
 
-@pytest.mark.parametrize("model_id", ["gemini-2.5-flash", "gpt-4o", "o1-mini", DEFAULT_MODEL_ID])
-def test_langextract_resolves_pinned_config_to_ollama_provider(model_id: str) -> None:
-    """End to end through LangExtract's own factory, not just our kwargs."""
-    from langextract.providers.ollama import OllamaLanguageModel
+@pytest.mark.parametrize(
+    ("provider", "model_id", "route"),
+    [
+        ("ollama", DEFAULT_MODEL_ID, "/api/generate"),
+        ("ollama", "gpt-oss:20b", "/api/chat"),
+        ("llama_xpc", "gemma2-2b", "/v1/chat/completions"),
+    ],
+)
+def test_extract_facts_end_to_end(local_model_server, provider: str, model_id: str, route: str) -> None:
+    """A real run through the vendored LangExtract: prompt, parse, align, ground."""
+    _, requests = local_model_server
 
-    config = ollama_model_config(model_id, "http://127.0.0.1:11434")
-    model = lx.factory.create_model(config)
+    extractions = extract_facts(_DOCUMENT, model_id=model_id, provider=provider)
 
-    assert isinstance(model, OllamaLanguageModel)
-    assert model._model_url == "http://127.0.0.1:11434"
+    assert [(e.extraction_text, e.char_interval.start_pos, e.char_interval.end_pos) for e in extractions] == [
+        ("Acme Corp was founded in 1998 by Jane Doe.", 0, 42),
+        ("The company is headquartered in Austin, Texas.", 43, 89),
+    ]
+    assert [path for path, _ in requests] == [route]
+    body = requests[0][1]
+    assert body["model"] == model_id
+    prompt = body["prompt"] if route == "/api/generate" else body["messages"][-1]["content"]
+    assert prompt.startswith("Extract every standalone fact stated in this document.")
+    assert prompt.rstrip().endswith("A:") and _DOCUMENT in prompt
+    if provider == "ollama":
+        assert body["think"] is False
+        assert body["options"] == {"keep_alive": 300, "temperature": 0.1, "num_ctx": 2048}
+    if route == "/api/generate":
+        assert body["format"] == "json"
+
+
+def test_ollama_model_not_found_is_a_config_error() -> None:
+    client = MagicMock()
+    client.post.return_value = MagicMock(status_code=404)
+    model = OllamaLanguageModel("missing:1b", "http://127.0.0.1:11434", client=client)
+    with pytest.raises(lx.exceptions.InferenceConfigError, match="ollama run missing:1b"):
+        list(model.infer(["prompt"]))
 
 
 @pytest.mark.parametrize(
