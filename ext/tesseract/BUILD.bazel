@@ -1,0 +1,62 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("//bazel:foreign_cc.bzl", "extract_foreign_cc_file")
+
+# The `tesseract` command-line tool pytesseract runs, linked statically against
+# //ext/leptonica so the app bundle ships one executable and no extra dylibs.
+cmake(
+    name = "tesseract_build",
+    build_args = [
+        "--",
+        "-j",
+    ],
+    cache_entries = {
+        "BUILD_SHARED_LIBS": "OFF",
+        "BUILD_TESTS": "OFF",
+        "BUILD_TRAINING_TOOLS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "DISABLE_ARCHIVE": "ON",
+        "DISABLE_CURL": "ON",
+        "DISABLE_TIFF": "ON",
+        "ENABLE_LTO": "OFF",
+        "GRAPHICS_DISABLED": "ON",
+        "INSTALL_CONFIGS": "OFF",
+        "Leptonica_DIR": "$$EXT_BUILD_DEPS/leptonica/lib/cmake/leptonica",
+        "OPENMP_BUILD": "OFF",
+        "ZLIB_ROOT": "$$EXT_BUILD_DEPS/libzlib",
+    },
+    env = {
+        "AR": "/usr/bin/ar",
+        # DebugPixa builds Leptonica's bitmap font on every run to caption debug images
+        # nobody asks for, and those fonts are TIFF-encoded; with //ext/leptonica built
+        # without TIFF that prints four "Error in pixReadMemTiff" lines per image.
+        "CXXFLAGS": "-DTESSERACT_DISABLE_DEBUG_FONTS",
+    },
+    lib_source = "@tesseract//:tesseract_source",
+    out_binaries = ["tesseract"],
+    out_static_libs = ["libtesseract.a"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ext/leptonica",
+        "//ext/libpng",
+        "//ext/libzlib",
+    ],
+)
+
+extract_foreign_cc_file(
+    name = "tesseract_bin",
+    out = "bin/tesseract",
+    filename = "tesseract",
+    target = ":tesseract_build",
+)
+
+filegroup(
+    name = "tessdata",
+    srcs = ["@tessdata_eng//file"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "tesseract",
+    actual = ":tesseract_bin",
+    visibility = ["//visibility:public"],
+)

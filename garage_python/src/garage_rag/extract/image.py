@@ -55,6 +55,13 @@ def _tesseract(path: Path) -> tuple[str, float]:
     import pytesseract
     from pytesseract import Output
 
+    # The app bundles its own tesseract and says where (GarageApp's Python runtime
+    # exports it, and TESSDATA_PREFIX for its language data); anywhere else,
+    # pytesseract's PATH lookup applies.
+    bundled = os.environ.get("GARAGE_TESSERACT_CMD")
+    if bundled:
+        pytesseract.pytesseract.tesseract_cmd = bundled
+
     # Tesseract is internally multi-threaded. Inside a process pool that
     # oversubscribes the CPU and slows everything down.
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
@@ -66,6 +73,13 @@ def _tesseract(path: Path) -> tuple[str, float]:
     if width < MIN_OCR_WIDTH or height < MIN_OCR_HEIGHT:
         raise ExtractionError(f"image too small to hold text ({width}x{height}): {path}")
 
+    # pytesseract writes the image to a temp file in its original format. The
+    # bundled Leptonica reads PNG only, so hand it an image with no format of its
+    # own, which pytesseract saves as PNG. GIF and WebP inputs take the same path.
+    if image.mode not in ("1", "L", "RGB", "RGBA"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    else:
+        image = image.copy()
     try:
         data = pytesseract.image_to_data(image, output_type=Output.DICT)
     except Exception as exc:  # noqa: BLE001

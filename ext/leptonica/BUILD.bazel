@@ -1,0 +1,38 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+# Static Leptonica, the image library under //ext/tesseract. PNG (plus zlib) is the only
+# codec: garage_rag.extract.image converts every image to PNG before OCR, so JPEG, TIFF,
+# GIF, WebP and JPEG 2000 support would only add dependencies to build and ship.
+cmake(
+    name = "leptonica",
+    build_args = [
+        "--",
+        "-j",
+    ],
+    cache_entries = {
+        "BUILD_PROG": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_GIF": "OFF",
+        "ENABLE_JPEG": "OFF",
+        "ENABLE_OPENJPEG": "OFF",
+        "ENABLE_PNG": "ON",
+        "ENABLE_TIFF": "OFF",
+        "ENABLE_WEBP": "OFF",
+        "ENABLE_ZLIB": "ON",
+        "PNG_LIBRARY": "$$EXT_BUILD_DEPS/libpng/lib/libpng16.a",
+        "PNG_PNG_INCLUDE_DIR": "$$EXT_BUILD_DEPS/libpng/include",
+        "SW_BUILD": "OFF",
+        "ZLIB_ROOT": "$$EXT_BUILD_DEPS/libzlib",
+    },
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@leptonica//:leptonica_source",
+    out_static_libs = ["libleptonica.a"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ext/libpng",
+        "//ext/libzlib",
+    ],
+)

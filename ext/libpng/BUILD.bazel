@@ -1,0 +1,27 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+# Static libpng for //ext/leptonica, which is the only image format Leptonica is built
+# with: garage_rag.extract.image hands Tesseract every image as a PNG.
+cmake(
+    name = "libpng",
+    build_args = [
+        "--",
+        "-j",
+    ],
+    cache_entries = {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PNG_SHARED": "OFF",
+        "PNG_STATIC": "ON",
+        "PNG_TESTS": "OFF",
+        "PNG_TOOLS": "OFF",
+        "PNG_FRAMEWORK": "OFF",
+        "ZLIB_ROOT": "$$EXT_BUILD_DEPS/libzlib",
+    },
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@libpng//:libpng_source",
+    out_static_libs = ["libpng16.a"],
+    visibility = ["//visibility:public"],
+    deps = ["//ext/libzlib"],
+)
