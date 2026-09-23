@@ -44,7 +44,12 @@ def _transition_app_impl(ctx):
     target = ctx.attr.app[0]
     orig_executable = target[DefaultInfo].files_to_run.executable
 
-    executable = ctx.actions.declare_file(ctx.label.name)
+    # Not `ctx.label.name`: these targets are named `Garage.app`, and Gatekeeper
+    # treats an exec'd file whose path ends in `.app` as an app bundle. An
+    # unsigned script with a provenance xattr fails that assessment, so
+    # syspolicyd SIGKILLs the launcher and `bazel run` exits 137 before the app
+    # ever starts.
+    executable = ctx.actions.declare_file(ctx.label.name.removesuffix(".app") + "_run")
     if orig_executable:
         rlocation = ctx.workspace_name + "/" + orig_executable.short_path
         runner_content = """#!/bin/bash
