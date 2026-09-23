@@ -162,12 +162,14 @@ public struct DocumentsView: View {
     // MARK: - Split View
 
     private var documentsSplitView: some View {
-        HSplitView {
+        // A third for the listing, two thirds for the document, held as the
+        // window is resized.
+        ProportionalSplitView(initialFraction: 1.0 / 3.0, minLeadingWidth: 260, minTrailingWidth: 340) {
             documentListView
-                .frame(minWidth: 320, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-
+                .frame(maxHeight: .infinity)
+        } trailing: {
             documentDetailView
-                .frame(minWidth: 340, idealWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxHeight: .infinity)
         }
     }
 
