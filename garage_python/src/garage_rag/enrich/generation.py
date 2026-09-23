@@ -2,23 +2,25 @@
 
 :class:`LocalChatModel` is a small provider-neutral chat client built from the
 ``facts`` section of the configuration (``facts.provider`` / ``facts.model``).
-Both providers are **local inference servers on this machine**; there is no
-cloud path here at all (``test_egress_block`` fails the build if any module
-imports a cloud AI SDK):
+Both providers are **local inference servers**, the app's own or the owner's;
+there is no cloud path here at all (``test_egress_block`` fails the build if any
+module imports a cloud AI SDK), and both clients are built through
+:mod:`garage_rag.net.egress`:
 
 * ``llama_xpc`` -- the llama.cpp HTTP API the app's ``LlamaXPCService`` serves
   on ``embedding.llama_host`` (default ``http://127.0.0.1:8790``). The engine
   holds several models at once and picks one by the ``model`` alias in each
   request, so every call names ``facts.model``. :class:`LlamaXPCClient`
-  refuses any non-loopback host and never uses an HTTP proxy.
-* ``ollama`` -- a local Ollama server on ``embedding.ollama_host`` (default
+  is loopback only.
+* ``ollama`` -- an Ollama server on ``embedding.ollama_host`` (default
   ``http://localhost:11434``), through the ``ollama`` SDK, the same client
-  ``embed.ollama`` uses for embeddings.
+  ``embed.ollama`` uses for embeddings. It may be another machine.
 
-Retrieved chunks -- communications included -- may be placed in a prompt to
-either server; that is local inference on the owner's own machine, the same
-as embedding them. Both hosts must be loopback: the configuration refuses any
-other value, and :class:`LocalChatModel` checks again on construction.
+Retrieved chunks -- communications included -- may be placed in a prompt to a
+loopback server; that is local inference on the owner's own machine, the same
+as embedding them. For a server that is not loopback the caller checks each
+chunk's class with :func:`garage_rag.net.egress.check_destination` first
+(``rag_ask`` does), so a communication never goes there.
 """
 
 from __future__ import annotations
@@ -28,9 +30,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import ollama
-
-from garage_rag.config import Settings, get_settings, require_loopback
+from garage_rag.config import Settings, get_settings
+from garage_rag.net import egress
 from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError
 
 log = logging.getLogger(__name__)
@@ -89,12 +90,18 @@ class LocalChatModel:
         if self.provider not in PROVIDERS:
             raise ValueError(f"unknown generation provider {self.provider!r}; expected one of {PROVIDERS}")
         self.model_ref = model_ref or settings.fact_model
-        setting = "embedding.llama_host" if self.provider == "llama_xpc" else "embedding.ollama_host"
-        self.host = require_loopback(
-            settings.llama_host if self.provider == "llama_xpc" else settings.ollama_host, setting
+        self.host = settings.llama_host if self.provider == "llama_xpc" else settings.ollama_host
+        # Fail at construction, not at the first request, when the host is not approved.
+        egress.check_destination(
+            self.host, purpose=self._purpose, loopback_only=self.provider == "llama_xpc", settings=settings
         )
+        self._settings = settings
         self._llama: LlamaXPCClient | None = None
-        self._ollama: ollama.Client | None = None
+        self._ollama: Any = None
+
+    @property
+    def _purpose(self) -> str:
+        return f"generation:{self.provider}"
 
     # ---- description ----------------------------------------------------
 
@@ -120,9 +127,9 @@ class LocalChatModel:
             self._llama = LlamaXPCClient(self.host)
         return self._llama
 
-    def _ollama_client(self) -> ollama.Client:
+    def _ollama_client(self) -> Any:
         if self._ollama is None:
-            self._ollama = ollama.Client(host=self.host, trust_env=False, follow_redirects=False)
+            self._ollama = egress.ollama_client(purpose=self._purpose, host=self.host, settings=self._settings)
         return self._ollama
 
     # ---- probing --------------------------------------------------------

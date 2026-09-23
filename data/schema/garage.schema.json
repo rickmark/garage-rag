@@ -49,12 +49,12 @@
       "properties": {
         "ollama_host": {
           "type": "string",
-          "description": "Base URL of the Ollama server that produces embeddings. Must be loopback.",
+          "description": "Base URL of the Ollama server for embeddings, fact distillation and answers. May be another machine; communications are only ever sent to a loopback host.",
           "default": "http://localhost:11434"
         },
         "lmstudio_host": {
           "type": "string",
-          "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1). Must be loopback.",
+          "description": "Base URL of the LM Studio OpenAI-compatible API (include /v1). May be another machine; communications are only ever sent to a loopback host.",
           "default": "http://localhost:1234/v1"
         },
         "llama_host": {

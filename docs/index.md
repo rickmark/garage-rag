@@ -67,7 +67,7 @@ description: Official support pages, troubleshooting guides, FAQ, and privacy do
   <div class="card">
     <span class="card-icon">🛡️</span>
     <h3>Privacy & Egress Guarantees</h3>
-    <p>No cloud AI client, and model servers only on loopback: how Garage keeps your documents and communications on your Mac.</p>
+    <p>No cloud AI client, one egress choke point with a destination allowlist, and communications that never leave your Mac.</p>
     <a href="{{ '/privacy-policy.html' | relative_url }}" class="card-link">Read Privacy Policy →</a>
   </div>
 

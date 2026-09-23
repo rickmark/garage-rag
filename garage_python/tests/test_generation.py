@@ -6,8 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from garage_rag.config import NonLoopbackHost, Settings
+from garage_rag.config import Settings
 from garage_rag.enrich.generation import ChatReply, LocalChatModel, LocalModelUnavailable
+from garage_rag.net.egress import EgressBlocked
 from garage_rag.xpc.llama_xpc import LlamaXPCError
 
 MESSAGES = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "hi"}]
@@ -37,11 +38,17 @@ class TestConstruction:
         with pytest.raises(ValueError, match="unknown generation provider"):
             LocalChatModel(provider="openai", settings=Settings())
 
-    def test_non_loopback_ollama_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="loopback"):
-            Settings(fact_provider="ollama", ollama_host="http://gpu-box:11434")
+    def test_configured_remote_ollama_is_approved(self) -> None:
+        model = LocalChatModel(settings=Settings(fact_provider="ollama", ollama_host="http://gpu-box:11434"))
+        assert model.host == "http://gpu-box:11434"
+
+    def test_unapproved_host_is_refused(self) -> None:
+        """Only reachable by bypassing Settings: host and allowlist come from the same settings."""
         settings = Settings.model_construct(fact_provider="ollama", ollama_host="http://gpu-box:11434")
-        with pytest.raises(NonLoopbackHost):
+        with (
+            patch("garage_rag.net.egress.approved_destinations", return_value=[]),
+            pytest.raises(EgressBlocked),
+        ):
             LocalChatModel(settings=settings)
 
 

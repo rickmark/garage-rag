@@ -14,7 +14,6 @@ dependencies = [
     "pgvector>=0.5,<0.6",
     # embeddings
     "ollama>=0.6.1",
-    "openai>=1.0",
     # document extraction (all permissive licenses; PyMuPDF avoided due to AGPL)
     "pypdf>=6.16",
     "pdfplumber>=0.11.10",
@@ -29,8 +28,10 @@ dependencies = [
     "pytesseract>=0.3.13",
     "pillow>=11.0",
     # fact extraction: the vendored LangExtract subset (garage_rag/enrich/langextract)
-    # needs regex for its tokenizer; the Ollama provider posts with httpx.
+    # needs regex for its tokenizer.
     "regex>=2023.0.0",
+    # the egress guard's HTTP client (garage_rag/net/egress.py), which every
+    # outbound HTTP request goes through
     "httpx>=0.27",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
     "mcp[cli]==2.1.0",

@@ -398,6 +398,7 @@ def _fake_chat_model(reply: ChatReply) -> MagicMock:
     model = MagicMock()
     model.provider = "llama_xpc"
     model.model_ref = "gemma2-2b"
+    model.host = "http://127.0.0.1:8790"
     model.complete.return_value = reply
     model.chat.return_value = reply.text
     return model

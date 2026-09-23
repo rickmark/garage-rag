@@ -12,7 +12,7 @@ from typing import Any
 
 import grpc
 
-from garage_rag.config import require_loopback
+from garage_rag.net import egress
 from garage_rag.proto.garage_pb2 import (
     AddSourceRequest,
     AddSourceResponse,
@@ -129,7 +129,7 @@ class GarageClient:
             host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
             server_address = f"{host}:{self.port}"
             # The facade carries document text (the ingest and embed workers persist through it).
-            require_loopback(f"http://{server_address}", "the gRPC server address")
+            egress.check_destination(f"http://{server_address}", purpose="grpc-facade", loopback_only=True)
             self._channel = grpc.insecure_channel(server_address)
             self._stub = GarageServiceStub(self._channel)
         return self._stub

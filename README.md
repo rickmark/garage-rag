@@ -9,7 +9,7 @@ a Model Context Protocol (MCP) 2.0 server, accompanied by a native macOS compani
 
 ## Key Features
 
-- **Local-First & Privacy-Focused**: Extracted documents, chunks, and embeddings remain in your local PostgreSQL database. There is no cloud AI client in the app, and model servers (Ollama, LM Studio, the built-in llama.cpp) are only ever reached on loopback.
+- **Local-First & Privacy-Focused**: Extracted documents, chunks, and embeddings remain in your local PostgreSQL database. There is no cloud AI client in the app; content goes only to the built-in llama.cpp or the Ollama / LM Studio server you configure, through one tested egress choke point, and communications never leave your Mac.
 - **Smart Multi-Format Ingestion**: Streaming, memory-efficient extractors for Markdown, PDF (`pypdf` with selective `pdfplumber` escalation for tables), Office documents (`.docx`, `.pptx`, `.xlsx`), images (Tesseract OCR), code, and configuration files.
 - **Automated Authorship Attribution**: Classifies content by provenance (`authored`, `reference`, `received`) and role using Git commit history, embedded document metadata, and configurable path heuristics.
 - **Hybrid Retrieval (RRF)**: Combines dense vector similarity (pgvector cosine distance) with PostgreSQL full-text search (`tsvector` / `tsquery`) using Reciprocal Rank Fusion.
@@ -44,7 +44,7 @@ For detailed architectural and design specifications, see:
 - [Frequently Asked Questions (FAQ)](docs/faq.md) — Privacy, storage, models, and MCP tools.
 - [Architecture Guide](docs/architecture.md) — Ingestion pipeline, extractors, quality filtering, and concurrency model.
 - [Attribution & Identity](docs/attribution.md) — Git-aware author detection, trust tiers, and evidence logging.
-- [Privacy & Egress Guarantees](docs/privacy.md) — No cloud AI, loopback-only model servers, and macOS TCC considerations.
+- [Privacy & Egress Guarantees](docs/privacy.md) — The egress choke point, destination allowlist and communication rule, and macOS TCC considerations.
 - [Database Schema Reference](docs/schema.md) — PostgreSQL schema layout, cascade rules, and HNSW vector indexing.
 
 ---

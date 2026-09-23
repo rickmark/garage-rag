@@ -23,7 +23,6 @@ manifest:
     httpx2: httpx2
     idna: idna
     iniconfig: iniconfig
-    jiter: jiter
     jsonschema: jsonschema
     jsonschema_specifications: jsonschema_specifications
     jwt: pyjwt
@@ -34,7 +33,6 @@ manifest:
     mdurl: mdurl
     multipart: python_multipart
     ollama: ollama
-    openai: openai
     openpyxl: openpyxl
     opentelemetry: opentelemetry_api
     packaging: packaging
@@ -64,7 +62,6 @@ manifest:
     rich: rich
     rpds: rpds_py
     shellingham: shellingham
-    sniffio: sniffio
     sqlalchemy: sqlalchemy
     sse_starlette: sse_starlette
     starlette: starlette

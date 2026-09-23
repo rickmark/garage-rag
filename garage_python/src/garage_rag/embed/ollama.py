@@ -17,16 +17,16 @@ import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
-import ollama
 from pgvector import HalfVector
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from garage_rag.config import get_settings, require_loopback
+from garage_rag.config import get_settings
 from garage_rag.db.emb_tables import assert_safe_table
 from garage_rag.db.models import EmbeddingModel
 from garage_rag.db.registry import StoragePlan, truncate_vector
 from garage_rag.embed.base import Embedder, EmbeddingError
+from garage_rag.net import egress
 
 log = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -65,9 +65,7 @@ class OllamaEmbedder(Embedder):
     def __init__(self, model_ref: str, *, host: str | None = None) -> None:
         settings = get_settings()
         self.model_ref = model_ref
-        url = require_loopback(host or settings.ollama_host, "embedding.ollama_host")
-        # The environment's proxies and a server's redirects must not decide where chunk text goes.
-        self._client = ollama.Client(host=url, trust_env=False, follow_redirects=False)
+        self._client = egress.ollama_client(purpose="embeddings:ollama", host=host or settings.ollama_host)
 
     def _embed_raw(self, texts: list[str]) -> Sequence[Sequence[float]]:
         response = self._client.embed(model=self.model_ref, input=texts)

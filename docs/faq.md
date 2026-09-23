@@ -41,12 +41,12 @@ description: Frequently asked questions about Garage local RAG, privacy guarante
 <details>
   <summary>Does my data ever leave my Mac?</summary>
   <div class="faq-content">
-    <p><strong>No.</strong> Garage sends nothing off your Mac, and the guarantee is enforced by tests rather than by convention:</p>
+    <p><strong>Not unless you point it at another machine.</strong> Garage sends nothing to the cloud, and the guarantee is enforced by tests rather than by convention:</p>
     <ul>
       <li><strong>No cloud AI client:</strong> An automated scan of every source file fails the build if any module imports a cloud AI SDK, and the dependency lockfile must contain none.</li>
-      <li><strong>Loopback-only model servers:</strong> Embeddings, fact extraction and answers run on the app's built-in llama.cpp, or on Ollama or LM Studio at a loopback address. Any other address is a configuration error.</li>
+      <li><strong>One egress choke point, one allowlist:</strong> Every outbound connection is built by a single tested module, and goes only to this Mac or to the Ollama / LM Studio server you configure. Anything else is refused.</li>
       <li><strong>Local OCR:</strong> Text in images is recognized with Tesseract on your Mac. There is no cloud fallback.</li>
-      <li><strong>Communications, twice over:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is additionally withheld from any embedding provider that is not on this machine.</li>
+      <li><strong>Communications stay local:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is never sent to a server that is not on this Mac, even one you configured.</li>
     </ul>
     <p>If you connect an MCP client such as Claude Desktop, what Garage returns to it is handled by that client under its own terms.</p>
   </div>

@@ -182,24 +182,6 @@ def is_loopback_url(url: str) -> bool:
         return False
 
 
-class NonLoopbackHost(ValueError):
-    """A model server URL that is not on this machine.
-
-    Document text is only ever posted to model servers on loopback. There is no
-    setting that relaxes this.
-    """
-
-
-def require_loopback(url: str, setting: str) -> str:
-    """Return ``url`` if it is loopback, else raise :class:`NonLoopbackHost` naming ``setting``."""
-    if not is_loopback_url(url):
-        raise NonLoopbackHost(
-            f"{setting} must be a loopback URL (localhost, 127.0.0.1 or ::1); got {url!r}. "
-            "Document text is only ever sent to model servers on this machine."
-        )
-    return url
-
-
 class SourceSpec(BaseModel):
     """A source declared in the config file.
 
@@ -301,21 +283,30 @@ class Settings(BaseModel):
     # ---- embeddings -----------------------------------------------------
     ollama_host: str = Field(
         default="http://localhost:11434",
-        description="Base URL of the Ollama server that produces embeddings. Must be loopback.",
+        description=(
+            "Base URL of the Ollama server for embeddings, fact distillation and answers. May be another "
+            "machine; communications are only ever sent to a loopback host."
+        ),
     )
     lmstudio_host: str = Field(
         default="http://localhost:1234/v1",
-        description="Base URL of the LM Studio OpenAI-compatible API (include /v1). Must be loopback.",
+        description=(
+            "Base URL of the LM Studio OpenAI-compatible API (include /v1). May be another machine; "
+            "communications are only ever sent to a loopback host."
+        ),
     )
     llama_host: str = Field(
         default="http://127.0.0.1:8790",
         description=("Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService (loopback only)."),
     )
 
-    @field_validator("ollama_host", "lmstudio_host", "llama_host")
+    @field_validator("llama_host")
     @classmethod
-    def _validate_loopback(cls, v: str, info: Any) -> str:
-        return require_loopback(v, f"embedding.{info.field_name}")
+    def _validate_llama_host(cls, v: str) -> str:
+        # The app's own LlamaXPCService only ever listens on loopback.
+        if not is_loopback_url(v):
+            raise ValueError(f"embedding.llama_host must be a loopback URL (localhost, 127.0.0.1 or ::1); got {v!r}")
+        return v
 
     lmstudio_api_token_file: str | None = Field(
         default=None,

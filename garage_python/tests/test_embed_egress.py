@@ -1,12 +1,10 @@
 """Embedding never posts a communication to a provider that is not on this machine.
 
-Embedding a chunk sends its text to the model's provider. Every provider host
-must be loopback: the configuration refuses anything else and each embedder
-checks again (``test_egress_block.py``). This is the layer behind that one: if
-a host ever got past the rule, backfill (in-process and through the embed
-worker's GetEmbeddingBatches) still leaves communication chunks out. The tests
-reach it with ``Settings.model_construct``, which skips the loopback validation
-the way a regression would.
+Embedding a chunk sends its text to the model's provider. ``llama_xpc`` is
+loopback by construction; ``ollama``/``lmstudio`` are local only while their
+host is (the egress guard's ``allows_communications``). When one is pointed
+off-box, backfill (in-process and through the embed worker's
+GetEmbeddingBatches) must leave communication chunks out.
 """
 
 from __future__ import annotations
@@ -30,9 +28,9 @@ def _fresh_settings():
     reset_settings()
 
 
-def _unvalidated(**overrides) -> Settings:
-    """Settings carrying an off-box host, as if the loopback rule had been bypassed."""
-    return Settings.model_construct(**overrides)
+def _off_box(**overrides) -> Settings:
+    """Settings with an off-box model server."""
+    return Settings(**overrides)
 
 
 def _model(provider: str = "ollama") -> MagicMock:
@@ -67,7 +65,7 @@ class TestProviderIsLocal:
         ],
     )
     def test_off_box_hosts_are_remote(self, field: str, host: str, provider: str) -> None:
-        set_settings(_unvalidated(**{field: host}))
+        set_settings(_off_box(**{field: host}))
         assert not provider_is_local(provider)
 
     def test_bare_loopback_host_port_is_local(self) -> None:
@@ -104,7 +102,7 @@ class TestBackfill:
         return state, batches, count
 
     def test_off_box_provider_withholds_communication_chunks(self) -> None:
-        set_settings(_unvalidated(ollama_host="http://gpu-box:11434"))
+        set_settings(_off_box(ollama_host="http://gpu-box:11434"))
         state, batches, count = self._run(_model("ollama"), counts=[1, 3])
 
         assert batches.call_args.kwargs["include_communications"] is False
@@ -138,7 +136,7 @@ class TestEmbedWorkerBatches:
         return str(session.execute.call_args.args[0])
 
     def test_off_box_provider_gets_no_communications(self) -> None:
-        set_settings(_unvalidated(lmstudio_host="https://lmstudio.example.com/v1"))
+        set_settings(_off_box(lmstudio_host="https://lmstudio.example.com/v1"))
         assert COMMUNICATION_FILTER in self._batches_sql("lmstudio")
 
     def test_local_provider_gets_everything(self) -> None:

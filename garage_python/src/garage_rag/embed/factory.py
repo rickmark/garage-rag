@@ -24,14 +24,14 @@ def provider_is_local(provider: str) -> bool:
     ``lmstudio_host`` point at loopback; an unknown provider counts as remote.
     """
     from garage_rag.config import get_settings
-    from garage_rag.xpc.llama_xpc import is_loopback_url
+    from garage_rag.net.egress import allows_communications
 
     if provider == "llama_xpc":
         return True
     settings = get_settings()
     hosts = {"ollama": settings.ollama_host, "lmstudio": settings.lmstudio_host}
     host = hosts.get(provider)
-    return host is not None and is_loopback_url(host)
+    return host is not None and allows_communications(host)
 
 
 def get_embedder(provider: str, model_ref: str) -> Embedder:

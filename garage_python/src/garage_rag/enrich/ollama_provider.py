@@ -8,7 +8,9 @@ context and a five-minute ``keep_alive``; GPT-OSS models go through
 ``/api/chat`` with a JSON-only system instruction instead, because their
 response format conflicts with Ollama's JSON mode.
 
-Only a loopback ``model_url`` is accepted.
+The client is built by :func:`garage_rag.net.egress.http_client`, so
+``model_url`` must be an approved destination, and a communication is never
+sent to one that is not loopback.
 """
 
 from __future__ import annotations
@@ -17,11 +19,10 @@ import dataclasses
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
-import httpx
-
-from garage_rag.config import require_loopback
+from garage_rag.db.models import CorpusClass
 from garage_rag.enrich.langextract import base_model, exceptions, schema
 from garage_rag.enrich.langextract import types as core_types
+from garage_rag.net import egress
 
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_TIMEOUT = 120.0
@@ -57,15 +58,18 @@ class OllamaLanguageModel(base_model.BaseLanguageModel):
         model_id: str,
         model_url: str,
         *,
+        corpus_class: CorpusClass | None = None,
         timeout: float = DEFAULT_TIMEOUT,
-        client: httpx.Client | None = None,
+        client: Any = None,
     ) -> None:
         super().__init__(constraint=schema.Constraint())
         self.model_id = model_id
-        self.model_url = require_loopback(model_url, "embedding.ollama_host").rstrip("/")
+        purpose = "facts:ollama"
+        self.model_url = egress.check_destination(model_url, purpose=purpose, corpus_class=corpus_class).rstrip("/")
         self.format_type = core_types.FormatType.JSON
-        # No proxies and no redirects: only this machine ever sees the document text.
-        self._client = client or httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False)
+        self._client = client or egress.http_client(
+            purpose=purpose, base_url=self.model_url, corpus_class=corpus_class, timeout=timeout
+        )
 
     def _options(self) -> dict[str, Any]:
         return {"keep_alive": DEFAULT_KEEP_ALIVE, "temperature": DEFAULT_TEMPERATURE, "num_ctx": DEFAULT_NUM_CTX}
@@ -75,11 +79,11 @@ class OllamaLanguageModel(base_model.BaseLanguageModel):
             response = self._client.post(
                 f"{self.model_url}{path}", json=payload, headers={"Accept": "application/json"}
             )
-        except httpx.TimeoutException as exc:
+        except egress.TransportTimeout as exc:
             raise exceptions.InferenceRuntimeError(
                 f"Ollama model timed out ({exc})", original=exc, provider="Ollama"
             ) from exc
-        except httpx.HTTPError as exc:
+        except egress.TransportError as exc:
             raise exceptions.InferenceRuntimeError(
                 f"Ollama request failed: {exc}", original=exc, provider="Ollama"
             ) from exc

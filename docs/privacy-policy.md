@@ -43,7 +43,7 @@ Garage contains **no advertising trackers, no analytics SDKs, and no background 
 All data indexed by Garage is processed and stored locally on your device in your private PostgreSQL database located in:  
 `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`
 
-Garage never sends your files, text, images, code, or communications off your device. Content you retrieve through a connected MCP client is subject to that client (see section 4).
+Garage never sends your communications off your device, and sends other content only to a model server you have configured yourself (see section 4). Content you retrieve through a connected MCP client is subject to that client.
 
 ---
 
@@ -52,9 +52,9 @@ Garage never sends your files, text, images, code, or communications off your de
 Garage does not send your content to third-party services, and contains no client for any cloud AI service:
 
 - **Text recognition (OCR)** in images uses Tesseract on your device. There is no cloud fallback.
-- **Language models** for embeddings, fact extraction, and answers run on your device: in the application itself, or in a local model server you run (Ollama or LM Studio). Garage connects to such a server only at a loopback address (`localhost`, `127.0.0.1` or `::1`) and refuses any other address.
+- **Language models** for embeddings, fact extraction, and answers run in the application itself, or in a model server you run yourself (Ollama or LM Studio), on your device by default. If you configure an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server and to no other address, and never sends private communications (Messages, Mail) to a server that is not on your device.
 
-If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing off your device; the client decides what it does with what it receives.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives.
 
 ---
 

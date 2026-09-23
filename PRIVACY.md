@@ -30,13 +30,13 @@ Garage does not include advertising trackers, analytics SDKs, or background tele
 
 Information processed by Garage stays on your device. Any files, text, images, documents, code, or communications you choose to use with the application are processed locally. Text recognition in images uses Tesseract on your device.
 
-Garage contains no client for any cloud AI service. The language models it uses for embeddings, fact extraction, and answering questions run on your own device, either in the application itself or in a local model server you run (Ollama or LM Studio). Garage only connects to such a server at a loopback address on your own device, and refuses to connect to one anywhere else.
+Garage contains no client for any cloud AI service. The language models it uses for embeddings, fact extraction, and answering questions run either in the application itself or in a model server you run yourself (Ollama or LM Studio). By default that server is on your own device. If you configure Garage to use an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server, and to no other address; private communications (such as Messages and Mail) are never sent to a server that is not on your own device.
 
 ## 3. Third-Party Processing
 
 Garage does not send your content to third-party services.
 
-If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing off your device; the client decides what it does with what it receives.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives.
 
 ## 4. User Control
 
@@ -60,7 +60,7 @@ Garage does not knowingly collect information from children or from any other us
 
 Garage is designed to minimize privacy risk by avoiding collection of user data. Local files and locally stored application data remain under your control and are subject to the security of your device, operating system, and any storage services you choose to use.
 
-Garage never sends your files, text, images, code, or communications off your device. Content you retrieve through a connected MCP client is subject to that client, as described in section 3.
+Garage never sends your communications off your device, and sends other content only to a model server you have configured yourself, as described in section 2. Content you retrieve through a connected MCP client is subject to that client, as described in section 3.
 
 ## 9. Changes to This Policy
 

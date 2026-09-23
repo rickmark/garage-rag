@@ -15,9 +15,8 @@ py_library(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/xpc",
-        "@pypi//httpx",
-        "@pypi//ollama",
         "@pypi//sqlalchemy",
     ],
 )

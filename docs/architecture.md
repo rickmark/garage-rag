@@ -149,9 +149,10 @@ prompt and no retrieval. The model is `LocalChatModel` (`enrich/generation.py`),
 built from `facts.provider` / `facts.model`: `llama_xpc` posts to the app's
 `LlamaXPCService` on `llama_host` (the `model` field of each request selects
 among the models the engine holds), `ollama` to a local Ollama server on
-`ollama_host`, both loopback by rule. Neither is a cloud API; retrieved
-communications may appear in the prompt but never leave the machine (see
-`docs/privacy.md`). `garage ask` is the
+`ollama_host`, both through the egress guard. Neither is a cloud API; retrieved
+communications may appear in the prompt but never leave the machine: `rag_ask`
+runs each excerpt's class through the guard, which refuses a communication for
+a host that is not loopback (see `docs/privacy.md`). `garage ask` is the
 CLI front door to both tools, with `--json` for the app.
 
 ## Idempotency

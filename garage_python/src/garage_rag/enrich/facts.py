@@ -16,10 +16,12 @@ backend here is always one of the two local providers
 model is refused outright (:func:`refuse_cloud_model_id`) rather than passed to
 a local server that could never serve it.
 
-The Ollama host itself is configurable (``ollama_host``), but only to another
-loopback URL: the configuration refuses anything else, and so does
-:class:`OllamaLanguageModel`. :func:`extract_and_store_facts` checks before it
-touches the document's stored facts.
+The Ollama host itself is configurable (``ollama_host``) and may be another
+machine. Its client is built through the egress guard
+(:mod:`garage_rag.net.egress`), and :func:`extract_and_store_facts` runs the
+document's class through :func:`~garage_rag.net.egress.check_destination` before
+it touches the document's stored facts, so a communication is never posted to a
+host that is not loopback.
 
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
@@ -43,12 +45,13 @@ import textwrap
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from garage_rag.config import get_settings, require_loopback
-from garage_rag.db.models import Chunk, Document, Fact
+from garage_rag.config import get_settings
+from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
 from garage_rag.enrich import langextract as lx
 from garage_rag.enrich.langextract.base_model import BaseLanguageModel
 from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
 from garage_rag.enrich.ollama_provider import OllamaLanguageModel
+from garage_rag.net import egress
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +155,7 @@ def extract_facts(
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
     provider: str = DEFAULT_PROVIDER,
+    corpus_class: CorpusClass | None = None,
 ) -> list[lx.data.Extraction]:
     """Run LangExtract over ``text``, returning only grounded extractions.
 
@@ -164,7 +168,9 @@ def extract_facts(
     local Ollama server through :class:`OllamaLanguageModel`; "llama_xpc" runs
     the prompt through :class:`LlamaXPCLanguageModel`, which posts to the app's
     LlamaXPCService on loopback. Both emit JSON. A cloud model id is refused
-    (:func:`refuse_cloud_model_id`).
+    (:func:`refuse_cloud_model_id`). ``corpus_class`` is the class of ``text``
+    when known; the egress guard refuses to send a communication to an Ollama
+    host that is not loopback.
     """
     if provider not in FACT_DISTIL_PROVIDERS:
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
@@ -173,7 +179,9 @@ def extract_facts(
     if provider == "llama_xpc":
         model: BaseLanguageModel = LlamaXPCLanguageModel(model_id=model_id)
     else:
-        model = OllamaLanguageModel(model_id=model_id, model_url=resolve_model_url(model_url))
+        model = OllamaLanguageModel(
+            model_id=model_id, model_url=resolve_model_url(model_url), corpus_class=corpus_class
+        )
     result = lx.extract(text_or_documents=text, prompt_description=PROMPT, examples=EXAMPLES, model=model)
     return [e for e in result.extractions if e.char_interval is not None]
 
@@ -245,18 +253,27 @@ def extract_and_store_facts(
     gets a ``chunks`` row appended after the document's existing chunks, ready
     for ``embed.ollama.backfill_model`` to pick up.
 
-    An Ollama endpoint that is not on this machine is refused
-    (:class:`~garage_rag.config.NonLoopbackHost`) before anything is deleted.
+    The destination is checked with the document's class before anything is
+    deleted: an unapproved host, or a communication bound for a host that is
+    not loopback, raises :class:`~garage_rag.net.egress.EgressBlocked`.
     """
     if provider == "ollama":
-        require_loopback(resolve_model_url(model_url), "embedding.ollama_host")
+        egress.check_destination(
+            resolve_model_url(model_url), purpose="facts:ollama", corpus_class=document.corpus_class
+        )
 
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     if not document.content:
         return []
 
     log.info("extracting facts for document %s via %s", document.id, provider)
-    extractions = extract_facts(document.content, model_id=model_id, model_url=model_url, provider=provider)
+    extractions = extract_facts(
+        document.content,
+        model_id=model_id,
+        model_url=model_url,
+        provider=provider,
+        corpus_class=document.corpus_class,
+    )
 
     facts = facts_from_extractions(document.id, extractions, model_id=model_id)
     session.add_all(facts)

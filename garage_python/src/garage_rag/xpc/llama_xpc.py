@@ -2,13 +2,14 @@
 
 The Swift ``LlamaXPCService`` loads models over XPC (the app drives that) and
 serves a llama-server / OpenAI-compatible HTTP API on loopback. This module is
-the Python side: a small stdlib-only client (``urllib``, ``json``) that talks
-to ``settings.llama_host`` (default :data:`DEFAULT_LLAMA_HTTP_URL`) and nothing
+the Python side: a small stdlib-only client (``urllib``, through the egress
+guard's :func:`garage_rag.net.egress.url_opener`, and ``json``) that talks to
+``settings.llama_host`` (default :data:`DEFAULT_LLAMA_HTTP_URL`) and nothing
 else.
 
 The provider exists for on-device inference, so :class:`LlamaXPCClient`
-refuses any base URL whose host is not loopback and never routes through an
-HTTP proxy. That keeps the egress story simple: content handed to this client
+refuses any base URL whose host is not loopback, and never routes through an
+HTTP proxy or follows a redirect. That keeps the egress story simple: content handed to this client
 cannot leave the machine, whatever the environment says.
 
 Model load/unload are not HTTP operations; there is deliberately no
@@ -19,12 +20,11 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
 from collections.abc import Sequence
 from typing import Any, cast
 
 from garage_rag.config import get_settings, is_loopback_url
+from garage_rag.net import egress
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,6 @@ __all__ = [
 
 # Where LlamaXPCService binds its HTTP API; mirrored by ``Settings.llama_host``.
 DEFAULT_LLAMA_HTTP_URL = "http://127.0.0.1:8790"
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Surface a 3xx as an error instead of following it somewhere else."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
-        return None
 
 
 class LlamaXPCError(RuntimeError):
@@ -84,16 +77,16 @@ class LlamaXPCClient:
         if base_url is None:
             base_url = get_settings().llama_host
         base_url = base_url.rstrip("/")
-        if not is_loopback_url(base_url):
+        try:
+            # No proxies and no redirects, pinned to loopback: see garage_rag.net.egress.
+            self._opener = egress.url_opener(purpose="llama_xpc", base_url=base_url, loopback_only=True)
+        except egress.EgressBlocked as exc:
             raise LlamaXPCError(
                 f"llama_host must be a loopback URL (127.0.0.1, localhost or ::1); got {base_url!r}",
                 status_code=400,
-            )
+            ) from exc
         self.base_url = base_url
         self.timeout = timeout
-        # No proxies and no redirects, ever: the host is loopback, and honouring
-        # ``http_proxy`` or a redirect are the ways content could leave the machine.
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     # ---- transport -------------------------------------------------------
 
@@ -110,17 +103,10 @@ class LlamaXPCClient:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
-                status = response.status
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            raw = exc.read()
-        except (urllib.error.URLError, OSError) as exc:
-            reason = getattr(exc, "reason", exc)
-            raise LlamaXPCError(f"cannot reach LlamaXPCService at {self.base_url}: {reason}", status_code=503) from exc
+            status, raw = self._opener.request(method, url, data=data, headers=headers, timeout=self.timeout)
+        except OSError as exc:
+            raise LlamaXPCError(f"cannot reach LlamaXPCService at {self.base_url}: {exc}", status_code=503) from exc
         try:
             payload = json.loads(raw) if raw else {}
         except ValueError as exc:

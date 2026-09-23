@@ -1145,16 +1145,18 @@ def mcp_test(
     console.print(table)
 
     # 2. HTTP Endpoint test if available
-    import urllib.request
-
-    from garage_rag.config import is_loopback_url
+    from garage_rag.net import egress
 
     console.print(f"\n[cyan]Testing HTTP endpoint:[/cyan] {target_url}")
-    if not is_loopback_url(target_url):
+    try:
+        opener = egress.url_opener(purpose="mcp-test", base_url=target_url, loopback_only=True)
+    except egress.EgressBlocked:
         console.print("  [yellow]skipped[/yellow]: only an endpoint on this machine is probed")
         return
     try:
-        req = urllib.request.Request(
+        t0 = time.perf_counter()
+        status_code, _ = opener.request(
+            "POST",
             target_url,
             data=json.dumps(
                 {
@@ -1169,15 +1171,14 @@ def mcp_test(
                 }
             ).encode("utf-8"),
             headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            timeout=3,
         )
-        t0 = time.perf_counter()
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            http_latency = (time.perf_counter() - t0) * 1000
-            status_code = resp.getcode()
-            console.print(
-                f"  [green]HTTP {status_code}[/green] ({http_latency:.1f}ms) "
-                "- MCP server endpoint reachable and responding"
-            )
+        http_latency = (time.perf_counter() - t0) * 1000
+        if status_code >= 400:
+            raise OSError(f"HTTP {status_code}")
+        console.print(
+            f"  [green]HTTP {status_code}[/green] ({http_latency:.1f}ms) - MCP server endpoint reachable and responding"
+        )
     except Exception as exc:
         console.print(f"  [yellow]HTTP endpoint not active[/yellow]: {exc}")
         console.print("  [dim]Start the MCP server with `garage mcp-serve --http` or from the macOS app.[/dim]")

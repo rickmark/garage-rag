@@ -249,7 +249,7 @@ linear history.
 Two independent axes on every document:
 
 - `corpus_class` — **what it is**: `document` | `code` | `communication` (communications never
-  leave the machine — this is what the embedding guard keys on, not trust).
+  leave the machine — this is what the egress guard's content rule keys on, not trust).
 - `trust_tier` — **how much it's trusted**: `authored` | `reference` | `received`.
 
 Embeddings live one table per model (`emb_<slug>`, e.g. `emb_bge_m3`) rather than one shared table,
@@ -260,31 +260,37 @@ backfill, not a re-ingest. Storage type is selected by dimension against pgvecto
 (`vector` ≤2000 dims, `halfvec` ≤4000, binary-quantized beyond that for non-MRL models). Full
 reference: `docs/schema.md`.
 
-### Privacy guarantee: no cloud AI, loopback only
+### Privacy guarantee: one egress choke point, an allowlist, and communications stay local
 
-No document content leaves the machine. There is no cloud AI client in the codebase, and every model
-server must be on loopback. Each layer is tested on its own in `tests/test_egress_block.py`, so
-removing one fails the suite:
+Content goes only to approved destinations, and communications never leave the machine. Each layer
+is tested on its own in `tests/test_egress_block.py`, so removing one fails the suite:
 
-1. **No cloud AI SDK.** An AST scan of every source file (function-local and `importlib` imports
-   included) fails on `anthropic`, `google.genai`, `google.cloud`, `cohere`, `mistralai`, upstream
-   `langextract` and the like, and `uv.lock` must contain none of them. `openai` is allowed only in
-   `embed/lmstudio.py`, as the client for LM Studio's OpenAI-compatible API on loopback. OCR is
-   Tesseract only; the old Claude fallback and its settings (`cloud.*`,
+1. **One choke point.** `net/egress.py` is the only module that imports an outbound network client
+   library (`httpx`, `urllib.request`, `requests`, `socket`, ...) or a library that opens its own
+   connections (`ollama`). Callers get clients from it: `egress.http_client(purpose=, base_url=)`,
+   `egress.ollama_client(purpose=, host=)`, `egress.url_opener(purpose=, base_url=)`. An AST scan
+   (function-local and `importlib` imports included) enforces this; inbound/local infrastructure
+   (gRPC server and stubs, the facade's gRPC client, uvicorn, psycopg) is listed file by file in
+   `INBOUND_OR_LOCAL`, not matched by pattern.
+2. **No cloud AI SDK** anywhere (`anthropic`, `openai`, `google.genai`, upstream `langextract`, ...),
+   and none in `uv.lock`. OCR is Tesseract only; the old Claude fallback and its settings (`cloud.*`,
    `sources[].allow_cloud_enrichment`) are retired.
-2. **Loopback only.** `embedding.ollama_host`, `lmstudio_host` and `llama_host` must be loopback
-   (`localhost` or a literal loopback address); `Settings` rejects anything else, and every client
-   re-checks the URL it is given with `config.require_loopback`, ignores proxy variables and does
-   not follow redirects. The gRPC client to the app's facade is held to the same rule.
-3. **Listed network clients.** Only the modules in `NETWORK_CLIENTS` may import an HTTP/socket
-   client; a new one must enforce rule 2 and be added there.
-4. **Local fact extraction.** Only the local part of LangExtract is vendored (no provider routing),
+3. **Destination allowlist.** `egress.check_destination` approves loopback and exactly the origins
+   configured as `embedding.ollama_host` / `embedding.lmstudio_host` (which may be off-box), and
+   raises `EgressBlocked` for anything else. There is no free-form extra-hosts setting.
+   `llama_host` must be loopback. Clients built by the guard ignore proxy variables, never follow
+   redirects, and refuse a request to any origin but their own.
+4. **Content rule.** `corpus_class = 'communication'` never goes to a destination that is not
+   loopback: `check_destination(..., corpus_class=...)` checks it before anything else, fact
+   extraction and `rag_ask` pass the class, and backfill asks `egress.allows_communications` and
+   withholds communication chunks from an off-box provider (`test_embed_egress.py`).
+5. **Local fact extraction.** Only the local part of LangExtract is vendored (no provider routing),
    and `enrich/facts.py` refuses a cloud model id.
 
-Behind these, backfill still withholds communication chunks from a provider that is not on this
-machine (`test_embed_egress.py`). When touching `embed/`, `enrich/`, `config/` or anything that
-could construct an outbound request for document content, preserve all of this — it's the
-load-bearing privacy property of the project. Full detail: `docs/privacy.md`.
+When touching `net/`, `embed/`, `enrich/`, or anything that could construct an outbound request for
+document content, preserve all of this — it's the load-bearing privacy property of the project. A
+new caller builds its client through `net/egress.py` and is added to `CALLERS` in the test. Full
+detail: `docs/privacy.md`.
 
 ### Configuration (`config/__init__.py`)
 
