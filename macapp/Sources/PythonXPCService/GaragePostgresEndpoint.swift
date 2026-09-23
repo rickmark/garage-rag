@@ -10,7 +10,11 @@ public enum GaragePostgresEndpoint {
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
     public static let port = 14824
     public static let databaseName = "garage-rag"
-    public static let keychainService = "com.rickmark.garage.postgres"
+    /// A separate item when the data folder is overridden (UI tests), so an isolated cluster never
+    /// reads or replaces the real database's password.
+    public static var keychainService: String {
+        GarageAppGroup.dataDirectoryOverride == nil ? "com.rickmark.garage.postgres" : "com.rickmark.garage.postgres.isolated"
+    }
     public static var keychainAccount: String { NSUserName() }
     public static var username: String { NSUserName() }
 
@@ -91,4 +95,8 @@ public enum GarageAppLaunch {
     /// `--after-database-reset <pid>`: the app instance `pid` deleted the database and launched this
     /// one to create a new one. This instance starts nothing until `pid` has quit.
     public static let databaseResetArgument = "--after-database-reset"
+
+    /// `--data-directory <path>`: run on this data folder instead of the real one, with no migration,
+    /// no link and a separate Keychain item. For UI tests, which reset the database.
+    public static let dataDirectoryArgument = "--data-directory"
 }

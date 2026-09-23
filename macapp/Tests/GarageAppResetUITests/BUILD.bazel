@@ -1,0 +1,30 @@
+load("@rules_apple//apple:macos.bzl", "macos_ui_test")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "GarageAppResetUITests_lib",
+    testonly = True,
+    srcs = glob(["**/*.swift"]),
+    module_name = "GarageAppResetUITests",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+# Drives the real app through Reset Database on a throwaway --data-directory. Manual: it launches
+# Garage (fixed port 14824) and needs UI automation permission. Run it from the generated Xcode
+# project (`aspect run //:xcodeproj`); rules_apple's default macOS runner injects the bundle into
+# the host like a unit test and has no UI-test mode.
+macos_ui_test(
+    name = "GarageAppResetUITests",
+    bundle_id = "me.rickmark.garage-rag.GarageAppResetUITests",
+    bundle_name = "GarageAppResetUITests",
+    minimum_os_version = "14.0",
+    tags = [
+        "exclusive",
+        "local",
+        "manual",
+    ],
+    test_host = "//macapp/Sources/GarageApp:GarageApp",
+    visibility = ["//visibility:public"],
+    deps = [":GarageAppResetUITests_lib"],
+)

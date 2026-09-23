@@ -27,7 +27,9 @@ enum Paths {
     static func displayPath(of url: URL, dataDirectory: URL = appSupportDir) -> String {
         let path = url.standardizedFileURL.path
         let data = dataDirectory.standardizedFileURL.path
-        guard path == data || path.hasPrefix(data + "/") else { return path }
+        // A `--data-directory` folder is not the familiar one: show where it really is.
+        guard GarageAppGroup.dataDirectoryOverride == nil,
+              path == data || path.hasPrefix(data + "/") else { return path }
         return "~/Library/Application Support/\(GarageAppGroup.dataFolderName)" + path.dropFirst(data.count)
     }
 

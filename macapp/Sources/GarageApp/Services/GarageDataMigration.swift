@@ -25,11 +25,13 @@ enum GarageDataMigration {
         var linkedLegacyDirectory = false
     }
 
-    /// Runs once at app launch, before Postgres or any XPC service starts. Never in tests: the
-    /// test host's legacy folder is the developer's real one.
+    /// Runs once at app launch, before Postgres or any XPC service starts. Never in tests, and never
+    /// on a `--data-directory` override: in both, the legacy folder is the developer's real one, and
+    /// moving it into a test's folder would let that test's reset delete it.
     @discardableResult
     static func runAtLaunch() -> Outcome {
-        guard !isRunningInTestEnvironment, let shared = GarageAppGroup.sharedDataDirectory else {
+        guard !isRunningInTestEnvironment, GarageAppGroup.dataDirectoryOverride == nil,
+              let shared = GarageAppGroup.sharedDataDirectory else {
             return Outcome()
         }
         let outcome = migrate(from: GarageAppGroup.legacyDataDirectory, to: shared)
