@@ -81,9 +81,15 @@ class LMStudioEmbedder(Embedder):
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
             raise EmbeddingError(f"lmstudio embed failed for {self.model_ref}: reply has no 'data' list")
+        rows: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                raise EmbeddingError(f"lmstudio embed failed for {self.model_ref}: malformed item {item!r}")
+            rows.append(item)
         try:
             # The API numbers each vector with the index of its input; order by it.
-            return [item["embedding"] for item in sorted(data, key=lambda item: item["index"])]
+            rows.sort(key=lambda row: row["index"])
+            return [row["embedding"] for row in rows]
         except (KeyError, TypeError) as exc:
             raise EmbeddingError(f"lmstudio embed failed for {self.model_ref}: malformed item ({exc!r})") from exc
 

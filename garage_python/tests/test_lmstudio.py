@@ -113,3 +113,15 @@ def test_malformed_reply_is_an_embedding_error(server) -> None:
     state.reply = {"object": "list"}
     with pytest.raises(EmbeddingError, match="no 'data' list"):
         LMStudioEmbedder("text-embedding").embed(["a"])
+
+
+@pytest.mark.parametrize(
+    "data",
+    [["not an object"], [{"embedding": [0.1]}], [{"index": 0}]],
+    ids=["non-object item", "no index", "no embedding"],
+)
+def test_malformed_items_are_an_embedding_error(server, data) -> None:
+    _, state = server
+    state.reply = {"data": data}
+    with pytest.raises(EmbeddingError, match="malformed item"):
+        LMStudioEmbedder("text-embedding").embed(["a"])
