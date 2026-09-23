@@ -56,7 +56,6 @@ py_test(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/ingest",
-        "@pypi//psycopg",
         "@pypi//pytest",
     ],
 )

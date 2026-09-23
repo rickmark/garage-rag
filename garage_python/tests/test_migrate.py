@@ -1,7 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import psycopg
 import pytest
 
 from garage_rag.config import repo_root
@@ -38,7 +37,7 @@ def test_sql_dir_is_the_committed_ddl() -> None:
 def test_missing_sql_dir_is_an_error_everywhere(tmp_path: Path) -> None:
     """Swallowing it would create extensions and then report an empty database as ready."""
     missing = tmp_path / "nowhere"
-    with patch("psycopg.connect") as mock_connect:
+    with patch("garage_rag.db.migrate._connect") as mock_connect:
         with pytest.raises(FileNotFoundError):
             init_extensions(database_url="postgresql://u:p@localhost/db", schema_dir=missing)
         with pytest.raises(FileNotFoundError):
@@ -77,13 +76,13 @@ def test_init_extensions_executes_outside_sqlalchemy(tmp_path: Path) -> None:
     mock_conn.__enter__.return_value = mock_conn
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn) as mock_connect:
         applied = init_extensions(
             database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
             schema_dir=tmp_path,
         )
 
-        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb")
         # Bootstraps the schema_migrations ledger, runs the extension file, then records it.
         assert mock_cursor.execute.call_count == 3
         executed = [c.args[0] for c in mock_cursor.execute.call_args_list]
@@ -104,7 +103,7 @@ def test_apply_migrations_without_session(tmp_path: Path) -> None:
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
     with (
-        patch("psycopg.connect", return_value=mock_conn) as mock_connect,
+        patch("garage_rag.db.migrate._connect", return_value=mock_conn) as mock_connect,
         patch("garage_rag.db.engine.reset_engine") as mock_reset,
     ):
         applied = apply_migrations(
@@ -113,7 +112,7 @@ def test_apply_migrations_without_session(tmp_path: Path) -> None:
         )
 
         assert mock_connect.call_count == 2
-        mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        mock_connect.assert_called_with("postgresql://user:pass@localhost:5432/testdb")
         assert applied == ["001_extensions.sql", "003_core.sql"]
         mock_reset.assert_called_once()
 
@@ -131,14 +130,14 @@ def test_apply_migrations_with_session(tmp_path: Path) -> None:
     mock_driver = MagicMock()
     mock_session.connection.return_value = mock_driver
 
-    with patch("psycopg.connect", return_value=mock_conn) as mock_connect:
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn) as mock_connect:
         applied = apply_migrations(
             session=mock_session,
             schema_dir=tmp_path,
             database_url="postgresql+psycopg://user:pass@localhost:5432/testdb",
         )
 
-        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb", autocommit=True)
+        mock_connect.assert_called_once_with("postgresql://user:pass@localhost:5432/testdb")
         # Extensions go through raw psycopg: ledger bootstrap, extension SQL, ledger insert.
         assert mock_cursor.execute.call_count == 3
         assert mock_cursor.execute.call_args_list[1].args[0] == "CREATE EXTENSION IF NOT EXISTS vector;"
@@ -157,10 +156,10 @@ def test_database_exists() -> None:
     mock_conn.__enter__.return_value = mock_conn
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    with patch("psycopg.connect", return_value=mock_conn):
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn):
         assert database_exists("postgresql://user:pass@localhost:5432/testdb") is True
 
-    with patch("psycopg.connect", side_effect=psycopg.OperationalError("connection failed")):
+    with patch("garage_rag.db.migrate._connect", side_effect=ConnectionRefusedError("connection failed")):
         assert database_exists("postgresql://user:pass@localhost:5432/testdb") is False
 
 
@@ -176,7 +175,7 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
 
     # Scenario 1: schema_migrations does not exist
     mock_cursor.fetchone.return_value = (False,)
-    with patch("psycopg.connect", return_value=mock_conn):
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn):
         assert (
             has_pending_migrations(
                 database_url="postgresql://user:pass@localhost:5432/testdb",
@@ -193,7 +192,7 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
     # Scenario 2: schema_migrations exists, only 001 is applied
     mock_cursor.fetchone.return_value = (True,)
     mock_cursor.fetchall.return_value = [("001_extensions",)]
-    with patch("psycopg.connect", return_value=mock_conn):
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn):
         assert (
             has_pending_migrations(
                 database_url="postgresql://user:pass@localhost:5432/testdb",
@@ -210,7 +209,7 @@ def test_pending_migrations_and_has_pending_migrations(tmp_path: Path) -> None:
     # Scenario 3: all migrations applied
     mock_cursor.fetchone.return_value = (True,)
     mock_cursor.fetchall.return_value = [("001_extensions",), ("002_types",), ("003_core",)]
-    with patch("psycopg.connect", return_value=mock_conn):
+    with patch("garage_rag.db.migrate._connect", return_value=mock_conn):
         assert (
             has_pending_migrations(
                 database_url="postgresql://user:pass@localhost:5432/testdb",
