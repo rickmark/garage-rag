@@ -15,6 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var _appState: AppState?
     private var isTerminating = false
 
+    /// Quit Garage (⌘Q and the menu bar's Quit). AppKit refuses to terminate while a window shows a
+    /// sheet ("App termination blocked by modal sheet"), and the splash is shown as one at every
+    /// launch, so close any sheet first.
+    static func quit() {
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+        }
+        NSApp.terminate(nil)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }

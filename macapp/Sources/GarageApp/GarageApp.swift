@@ -22,6 +22,12 @@ struct GarageApp: App {
                     showSplash()
                 }
             }
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Garage") {
+                    AppDelegate.quit()
+                }
+                .keyboardShortcut("q")
+            }
         }
 
         MenuBarExtra {

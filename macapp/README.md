@@ -122,6 +122,17 @@ Things worth knowing:
   strips `--options=runtime` for it exactly as it does for ad-hoc. Release
   builds still go through `--config=developer_id` / `--config=appstore`.
 
+### App Store configuration
+
+`--config=appstore` signs with **Apple Development** (`STORE_IDENTITY` in `bazel/signing.bzl`) and
+embeds the development profile `macapp/GarageRAGDevelopmentApp.provisionprofile`, so the sandboxed
+store build runs on the Macs that profile lists. An Apple Distribution–signed build with a store
+profile cannot launch locally. Uploading re-signs the archive in Xcode (Organizer → Distribute App)
+with Apple Distribution and the store profile, `macapp/GarageMacAppConnect.provisionprofile`; run
+Validate App first so Xcode confirms it re-signs the nested code (Postgres in `Resources/`, the
+site-packages extensions, `Python.framework`). To run a store build on another Mac, add that Mac to
+the development profile in the developer portal and replace the file.
+
 ## Why Postgres is built from source
 
 Homebrew's `postgresql@18` bakes absolute `/opt/homebrew/...` paths for its
