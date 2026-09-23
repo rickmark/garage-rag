@@ -986,3 +986,158 @@ Possible fixes, not made here:
 4. Drop the PythonKit and `Paths.swift` Homebrew candidates. PythonKit could be patched, or given
    `PYTHON_LIBRARY` explicitly.
 5. Drop `site-python/config-3.13-darwin` from the bundle.
+
+# OpenAI-compatible API probe
+
+Can one small OpenAI-compatible (`/v1`) client replace both the `openai` SDK and the `ollama`
+package, and can LM Studio drive langextract?
+
+2026-09-23 20:25–20:40 UTC, on the M3, at `97e3dd2`, in the venv (`garage_python/.venv`: langextract
+1.7.0, `ollama` 0.6.2, `openai` 3.3.1). Scratch scripts and their output are in
+`~/GarageTest/api-probe/`. No repo code changed, nothing was installed, updated or downloaded, and
+Garage's database, port 14824 and the app were not touched.
+
+**What was there:**
+- **LM Studio 0.4.25+1** (already running, port 1234). It **needed no API token**: `/v1/models`,
+  `/v1/embeddings` and `/v1/chat/completions` all answered without one, so no token was read.
+  Nine models, none loaded at the start. Used:
+  - `text-embedding-nomic-embed-text-v1.5`: `nomic-bert`, Q4_K_M GGUF, 768 dims.
+  - `google/gemma-3-4b`: MLX 4-bit.
+  - Both were JIT-loaded by the requests and unloaded afterwards (`lms unload --all`).
+- **Ollama 0.34.3** (already running, port 11434). **One model only: `llama4:latest`**, 108.6B,
+  Q4_K_M, digest `bf31604e25c2`, capabilities `completion, vision, tools`.
+  - **No embedding model is installed** (neither `nomic-embed-text` nor `bge-m3`), and none was
+    pulled.
+- **Garage's `llama_xpc`** (port 8790, the app from the 898c0e6 check): `no_model_loaded`.
+  - Loading a model is an NSXPC call from the app (`LlamaXPCProtocol.loadModel`), not an HTTP route,
+    so its vectors were **not measured**.
+  - Garage's own models folder has `nomic-embed-text-v1.5.Q8_0.gguf`. That is **not the same GGUF**
+    as LM Studio's Q4_K_M.
+
+## 1. LM Studio on Ollama's routes
+
+| Request | Result |
+|---|---|
+| `GET /api/tags` | **HTTP 200**, `{"error":"Unexpected endpoint or method. (GET /api/tags)"}` |
+| `POST /api/embed` | **HTTP 200**, `{"error":"Unexpected endpoint or method. (POST /api/embed)"}` |
+| `POST /api/chat` | **HTTP 200**, `{"error":"Unexpected endpoint or method. (POST /api/chat)"}` |
+
+As expected, LM Studio does not speak Ollama's API. **But it answers with 200 and an error body, not
+404.** A client has to check the body. Garage's `LlamaXPCClient` raises only on non-2xx, so a wrong
+route there would surface as "reply has no 'data' list" or a `KeyError`, not as a clean HTTP error.
+
+## 2. Ollama: `/api/embed` vs `/v1/embeddings`
+
+**Not measurable here**: the only model, `llama4:latest`, has no embedding capability. Both routes
+refuse it in the same way:
+- `/api/embed` → **HTTP 501**
+  `{"error":"This server does not support embeddings. Start it with --embeddings"}`
+- `/v1/embeddings` → **HTTP 501**, the same message in OpenAI's error shape (`{"error":{"message":…,"type":"api_error"}}`)
+
+So max-abs difference, cosine per pair, L2 norms, `dimensions` and batching are unmeasured for
+Ollama. Measuring them needs `nomic-embed-text` or `bge-m3` pulled into Ollama, which is a download.
+
+## 3. LM Studio `/v1/embeddings` (nomic-embed-text v1.5, Q4_K_M)
+
+- **Shape:** `{"object","data","model","usage"}`. Each `data[i]` is `{"object":"embedding","index","embedding"}`,
+  with indexes 0–4 in input order. This is exactly what `embed/lmstudio.py` reads
+  (`response.data[i].embedding` through the `openai` SDK), and what `LlamaXPCClient.embed_texts`
+  reads (`data[*].index` / `embedding`).
+  - `usage` is `{"prompt_tokens":0,"total_tokens":0}`: LM Studio does not count tokens.
+- **Same vectors through either client.** The same 5 texts went through Garage's `LlamaXPCClient`
+  and through the `openai` SDK: max abs difference **0.0**, cosine **1.000000000** for all 5. The
+  first request (JIT load) took 20.4 s; after that, 49 ms (`LlamaXPCClient`) and 543 ms (SDK).
+- **Normalized:** L2 norm **1.000000** for every vector.
+- **Batched = single:** text 2 alone vs in the batch, max abs difference 0.0.
+- **`dimensions` is silently ignored:** `dimensions: 256` returned HTTP 200 with **768** dimensions.
+  This doesn't matter for Garage, which truncates on its side (`registry.truncate_vector` in
+  `embed/ollama.py` and `search/hybrid.py`). But LM Studio must never be relied on to truncate.
+
+## 4. Completions for langextract
+
+### (a) `response_format` on `/v1/chat/completions`
+
+| Server, model | `json_object` | `json_schema` (strict, `{"facts":[string]}`) |
+|---|---|---|
+| LM Studio, `google/gemma-3-4b` | **HTTP 400** `'response_format.type' must be 'json_schema' or 'text'` | HTTP 200, 2.7 s, valid JSON matching the schema |
+| Ollama `/v1`, `llama4:latest` | HTTP 200, 4.2 s, valid JSON | HTTP 200, 2.5 s, valid JSON matching the schema |
+
+A shared client that asks for JSON has to use `json_schema`, not `json_object`, or LM Studio refuses
+the request.
+
+### (b) Real langextract extraction
+
+`enrich/facts.py`'s `PROMPT` and `EXAMPLES`, three short paragraphs (405 characters),
+`use_schema_constraints=False`, as `facts.extract_facts` does it:
+- the first two runs through the repo's `LlamaXPCLanguageModel` with a `LlamaXPCClient` pointed at
+  each server's base URL (no subclass needed: loopback, no token);
+- the third through `facts.ollama_model_config(...)`, today's `ollama` provider.
+
+| Backend | Extractions | Grounded (`char_interval` set) | Time |
+|---|---|---|---|
+| LM Studio `/v1`, `google/gemma-3-4b`, via `LlamaXPCLanguageModel` | 7 | **7/7** | **2.8 s** |
+| Ollama `/v1`, `llama4:latest`, via `LlamaXPCLanguageModel` | 5 | **5/5** | 9.3 s |
+| Ollama `/api/generate`, `llama4:latest`, via langextract's Ollama provider (today's path) | 5 | **5/5** | 28.1 s |
+
+- The two `llama4` runs produced the **same 5 spans**, from `[0:86]` "Garage stores its index…"
+  to `[310:405]` "Messages and Mail are classified as communications, and Garage never sends them to
+  a cloud API."
+- gemma-3-4b split two of those sentences into smaller facts, so it has 7.
+- **The `/v1` route was 3× faster than `/api/generate` for the same model and output.** The
+  `/api/generate` run came last, so the model was already loaded.
+- `LlamaXPCLanguageModel` sends no `response_format`; it relies on the prompt. That was enough for
+  all three backends.
+
+## 5. Ollama-only features
+
+- **Model lists match:** `/v1/models` lists the same models as `/api/tags` (here just
+  `llama4:latest`). It lacks `/api/tags`' family, size, quantization and digest details.
+- **Garage's `ollama` package use** (`garage_python/src`) is three calls, each with a `/v1`
+  equivalent:
+  - `embed/ollama.py:71`: `client.embed(model, input)` → `POST /v1/embeddings`.
+  - `enrich/generation.py:145`: `client.show(model)`, used only as "does this model exist" →
+    `GET /v1/models` membership, which is how the `llama_xpc` branch of the same function already
+    works (`list_models`).
+  - `enrich/generation.py:215`: `client.chat(model, messages, options={num_predict, temperature})` →
+    `POST /v1/chat/completions` with `max_tokens` and `temperature`.
+- **Not used anywhere:** `list`, `pull`, `ps`, `keep_alive` or `truncate`.
+  - `pull` appears only in user-facing hints (`"pull it with 'ollama pull …'"`, and a comment in
+    `facts.py`).
+  - `truncate` hits are Garage's own `truncate_vector`.
+- **Outside the package:** `facts.py`'s default `ollama` provider uses langextract's
+  `OllamaLanguageModel` on `/api/generate`. Section 4(b) shows `LlamaXPCLanguageModel` on Ollama's
+  `/v1` does the same job, faster.
+
+## Verdicts
+
+**(i) One `/v1` client for LM Studio, Ollama and `llama_xpc` embeddings with identical vectors: yes
+for the client, unproven for identical vectors across servers.**
+- Garage's own `LlamaXPCClient` is already that client:
+  - against LM Studio it returns bit-identical vectors to the `openai` SDK;
+  - it reads the same response shape as Ollama's `/v1/embeddings` (OpenAI shape) and `llama_xpc`.
+- Not established:
+  - whether Ollama's `/v1/embeddings` equals its `/api/embed` for a real embedding model (no
+    embedding model is installed in Ollama here);
+  - `llama_xpc`'s vectors (no model loaded).
+- Vectors will **not** be identical across servers unless they run the same GGUF: LM Studio ships
+  nomic as Q4_K_M, and Garage downloads Q8_0.
+- The client must not delegate `dimensions` (LM Studio ignores it). Garage already truncates on its
+  side.
+
+**(ii) langextract through our OpenAI-shaped provider: yes, for both.**
+- `LlamaXPCLanguageModel` with a `LlamaXPCClient` at `127.0.0.1:1234` (LM Studio, gemma-3-4b) and at
+  `127.0.0.1:11434` (Ollama `/v1`, llama4) produced fully grounded extractions from Garage's prompt
+  and examples.
+- The Ollama `/v1` run matched today's `/api/generate` path fact for fact, in a third of the time.
+- Two things to handle:
+  - if JSON mode is ever requested, use `json_schema`, since LM Studio rejects `json_object`;
+  - LM Studio's HTTP 200 error bodies (section 1).
+
+**(iii) What would still need the `ollama` package or Ollama's own API: nothing Garage does today.**
+- Embeddings, the "model present?" check and chat all map to `/v1` (section 5).
+- Only these would still need Ollama's native API:
+  - pulling models (`/api/pull`, not used; Garage only tells the user to run `ollama pull`);
+  - richer model metadata (`/api/show`, `/api/tags` details);
+  - load control (`keep_alive`, `/api/ps`, not used).
+- The one open question is embedding parity, `/api/embed` vs `/v1/embeddings`, on a real
+  embedding model. That needs a model pulled into Ollama first.
