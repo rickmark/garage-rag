@@ -543,3 +543,141 @@ Still open:
 Unverified this round: the ingest-counter regression, the `garage_rag` runfiles gap, the psycopg
 import creep (all blocked by step 1/2), and the Developer ID transition on
 `//macapp/package:GarageApp` (step 4 skipped).
+
+---
+
+# Round 2b — `80c11fc`
+
+Re-run after `096630a` ("Keep the pytest macro's data a plain list; sync BUILD deps with gazelle")
+fixed the round-2 load error. Branch head **`80c11fc`**. Same machine and toolchain.
+Nothing changed on `claude/adoring-ritchie-c084cj`; no notarize / installer / install /
+`xcarchive_open` target ran. Step 4 (`//macapp/package:GarageApp`) remains **skipped at the user's
+request** — that overrides the follow-up request's assumption that it had run.
+
+The fix: `data` is a plain list again, with `select` kept only on `env`
+(**`tools/pytest/defs.bzl:47-57`**), which is what aspect_rules_py 2.0.0-alpha.6 can accept.
+
+## Step 1 — `aspect build //...`: **PASS**
+
+Exit 0, 6m13s, **zero compile errors**. This is the first time the whole target pattern has built
+in this validation effort.
+
+Three first-party warnings, all pre-existing. The `runStartDate` warning reported at `4139dbb` is
+**gone**:
+```
+macapp/Sources/GarageIngestXPCService/main.swift:345:36: warning: capture of 'requester' with non-Sendable type 'NSXPCConnection?' in an isolated local function; this is an error in the Swift 6 language mode
+macapp/Sources/GarageApp/Services/XPCServiceManager.swift:242:25: warning: reference to captured var 'manager' in concurrently-executing code; this is an error in the Swift 6 language mode
+macapp/Sources/GarageApp/Services/XPCServiceManager.swift:245:25: warning: reference to captured var 'osLogStreamService' in concurrently-executing code; this is an error in the Swift 6 language mode
+```
+Zero `external/` warnings (vendored deps were cache hits).
+
+## Step 2 — `aspect test //...`: 26 pass, 4 fail
+
+`Executed 29 out of 30 tests: 26 tests pass and 4 fail locally.`
+(Round 1 at `4139dbb` was 8 pass / 17 fail.)
+
+Failing targets and the first real error from each:
+
+| target | first failing test | error |
+|---|---|---|
+| `test_ingest_gateway` | `test_ingest_source_with_grpc_gateway` | `AssertionError: assert 0 == 1` (`.seen`) |
+| `test_scanner` | `test_scan_filesystem_directory` | `AssertionError: assert 0 == 2` |
+| `test_migrate` | collection error | `ImportError: no pq wrapper available.` |
+| `python_framework_codesign_test` | — | `Too many levels of symbolic links` |
+
+### (a) Ingest-counter regression — **STILL PRESENT**
+
+`grep -c "assert 0 == 1"` → 4. Now 4 failed / 8 passed (the file has grown to 12 tests; two
+previously-failing tests in it were fixed by the runfiles change).
+
+```
+E           AssertionError: assert 0 == 1
+E            +  where 0 = IngestCounters(seen=0, indexed=0, skipped=0, failed=0, placeholders=0, rejected=0, chunks_written=0, total_items=1, item_type='files', errors=[]).seen
+```
+At **`garage_python/tests/test_ingest_gateway.py:296`, `:564`, `:613`, `:642`** — the same four
+lines as round 1. The assertions span `.seen`, `.indexed` and `.failed`; every counter stays 0
+while `total_items=1`. Failing: `test_ingest_source_with_grpc_gateway`,
+`test_stat_skipped_file_is_recorded_as_seen`, `test_no_chunks_file_is_recorded_as_seen`,
+`test_unexpected_ingest_error_is_recorded_as_seen`.
+
+### (b) Runfiles `__init__` gap — **FIXED**
+
+No `AttributeError: module 'garage_rag' has no attribute ...` anywhere in the run.
+`test_dedicated_rpcs`, `test_grpc_serialization`, `test_grpc_server`, `test_embed_xpc`,
+`test_grpc_documents`, `test_ingest_xpc` and `test_embed_egress` all **PASS**. `39f9561`'s
+dependency on `//garage_python/src/garage_rag` did the job.
+
+### (c) libpq / psycopg — **mostly fixed; one genuine leftover, one bug unmasked**
+
+Now passing: `test_cli_serve`, `test_egress_block`, `test_grpc_operations`, `test_mcp_install`,
+`test_mcp_server`, `test_registry_dims`.
+
+**`test_egress_block` passes in full.** The three subtests that failed in round 1 —
+`test_add_source_refuses_before_touching_the_database`, `test_cli_add_source_refuses`,
+`test_sync_refuses_a_declared_communication_source_with_cloud` — now pass. (The privacy invariants
+themselves always passed; this restores the guard to being environment-independent.)
+
+**`test_migrate` still fails**, but not because of the library: the *test file itself* imports
+psycopg eagerly at **`garage_python/tests/test_migrate.py:4`** (`import psycopg`), before any
+`garage_rag` code runs. `39f9561` removed eager imports from `cli`, `db/engine` and `db/migrate`,
+but not from this test module.
+```
+garage_python/tests/test_migrate.py:4: in <module>
+    import psycopg
+E   ImportError: no pq wrapper available.
+E   - couldn't import psycopg 'python' implementation: libpq library not found
+```
+
+**`test_scanner` now executes and reveals real failures** that the import error was previously
+masking — 5 failed / 10 passed, none of them import-related:
+```
+garage_python/tests/test_scanner.py:72:  AssertionError: assert 0 == 2
+garage_python/tests/test_scanner.py:92:  AssertionError
+garage_python/tests/test_scanner.py:134: AssertionError
+garage_python/tests/test_scanner.py:150: AssertionError
+garage_python/tests/test_scanner.py:380: AssertionError
+```
+Distinct assertion shapes seen: `assert 0 == 1`, `assert 0 == 2`, `assert 1 >= 2`,
+`assert 2 == 0`, `assert 2 == 3`. Failing: `test_scan_filesystem_directory`,
+`test_scan_filesystem_exclude_prefixes_prune_subtrees`, `test_scan_git_repository`,
+`test_scan_git_counts_what_ingest_walks`, `test_ingest_source_executes_scan_phase`.
+`scan_filesystem(...)` returns `item_count == 0` where 2 is expected — the scanner counts nothing.
+This looks related to the ingest-counter regression: both are "the pipeline ran but counted zero".
+
+### (d) `python_framework_codesign_test` — **STILL FAILING, unchanged**
+
+```
+Verifying bundle: Python.framework
+/var/folders/.../codesign_test.PcoHNy/stage/Python.framework: Too many levels of symbolic links
+[FAIL] Bundle verification failed: Python.framework
+Checked 0 Mach-O binaries: -1 passed, 1 failed
+Error: No Mach-O binaries were found in target inputs
+```
+Identical to `ef303db`. Both defects stand: the symlink cycle from the tar staging at
+**`bazel/codesign_test.bzl:114`**, and the negative pass count at
+**`bazel/codesign_test.bzl:239`**.
+
+### (e) Swift `AppStateTests` — **FIXED**
+
+`//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests` **PASSED** in 53.1s.
+`testCombinedIngestProgressUsesPriorScanTotalsAcrossSources` (`("600") is not equal to ("1000")`)
+is resolved. `GarageAppUITests` and `LlamaClientTests` also pass. New target `test_model_catalog`
+passes.
+
+## Round 2b summary
+
+Fixed since round 1: the runfiles `__init__` gap, the Swift `AppStateTests` assertion, the
+`runStartDate` warning, the xcarchive's unsigned framework (round 2), and the load error itself.
+Test results went from 8 pass / 17 fail to **26 pass / 4 fail**.
+
+Still open:
+1. **Ingest counters stay at zero** — `test_ingest_gateway.py:296/564/613/642`, unchanged since
+   round 1. The most substantive outstanding bug.
+2. **Scanner counts nothing** — `test_scanner.py:72/92/134/150/380`, newly *visible* rather than
+   newly broken. Probably the same root cause as (1).
+3. **`test_migrate.py:4`** imports psycopg eagerly in the test module, so it still needs a system
+   libpq.
+4. **`python_framework_codesign_test`** — symlink cycle plus the negative-count arithmetic.
+
+Unverified: the Developer ID transition on `//macapp/package:GarageApp` (step 4 skipped at the
+user's request).
