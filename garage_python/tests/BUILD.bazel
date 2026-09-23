@@ -23,6 +23,18 @@ py_test(
 )
 
 py_test(
+    name = "test_chunking_golden",
+    srcs = ["test_chunking_golden.py"],
+    # Recorded chunker output the splitters must reproduce.
+    data = ["golden/chunking.json"],
+    deps = [
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_config",
     srcs = ["test_config.py"],
     data = ["//data/schema:config_schema"],
@@ -315,6 +327,7 @@ test_suite(
     tests = [
         ":test_attribution",
         ":test_chunking",
+        ":test_chunking_golden",
         ":test_cli_serve",
         ":test_config",
         ":test_dedicated_rpcs",
