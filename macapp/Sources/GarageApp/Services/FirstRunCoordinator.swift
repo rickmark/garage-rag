@@ -402,7 +402,7 @@ final class FirstRunCoordinator: ObservableObject {
     /// An install that already has sources declared in `~/.garage.json` was
     /// configured by hand (or by an earlier version) and should not be walked
     /// through the assistant again.
-    static func looksAlreadyConfigured(configSources: [RegisteredSource], registeredModels: [RegisteredModel]) -> Bool {
+    nonisolated static func looksAlreadyConfigured(configSources: [RegisteredSource], registeredModels: [RegisteredModel]) -> Bool {
         !configSources.isEmpty || !registeredModels.isEmpty
     }
 
