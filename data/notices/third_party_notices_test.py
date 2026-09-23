@@ -10,5 +10,8 @@ problems = third_party_notices.check(notices, lockfile)
 for problem in problems:
     print(problem, file=sys.stderr)
 if problems:
-    print("run `python3 tools/third_party_notices.py` and commit the result", file=sys.stderr)
+    print(
+        "run `python3 tools/third_party_notices.py` and commit the result",
+        file=sys.stderr,
+    )
 sys.exit(1 if problems else 0)

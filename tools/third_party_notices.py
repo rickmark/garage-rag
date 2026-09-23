@@ -60,7 +60,10 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "3.13.2",
         "PSF-2.0 (and bundled third-party licenses)",
         "https://www.python.org/",
-        (f"{RAW}/python/cpython/v3.13.2/LICENSE", f"{RAW}/python/cpython/v3.13.2/Doc/license.rst"),
+        (
+            f"{RAW}/python/cpython/v3.13.2/LICENSE",
+            f"{RAW}/python/cpython/v3.13.2/Doc/license.rst",
+        ),
     ),
     Component(
         "PostgreSQL",
@@ -123,21 +126,30 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "1.16.0",
         "Apache-2.0",
         "https://github.com/grpc/grpc-swift",
-        (f"{RAW}/grpc/grpc-swift/1.16.0/LICENSE", f"{RAW}/grpc/grpc-swift/1.16.0/NOTICES.txt"),
+        (
+            f"{RAW}/grpc/grpc-swift/1.16.0/LICENSE",
+            f"{RAW}/grpc/grpc-swift/1.16.0/NOTICES.txt",
+        ),
     ),
     Component(
         "SwiftNIO",
         "2.42.0",
         "Apache-2.0",
         "https://github.com/apple/swift-nio",
-        (f"{RAW}/apple/swift-nio/2.42.0/LICENSE.txt", f"{RAW}/apple/swift-nio/2.42.0/NOTICE.txt"),
+        (
+            f"{RAW}/apple/swift-nio/2.42.0/LICENSE.txt",
+            f"{RAW}/apple/swift-nio/2.42.0/NOTICE.txt",
+        ),
     ),
     Component(
         "SwiftNIO HTTP/2",
         "1.26.0",
         "Apache-2.0",
         "https://github.com/apple/swift-nio-http2",
-        (f"{RAW}/apple/swift-nio-http2/1.26.0/LICENSE.txt", f"{RAW}/apple/swift-nio-http2/1.26.0/NOTICE.txt"),
+        (
+            f"{RAW}/apple/swift-nio-http2/1.26.0/LICENSE.txt",
+            f"{RAW}/apple/swift-nio-http2/1.26.0/NOTICE.txt",
+        ),
     ),
     Component(
         "SwiftNIO Transport Services",
@@ -151,7 +163,10 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "1.4.0",
         "Apache-2.0",
         "https://github.com/apple/swift-nio-extras",
-        (f"{RAW}/apple/swift-nio-extras/1.4.0/LICENSE.txt", f"{RAW}/apple/swift-nio-extras/1.4.0/NOTICE.txt"),
+        (
+            f"{RAW}/apple/swift-nio-extras/1.4.0/LICENSE.txt",
+            f"{RAW}/apple/swift-nio-extras/1.4.0/NOTICE.txt",
+        ),
     ),
     Component(
         "SwiftNIO SSL (includes BoringSSL)",
@@ -170,7 +185,10 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "1.4.4",
         "Apache-2.0",
         "https://github.com/apple/swift-log",
-        (f"{RAW}/apple/swift-log/1.4.4/LICENSE.txt", f"{RAW}/apple/swift-log/1.4.4/NOTICE.txt"),
+        (
+            f"{RAW}/apple/swift-log/1.4.4/LICENSE.txt",
+            f"{RAW}/apple/swift-log/1.4.4/NOTICE.txt",
+        ),
     ),
     Component(
         "Swift Collections",
@@ -191,12 +209,16 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
 # Packages whose wheel and sdist ship no license file: take it from the upstream repository instead.
 # `{version}` is filled from uv.lock so a version bump follows the matching upstream tag.
 LICENSE_OVERRIDES: dict[str, tuple[str, ...]] = {
-    "langchain-text-splitters": (f"{RAW}/langchain-ai/langchain/langchain-text-splitters%3D%3D{{version}}/LICENSE",),
+    "langchain-text-splitters": (
+        f"{RAW}/langchain-ai/langchain/langchain-text-splitters%3D%3D{{version}}/LICENSE",
+    ),
     "langsmith": (f"{RAW}/langchain-ai/langsmith-sdk/v{{version}}/LICENSE",),
 }
 
 # Names inside a wheel's .dist-info (or sdist root) that hold license/notice text.
-_LICENSE_NAME = re.compile(r"(?i)^(licen[cs]e|copying|notice|authors|copyright)([._-].*)?$")
+_LICENSE_NAME = re.compile(
+    r"(?i)^(licen[cs]e|copying|notice|authors|copyright)([._-].*)?$"
+)
 _MARKER_ENV = {
     "sys_platform": "darwin",
     "platform_machine": "arm64",
@@ -217,7 +239,9 @@ def _marker_applies(marker: str | None) -> bool:
     for var, value in _MARKER_ENV.items():
         expr = expr.replace(var, repr(value))
     if re.search(r"[a-z_]+_version|<|>|\bin\b", expr):
-        raise ValueError(f"unsupported marker in uv.lock (extend _marker_applies): {marker}")
+        raise ValueError(
+            f"unsupported marker in uv.lock (extend _marker_applies): {marker}"
+        )
     return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - literal-only expression
 
 
@@ -285,12 +309,21 @@ def _python_license_texts(pkg: dict) -> list[tuple[str, str]]:
                 if in_dist_info and not info.endswith("/"):
                     under_licenses = len(parts) > 2 and parts[1] == "licenses"
                     if under_licenses or _LICENSE_NAME.match(parts[-1]):
-                        texts.append(("/".join(parts[1:]), zf.read(info).decode("utf-8", "replace")))
+                        texts.append(
+                            (
+                                "/".join(parts[1:]),
+                                zf.read(info).decode("utf-8", "replace"),
+                            )
+                        )
     if not texts and "sdist" in pkg:
         with tarfile.open(fileobj=io.BytesIO(_get(pkg["sdist"]["url"]))) as tf:
             for member in sorted(tf.getmembers(), key=lambda m: m.name):
                 parts = member.name.split("/")
-                if member.isfile() and len(parts) == 2 and _LICENSE_NAME.match(parts[1]):
+                if (
+                    member.isfile()
+                    and len(parts) == 2
+                    and _LICENSE_NAME.match(parts[1])
+                ):
                     fh = tf.extractfile(member)
                     if fh:
                         texts.append((parts[1], fh.read().decode("utf-8", "replace")))
@@ -299,12 +332,18 @@ def _python_license_texts(pkg: dict) -> list[tuple[str, str]]:
 
 def _license_expression(pkg: dict) -> str:
     try:
-        info = json.loads(_get(f"https://pypi.org/pypi/{pkg['name']}/{pkg['version']}/json"))["info"]
+        info = json.loads(
+            _get(f"https://pypi.org/pypi/{pkg['name']}/{pkg['version']}/json")
+        )["info"]
     except Exception:  # noqa: BLE001 - metadata is a nicety; the texts are what matter
         return "see license text"
     if expr := info.get("license_expression"):
         return expr
-    classifiers = [c.split("::")[-1].strip() for c in info.get("classifiers", []) if c.startswith("License ::")]
+    classifiers = [
+        c.split("::")[-1].strip()
+        for c in info.get("classifiers", [])
+        if c.startswith("License ::")
+    ]
     if classifiers:
         return " / ".join(classifiers)
     lic = (info.get("license") or "").strip()
@@ -347,7 +386,10 @@ def generate() -> str:
         print(f"python  {pkg['name']} {pkg['version']}", file=sys.stderr)
         if override := LICENSE_OVERRIDES.get(pkg["name"]):
             urls = [url.format(version=pkg["version"]) for url in override]
-            texts = [(url.rsplit("/", 1)[-1], _get(url).decode("utf-8", "replace")) for url in urls]
+            texts = [
+                (url.rsplit("/", 1)[-1], _get(url).decode("utf-8", "replace"))
+                for url in urls
+            ]
         else:
             texts = _python_license_texts(pkg)
         if not texts:
@@ -356,20 +398,34 @@ def generate() -> str:
         sections.append(
             _section(
                 f"{pkg['name']} {pkg['version']}",
-                [f"License: {_license_expression(pkg)}", f"Homepage: https://pypi.org/project/{pkg['name']}/"],
+                [
+                    f"License: {_license_expression(pkg)}",
+                    f"Homepage: https://pypi.org/project/{pkg['name']}/",
+                ],
                 texts,
             )
         )
     if missing:
-        raise SystemExit(f"no license file shipped for {', '.join(missing)}; add them to LICENSE_OVERRIDES")
+        raise SystemExit(
+            f"no license file shipped for {', '.join(missing)}; add them to LICENSE_OVERRIDES"
+        )
     for comp in NATIVE_COMPONENTS:
         print(f"native  {comp.name} {comp.version}", file=sys.stderr)
-        texts = [(url.rsplit("/", 1)[-1], _get(url).decode("utf-8", "replace")) for url in comp.license_urls]
+        texts = [
+            (url.rsplit("/", 1)[-1], _get(url).decode("utf-8", "replace"))
+            for url in comp.license_urls
+        ]
         for (_, text), url in zip(texts, comp.license_urls, strict=True):
             if len(text) < 200:  # e.g. a git symlink served as its target path
-                raise SystemExit(f"{comp.name}: {url} does not look like a license text: {text!r}")
+                raise SystemExit(
+                    f"{comp.name}: {url} does not look like a license text: {text!r}"
+                )
         sections.append(
-            _section(f"{comp.name} {comp.version}", [f"License: {comp.license}", f"Homepage: {comp.homepage}"], texts)
+            _section(
+                f"{comp.name} {comp.version}",
+                [f"License: {comp.license}", f"Homepage: {comp.homepage}"],
+                texts,
+            )
         )
     return "\n".join(header) + "\n" + "\n".join(sections)
 
@@ -377,7 +433,9 @@ def generate() -> str:
 def indexed_entries(notices: str) -> list[str]:
     """The component index at the top of a generated notices file."""
     _, _, rest = notices.partition("Components:\n\n")
-    return [line.strip() for line in rest.split("\n\n", 1)[0].splitlines() if line.strip()]
+    return [
+        line.strip() for line in rest.split("\n\n", 1)[0].splitlines() if line.strip()
+    ]
 
 
 def check(notices_path: Path = OUTPUT, lockfile: Path = LOCKFILE) -> list[str]:
@@ -392,8 +450,14 @@ def check(notices_path: Path = OUTPUT, lockfile: Path = LOCKFILE) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--check", action="store_true", help="verify the committed file offline instead of writing")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the committed file offline instead of writing",
+    )
     parser.add_argument("--notices", type=Path, default=OUTPUT)
     parser.add_argument("--lockfile", type=Path, default=LOCKFILE)
     args = parser.parse_args()
@@ -403,7 +467,10 @@ def main() -> int:
         for p in problems:
             print(p, file=sys.stderr)
         if problems:
-            print("run `python3 tools/third_party_notices.py` and commit the result", file=sys.stderr)
+            print(
+                "run `python3 tools/third_party_notices.py` and commit the result",
+                file=sys.stderr,
+            )
         return 1 if problems else 0
 
     args.notices.parent.mkdir(parents=True, exist_ok=True)
