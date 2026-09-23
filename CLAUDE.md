@@ -133,6 +133,38 @@ the server is touched. Put new tests that need real SQL there, and keep logic te
 - `.github/actions/setup-aspect` installs the Aspect CLI pinned in `tools/tools.lock.json` for the
   runner's OS and CPU.
 
+### Testing against Postgres
+
+Most Python tests mock the database. `garage_python/tests/test_postgres.py` covers the SQL that only
+a server can judge, against real Postgres + pgvector:
+- the migrations, applied and then re-applied, including 008's data move;
+- the per-model DDL, with each distance metric's operator class;
+- the search query, including the halfvec and binary-quantized paths;
+- the egress filter on pending chunks.
+
+It runs when `GARAGE_TEST_DATABASE_URL` names a server and skips when the variable is unset. Each run
+creates a throwaway `garage_test_*` database, applies `data/sql` to it and drops it; nothing else on
+the server is touched. Put new tests that need real SQL there, and keep logic tests on mocks.
+
+- **Development Macs** run Homebrew PostgreSQL 18 with pgvector as a service. Use that server for
+  every test except end-to-end app testing:
+
+  ```bash
+  brew install postgresql@18 pgvector
+  brew services start postgresql@18
+  echo 'export GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres' >> .env   # direnv sources .env
+  ```
+
+  The URL needs a role that is a superuser, because pgvector is not a trusted extension and each
+  run creates a database. Homebrew's cluster makes your login user one, with local trust auth.
+- **Bazel** passes the variable through (`test --test_env=GARAGE_TEST_DATABASE_URL` in `.bazelrc`),
+  so `aspect test //garage_python/tests:test_postgres` uses the same server as the venv's `pytest`.
+- **Web sessions** get a server from the start hook (below).
+- **CI's hosted runners** have no server, so these tests skip there.
+- **Never point it at the app's own cluster.** The vendored Postgres (`//ext/postgres`, port 14824,
+  password in the Keychain) holds the real corpus. It is for end-to-end app testing, the launchers,
+  and the tests of the vendored build itself.
+
 ### Swift app dev loop
 
 The app is built by Bazel only; there is no SwiftPM manifest. Every Swift module depends on
