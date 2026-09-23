@@ -188,7 +188,10 @@ final class ProcessRunnerTests: XCTestCase {
 
     func testProcessRunnerAsyncExecution() throws {
         let runner = ProcessRunner()
-        let expectation = XCTestExpectation(description: "Process completes and logs lines")
+        let expectation = XCTestExpectation(description: "Process completes")
+        // Lines reach main from the pipe's readability handler, independently of the exit:
+        // on a loaded machine the termination hop can land first, so wait for the line too.
+        let lineExpectation = XCTestExpectation(description: "Process logs its line")
         var collectedLines: [LogLine] = []
 
         let process = try runner.run(
@@ -197,6 +200,9 @@ final class ProcessRunnerTests: XCTestCase {
             source: "echo_test"
         ) { line in
             collectedLines.append(line)
+            if line.text.contains("streaming test") {
+                lineExpectation.fulfill()
+            }
         }
 
         process.terminationHandler = { _ in
@@ -205,7 +211,7 @@ final class ProcessRunnerTests: XCTestCase {
             }
         }
 
-        wait(for: [expectation], timeout: 5.0)
+        wait(for: [expectation, lineExpectation], timeout: 5.0)
         XCTAssertFalse(runner.isRunning)
         XCTAssertTrue(collectedLines.contains { $0.text.contains("streaming test") })
     }
