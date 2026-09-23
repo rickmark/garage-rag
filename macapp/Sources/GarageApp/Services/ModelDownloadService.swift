@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import ModelDownloadClient
+import PythonXPCService
 
 /// Service managing the state and operations of the ModelDownload XPC service in the macOS app.
 @MainActor
@@ -45,11 +46,28 @@ final class ModelDownloadService: ObservableObject {
     }
 
     let client: ModelDownloadClient
+    /// The models folder the XPC service must use instead of its own default, or nil to leave it.
+    /// Set under `--data-directory`: XPC services never see the app's arguments, so the service
+    /// would otherwise resolve the real models folder in its own process and list, download into
+    /// and delete from the user's real models while the app runs on a test data folder.
+    let modelsDirectoryOverride: String?
     private let maxLogLines = 2000
     private var pollTimer: Timer?
 
-    init(client: ModelDownloadClient = ModelDownloadClient()) {
+    init(
+        client: ModelDownloadClient = ModelDownloadClient(),
+        modelsDirectoryOverride: String? = GarageAppGroup.dataDirectoryOverride == nil ? nil : Paths.modelsDir.path
+    ) {
         self.client = client
+        self.modelsDirectoryOverride = modelsDirectoryOverride
+    }
+
+    /// Tells the service which models folder to use (`modelsDirectoryOverride`). The service keeps
+    /// it in memory only, and launchd may relaunch the service between calls, so this runs before
+    /// every call that reads or writes the folder rather than once at launch.
+    private func applyModelsDirectoryOverride() async throws {
+        guard let path = modelsDirectoryOverride else { return }
+        _ = try await client.setModelsDirectory(path: path)
     }
 
     deinit {
@@ -94,6 +112,7 @@ final class ModelDownloadService: ObservableObject {
         do {
             let pingResp = try await client.ping()
             isConnected = true
+            try await applyModelsDirectoryOverride()
 
             let downloads = try await client.listDownloads()
             self.activeDownloads = downloads
@@ -199,6 +218,7 @@ final class ModelDownloadService: ObservableObject {
 
         do {
             appendLog("Starting download for \(req.filename ?? trimmedUrl)...")
+            try await applyModelsDirectoryOverride()
             let taskInfo = try await client.startDownload(request: req)
             lastSuccess = "Started download: \(taskInfo.filename)"
             appendLog("Download task created (ID: \(taskInfo.id)) for \(taskInfo.filename)")
