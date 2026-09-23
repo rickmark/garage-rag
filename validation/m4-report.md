@@ -372,3 +372,174 @@ without a human answering the Keychain prompt. `garage register-model bq-test --
 5. **New psycopg imports** dragging DB dependencies into previously DB-free tests, including the
    egress guard.
 6. **Codesign test paths** — two new tests that cannot pass as written.
+
+---
+
+# Round 2 — re-validation at `ef303db`
+
+Re-run against `claude/adoring-ritchie-c084cj` at **`ef303db`** ("Fix combined batch progress; let
+garage-mcp answer before Postgres is up"), on top of `2cf8433` ("Sign what the xcarchive and lipo
+app actually ship") and `39f9561` ("Let the Bazel tests import garage_rag and reach libpq; stop
+importing psycopg eagerly").
+
+Same machine and toolchain as round 1: macOS 27.0 (26A428), Xcode 27.0 (27A266a), aspect launcher
+2026.35.26. Nothing was changed on `claude/adoring-ritchie-c084cj`. No notarize / installer /
+install / `xcarchive_open` target ran.
+
+Scope note: steps 6 (migrations 008/009, binary-quantized search) and 7 (`garage-mcp` initialize
+timing) were reassigned to the M3 mid-round and are **not** covered here. Step 4 was **skipped at
+the user's request**.
+
+| Step | Result |
+|---|---|
+| 1. `aspect build //...` | **FAIL** — Bazel load error, nothing builds |
+| 2. `aspect test //...` | **FAIL** — same load error, no tests run |
+| 3. xcarchive + codesign | **PASS** — blocker (a) fixed |
+| 4. `//macapp/package:GarageApp` | skipped at user's request |
+| 5. `//ext/python:python_framework_codesign_test` | **FAIL** — new error |
+
+## Step 1 — `aspect build //...`: FAIL (exit 1, 0.6s)
+
+This is a **load-phase failure**: the target pattern `//...` cannot be evaluated, so no target in
+the repository builds, and nothing downstream of it can be assessed.
+
+```
+ERROR: Traceback (most recent call last):
+	File "/Users/rickmark/Developer/garage-validate/garage_python/tests/BUILD.bazel", line 3, column 8, in <toplevel>
+		py_test(
+	File "/Users/rickmark/Developer/garage-validate/tools/pytest/defs.bzl", line 46, column 20, in py_test
+		_py_pytest_test(
+	File ".../external/aspect_rules_py+/py/private/py_pytest_test.bzl", line 121, column 32, in py_pytest_test
+		main = pytest_driver_wiring(
+	File ".../external/aspect_rules_py+/py/private/py_pytest_test.bzl", line 73, column 16, in pytest_driver_wiring
+		data = list(kwargs.pop("data", []))
+Error in list: in call to list(), parameter 'x' got value of type 'select', want 'iterable'
+ERROR: package contains errors: garage_python/tests
+WARNING: Target pattern parsing failed.
+```
+
+**Cause.** `39f9561` added the macOS libpq wiring at **`tools/pytest/defs.bzl:49-52`**:
+
+```starlark
+data = data + select({
+    "@platforms//os:macos": [_LIBPQ],
+    "//conditions:default": [],
+}),
+```
+
+`aspect_rules_py` 2.0.0-alpha.6 (**`MODULE.bazel:29`**) cannot accept a `select` there:
+`pytest_driver_wiring` does `data = list(kwargs.pop("data", []))` at
+**`py_pytest_test.bzl:73`**, and `list()` rejects a `select`. Because the macro is used by every
+`py_test` in `garage_python/tests/BUILD.bazel`, the whole package fails to load, which fails
+`//...`.
+
+The sibling `env = select({...})` at **`tools/pytest/defs.bzl:53`** is fine — `env` is not passed
+through `list()`.
+
+## Step 2 — `aspect test //...`: FAIL (exit 1, 0.6s)
+
+Identical load error; **zero tests executed**, so there is no per-target failure list to give.
+
+```
+ERROR: Error evaluating '//...': error loading package 'garage_python/tests': Package 'garage_python/tests' contains errors
+```
+
+Consequently the previously reported Python findings could **not** be re-checked at this commit:
+the ingest-counter regression (`counters.seen`), the `garage_rag` runfiles gap, and the psycopg
+import creep are all **unverified here** — neither confirmed fixed nor confirmed still broken.
+`39f9561` is intended to address the latter two, but that cannot be observed until the load error
+is resolved.
+
+## Step 3 — xcarchive: PASS — blocker (a) is fixed
+
+```
+aspect build //macapp:GarageStore.xcarchive
+```
+Exit 0, 5m43s. Output:
+`bazel-out/darwin_arm64-fastbuild-ST-37fe811ccc69/bin/macapp/_GarageStore_xcarchive_raw/Garage.xcarchive`
+
+The app inside the archive:
+```
+.../Garage.xcarchive/Products/Applications/Garage.app: valid on disk
+.../Garage.xcarchive/Products/Applications/Garage.app: satisfies its Designated Requirement
+```
+```
+Identifier=me.rickmark.garage-rag
+Authority=Apple Distribution: Richard Penwell (DWVXMLB45Y)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=DWVXMLB45Y
+```
+
+And the framework that previously failed:
+```
+.../Garage.app/Contents/Frameworks/Python.framework: valid on disk
+.../Garage.app/Contents/Frameworks/Python.framework: satisfies its Designated Requirement
+```
+
+Round 1 reported `code object is not signed at all / In subcomponent: ... Python.framework`.
+That is resolved — `2cf8433`'s ditto-based assembly works.
+
+## Step 4 — `//macapp/package:GarageApp`: SKIPPED
+
+Not run, at the user's explicit request. The Developer ID authority chain on the lipo'd universal
+app is therefore **unverified**. Note the round-1 root cause (`macos_lipo_app`'s `app` attribute
+lacking `cfg = _developer_id_transition`, `bazel/lipo.bzl:238-241`) is reported fixed by
+`2cf8433`, but that claim is not checked here.
+
+## Step 5 — `//ext/python:python_framework_codesign_test`: FAIL (exit 3)
+
+Still failing, but with a **different** error than round 1 — the symlink fix changed the failure
+mode rather than removing it.
+
+```
+Verifying bundle: Python.framework
+/var/folders/.../codesign_test.EteXJy/stage/Python.framework: Too many levels of symbolic links
+[FAIL] Bundle verification failed: Python.framework
+============================================================
+Checked 0 Mach-O binaries: -1 passed, 1 failed
+============================================================
+Error: No Mach-O binaries were found in target inputs
+```
+
+Round 1 was `bundle format is ambiguous (could be app or framework)` with `1 passed, 2 failed`.
+Now the staged copy has a symlink cycle, `codesign` refuses it, and **no** binaries get checked at
+all.
+
+Two distinct problems:
+
+1. **Symlink cycle in the staged tree.** `2cf8433` replaced the copy with
+   **`bazel/codesign_test.bzl:114`**:
+   `tar -cf - -C "$item" . | (cd "$STAGE_DIR/$(basename "$item")" && tar -xf -)`.
+   This preserves symlinks, which was the intent, but the resulting
+   `Python.framework` staged this way resolves into a loop —
+   `Versions/Current` → `Versions/3.13` and the top-level `Python`/`Resources`
+   entries pointing back through `Current` — so `codesign` reports
+   `Too many levels of symbolic links`.
+2. **Counter arithmetic bug, independent of the above.** The summary prints `-1 passed` because
+   **`bazel/codesign_test.bzl:239`** computes
+   `$((total_checked - failed_count))` where `total_checked` is 0 (incremented only at
+   **`:179`**, per Mach-O binary) while `failed_count` was incremented by the *bundle* failure.
+   Bundle failures and binary failures are counted against different denominators. Even once the
+   symlink issue is fixed, this line can report a negative pass count.
+
+`//ext/pythonkit:pythonkit_codesign_test` is confirmed **removed**:
+`ERROR: no such target '//ext/pythonkit:pythonkit_codesign_test': target 'pythonkit_codesign_test'
+not declared in package 'ext/pythonkit'`.
+
+## Round 2 summary
+
+Fixed and verified: the xcarchive's unsigned `Python.framework`, and the removal of
+`pythonkit_codesign_test`.
+
+Still open:
+1. **`tools/pytest/defs.bzl:49` breaks the whole build graph** — the `select` in `data` is
+   incompatible with aspect_rules_py 2.0.0-alpha.6. This is the highest priority item: it blocks
+   `//...` entirely, so it also hides whatever state the Python fixes in `39f9561` are actually in.
+   Worth noting this is the second time a Bazel load error has masked the tree.
+2. **`python_framework_codesign_test`** — symlink cycle in the tar-staged framework
+   (`codesign_test.bzl:114`) plus a negative-count bug at `codesign_test.bzl:239`.
+
+Unverified this round: the ingest-counter regression, the `garage_rag` runfiles gap, the psycopg
+import creep (all blocked by step 1/2), and the Developer ID transition on
+`//macapp/package:GarageApp` (step 4 skipped).
