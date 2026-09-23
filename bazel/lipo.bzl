@@ -100,6 +100,8 @@ options = sys.argv[4]
 # 0. Clean unneeded directories from the staged app bundle before signing
 for site_python_test in [
     os.path.join(app_bundle, "Contents/Resources/site-python/test"),
+    os.path.join(app_bundle, "Contents/Frameworks/PythonXPCService.framework/site-python/test"),
+    os.path.join(app_bundle, "Contents/Frameworks/PythonXPCService.framework/Resources/site-python/test"),
 ]:
     if os.path.exists(site_python_test):
         shutil.rmtree(site_python_test, ignore_errors=True)

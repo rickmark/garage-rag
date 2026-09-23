@@ -15,7 +15,7 @@ MCP 2.0 and gRPC. Communications never leave the machine; see [`docs/privacy.md`
 
 Both are console scripts of the `garage_rag` package. The macOS app does not
 ship them as standalone binaries: it bundles the package as
-`Resources/site-python` (`//garage_python:site-packages`) and runs it through
+`site-python` inside `Frameworks/PythonXPCService.framework` (`//garage_python:site-packages`) and runs it through
 `MacOS/garage` (`//macapp/Sources/GarageCLI:garage`), a Swift binary that embeds
 the bundled interpreter.
 

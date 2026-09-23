@@ -127,7 +127,7 @@ public enum Launcher {
     }
 
     /// Starts the isolated interpreter (PyConfig API) with `home`, stdlib, `lib-dynload`
-    /// and `site-packages` from `<Garage.app>/Contents/Resources/site-python`, exactly
+    /// and `site-packages` from `site-python` in `PythonXPCService.framework`, exactly
     /// like the XPC services do.
     private static func startPython(appBundle: URL?) -> Bool {
         let runtime = GaragePythonRuntime.shared

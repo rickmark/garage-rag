@@ -95,7 +95,7 @@ public enum GaragePythonRuntimeError: Error, LocalizedError, Equatable {
 /// Owns the single embedded CPython interpreter of an XPC service.
 ///
 /// Responsibilities:
-/// - resolve the isolated environment (`Resources/site-python`) relative to the main application bundle,
+/// - resolve the isolated environment (`site-python` in `PythonXPCService.framework`, else in the app bundle),
 ///   which may be provided explicitly (URL or `FileHandle`) by the host application or inferred from the
 ///   location of the XPC bundle;
 /// - start the interpreter through the PyConfig API (isolated mode, explicit `home` and `sys.path`);
@@ -272,8 +272,20 @@ public final class GaragePythonRuntime: @unchecked Sendable {
 
     // MARK: - Environment resolution
 
-    /// Resolves the isolated environment from (in order): `GARAGE_SITE_PYTHON`, the explicitly registered app
-    /// bundle, the inferred enclosing `.app`, and finally the XPC bundle's own `Resources`.
+    /// Bundle identifier of `PythonXPCService.framework`, whose resources hold `site-python`.
+    public static let frameworkBundleIdentifier = "me.rickmark.garage-rag.PythonXPCService"
+
+    /// `site-python` inside `PythonXPCService.framework`, the framework every Python process links. A sandboxed
+    /// XPC service may read inside the frameworks it links but not elsewhere in the enclosing app bundle, so this
+    /// is where the App Store build's services find the interpreter home. Nil when the framework is not loaded.
+    static var frameworkSitePythonURL: URL? {
+        Bundle(identifier: frameworkBundleIdentifier)?.resourceURL?
+            .appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true)
+    }
+
+    /// Resolves the isolated environment from (in order): `GARAGE_SITE_PYTHON`, the loaded `PythonXPCService.framework`'s
+    /// resources, then for the explicitly registered and the inferred enclosing `.app` the framework's `site-python`
+    /// by path and the older `Contents/Resources/site-python`, and finally the XPC bundle's own `Resources`.
     public func resolveEnvironment() throws -> GaragePythonEnvironment {
         let fm = FileManager.default
         var candidates: [(URL?, URL)] = []
@@ -290,9 +302,21 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         if let explicit = explicit { bundleCandidates.append(explicit) }
         if let inferred = Self.inferAppBundleURL(), !bundleCandidates.contains(inferred) { bundleCandidates.append(inferred) }
 
+        if let frameworkSitePython = Self.frameworkSitePythonURL {
+            candidates.append((bundleCandidates.first, frameworkSitePython))
+        }
+
         for bundleURL in bundleCandidates {
-            let resources = bundleURL.appendingPathComponent("Contents/Resources", isDirectory: true)
-            candidates.append((bundleURL, resources.appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true)))
+            // By path, for processes that do not load the framework (the `garage` / `garage-mcp` launchers):
+            // the framework is flat as built today, or versioned (`Resources/`), then the pre-framework location.
+            let framework = bundleURL.appendingPathComponent("Contents/Frameworks/PythonXPCService.framework", isDirectory: true)
+            for sitePython in [
+                framework.appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true),
+                framework.appendingPathComponent("Resources/\(GaragePythonEnvironment.sitePythonDirectoryName)", isDirectory: true),
+                bundleURL.appendingPathComponent("Contents/Resources/\(GaragePythonEnvironment.sitePythonDirectoryName)", isDirectory: true),
+            ] where !candidates.contains(where: { $0.1.standardizedFileURL == sitePython.standardizedFileURL }) {
+                candidates.append((bundleURL, sitePython))
+            }
         }
 
         if let ownResources = Bundle.main.resourceURL {

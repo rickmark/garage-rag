@@ -63,11 +63,15 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   `libpq` in `Frameworks/`.
 - `Resources/schema` — the SQL migrations, `Resources/postgresql.conf`, the model
   manifest and the config JSON schema.
-- `Resources/site-python` — the Python site-packages (`//macapp/externals:site-python`)
-  used by the CLI and every XPC service; the interpreter itself is the
-  `Python.framework` from `//ext/python`.
 - `Frameworks/PythonXPCService.framework` — the shared runtime for the six
-  `XPCServices/*.xpc` helpers listed under `xpc_services`.
+  `XPCServices/*.xpc` helpers listed under `xpc_services`. Its resources hold
+  `site-python` (`//macapp/externals:site-python`): the standard library,
+  `lib-dynload` and site-packages, used by the CLI and every XPC service. It lives
+  in the framework because a sandboxed XPC service may read inside the frameworks it
+  links but not elsewhere in the app bundle. The interpreter itself is the
+  `Python.framework` from `//ext/python`, kept to the bare interpreter.
+- The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
+  is mapped before the App Sandbox applies; opening it later by path is denied.
 
 ## A stable local signing identity
 

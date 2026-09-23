@@ -1,4 +1,5 @@
 load("@rules_apple//apple:macos.bzl", "macos_framework")
+load("@rules_apple//apple:resources.bzl", "apple_resource_group")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_swift//swift:swift.bzl", "swift_binary", "swift_library")
 load("//bazel:codesign.bzl", "codesign")
@@ -85,6 +86,14 @@ swift_binary(
     ],
 )
 
+# The embedded interpreter's home (stdlib, lib-dynload, site-packages) lives in this framework's
+# resources. Sandboxed XPC services may read inside the frameworks they link, but not elsewhere in
+# the app bundle, so this is the one place the App Store build's Python services can load it from.
+apple_resource_group(
+    name = "site_python_resources",
+    structured_resources = ["//macapp/externals:site-python"],
+)
+
 macos_framework(
     name = "PythonXPCService_framework",
     additional_linker_inputs = [
@@ -101,6 +110,7 @@ macos_framework(
         "SystemConfiguration",
     ],
     minimum_os_version = "14.0",
+    resources = [":site_python_resources"],
     version = "//macapp/Sources/GarageApp:GarageAppVersion",
     visibility = ["//visibility:public"],
     deps = [

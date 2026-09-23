@@ -25,7 +25,7 @@ extern "C" {
 /// Options describing an isolated Python.framework environment bundled inside the app.
 typedef struct GaragePythonEmbedOptions {
     /// Directory used as `PyConfig.home` (prefix and exec_prefix). Usually
-    /// `<App>.app/Contents/Resources/site-python`.
+    /// `site-python` in `PythonXPCService.framework`'s resources.
     const char *home;
     /// Directory containing the pure-Python standard library (`os.py`, ...).
     const char *stdlibDir;
