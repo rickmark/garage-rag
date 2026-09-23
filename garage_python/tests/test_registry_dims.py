@@ -255,7 +255,10 @@ class TestSearchBindType:
         session, _ = self._run(row, mode="hybrid")
         statement, params = session.execute.call_args.args
         sql = statement.text
-        assert "binary_quantize(e.embedding)::bit(4096) <~> binary_quantize(:qv)::bit(4096)" in sql
+        assert "ORDER BY binary_quantize(e.embedding)::bit(4096)" in sql
+        # Cast: binary_quantize() is overloaded for vector and halfvec, and the
+        # bound query vector arrives untyped (test_postgres runs this for real).
+        assert "<~> binary_quantize(CAST(:qv AS vector(4096)))::bit(4096)" in sql
         assert "LIMIT :bq_depth" in sql
         assert params["bq_depth"] == CANDIDATE_DEPTH * BQ_OVERFETCH
         # Stage two orders the prefetched rows on exact cosine.

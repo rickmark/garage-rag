@@ -206,6 +206,9 @@ def search(
         # over-fetched rows on the model's exact distance. The ORDER BY expression
         # must match the index expression, width included, for the planner to use it.
         bits = int(model.stored_dims)
+        # binary_quantize() exists for both vector and halfvec, so the bound query
+        # vector (an untyped literal on the wire) must be cast to the column's type.
+        column_type = f"{model.storage_kind}({bits})"
         params["bq_depth"] = CANDIDATE_DEPTH * BQ_OVERFETCH
         vector_cte = f"""
         vec_bq AS (
@@ -215,7 +218,8 @@ def search(
             JOIN documents d ON d.id = c.document_id
             JOIN sources s   ON s.id = d.source_id
             WHERE {where}
-            ORDER BY binary_quantize(e.embedding)::bit({bits}) <~> binary_quantize(:qv)::bit({bits})
+            ORDER BY binary_quantize(e.embedding)::bit({bits})
+                     <~> binary_quantize(CAST(:qv AS {column_type}))::bit({bits})
             LIMIT :bq_depth
         ),
         vec AS (
