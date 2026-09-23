@@ -1232,3 +1232,65 @@ The change is behavioral only, and it depends on `GarageAppGroup.isSandboxed` re
 `com.apple.security.app-sandbox`. The dumps confirm the premise: the key is absent from every
 Developer ID binary, so the link path runs there, and `true` on the Store app, so it doesn't.
 The runtime effect (the link actually appearing) still waits for the first launch.
+
+---
+
+# Check (e67d0a9)
+
+Commit **`e67d0a9`** (PR branch, checked out detached) turns "Reset Database" into a detailed sheet.
+It stops everything, deletes `pgdata`, and relaunches with `--after-database-reset <pid>`.
+**Neither app was launched, and no reset was performed.** The real cluster is untouched:
+`~/Library/Application Support/GarageApp/pgdata/PG_VERSION` is still present after the test runs.
+No notarize / installer / install / `xcarchive_open` / upload ran, and nothing was pushed to the PR
+branch.
+
+Code read before running anything (it deletes data):
+- `deleteClusterForReset()` returns immediately under XCTest, and refuses (deletes nothing) while
+  `postmaster.pid` names a live process.
+- Nothing is relaunched under XCTest.
+- A failed delete restarts the services.
+- `GarageDataMigration.runAtLaunch()` is still the first thing both launch paths run
+  (`launchServices`).
+
+One edge case: `waitForExit` gives up after 30s. If the old instance takes longer to quit, the new
+one starts its services while the old one's quit path can still stop XPC services by executable
+name. This is unlikely, but worth knowing.
+
+**1. `aspect build //:macapp //macapp/package:GarageApp //macapp:GarageStore.app`: PASS**, exit 0,
+2m47s. **No new warnings**, and none in `AppState.swift` or `DatabaseResetSheet.swift`. The only
+warnings printed are the two existing Swift 6 ones at `XPCServiceManager.swift:242/245`
+(`GarageApp_lib` recompiled). The third existing one, `GarageIngestXPCService/main.swift:345`, was
+not re-emitted by the incremental worker.
+
+**2. `aspect test //macapp/Tests/... --bazel-flag=--test_output=errors`: PASS**, exit 0, 3/3
+targets. `GarageAppUnitTests` executed **234 tests, 0 failures** (9f87af2: 231), so nothing
+regressed. The five named tests pass:
+```
+AppStateTests        testResetDatabaseStopsServicesButNeitherDeletesNorRelaunchesInTests  passed
+AppStateTests        testDatabaseResetParentIsReadFromTheLaunchArguments                 passed
+AppStateTests        testWaitForExitReturnsAtOnceForAProcessThatIsGone                   passed
+AppStateTests        testWaitForExitGivesUpAtTheTimeout                                  passed (0.43s)
+PostgresServiceTests testDeleteClusterForResetIsANoOpInTests                             passed
+```
+
+**3. Sheet screenshot: rendered without launching the app.** I used a throwaway XCTest (not
+committed, and deleted afterwards). It hosts `DatabaseResetSheet` with a test-host `AppState` in an
+off-screen `NSHostingView` and writes PNGs to `TEST_UNDECLARED_OUTPUTS_DIR`:
+[light](img/e67d0a9-reset-sheet-light.png), [dark](img/e67d0a9-reset-sheet-dark.png).
+
+![Reset sheet, light](img/e67d0a9-reset-sheet-light.png)
+
+The layout reads well in both appearances: a title with a red warning glyph, the intro, a
+**Deleted** box (search index, facts, conversation memory, registrations and history), a **Kept**
+box (original files; models, logs and settings; the database password), the path footnote, and
+Cancel / Reset and Relaunch. Notes:
+- The footnote shows `~/Library/Application Support/GarageApp/pgdata` because the test host is not
+  entitled for the group. A signed build shows the group-container path, which is long and less
+  familiar. Consider showing the `~/Library/Application Support/GarageApp` link path on Developer ID
+  builds (9f87af2 keeps it as a link).
+- With no database, the index line falls back to the generic text. The real one shows
+  document/chunk counts.
+- **"Reset and Relaunch" renders gray, not red.** On macOS, `.tint(.red)` does not colour the
+  default (bordered) button style, and `role: .destructive` does not make it red either. If red is
+  intended, use `.buttonStyle(.borderedProminent)` with the tint, or `.foregroundStyle(.red)`.
+  An off-screen, non-key window may also mute accent colours, so confirm this in the running app.
