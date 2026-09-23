@@ -1190,3 +1190,45 @@ and the other will be left where it is.
 
   Before that first launch: quit Garage and back up both old folders (`ditto`) or `pg_dump`, then
   launch **one** build, check the logs, and only then the other.
+
+---
+
+# Check (9f87af2)
+
+Commit **`9f87af2`** (PR branch, on top of `904ab61`, checked out detached) keeps
+`~/Library/Application Support/GarageApp` as a link to the group-container data folder on
+unsandboxed (Developer ID) builds, on fresh installs too. **Neither app was launched**. No
+notarize / installer / install / `xcarchive_open` / upload ran, and nothing was pushed to the PR
+branch. No Keychain prompt appeared.
+
+**1. `aspect build //:macapp //macapp/package:GarageApp //macapp:GarageStore.app`: PASS**, exit 0,
+2m31s. **No new warnings.** The log has zero `warning:` lines. The persistent Swift worker rebuilt
+`GarageApp_lib`, `PythonXPCService_protocol`/`_swift`, `ModelDownloadClient`, `IngestClient` and
+`GarageMCPServerService_lib` incrementally. Unchanged files (e.g. `XPCServiceManager.swift`)
+therefore did not re-print their three existing Swift 6 warnings, and the changed files added none.
+`duplicate -rpath`: 0.
+
+**2. `aspect test //macapp/Tests/... --bazel-flag=--test_output=errors`: PASS**, exit 0, 3/3
+targets. `GarageAppUnitTests` executed 231 tests with 0 failures (904ab61: 228).
+**`GarageDataMigrationTests` went from 10 to 13 cases, all passing**, including the three new ones:
+```
+testAFolderStillThereIsNotReplacedByALink       passed
+testAnExistingLinkIsLeftAsIs                    passed
+testLinksTheUnsandboxedPathOnAFreshInstall      passed
+```
+
+**3. Entitlements: unchanged from the 904ab61 check.** I dumped them with
+`codesign -d --entitlements -` on the app, the six XPC services, `garage` and `garage-mcp`, as
+sorted JSON, and diffed against the same dump of the 904ab61 builds. Both came out `identical`.
+- Developer ID: `Garage.app` and all six XPC services carry only
+  `com.apple.security.application-groups = ["DWVXMLB45Y.group.me.rickmark.garage-rag"]`. `garage` and
+  `garage-mcp` have none.
+- App Store: the app has `application-identifier`, `team-identifier`, `app-sandbox`, the group and
+  the rest. The XPC services have `app-sandbox` plus the group, as before.
+- Both verify with `codesign --verify --deep --strict` (exit 0). The Developer ID Application and
+  Apple Distribution chains are as before, `flags=0x10000(runtime)`.
+
+The change is behavioral only, and it depends on `GarageAppGroup.isSandboxed` reading
+`com.apple.security.app-sandbox`. The dumps confirm the premise: the key is absent from every
+Developer ID binary, so the link path runs there, and `true` on the Store app, so it doesn't.
+The runtime effect (the link actually appearing) still waits for the first launch.
