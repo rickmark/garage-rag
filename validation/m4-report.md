@@ -873,3 +873,183 @@ the XPC services, arm64 as declared. Tests went from **26/4 to 30/1**.
    exercised in this round.
 4. `spctl` accepts the unnotarized build locally. This is expected to differ for a quarantined
    download, and notarization is still required for distribution.
+
+---
+
+# Round 4 (f558ef7)
+
+Run on 2026-09-23 on the same M4 (macOS 27.0 / 26A428, arm64), at PR head **`f558ef7`**, checked out
+detached. New since round 3: `36c19d5` (codesign_test rebuilds framework links), `b337487` (App Store
+entitlements), `a171d4b` (xcarchive dSYMs, Team and Architectures) and `f558ef7` (test_scanner git
+isolation, duplicate rpaths removed, docs).
+Test database: Homebrew `postgresql@18` on `localhost:5432` (role `rickmark`, superuser, pgvector
+0.8.6). Nothing pointed at the app's cluster on 14824.
+**No Keychain prompt appeared** in any signing build: no `SecurityAgent` process came up during
+steps 3–5. No notarize / installer / pkgbuild / install / `xcarchive_open` / upload tool ran, and
+nothing was pushed to `claude/adoring-ritchie-c084cj`.
+
+**Result: all six steps pass.**
+
+## Step 1: `aspect build //...` **PASS**
+
+Exit 0, 38s. Mostly action-cache hits (`14564 action cache hit, 44 darwin-sandbox, 11 local`).
+Cached compiles do not replay their diagnostics, so this run printed **zero** `warning:` lines. The
+three Swift 6 concurrency warnings are still there, because their sources did not change: step 3's
+fresh App Store build re-emitted them verbatim (`XPCServiceManager.swift:242:25`, `:245:25`,
+`GarageIngestXPCService/main.swift:345:36`). No new first-party warnings.
+
+**`ld: warning: duplicate -rpath` is gone.** The build log has 0 occurrences. Because the relinks
+could also have been cache hits, I checked the link command lines directly with
+`bazel aquery --output=jsonproto` over every `ObjcLink` action in the app and both test bundles.
+No action repeats an rpath:
+```
+GarageApp_bin rpaths: 6 dups: {}
+Garage{Ingest,MCPServer,Embed}XPCService_bin, GarageXPCService_bin, ModelDownloadXPCService_bin,
+  LlamaXPCService_bin, PythonXPCService_framework_bin     rpaths: 5 dups: {}   (each)
+GarageAppUnitTests / GarageAppUITests __test_bundle_bin  rpaths: 7 dups: {}   (each)
+```
+(Before `f558ef7`, `GarageApp_lib`'s linkopts added `@executable_path/../Frameworks` and
+`@loader_path/../Frameworks` on top of rules_apple's own.)
+
+## Step 2: `GARAGE_TEST_DATABASE_URL=… aspect test //... --bazel-flag=--test_output=errors` **PASS**
+
+Exit 0, 60s. **`Executed 31 out of 31 tests: 31 tests pass.`** No failing targets.
+
+- **`python_framework_codesign_test` PASSES under the default darwin-sandbox.** The target has no
+  `no-sandbox`/`local` tags, and the progress lines show `Testing //ext/python:python_framework_codesign_test; … darwin-sandbox`.
+  ```
+  Verifying bundle: Python.framework
+  .../stage/Python.framework: valid on disk
+  .../stage/Python.framework: satisfies its Designated Requirement
+  [PASS] Bundle valid: Python.framework
+  [PASS] Python.framework/Versions/3.13/Python
+  Checked 1 Mach-O binaries: 1 passed, 0 failed
+  ```
+  Only one Mach-O is counted now (round 3: 3) because top-level `Python` and `Versions/Current` are
+  links again, not copies.
+- **`test_postgres` ran, not skipped:** `============ 16 passed in 1.22s ============`. The
+  `.bazelrc` `--test_env` passthrough works.
+
+## Step 3: `aspect build //macapp:GarageStore.app` **PASS**
+
+Exit 0, 7m49s. Note: `bazel-bin/macapp/GarageStore.app` is a 934-byte launcher script (it `exec`s
+the app binary from runfiles), not a bundle. The signed bundle is the transitioned
+`bazel-out/darwin_arm64-fastbuild-macos-arm64-min14.0-ST-a379604bb3e5/bin/macapp/Sources/GarageApp/GarageApp.zip`,
+listed in the launcher's runfiles manifest, and was extracted with `ditto -x -k`.
+
+**App entitlements** (`codesign -d --entitlements -`). Both new keys are present with the expected values:
+```
+"com.apple.application-identifier"    => "DWVXMLB45Y.me.rickmark.garage-rag"
+"com.apple.developer.team-identifier" => "DWVXMLB45Y"
+"com.apple.security.app-sandbox" => true
+"com.apple.security.application-groups" => ["DWVXMLB45Y.group.me.rickmark.garage-rag"]
+"com.apple.security.cs.disable-library-validation" => true
+"com.apple.security.files.bookmarks.app-scope" => true
+"com.apple.security.files.user-selected.read-only" => true
+"com.apple.security.files.user-selected.read-write" => true
+"com.apple.security.network.client" => true
+"com.apple.security.network.server" => true
+```
+
+**XPC services.** None of the six carries `com.apple.security.inherit`, and each keeps
+`com.apple.security.app-sandbox => true`. Each also has the app group, `disable-library-validation`,
+bookmarks and user-selected files, and `network.client`:
+
+| XPC service | inherit | app-sandbox | network.server |
+|---|---|---|---|
+| GarageEmbedXPCService | absent | true | — |
+| GarageIngestXPCService | absent | true | — |
+| GarageMCPServerService | absent | true | true |
+| GarageXPCService | absent | true | true |
+| LlamaXPCService | absent | true | true |
+| ModelDownloadXPCService | absent | true | — |
+
+**`codesign --verify --deep --strict --verbose=2`**: exit 0, `valid on disk` / `satisfies its
+Designated Requirement`. `-dvv`: `Apple Distribution: Richard Penwell (DWVXMLB45Y)` → Apple
+Worldwide Developer Relations Certification Authority → Apple Root CA, `TeamIdentifier=DWVXMLB45Y`,
+`flags=0x10000(runtime)`.
+
+## Step 4: `aspect build //macapp:GarageStore.xcarchive` **PASS**
+
+Exit 0, 19s. Output is
+`bazel-out/darwin_arm64-fastbuild-ST-37fe811ccc69/bin/macapp/_GarageStore_xcarchive_raw/Garage.xcarchive`,
+from `bazel cquery --output=files`. It is in a transitioned config, so `bazel-bin/macapp` has no
+`.xcarchive`.
+
+**`dSYMs/`** contains 8 bundles, all arm64:
+```
+Garage.app.dSYM                    EC9BDFFF-02A5-3C8F-B24A-9F4963381D6C
+GarageEmbedXPCService.xpc.dSYM     50796926-…    GarageIngestXPCService.xpc.dSYM  AAD3E4B8-…
+GarageMCPServerService.xpc.dSYM    2C6A5DE8-…    GarageXPCService.xpc.dSYM        BB8BD6B0-…
+LlamaXPCService.xpc.dSYM           6253AF81-…    ModelDownloadXPCService.xpc.dSYM 68080D03-…
+PythonXPCService.framework.dSYM    BD4D5425-…
+```
+`Garage.app.dSYM`'s UUID **matches** the archived `Contents/MacOS/GarageApp`
+(`EC9BDFFF-02A5-3C8F-B24A-9F4963381D6C`), so symbolication will line up.
+
+**`plutil -p Info.plist`**:
+```
+"ApplicationProperties" => {
+  "ApplicationPath" => "Applications/Garage.app"
+  "Architectures" => [ 0 => "arm64" ]
+  "CFBundleIdentifier" => "me.rickmark.garage-rag"
+  "CFBundleShortVersionString" => "0.9"
+  "CFBundleVersion" => "217"
+  "SigningIdentity" => "Apple Distribution: Richard Penwell (DWVXMLB45Y)"
+  "Team" => "DWVXMLB45Y"
+}
+"ArchiveVersion" => 2   "Name" => "Garage"   "SchemeName" => "Garage"
+```
+
+**`codesign --verify --deep --strict`** on `Products/Applications/Garage.app`: exit 0, valid, and it
+satisfies its DR. Apple Distribution chain, runtime flag set.
+
+## Step 5: `aspect build //macapp/package:GarageApp` (Developer ID) **PASS, unchanged**
+
+Exit 0, 2m01s. `bazel-bin/macapp/package/GarageApp.zip` was extracted with `ditto`.
+- `codesign --verify --deep --strict --verbose=2 Garage.app`: exit 0, valid, and it satisfies its DR.
+- `codesign -dvv`: `Developer ID Application: Richard Penwell (DWVXMLB45Y)` → Developer ID
+  Certification Authority → Apple Root CA, `TeamIdentifier=DWVXMLB45Y`,
+  `flags=0x10000(runtime)`, timestamped, `Mach-O thin (arm64)`.
+- **Entitlements are unchanged from round 3: none.** `codesign -d --entitlements -` prints only
+  the `Executable=` line for the app and for all six XPC services, exactly as for the round-3
+  (`4c067e4`) Developer ID app. The store keys did not leak into it.
+
+  Observation, not tested at runtime: the Developer ID app therefore has no
+  `com.apple.security.application-groups` and no `cs.disable-library-validation`. If any
+  code path relies on the `group.me.rickmark.garage-rag` container, or loads a library signed by a
+  different team under hardened runtime, it would behave differently from the Store build. That
+  is worth a GUI smoke test of the Developer ID build.
+
+## Step 6: `pytest` in `garage_python/.venv` **PASS**
+
+`.venv` already existed (Python 3.14.2), so `uv sync` was skipped. My normal git config was left in
+place, and it is the case that used to hang: global `commit.gpgsign=true` with `gpg.format=ssh` via
+Secretive (Touch ID). The run was wrapped in a 900s `alarm` guard (macOS has no `timeout(1)`).
+```
+GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres .venv/bin/python -m pytest -q
+597 passed in 25.72s          (exit 0, 28s wall)
+```
+**test_scanner did not hang** and no Touch ID prompt appeared, so the git-config isolation works.
+Nothing was skipped, which means the Postgres-backed tests ran here too.
+
+## Round 4 summary
+
+Every item from round 3 is closed:
+- **`python_framework_codesign_test` passes in the darwin sandbox** (`36c19d5`).
+- **Duplicate `-rpath` link warnings are gone**, confirmed on the link command lines (`f558ef7`).
+- **`test_postgres` runs for real:** 16 passed under Bazel, and everything passes under the venv.
+
+The App Store fixes from the M3's round 3 check out on this machine:
+- The app gains `application-identifier` and `team-identifier`.
+- The XPC services lose `inherit` and stay sandboxed.
+- The xcarchive has matching dSYMs, `Team` and `Architectures`.
+
+The Developer ID build is unaffected. **Bazel: 31/31. venv pytest: 597/597.**
+
+Still open (not regressions):
+1. The three Swift 6 concurrency warnings (`XPCServiceManager.swift:242/245`,
+   `GarageIngestXPCService/main.swift:345`).
+2. The Developer ID app ships with no entitlements at all (see step 5). Probably intended, but
+   worth a runtime check.
+3. Unchanged from round 3: the Developer ID build is not notarized, by design.
