@@ -22,6 +22,9 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
     private var stdoutBuffer = Data()
     private var stderrBuffer = Data()
+    // Per stream: a pipe read can end inside a multibyte character. Guarded by `lock`.
+    private var stdoutDecoder = UTF8StreamDecoder()
+    private var stderrDecoder = UTF8StreamDecoder()
     private let maxBufferSize: Int
 
     public var serviceName: String = "GarageXPC"
@@ -123,8 +126,9 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
     /// Appends data to the stdout buffer, writes to log file, and streams over XPC.
     private func appendStdoutData(_ data: Data) {
-        // Decode lossily rather than dropping the whole chunk when a multibyte character straddles two pipe reads.
-        let text = String(decoding: data, as: UTF8.self)
+        lock.lock()
+        let text = stdoutDecoder.decode(data)
+        lock.unlock()
         guard !text.isEmpty else { return }
 
         let currentFile: String
@@ -161,8 +165,9 @@ public final class GarageXPCOutputCapture: @unchecked Sendable {
 
     /// Appends data to the stderr buffer, writes to log file, and streams over XPC.
     private func appendStderrData(_ data: Data) {
-        // Decode lossily rather than dropping the whole chunk when a multibyte character straddles two pipe reads.
-        let text = String(decoding: data, as: UTF8.self)
+        lock.lock()
+        let text = stderrDecoder.decode(data)
+        lock.unlock()
         guard !text.isEmpty else { return }
 
         let currentFile: String
