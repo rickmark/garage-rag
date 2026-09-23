@@ -180,6 +180,12 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.lastCommandOutput.isEmpty)
     }
 
+    func testDatabaseResetMessageSaysHowManySourcesCameBack() {
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 0).contains("declares no sources"))
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 1).contains("The 1 source in garage.json"))
+        XCTAssertTrue(AppState.databaseResetMessage(registeredSourceCount: 3).contains("The 3 sources in garage.json"))
+    }
+
     func testDatabaseResetParentIsReadFromTheLaunchArguments() {
         XCTAssertEqual(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "4242"]), 4242)
         XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp"]))

@@ -74,6 +74,10 @@ final class AppState: ObservableObject {
     @Published private(set) var isResettingDatabase = false
     private var hasLaunched = false
     private var hasTerminated = false
+    /// Set once "Reset Database" has asked a new instance to start. From then on this instance's
+    /// services are already stopped, and the Postgres pid file and XPC service names belong to the new
+    /// instance, so quitting must not run the usual shutdown (which stops both by pid file and name).
+    private(set) var hasHandedOffToRelaunch = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
     private var pendingMaintenanceTask: Task<Void, Never>?
 
@@ -334,7 +338,7 @@ final class AppState: ObservableObject {
     /// Synchronously terminates all child and daemon processes, CLI runs, and XPC helper services.
     /// Idempotent: every quit path (applicationShouldTerminate, applicationWillTerminate) calls it once.
     func terminateImmediately() {
-        guard !hasTerminated else { return }
+        guard !hasTerminated, !hasHandedOffToRelaunch else { return }
         hasTerminated = true
         scheduledMaintenanceTask?.cancel()
         scheduledMaintenanceTask = nil
@@ -397,19 +401,36 @@ final class AppState: ObservableObject {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         configuration.arguments = [GarageAppLaunch.databaseResetArgument, String(getpid())]
+        // Before the new instance can start anything: a quit from here on must leave its services alone.
+        markHandedOffToRelaunch()
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
             let failure = error?.localizedDescription
             Task { @MainActor in
                 guard let failure else {
-                    NSApp.terminate(nil)
+                    Self.terminateFromRunLoop()
                     return
                 }
                 // No second instance: create the new database in this one instead.
                 logger.error("Relaunch after reset failed: \(failure, privacy: .public)")
+                self.hasHandedOffToRelaunch = false
                 self.isResettingDatabase = false
                 await self.startPostgres()
                 await self.finishDatabaseReset()
             }
+        }
+    }
+
+    func markHandedOffToRelaunch() {
+        hasHandedOffToRelaunch = true
+    }
+
+    /// `NSApp.terminate` from the run loop rather than from inside a main-actor job. Called from a
+    /// job, AppKit's wait for `reply(toApplicationShouldTerminate:)` runs a nested event loop inside
+    /// that job, and since the main queue is serial, any reply scheduled as another main-actor job
+    /// never runs: the app hangs in `terminate:` until it is killed.
+    private static func terminateFromRunLoop() {
+        RunLoop.main.perform {
+            NSApp.terminate(nil)
         }
     }
 
@@ -431,15 +452,23 @@ final class AppState: ObservableObject {
             await fetchCorpusStats()
             lastCommandSucceeded = synced
             lastCommandOutput = synced
-                ? "Database reset: a new, empty database was created and the sources in garage.json were "
-                    + "registered again. Register your embedding models on the Models page, then run ingest to "
-                    + "rebuild the index."
+                ? Self.databaseResetMessage(registeredSourceCount: registeredSources.count)
                 : "Database reset: a new database was created, but registering the sources from garage.json "
                     + "failed: \(lastCommandOutput)"
         } catch {
             lastCommandSucceeded = false
             lastCommandOutput = "Database reset: the new database could not be set up: \(error.localizedDescription)"
         }
+    }
+
+    nonisolated static func databaseResetMessage(registeredSourceCount: Int) -> String {
+        let sources = switch registeredSourceCount {
+        case 0: "garage.json declares no sources, so none are registered; add them on the Sources page."
+        case 1: "The 1 source in garage.json was registered again."
+        default: "The \(registeredSourceCount) sources in garage.json were registered again."
+        }
+        return "Database reset: a new, empty database was created. \(sources) Register your embedding models "
+            + "on the Models page, then run ingest to rebuild the index."
     }
 
     func applyMigrations() async {

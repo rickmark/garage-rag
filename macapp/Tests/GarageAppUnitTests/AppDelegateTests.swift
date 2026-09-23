@@ -49,6 +49,23 @@ final class AppDelegateTests: XCTestCase {
     }
 
     @MainActor
+    func testQuitAfterTheResetHandOffIsImmediateAndStopsNothing() {
+        // After "Reset Database" relaunched the app, the old instance must not wait on a reply (it
+        // deadlocked there) or run the shutdown, which would stop the new instance's Postgres and XPC
+        // services by pid file and executable name.
+        let delegate = AppDelegate()
+        let state = AppState()
+        delegate.appState = state
+        state.markHandedOffToRelaunch()
+
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateNow)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+
+        XCTAssertNotEqual(state.mcp.status, .stopping)
+        XCTAssertNotEqual(state.grpc.status, .stopping)
+    }
+
+    @MainActor
     func testApplicationWillTerminateExecutesCleanly() {
         let delegate = AppDelegate()
         let state = AppState()

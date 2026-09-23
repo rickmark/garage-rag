@@ -39,6 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isTerminating = true
 
         let state = self.appState
+        // After "Reset Database" relaunched the app, everything here is already stopped and what is
+        // running belongs to the new instance: quit at once, without the shutdown below.
+        if state?.hasHandedOffToRelaunch == true {
+            return .terminateNow
+        }
 
         Task { @MainActor in
             let shutdownTask = Task { @MainActor in
@@ -49,8 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
+            // Room for Postgres's shutdown checkpoint (PostgresService.stop polls for up to 10s).
             let timeoutTask = Task {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
                 shutdownTask.cancel()
             }
 

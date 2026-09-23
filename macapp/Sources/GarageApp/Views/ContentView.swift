@@ -1,4 +1,5 @@
 import SwiftUI
+import PythonXPCService
 
 enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
@@ -64,6 +65,8 @@ struct ContentView: View {
     private func presentSplashAtLaunchIfNeeded() {
         guard showSplashAtLaunch,
               !isRunningInTestEnvironment,
+              // The app relaunched itself after "Reset Database"; it is not a new launch to greet.
+              !CommandLine.arguments.contains(GarageAppLaunch.databaseResetArgument),
               !SplashLaunchGate.hasPresented else { return }
         SplashLaunchGate.hasPresented = true
         isSplashPresented = true

@@ -71,6 +71,9 @@ Garage stops its services, deletes the database folder and relaunches itself to 
 The sources in `garage.json` are registered again automatically. Register your embedding models on the
 Models page, then run ingest to rebuild the index.
 
+To keep a way back, press **Back Up First…** in the confirmation sheet before resetting. It saves the
+same dump as **Back Up…**, and **Restore…** on the Database page loads it into the new database.
+
 ---
 
 <h2 id="tcc-permissions">2. macOS Permissions (TCC) & Protected Files</h2>

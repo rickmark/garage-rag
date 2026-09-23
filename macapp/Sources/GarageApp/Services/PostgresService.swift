@@ -462,10 +462,10 @@ final class PostgresService: ObservableObject {
         }
     }
 
-    /// Fire-and-forget SIGTERM for app-quit paths that can't await cleanup
+    /// Fire-and-forget fast shutdown (SIGINT) for app-quit paths that can't await cleanup
     /// (see AppDelegate.applicationWillTerminate). Prefer stop() elsewhere.
     func terminateImmediately() {
-        runner.terminate()
+        runner.interrupt()
         Self.stopAnyRunningInstanceSync()
     }
 
@@ -475,9 +475,13 @@ final class PostgresService: ObservableObject {
             return
         }
         status = .stopping
-        runner.terminate()
-        // Poll briefly for the process to actually exit rather than assuming.
-        for _ in 0..<50 where runner.isRunning {
+        // A fast shutdown (SIGINT), not SIGTERM's smart one: the XPC services keep pooled connections
+        // open, and a smart shutdown waits for them until the grace period ends in SIGKILL, which
+        // leaves the cluster without a shutdown checkpoint to crash-recover on the next start.
+        runner.interrupt()
+        // Poll for the process to actually exit rather than assuming; the shutdown checkpoint of a
+        // busy cluster can take a few seconds.
+        for _ in 0..<100 where runner.isRunning {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         if runner.isRunning {
@@ -500,7 +504,7 @@ final class PostgresService: ObservableObject {
     }
 
     /// The blocking form. `applicationWillTerminate` has no way to await, so it
-    /// pays the pg_ctl + SIGTERM grace period on the calling thread; everywhere
+    /// pays the pg_ctl + SIGINT grace period on the calling thread; everywhere
     /// else should use `stopAnyRunningInstance()`.
     nonisolated static func stopAnyRunningInstanceSync() {
         // Paths.pgDataDir is the developer's live cluster; unit tests must never signal or kill it.
@@ -525,7 +529,8 @@ final class PostgresService: ObservableObject {
         }
 
         if kill(pid, 0) == 0 {
-            kill(pid, SIGTERM)
+            // Fast shutdown, as in stop(); SIGTERM would wait for connected clients.
+            kill(pid, SIGINT)
             var exited = false
             for _ in 0..<20 {
                 usleep(50_000)
@@ -605,6 +610,17 @@ final class PostgresService: ObservableObject {
             throw PostgresError.other("pg_restore failed: \(output)")
         }
         appendLog(LogLine(stream: .stdout, text: "restored database from \(source.path)", source: "pg_restore"))
+    }
+
+    /// `url` for display: the password, when there is one, replaced by bullets. Copy and the
+    /// registered handler still get the real URL; the screen (and the accessibility API) never does.
+    nonisolated static func redactedConnectionString(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let password = components.percentEncodedPassword, !password.isEmpty else {
+            return url.absoluteString
+        }
+        components.percentEncodedPassword = "REDACTED"
+        return (components.string ?? url.absoluteString).replacingOccurrences(of: ":REDACTED@", with: ":••••••@")
     }
 
     /// Fetches all registered embedding models directly from the backing database.

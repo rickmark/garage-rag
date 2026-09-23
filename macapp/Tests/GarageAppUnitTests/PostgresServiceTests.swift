@@ -118,6 +118,22 @@ final class PostgresServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectionURLIsShownWithoutThePassword() throws {
+        let url = try XCTUnwrap(URL(string: "postgresql://garage:s3cr%40t@localhost:14824/garage"))
+
+        let shown = PostgresService.redactedConnectionString(url)
+
+        XCTAssertEqual(shown, "postgresql://garage:••••••@localhost:14824/garage")
+        XCTAssertFalse(shown.contains("s3cr"))
+    }
+
+    func testConnectionURLWithoutAPasswordIsShownAsIs() throws {
+        let url = try XCTUnwrap(URL(string: "postgresql://garage@localhost:14824/garage"))
+
+        XCTAssertEqual(PostgresService.redactedConnectionString(url), url.absoluteString)
+    }
+
+    @MainActor
     func testDeleteClusterForResetIsANoOpInTests() async throws {
         // deleteClusterForReset() removes the live pgdata directory; under XCTest it must not touch it.
         let service = PostgresService()

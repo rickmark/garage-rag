@@ -26,14 +26,14 @@ struct DatabaseView: View {
                             Button("Stop") { Task { await appState.stopPostgres() } }
                                 .disabled(!isPostgresActive)
                         }
-                        LabeledContent("Data directory", value: Paths.pgDataDir.path)
+                        LabeledContent("Data directory", value: Paths.displayPath(of: Paths.pgDataDir))
                         LabeledContent("Port", value: String(appState.postgres.port))
                         LabeledContent("Database", value: appState.postgres.databaseName)
                         LabeledContent("Bundled binaries", value: Paths.isPackaged ? "yes (vendored)" : "no (using Homebrew install for development)")
                         LabeledContent("Connection URL") {
                             HStack(spacing: 8) {
                                 if let url = try? appState.postgres.standardConnectionURL() {
-                                    Text(url.absoluteString)
+                                    Text(PostgresService.redactedConnectionString(url))
                                         .font(.system(.caption, design: .monospaced))
                                         .lineLimit(1)
                                         .truncationMode(.middle)
@@ -175,10 +175,13 @@ struct DatabaseView: View {
                         HStack {
                             Button("Back Up…") { chooseBackupDestination() }
                                 .disabled(!isPostgresActive)
+                                .accessibilityIdentifier("database.backup")
                             Button("Restore…") { chooseBackupSource() }
                                 .disabled(!isPostgresActive)
+                                .accessibilityIdentifier("database.restore")
                             Button("Reset Database…") { showResetConfirmation = true }
                                 .tint(.red)
+                                .accessibilityIdentifier("database.reset")
                                 .disabled(
                                     appState.isResettingDatabase
                                         || appState.postgres.status == .starting
@@ -207,11 +210,7 @@ struct DatabaseView: View {
     }
 
     private func chooseBackupDestination() {
-        let panel = NSSavePanel()
-        panel.title = "Back Up Garage Database"
-        panel.nameFieldStringValue = "garage-rag-\(backupTimestamp()).dump"
-        panel.allowedContentTypes = [.data]
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        guard let destination = DatabaseBackupPanel.chooseDestination() else { return }
         appState.backupDatabase(to: destination)
     }
 
@@ -225,8 +224,21 @@ struct DatabaseView: View {
         guard panel.runModal() == .OK, let source = panel.url else { return }
         appState.restoreDatabase(from: source)
     }
+}
 
-    private func backupTimestamp() -> String {
+/// The save panel for a database backup, shared by Back Up… and the reset sheet's Back Up First….
+@MainActor
+enum DatabaseBackupPanel {
+    static func chooseDestination() -> URL? {
+        let panel = NSSavePanel()
+        panel.title = "Back Up Garage Database"
+        panel.nameFieldStringValue = "garage-rag-\(timestamp()).dump"
+        panel.allowedContentTypes = [.data]
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    private static func timestamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: Date())

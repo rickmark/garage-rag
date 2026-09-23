@@ -288,10 +288,14 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
   folder on a fresh install, so the familiar path reaches the data; a folder or other link already
   there is left alone.
 - "Reset Database" (`DatabaseResetSheet` → `AppState.resetDatabaseAndRelaunch`) stops every
-  service, deletes `pgdata` and relaunches the app with `--after-database-reset <old pid>`. The new
-  instance waits for the old one to exit first, because the old one's quit path stops Postgres by pid
-  file and XPC services by executable name. Then it initializes a new cluster, applies the schema and
-  re-syncs the sources from `garage.json` (`finishDatabaseReset`).
+  service, deletes `pgdata` and relaunches the app with `--after-database-reset <old pid>`. The old
+  instance then quits at once (`hasHandedOffToRelaunch`: `.terminateNow`, and no quit-time shutdown,
+  which would stop the new instance's Postgres by pid file and XPC services by executable name). It
+  calls `terminate:` from the run loop, not from a main-actor task, where AppKit's wait for a
+  `.terminateLater` reply deadlocks. The new instance waits for the old one to exit, then initializes a
+  new cluster, applies the schema and re-syncs the sources from `garage.json` (`finishDatabaseReset`).
+- Postgres is stopped with SIGINT (fast shutdown), never SIGTERM: a smart shutdown waits on the XPC
+  services' pooled connections until the grace period ends in SIGKILL, leaving no shutdown checkpoint.
 - `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which

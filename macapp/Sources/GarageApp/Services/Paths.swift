@@ -19,6 +19,18 @@ enum Paths {
     }()
 
     static let pgDataDir = appSupportDir.appendingPathComponent("pgdata", isDirectory: true)
+
+    /// `url` as people should read it: a path under the data directory is shown below
+    /// `~/Library/Application Support/GarageApp`, however it is really reached. The group container
+    /// path is long and the sandbox's home is its own container, while that one is the path people
+    /// know (and, on a Developer ID build, a link to the group folder). Other paths are shown as is.
+    static func displayPath(of url: URL, dataDirectory: URL = appSupportDir) -> String {
+        let path = url.standardizedFileURL.path
+        let data = dataDirectory.standardizedFileURL.path
+        guard path == data || path.hasPrefix(data + "/") else { return path }
+        return "~/Library/Application Support/\(GarageAppGroup.dataFolderName)" + path.dropFirst(data.count)
+    }
+
     static let modelsDir: URL = {
         let dir = appSupportDir.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
