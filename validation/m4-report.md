@@ -2086,3 +2086,77 @@ back empty, so I repeated it with the sheet verified open. The table above recor
 ## State left behind
 898c0e6 (`~/GarageTest/Garage.app`, build 225) is **running**, splash dismissed. Postgres 14824,
 MCP 8787 and gRPC 50051 are up on the group-container cluster.
+
+---
+
+# Store sandbox: getting Python into the XPC services
+
+2026-09-23 12:50–14:00 MDT. This covers the store-build blocker from the e0d3aae check: the four
+sandboxed Python XPC services could not start Python, so there was no MCP, gRPC, ingest or embedding.
+Work is on the branch **`claude/store-sandbox-python`** (worktree `~/Developer/garage-sandbox`,
+based on `898c0e6`), **not yet committed or pushed**. Every experiment ran against Apple
+Development-signed store builds on this Mac. Each run briefly quit the 898c0e6 Developer ID app,
+which shares port 14824, and the cluster was `shut down` at every switch.
+
+## What the sandbox allows an embedded XPC service to read
+
+| Approach | Result (all six services behaved the same) |
+|---|---|
+| Read the app's `Contents/Resources/site-python` directly | Denied (`deny(1) file-read-data`, EPERM) |
+| Read the app's `Contents/Frameworks` folder, or `dlopen` `Frameworks/libpq.dylib` by path | Denied ("file system sandbox blocked open()") |
+| Symlinks `X.xpc/Contents/{Frameworks,Resources}` → the app's folders | Whole-app `codesign --deep --strict` passes, but each `.xpc` on its own fails ("invalid destination for symbolic link in bundle"). Not used |
+| **Security-scoped bookmark** created by the app for `site-python` | The app creates it (852 bytes). **The services cannot resolve it** ("isn't in the correct format"), even though the app and all services share the same certificate and team (`Apple Development: Rick Penwell (23E5F7Z5L7)`, DWVXMLB45Y) |
+| Plain `NSURL` of `site-python` over `NSXPCConnection` | `startAccessingSecurityScopedResource()` returns false; reads still denied |
+| **Directory `NSFileHandle`** of `site-python` over `NSXPCConnection` | `fdopendir` lists it (194 entries), but **`openat(dirfd, "os.py")` / `"lib-dynload"` is denied**: the kernel logs the child's full path. A handle grants only the opened object |
+| **Reading inside a framework the service links** (`Python.framework` in the app's `Contents/Frameworks`) | **Allowed**: `Resources` listed, `Info.plist` read, no denials |
+| **libpq linked at load time** (`-needed_library`, `@rpath/libpq.dylib`) instead of `dlopen` by path | **Works**: no libpq errors or denials, where there were about 60 per service before |
+
+Apple sources, gathered by a Fable research agent:
+- **Security-scoped bookmarks do not cross processes.** From the `bookmarkData` documentation: "a bookmark
+  created with security scope fails to resolve if the caller does not have the same code signing identity".
+  DTS on the forums (thread 798402): "a bookmark created by your main app can't be resolved by your helper
+  process". The probe confirms it: even the same certificate and team is not enough.
+- **No sandbox extension can grant executable access.** DTS (Quinn, thread 678819): "There's currently no way to get a
+  dynamic sandbox extension that grants executable access." So no grant-based route could make the `.so` modules load.
+- **Apple recommends the app group container for app↔XPC sharing** (Quinn, thread 126424).
+- **`com.apple.security.inherit` is not meant for XPC services.**
+
+## The fix: `site-python` inside `PythonXPCService.framework`
+
+Every Python process links our framework, and a sandboxed service may read inside a framework it links.
+`Python.framework` stays the bare interpreter. The changes on the branch:
+- **`//macapp/Sources/PythonXPCService:PythonXPCService_framework`** gets
+  `resources = [":site_python_resources"]`, an `apple_resource_group` whose
+  `structured_resources = ["//macapp/externals:site-python"]`. Structured resources are copied as-is. The
+  framework is flat as rules_apple builds it, so `site-python` lands at
+  `Frameworks/PythonXPCService.framework/site-python` (498 MB).
+- **`//macapp/Sources/GarageApp`** drops its own `Resources/site-python` copy (`additional_contents`), so the
+  500 MB is shipped once.
+- **`GaragePythonRuntime.resolveEnvironment()`** tries, in order:
+  1. `GARAGE_SITE_PYTHON`;
+  2. the loaded framework's `Bundle(identifier: "me.rickmark.garage-rag.PythonXPCService").resourceURL/site-python`;
+  3. for each app-bundle candidate, the framework's `site-python` by path (flat, then `Resources/`),
+     then the old `Contents/Resources/site-python`;
+  4. the XPC's own `Resources`.
+
+  The by-path step (3) matters for **`garage` / `garage-mcp`, which link only `Python.framework`, not
+  `PythonXPCService.framework`**, so step 2 is nil for them.
+- **The four Python XPC services** link `//macapp/externals:libpq` with `-needed_library` (in `linkopts`, which
+  go straight to `ld`, so no `-Wl,`). `otool -L` shows `@rpath/libpq.dylib` in all four.
+- Docs (`macapp/README.md`, `garage_python/README.md`), comments, and `bazel/lipo.bzl`'s `site-python/test`
+  cleanup now point at the new location.
+
+**Verified with the Bazel-built store app (no hand edits), before the launcher fix:**
+- MCP 8787, gRPC 50051 and llama 8790 came up **7s** after launch.
+- All four Python services pass the `Python Runtime` and `libpq` self tests. Ingest and embed pass
+  `Standard Library Extensions` (41–61 ms). MCP passes `Site Packages`. **No self test failed.**
+- There were no `site-python` or libpq denials. The only denials left are unrelated: `net.link.addr`,
+  and `/opt/homebrew/etc/openssl@3/openssl.cnf`. That second one means the bundled OpenSSL has a Homebrew
+  path compiled in, which is a portability bug worth fixing separately.
+- The whole app and the framework on its own pass `codesign --verify --strict`. The app shrank to 649 MB.
+
+**Pending** (building now):
+- the Developer ID package with the launcher fix;
+- the `garage` CLI starting Python from the new location;
+- the macapp unit tests;
+- then commit and push `claude/store-sandbox-python` for folding into PR #15.
