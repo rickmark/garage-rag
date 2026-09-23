@@ -161,6 +161,17 @@ Two hashes, deliberately not redundant:
 
 One transaction per document, so a crash leaves earlier documents committed.
 
+Each document also records a chunker signature (`chunks.chunker`, e.g.
+`recursive:1000/100` or `code:python:1500/150`); a different signature means the
+chunks are rebuilt on the next ingest even when neither hash changed. The
+splitters behind it (`ingest/splitters.py`) are a small dependency-free port of
+the langchain-text-splitters behaviour the chunker was first written against.
+`tests/test_chunking_golden.py` pins their output to what langchain produced,
+chunk for chunk and offset for offset, so the signatures did not change with the
+swap and an existing index is not rebuilt. A deliberate change to the splitting
+must change the signature too, so that stored chunks are rebuilt rather than
+silently mixed.
+
 ## Deletion safety
 
 The risk is not deleting, it is *deciding* something is missing — an unmounted
