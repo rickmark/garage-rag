@@ -1,12 +1,59 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+
+# Which bundled PostgreSQL major version to build against: 18 (//ext/postgres, default) or
+# the 19 beta (//ext/postgres19). pgvector, the app bundle and PythonXPCService all go
+# through the aliases below, so flipping this switches the whole tree:
+#   aspect build //:macapp --//ext:postgres_version=19    (or --config=pg19)
+# A cluster initdb'd by one major version won't start under the other - switching an
+# existing install needs a pg_dump/restore (or pg_upgrade) of its data directory.
+string_flag(
+    name = "postgres_version",
+    build_setting_default = "18",
+    values = [
+        "18",
+        "19",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "postgres_19",
+    flag_values = {":postgres_version": "19"},
+)
+
 alias(
     name = "postgres",
-    actual = "//ext/postgres:postgres",
+    actual = select({
+        ":postgres_19": "//ext/postgres19:postgres",
+        "//conditions:default": "//ext/postgres:postgres",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "postgres_rpath",
+    actual = select({
+        ":postgres_19": "//ext/postgres19:postgres_rpath",
+        "//conditions:default": "//ext/postgres:postgres_rpath",
+    }),
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "libpq",
-    actual = "//ext/postgres:libpq",
+    actual = select({
+        ":postgres_19": "//ext/postgres19:libpq",
+        "//conditions:default": "//ext/postgres:libpq",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libpq_dylib",
+    actual = select({
+        ":postgres_19": "//ext/postgres19:libpq_dylib",
+        "//conditions:default": "//ext/postgres:libpq_dylib",
+    }),
     visibility = ["//visibility:public"],
 )
 

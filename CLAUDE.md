@@ -147,6 +147,12 @@ open macapp/Garage.xcodeproj
 See `macapp/README.md` for why Postgres can't just use the Homebrew build (it bakes absolute
 `/opt/homebrew` paths).
 
+The bundled Postgres has two externals: `//ext/postgres` (18, the default) and `//ext/postgres19`
+(19 beta). Pick one with `--//ext:postgres_version=19` (or `--config=pg19`). Everything downstream
+depends on the `//ext:postgres`/`postgres_rpath`/`libpq`/`libpq_dylib` aliases, never on a
+version package directly. Each package carries its own `sysv_shmem.patch`; a change to one patch
+usually needs porting to the other.
+
 Without a Swift toolchain (Linux, Claude Code on the web) there is still a syntax gate:
 
 ```bash
