@@ -49,6 +49,8 @@ macos_application(
         "//macapp/externals:postgresql.conf": "Resources",
         "//data/models:model_manifest": "Resources",
         "//data/schema:config_schema": "Resources",
+        "//data/notices:third_party_notices": "Resources",
+        "//garage_python:LICENSE": "Resources",
     },
     app_icons = ["//macapp:GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",

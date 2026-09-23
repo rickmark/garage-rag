@@ -11,6 +11,7 @@ included `.envrc` automates this for you.
 
 """
 
+load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("@bazel_env.bzl", "bazel_env")
 load("@multitool//:tools.bzl", MULTITOOL_TOOLS = "TOOLS")
 
@@ -26,4 +27,11 @@ bazel_env(
         "format": "//tools/format:format",
         "uv": "@uv//:uv",
     } | MULTITOOL_TOOLS,
+)
+
+# Regenerate //data/notices:THIRD_PARTY_NOTICES.txt with `python3 tools/third_party_notices.py`.
+py_library(
+    name = "third_party_notices",
+    srcs = ["third_party_notices.py"],
+    imports = ["."],
 )
