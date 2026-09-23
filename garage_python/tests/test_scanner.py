@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
@@ -23,6 +25,15 @@ from garage_rag.ingest.scanner import (
 )
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's git config out of these repositories. A global
+    commit.gpgsign made `git commit` wait on a signing prompt (a Secure Enclave
+    key) for as long as nobody answered it."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 # ---------------------------------------------------------------------------

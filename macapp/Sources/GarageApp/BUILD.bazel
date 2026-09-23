@@ -6,15 +6,10 @@ load("//bazel:version.bzl", "macapp_version")
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["**/*.swift"]),
+    # rules_apple already gives the app and its test bundles @executable_path/../Frameworks
+    # and @loader_path/../Frameworks (repeating them made ld warn "duplicate -rpath");
+    # only the Python.framework directories are added here.
     linkopts = [
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
         "-Xlinker",
         "-rpath",
         "-Xlinker",

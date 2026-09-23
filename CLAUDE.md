@@ -63,16 +63,24 @@ Tests live in `garage_python/tests/`, one `py_test` target per file in
 
 ```bash
 aspect test //garage_python/tests:test_attribution
-aspect test //garage_python/tests:test_attribution --test_arg=-k --test_arg=some_case_name
+aspect test //garage_python/tests:test_attribution --bazel-flag=--test_arg=-k --bazel-flag=--test_arg=some_case_name
+aspect test //... --bazel-flag=--test_output=errors
 ```
+
+The Aspect CLI takes its own flags only. Pass each Bazel flag as `--bazel-flag=...`: a bare
+`--test_output=errors` is rejected, and anything after `--` is read as a target pattern. There is no
+`aspect query`; use `bazel query` (on `PATH` from `bazel_env`), e.g.
+`bazel query 'kind(codesign_test, //...)'`.
 
 Adding a new test file just needs `aspect gazelle`, which writes the `py_test` entry; the
 `# gazelle:map_kind py_test py_test //tools/pytest:defs.bzl` directive in `garage_python/BUILD.bazel`
 keeps them on the pytest wrapper rather than the stock rule.
 
-There is also a real `.venv` under `garage_python/.venv` (`uv`-managed) for running things directly
-with `pytest`/`python` outside Bazel when iterating quickly — the Bazel targets remain the source
-of truth for CI.
+There is also a `uv`-managed venv at `garage_python/.venv` for running things directly with
+`pytest`/`python` outside Bazel when iterating quickly — the Bazel targets remain the source of truth
+for CI. A fresh clone has none. Create it with `uv sync` in `garage_python/` (the lockfile resolves
+for macOS). On Linux use `uv venv --python 3.13 .venv && uv pip install -e '.[dev]'`, which is what the
+web-session hook runs.
 
 ### Testing against Postgres
 
