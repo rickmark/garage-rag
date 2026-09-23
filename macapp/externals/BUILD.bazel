@@ -85,6 +85,10 @@ copy_to_directory(
     exclude_srcs_patterns = [
         "**/test/**",
         "**/test",
+        # Build-time only (Makefile, libpython3.13.a, python.o): never loaded by the embedded
+        # interpreter, and the static library alone is dead weight in the bundle.
+        "**/config-3.13-darwin/**",
+        "**/config-3.13-darwin",
     ],
     include_srcs_patterns = [
         "ext/python/python_3_13/Python.framework/Versions/Current/lib/python3.13/**",

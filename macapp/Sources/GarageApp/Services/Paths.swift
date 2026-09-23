@@ -199,8 +199,6 @@ enum Paths {
         let devCandidates = [
             devRepoRoot.appendingPathComponent(".venv/bin/garage-mcp"),
             devRepoRoot.appendingPathComponent("bazel-bin/garage_python/garage-mcp"),
-            URL(fileURLWithPath: "/opt/homebrew/bin/garage-mcp"),
-            URL(fileURLWithPath: "/usr/local/bin/garage-mcp"),
         ]
         for candidate in devCandidates {
             if FileManager.default.isExecutableFile(atPath: candidate.path) {
