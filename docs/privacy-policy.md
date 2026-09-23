@@ -41,7 +41,7 @@ Garage contains **no advertising trackers, no analytics SDKs, and no background 
 ## 3. Local Processing & Storage
 
 All data indexed by Garage is processed and stored locally on your device in your private PostgreSQL database located in:  
-`~/Library/Application Support/GarageApp/pgdata`
+`~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`
 
 Your files, text, images, code, and communications never leave your device unless you explicitly enable optional third-party integrations.
 

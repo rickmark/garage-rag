@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import PythonXPCService
 
 /// Core engine managing model downloads, file system storage, and task tracking.
 public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
@@ -39,9 +40,7 @@ public final class ModelDownloaderEngine: NSObject, @unchecked Sendable {
         if let custom = customModelsDirectory {
             return custom
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let modelsDir = base.appendingPathComponent("GarageApp", isDirectory: true).appendingPathComponent("models", isDirectory: true)
+        let modelsDir = GarageAppGroup.dataDirectory.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
         return modelsDir
     }

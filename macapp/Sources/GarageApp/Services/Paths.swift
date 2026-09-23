@@ -1,4 +1,5 @@
 import Foundation
+import PythonXPCService
 
 /// Resolves where the Postgres install and the `garage` CLI live.
 ///
@@ -7,9 +8,12 @@ import Foundation
 /// `devRepoRoot` fallbacks below only matter when a resource is missing
 /// from the bundle.
 enum Paths {
+    /// The data directory: `Library/Application Support/GarageApp` in the App Group container, which
+    /// the App Store and Developer ID builds share, or the per-user one when the process is not
+    /// entitled for the group (locally signed and test builds). `GarageDataMigration` moves data
+    /// from the per-user location into it at launch.
     static let appSupportDir: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("GarageApp", isDirectory: true)
+        let dir = GarageAppGroup.dataDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

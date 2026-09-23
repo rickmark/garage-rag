@@ -40,9 +40,9 @@ Before sharing logs on public issue trackers, protect your privacy by following 
 
 ### Locating Your Logs
 Logs are stored locally on your machine at:
-- **PostgreSQL Service**: `~/Library/Application Support/GarageApp/logs/postgres.log`
-- **Ingestion & CLI Pipeline**: `~/Library/Application Support/GarageApp/logs/ingest.log`
-- **MCP HTTP Server**: `~/Library/Application Support/GarageApp/logs/mcp.log`
+- **PostgreSQL Service**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/postgres.log`
+- **Ingestion & CLI Pipeline**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/ingest.log`
+- **MCP HTTP Server**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
 
 ### Sanitization Guidelines
 1. **Redact Usernames and Paths**: Replace your home directory name (e.g., `/Users/yourname/`) with `/Users/username/`.

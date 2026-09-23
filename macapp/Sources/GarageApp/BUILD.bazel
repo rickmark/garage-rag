@@ -56,6 +56,7 @@ macos_application(
     codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
     entitlements = select({
         "//bazel:is_store": ":Garage.entitlements",
+        "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",
         "//conditions:default": None,
     }),
     executable_name = "GarageApp",

@@ -86,6 +86,7 @@ fi
 
 /usr/bin/python3 - "$app_bundle" "$target_arch" "$signing_identity" "$options" << 'PYEOF'
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -185,27 +186,38 @@ for root, dirs, files in os.walk(app_bundle):
             if not os.path.islink(p):
                 nested_bundles.append(p)
 
-nested_bundles_sorted = sorted(nested_bundles, key=lambda x: len(x.split("/")), reverse=True)
-for b in nested_bundles_sorted:
-    cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg + [b]
+# Signing a bundle re-signs its main executable, so a bundle is signed with that executable's
+# entitlements; without them codesign drops what step 3 applied. The executable comes from
+# CFBundleExecutable, not the bundle's name (Garage.app's is GarageApp).
+entitlements_by_realpath = {os.path.realpath(k): v for k, v in entitlements.items()}
+
+def bundle_entitlements(bundle):
+    for info in ("Contents/Info.plist", "Versions/Current/Resources/Info.plist", "Resources/Info.plist"):
+        info_path = os.path.join(bundle, info)
+        if not os.path.exists(info_path):
+            continue
+        with open(info_path, "rb") as fp:
+            executable = plistlib.load(fp).get("CFBundleExecutable")
+        if not executable:
+            return None
+        exec_dir = os.path.join(bundle, "Contents/MacOS") if info.startswith("Contents/") else bundle
+        return entitlements_by_realpath.get(os.path.realpath(os.path.join(exec_dir, executable)))
+    return None
+
+def sign_bundle(bundle):
+    cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg
+    ent = bundle_entitlements(bundle)
+    if ent:
+        cmd.extend(["--entitlements", ent])
+    cmd.append(bundle)
     subprocess.run(cmd, check=True, capture_output=True)
 
-# 5. Codesign top-level app bundle
-main_exec = os.path.join(app_bundle, "Contents/MacOS", os.path.splitext(os.path.basename(app_bundle))[0])
-if not os.path.exists(main_exec):
-    # Try finding any executable in Contents/MacOS
-    macos_dir = os.path.join(app_bundle, "Contents/MacOS")
-    if os.path.exists(macos_dir):
-        execs = [os.path.join(macos_dir, f) for f in os.listdir(macos_dir) if os.path.isfile(os.path.join(macos_dir, f))]
-        if execs:
-            main_exec = execs[0]
+nested_bundles_sorted = sorted(nested_bundles, key=lambda x: len(x.split("/")), reverse=True)
+for b in nested_bundles_sorted:
+    sign_bundle(b)
 
-app_ent = entitlements.get(main_exec)
-cmd = ["/usr/bin/codesign", "-f", "-s", signing_identity] + opts_arg
-if app_ent:
-    cmd.extend(["--entitlements", app_ent])
-cmd.append(app_bundle)
-subprocess.run(cmd, check=True, capture_output=True)
+# 5. Codesign top-level app bundle
+sign_bundle(app_bundle)
 
 # 6. Verify signature
 verify = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app_bundle], capture_output=True, text=True)

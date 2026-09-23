@@ -161,11 +161,11 @@ Setting `"materialize": false` ensures online-only placeholders are indexed as m
 When diagnosing issues, check the relevant logs:
 
 - **PostgreSQL Database Logs**:
-  `~/Library/Application Support/GarageApp/logs/postgres.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/postgres.log`
 - **Ingestion & CLI Logs**:
-  `~/Library/Application Support/GarageApp/logs/ingest.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/ingest.log`
 - **MCP Server Logs**:
-  `~/Library/Application Support/GarageApp/logs/mcp.log`
+  `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
 
 <div class="callout callout-info">
   <div class="callout-title">Need to Submit Logs for Support?</div>

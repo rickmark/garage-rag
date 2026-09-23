@@ -7,6 +7,7 @@ load("//bazel:codesign.bzl", "codesign")
 swift_library(
     name = "PythonXPCService_protocol",
     srcs = [
+        "GarageAppGroup.swift",
         "GarageCommonXPCProtocol.swift",
         "GaragePostgresEndpoint.swift",
     ],

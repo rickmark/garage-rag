@@ -46,7 +46,7 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 `GarageApp` provides a menu bar utility and management window that bundles an embedded, relocatable instance of PostgreSQL 18 with `pgvector`:
 
-1. **Launch GarageApp**: The app initializes its private database in `~/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
+1. **Launch GarageApp**: The app initializes its private database in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
 2. **Menu Bar Status**: Look for the Garage icon in your macOS menu bar. A green status indicator confirms that PostgreSQL and the local MCP HTTP service are active.
 3. **Open Management Window**: Click the menu bar icon and select **Open Garage** to view Sources, Models, Logs, and Search.
 

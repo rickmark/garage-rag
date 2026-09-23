@@ -137,6 +137,8 @@ final class AppState: ObservableObject {
     func launch() {
         guard !hasLaunched else { return }
         hasLaunched = true
+        // Before anything reads the data folder's contents or starts Postgres / an XPC service.
+        GarageDataMigration.runAtLaunch()
         fetchPresetModels()
         volumeAccess.restoreAndVerifyAccess()
         osLogStreamService.loadAllPersistedLogs()

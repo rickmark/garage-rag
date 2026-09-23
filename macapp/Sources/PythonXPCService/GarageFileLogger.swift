@@ -30,7 +30,7 @@ public final class GarageFileLogger: @unchecked Sendable {
     public static let logsFolderName = "Garage"
 
     /// App Group shared by the host application and its XPC helpers.
-    public static let appGroupIdentifier = "group.me.rickmark.garage-rag"
+    public static let appGroupIdentifier = GarageAppGroup.identifier
 
     private static let resolvedLogsDirectory: URL = {
         let fm = FileManager.default
@@ -52,7 +52,8 @@ public final class GarageFileLogger: @unchecked Sendable {
         }
         // 2. Shared App Group container so the host app and every XPC service write to the same place
         //    even when their individual containers differ (App Store builds).
-        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+        if GarageAppGroup.isEntitled,
+           let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let logsDir = container.appendingPathComponent("Library/Logs", isDirectory: true).appendingPathComponent(logsFolderName, isDirectory: true)
             if usable(logsDir) {
                 return logsDir

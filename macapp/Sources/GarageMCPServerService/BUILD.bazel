@@ -24,6 +24,7 @@ macos_xpc_service(
     bundle_name = "GarageMCPServerService",
     entitlements = select({
         "//bazel:is_store": ":GarageMCPServerService.entitlements",
+        "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",
         "//conditions:default": None,
     }),
     infoplists = ["Info.plist"],

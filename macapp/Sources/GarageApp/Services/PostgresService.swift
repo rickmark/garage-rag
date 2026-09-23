@@ -325,6 +325,16 @@ final class PostgresService: ObservableObject {
     /// Runs initdb into Paths.pgDataDir if it hasn't been created yet.
     func ensureInitialized() async throws {
         guard !isInitialized else { return }
+        // The corpus is still in the pre-App-Group folder (GarageDataMigration could not move it,
+        // usually because a postgres was still running from it). A new, empty cluster here would
+        // hide it, so refuse and let the next launch finish the move.
+        if !isRunningInTestEnvironment, GarageDataMigration.hasUnmigratedCluster() {
+            throw PostgresError.other(
+                "The database is still in \(GarageAppGroup.legacyDataDirectory.path) and could not be moved "
+                    + "into the shared folder \(Paths.appSupportDir.path). Quit every copy of Garage, "
+                    + "then open it again."
+            )
+        }
         try FileManager.default.createDirectory(at: Paths.pgDataDir, withIntermediateDirectories: true)
         let password = try postgresPassword()
         let passwordFile = Paths.appSupportDir
@@ -1030,6 +1040,16 @@ final class PostgresService: ObservableObject {
         if let storedPassword = try KeychainPostgresPassword.load() {
             cachedPassword = storedPassword
             return storedPassword
+        }
+        // A cluster without a password this build can read was made by another build (the App
+        // Store and Developer ID builds share the data folder, not necessarily the Keychain item).
+        // A new password would not open it and would hide the real problem.
+        if !isRunningInTestEnvironment, isInitialized {
+            throw PostgresError.other(
+                "The database in \(Paths.pgDataDir.path) exists, but its password is not in this "
+                    + "build's Keychain (service \(GaragePostgresEndpoint.keychainService)). It was "
+                    + "probably created by the other Garage build."
+            )
         }
         let generatedPassword = try KeychainPostgresPassword.generate()
         try KeychainPostgresPassword.save(generatedPassword)

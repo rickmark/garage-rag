@@ -275,8 +275,15 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
 ### macOS app (`macapp/`)
 
 - `PostgresService` owns a private, relocatable Postgres cluster (built from source — see
-  `macapp/README.md` for why Homebrew's build won't work) in
-  `~/Library/Application Support/GarageApp/pgdata`.
+  `macapp/README.md` for why Homebrew's build won't work) in `pgdata/` of the data folder.
+- The data folder (`pgdata`, `models`, `logs`, `garage.json`) is `Library/Application Support/GarageApp`
+  in the App Group container, `Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp` under the home folder, so the App Store and Developer ID
+  builds share one corpus. Both sign the app and its six XPC services with the team-prefixed group
+  (`GarageAppGroup` in `PythonXPCService`); the Developer ID build carries only that entitlement
+  (`macapp/externals/GarageAppGroup.entitlements`). Unentitled builds (locally signed, tests) use
+  `~/Library/Application Support/GarageApp`. At launch `GarageDataMigration` renames an older build's
+  per-user folder into the group container and leaves a symlink behind. It never copies, deletes or
+  overwrites anything, and it skips a `pgdata` a running postmaster still holds.
 - `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which
