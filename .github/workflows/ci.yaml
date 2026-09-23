@@ -46,14 +46,12 @@ jobs:
       # A superuser: pgvector is not a trusted extension, and each run creates
       # and drops its own garage_test_* database.
       GARAGE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-      # test_scanner runs git; keep the runner's global config out of it.
-      GIT_CONFIG_GLOBAL: /dev/null
     defaults:
       run:
         working-directory: garage_python
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: garage_python/pyproject.toml
@@ -68,13 +66,20 @@ jobs:
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
       - name: pytest
-        run: .venv/bin/pytest -q
+        # Typer forces Rich's terminal mode (ANSI colour, boxed errors) when
+        # GITHUB_ACTIONS is set, which breaks the CLI tests' output checks. Bazel's
+        # test sandbox never passes it, so clear it here too.
+        run: env -u GITHUB_ACTIONS .venv/bin/pytest -q
+        env:
+          # test_scanner runs git; keep the runner's global config out of it. Only
+          # here: job-wide, it breaks actions/checkout's post-job git config cleanup.
+          GIT_CONFIG_GLOBAL: /dev/null
 
   swiftcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Swift syntax gate (tree-sitter)
         run: |
           uv venv --python 3.13 "$RUNNER_TEMP/venv"
