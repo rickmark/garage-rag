@@ -4,7 +4,7 @@
 **Application:** Garage & GarageApp  
 **Developer:** Rick Mark
 
-Garage is designed as a local-first application. We respect your privacy and have designed the application so that it does not collect, track, sell, or transmit user data.
+Garage is designed as a local-first application. We respect your privacy and have designed the application so that it does not collect, track, or sell user data, and does not transmit your content anywhere except to a model server you configure yourself (section 2).
 
 ## 1. Data Collection
 
@@ -28,7 +28,7 @@ Garage does not include advertising trackers, analytics SDKs, or background tele
 
 ## 2. Local Processing
 
-Information processed by Garage stays on your device. Any files, text, images, documents, code, or communications you choose to use with the application are processed locally. Text recognition in images uses Tesseract on your device.
+Information processed by Garage stays on your device by default. Any files, text, images, documents, code, or communications you choose to use with the application are processed locally, except that text may be sent to an Ollama or LM Studio server on another computer if you configure one, as described below. Text recognition in images uses Tesseract on your device.
 
 Garage contains no client for any cloud AI service. The language models it uses for embeddings, fact extraction, and answering questions run either in the application itself or in a model server you run yourself (Ollama or LM Studio). By default that server is on your own device. If you configure Garage to use an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server, and to no other address; private communications (such as Messages and Mail) are never sent to a server that is not on your own device.
 
