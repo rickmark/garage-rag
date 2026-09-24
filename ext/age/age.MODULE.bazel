@@ -1,0 +1,17 @@
+git_repo = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+# Apache AGE keeps one release line per PostgreSQL major version; //ext/age selects the one
+# matching //ext:postgres_version. AGE publishes its GitHub releases on the -rc0 tags.
+git_repo(
+    name = "age_pg18",
+    build_file = "//ext/age:age.BUILD.bazel",
+    commit = "e43dc1a12b78fba4acef9835b2b10379b8d243b4",  # "PG18/v1.8.0-rc0"
+    remote = "https://github.com/apache/age.git",
+)
+
+git_repo(
+    name = "age_pg19",
+    build_file = "//ext/age:age.BUILD.bazel",
+    commit = "d03d1cb07aab5919bb6b6019863143d0e46db024",  # "PG19/v1.8.0-rc0"
+    remote = "https://github.com/apache/age.git",
+)

@@ -266,9 +266,9 @@ public enum GarageXPCStandardSelfTests {
         }
     }
 
-    /// Connects to PostgreSQL with psycopg and runs `SELECT version()` plus a pgvector extension probe.
+    /// Connects to PostgreSQL with psycopg and runs `SELECT version()` plus pgvector and Apache AGE extension probes.
     public static func database(urlProvider: @escaping @Sendable () -> String?) -> GarageXPCSelfTest {
-        GarageXPCSelfTest(name: "Database Connection", description: "Opens a psycopg connection to GARAGE_DATABASE_URL, runs SELECT version() and checks the vector extension.") {
+        GarageXPCSelfTest(name: "Database Connection", description: "Opens a psycopg connection to GARAGE_DATABASE_URL, runs SELECT version() and checks the vector and age extensions.") {
             guard let raw = urlProvider(), !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw GarageXPCSelfTestSkipped("GARAGE_DATABASE_URL is not configured")
             }
@@ -288,8 +288,11 @@ public enum GarageXPCStandardSelfTests {
             _ = try cursor.execute.throwing.dynamicallyCall(withArguments: ["SELECT extversion FROM pg_extension WHERE extname = 'vector'"])
             let row = cursor.fetchone()
             let vectorVersion = row == Python.None ? "not installed" : (String(row[0]) ?? "unknown")
+            _ = try cursor.execute.throwing.dynamicallyCall(withArguments: ["SELECT extversion FROM pg_extension WHERE extname = 'age'"])
+            let ageRow = cursor.fetchone()
+            let ageVersion = ageRow == Python.None ? "not installed" : (String(ageRow[0]) ?? "unknown")
             let redacted = Self.redactCredentials(in: conninfo)
-            return "URL: \(redacted)\nServer: \(version)\npgvector: \(vectorVersion)"
+            return "URL: \(redacted)\nServer: \(version)\npgvector: \(vectorVersion)\nApache AGE: \(ageVersion)"
         }
     }
 

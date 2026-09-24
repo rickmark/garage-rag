@@ -1,0 +1,13 @@
+filegroup(
+    name = "age_source",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    [
+        "src/backend/parser/ag_scanner.l",
+        "src/backend/parser/cypher_gram.y",
+    ],
+    visibility = ["//visibility:public"],
+)

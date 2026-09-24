@@ -1,0 +1,7 @@
+load("//ext/age:age.bzl", "age_source")
+
+# Apache AGE's PG18 release line, for //ext/postgres (the default).
+age_source(
+    name = "age_source",
+    repo = "@age_pg18",
+)
