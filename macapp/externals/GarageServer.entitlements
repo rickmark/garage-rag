@@ -3,7 +3,8 @@
 <!--
   App Store entitlements for the Postgres binaries (Contents/Resources/postgres), which GarageApp
   starts: inherit takes on the parent's sandbox. The garage / garage-mcp launchers are started
-  from outside the app and carry GarageLauncher.entitlements instead.
+  from outside the app and are helper bundles with sandboxes of their own instead
+  (macapp/Sources/GarageCLI/GarageCLI.entitlements, GarageMCPCLI/GarageMCPCLI.entitlements).
 -->
 <plist version="1.0">
 <dict>

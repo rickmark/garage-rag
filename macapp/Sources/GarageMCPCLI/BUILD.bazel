@@ -1,75 +1,20 @@
-load("@rules_swift//swift:swift.bzl", "swift_binary")
-load("//bazel:codesign.bzl", "codesign")
-load("//bazel:signing.bzl", "STORE_IDENTITY")
+load("//bazel:launcher_app.bzl", "garage_launcher_app")
 
-swift_binary(
-    name = "garage_mcp_bin",
-    srcs = ["main.swift"],
-    additional_linker_inputs = [
-        ":Info.plist",
-        "//ext/python:python_framework",
-        "//macapp/Sources/PythonXPCService:PythonXPCService_signed",
-    ],
-    linkopts = [
-        # Link the bundled Python.framework directly (PyConfig embedding API); resolved at runtime via the
-        # @executable_path/../Frameworks rpath below.
-        "-F$(location //ext/python:python_framework)/..",
-        "-framework",
-        "Python",
-        # Loads site-python, libpq and libtesseract with it, as in the XPC services.
-        "-F$(location //macapp/Sources/PythonXPCService:PythonXPCService_signed)/..",
-        "-framework",
-        "PythonXPCService",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@executable_path/../Frameworks/Python.framework",
-        "-Xlinker",
-        "-rpath",
-        "-Xlinker",
-        "@loader_path/../Frameworks/Python.framework",
-    ] + select({
-        # The store build sandboxes the launcher on its own (GarageLauncher.entitlements), which needs
-        # an embedded Info.plist with a bundle identifier. Other builds keep signing as the bare name.
-        "//bazel:is_store": [
-            "-Xlinker",
-            "-sectcreate",
-            "-Xlinker",
-            "__TEXT",
-            "-Xlinker",
-            "__info_plist",
-            "-Xlinker",
-            "$(location :Info.plist)",
-        ],
-        "//conditions:default": [],
-    }),
-    deps = [
-        "//ext/python:python_3_13",
-        # Interpreter start-up, app launch and the database URL, shared with garage.
-        "//macapp/Sources/GarageLauncher",
-    ],
+# `garage-mcp`, as the helper bundle Garage.app/Contents/Helpers/garage-mcp.app. The file
+# `garage-mcp` next to this BUILD file is the forwarder that becomes Garage.app/Contents/MacOS/garage-mcp.
+exports_files(
+    ["garage-mcp"],
+    visibility = ["//macapp:__subpackages__"],
 )
 
-codesign(
-    name = "garage-mcp",
-    src = ":garage_mcp_bin",
-    entitlements = select({
-        "//bazel:is_store": "//macapp/externals:GarageLauncher.entitlements",
-        "//conditions:default": None,
-    }),
-    options = ["runtime"],
-    signing_identity = select({
-        "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
-        "//bazel:is_store": STORE_IDENTITY,
-        "//conditions:default": "-",
-    }),
+garage_launcher_app(
+    name = "garage_mcp_app",
+    bundle_id = "me.rickmark.garage-rag.mcp-server-cli",
+    bundle_name = "garage-mcp",
+    developer_id_entitlements = ":GarageMCPCLI.developer_id.entitlements",
+    developer_id_profile = "//macapp:GarageRAGDevIDMCP.provisionprofile",
+    main = "main.swift",
+    store_entitlements = ":GarageMCPCLI.entitlements",
+    store_profile = "//macapp:GarageRAGDevelopmentMCP.provisionprofile",
     visibility = ["//visibility:public"],
 )

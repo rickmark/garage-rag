@@ -1,17 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Embedded in the App Store build's `garage-mcp` (__TEXT,__info_plist; see BUILD.bazel). A sandboxed
-  command-line tool needs a bundle identifier of its own: without one, sandbox initialization
-  traps at launch. It is also the tool's signing identifier and names its sandbox container.
+  Info.plist of the `garage-mcp` helper bundle, Garage.app/Contents/Helpers/garage-mcp.app. A
+  bundle of its own, with its own identifier, is what lets the launcher embed a provisioning
+  profile, and so carry the application identifier the data-protection keychain requires; a bare
+  command-line tool cannot. LSUIElement: a stdio server an MCP client spawns, never a Dock icon.
 -->
 <plist version="1.0">
 <dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
-	<string>me.rickmark.garage-rag.garage-mcp</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>garage-mcp</string>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Garage MCP Server</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT</string>
 </dict>
 </plist>
