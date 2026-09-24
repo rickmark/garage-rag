@@ -7,6 +7,7 @@ swift_binary(
     srcs = ["main.swift"],
     additional_linker_inputs = [
         "//ext/python:python_framework",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_signed",
     ],
     linkopts = [
         # Link the bundled Python.framework directly (PyConfig embedding API); resolved at runtime via the
@@ -14,6 +15,10 @@ swift_binary(
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",
+        # Loads site-python, libpq and libtesseract with it, as in the XPC services.
+        "-F$(location //macapp/Sources/PythonXPCService:PythonXPCService_signed)/..",
+        "-framework",
+        "PythonXPCService",
         "-Xlinker",
         "-rpath",
         "-Xlinker",
@@ -34,7 +39,6 @@ swift_binary(
     deps = [
         "//ext/python:python_3_13",
         # Interpreter start-up, app launch and the database URL, shared with garage-mcp.
-        # Linked statically; the launcher does not load PythonXPCService.framework at runtime.
         "//macapp/Sources/GarageLauncher",
     ],
 )

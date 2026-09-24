@@ -52,8 +52,6 @@ swift_library(
         ":GaragePythonEmbed",
         ":PythonXPCService_protocol",
         "//ext:PythonKit",
-        "//ext:libpq",  # For static libpq.a (version picked by //ext:postgres_version)
-        "//ext:openssl",  # For libssl.a and libcrypto.a
     ],
 )
 
@@ -63,13 +61,14 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-# Command line smoke test: `bazel run //macapp/Sources/PythonXPCService:python_embed_smoke -- /path/to/Garage.app`
-# starts the isolated interpreter exactly like the XPC services do and runs the standard self tests.
+# Command line smoke test: `bazel run //macapp/Sources/PythonXPCService:python_embed_smoke` starts the isolated
+# interpreter exactly like the XPC services do, from the framework it links, and runs the standard self tests.
 swift_binary(
     name = "python_embed_smoke",
     srcs = ["SmokeTest/main.swift"],
     additional_linker_inputs = [
         "//ext/python:python_framework",
+        ":PythonXPCService_signed",
     ],
     linkopts = [
         "-F$(location //ext/python:python_framework)/..",
@@ -79,6 +78,13 @@ swift_binary(
         "-rpath",
         "-Xlinker",
         "$(location //ext/python:python_framework)/..",
+        "-F$(location :PythonXPCService_signed)/..",
+        "-framework",
+        "PythonXPCService",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "$(location :PythonXPCService_signed)/..",
     ],
     tags = ["manual"],
     deps = [
@@ -94,13 +100,19 @@ swift_binary(
 apple_resource_group(
     name = "site_python_resources",
     resources = ["openssl.cnf"],
-    structured_resources = ["//macapp/externals:site-python"],
+    structured_resources = [
+        "//macapp/externals:python_framework_libs",
+        "//macapp/externals:site-python",
+        "//macapp/externals:tessdata_output",
+    ],
 )
 
 macos_framework(
     name = "PythonXPCService_framework",
     additional_linker_inputs = [
         "//ext/python:python_framework",
+        "//macapp/externals:libpq",
+        "//macapp/externals:libtesseract",
     ],
     bundle_id = "me.rickmark.garage-rag.PythonXPCService",
     bundle_name = "PythonXPCService",
@@ -111,6 +123,15 @@ macos_framework(
         "Python",
         "-framework",
         "SystemConfiguration",
+        # libpq and libtesseract ship in this framework's Frameworks folder and load with it, so
+        # every process that links the framework has them. Nothing here calls them (Python does,
+        # through ctypes), so -needed_library keeps the load commands the linker would drop.
+        "-needed_library",
+        "$(location //macapp/externals:libpq)",
+        "-needed_library",
+        "$(location //macapp/externals:libtesseract)",
+        "-rpath",
+        "@loader_path/Frameworks",
     ],
     minimum_os_version = "14.0",
     resources = [":site_python_resources"],

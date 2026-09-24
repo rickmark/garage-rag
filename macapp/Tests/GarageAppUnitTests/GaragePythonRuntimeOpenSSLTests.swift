@@ -27,7 +27,7 @@ final class GaragePythonRuntimeOpenSSLTests: XCTestCase {
     }
 
     private var environment: GaragePythonEnvironment {
-        GaragePythonEnvironment(appBundleURL: nil, sitePythonURL: root.appendingPathComponent("site-python", isDirectory: true))
+        GaragePythonEnvironment(sitePythonURL: root.appendingPathComponent("site-python", isDirectory: true))
     }
 
     private func writeConfig() throws -> URL {

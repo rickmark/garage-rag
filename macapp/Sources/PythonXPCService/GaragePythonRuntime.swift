@@ -7,9 +7,9 @@ import PythonXPCService_protocol
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "GaragePythonRuntime")
 
-/// Describes the on-disk layout of the isolated Python environment shipped inside the application bundle.
+/// Describes the on-disk layout of the isolated Python environment shipped inside `PythonXPCService.framework`.
 ///
-/// Layout (relative to `<App>.app/Contents/Resources`):
+/// Layout (relative to the framework):
 /// ```
 /// site-python/                 <- python stdlib (os.py, ...) == PyConfig.home / stdlib_dir
 /// site-python/lib-dynload/     <- compiled stdlib extension modules
@@ -20,8 +20,6 @@ public struct GaragePythonEnvironment: Equatable, Sendable {
     public static let libDynloadDirectoryName = "lib-dynload"
     public static let sitePackagesDirectoryName = "site-packages"
 
-    /// The `.app` bundle the environment was resolved from (if any).
-    public let appBundleURL: URL?
     /// `PyConfig.home`: the directory that holds the standard library.
     public let home: URL
     public let stdlibDir: URL
@@ -30,8 +28,7 @@ public struct GaragePythonEnvironment: Equatable, Sendable {
     /// Additional `sys.path` entries appended after site-packages.
     public let extraSearchPaths: [URL]
 
-    public init(appBundleURL: URL?, sitePythonURL: URL, extraSearchPaths: [URL] = []) {
-        self.appBundleURL = appBundleURL
+    public init(sitePythonURL: URL, extraSearchPaths: [URL] = []) {
         self.home = sitePythonURL
         self.stdlibDir = sitePythonURL
         self.libDynloadDir = sitePythonURL.appendingPathComponent(Self.libDynloadDirectoryName, isDirectory: true)
@@ -70,24 +67,18 @@ public struct GaragePythonEnvironment: Equatable, Sendable {
 
 /// Errors raised while resolving or starting the embedded interpreter.
 public enum GaragePythonRuntimeError: Error, LocalizedError, Equatable {
-    case appBundleNotResolved(String)
     case invalidEnvironment([String])
     case initializationFailed(code: Int, message: String)
     case notInitialized
-    case fileHandleUnresolvable(String)
 
     public var errorDescription: String? {
         switch self {
-        case .appBundleNotResolved(let detail):
-            return "Unable to resolve the Garage application bundle: \(detail)"
         case .invalidEnvironment(let problems):
             return "Bundled Python environment is incomplete:\n  - " + problems.joined(separator: "\n  - ")
         case .initializationFailed(let code, let message):
             return "Py_InitializeFromConfig failed (code \(code)): \(message)"
         case .notInitialized:
             return "The embedded Python interpreter has not been initialized"
-        case .fileHandleUnresolvable(let detail):
-            return "Unable to resolve a path from the provided file handle: \(detail)"
         }
     }
 }
@@ -95,9 +86,8 @@ public enum GaragePythonRuntimeError: Error, LocalizedError, Equatable {
 /// Owns the single embedded CPython interpreter of an XPC service.
 ///
 /// Responsibilities:
-/// - resolve the isolated environment (`site-python` in `PythonXPCService.framework`, else in the app bundle),
-///   which may be provided explicitly (URL or `FileHandle`) by the host application or inferred from the
-///   location of the XPC bundle;
+/// - resolve the isolated environment (`site-python` in the loaded `PythonXPCService.framework`, which also
+///   links libpq and libtesseract, so dyld has loaded them before the interpreter starts);
 /// - start the interpreter through the PyConfig API (isolated mode, explicit `home` and `sys.path`);
 /// - manage the GIL for host → Python calls so that Python threads (gRPC servers, thread pools)
 ///   keep running while Swift code is idle.
@@ -133,15 +123,9 @@ public final class GaragePythonRuntime: @unchecked Sendable {
     private let stateLock = NSRecursiveLock()
     private var _state: State = .notStarted
     private var _environment: GaragePythonEnvironment?
-    private var _explicitAppBundleURL: URL?
-    private var _securityScopedURL: URL?
-    private var _appBundleFileHandle: FileHandle?
     private var _initializationMs: Double?
     private var _pythonVersion: String?
     private var _sysPath: [String] = []
-    private var _libpqPath: String?
-    private var _libpqError: String?
-    private var _libpqHandle: UnsafeMutableRawPointer?
 
     /// Serial queue that owns interpreter initialization (exactly one `Py_InitializeFromConfig` per process).
     private let pythonQueue = DispatchQueue(label: "me.rickmark.garage-rag.python-runtime", qos: .userInitiated)
@@ -149,15 +133,6 @@ public final class GaragePythonRuntime: @unchecked Sendable {
 
     /// Environment variable that allows overriding the `site-python` location during development / testing.
     public static let sitePythonOverrideEnvironmentKey = "GARAGE_SITE_PYTHON"
-
-    /// Environment variable naming the `libpq.dylib` psycopg must use. Set by the host app for child processes
-    /// and exported by the runtime itself once the bundled copy has been resolved, so `garage_rag` (and the
-    /// ctypes hook installed at start-up) always point psycopg at the signed library inside the bundle.
-    public static let libpqPathEnvironmentKey = "GARAGE_LIBPQ_PATH"
-    /// The bundled `libtesseract.dylib`, loaded in-process by garage_rag.extract.tesseract through ctypes.
-    public static let libtesseractPathEnvironmentKey = "GARAGE_LIBTESSERACT_PATH"
-    /// Where libtesseract looks for `eng.traineddata`.
-    public static let tessdataPrefixEnvironmentKey = "TESSDATA_PREFIX"
 
     /// Environment variable naming the configuration file OpenSSL loads when it initializes. The runtime points it
     /// at the empty `openssl.cnf` shipped next to `site-python`, so no OpenSSL in the process reads a configuration
@@ -188,96 +163,10 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         return _pythonVersion
     }
 
-    /// The app bundle URL currently used as the basis for path resolution (explicit or inferred).
-    public var appBundleURL: URL? {
-        stateLock.lock()
-        let explicit = _explicitAppBundleURL
-        stateLock.unlock()
-        return explicit ?? Self.inferAppBundleURL()
-    }
-
     private func setState(_ newState: State) {
         stateLock.lock()
         _state = newState
         stateLock.unlock()
-    }
-
-    // MARK: - App bundle references
-
-    /// Registers the main application bundle URL as the basis for Python path resolution and extends the
-    /// sandbox with security scoped access when the URL carries a scope.
-    @discardableResult
-    public func setAppBundle(url: URL) -> Bool {
-        let standardized = url.standardizedFileURL
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDir), isDir.boolValue else {
-            logger.error("setAppBundle(url:) ignored: '\(standardized.path, privacy: .public)' is not a directory")
-            return false
-        }
-
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        if let existing = _explicitAppBundleURL, existing == standardized {
-            return true
-        }
-        if let scoped = _securityScopedURL {
-            scoped.stopAccessingSecurityScopedResource()
-            _securityScopedURL = nil
-        }
-        if standardized.startAccessingSecurityScopedResource() {
-            _securityScopedURL = standardized
-            logger.info("Security scoped access granted for app bundle '\(standardized.path, privacy: .public)'")
-        }
-        _explicitAppBundleURL = standardized
-        logger.info("App bundle reference set to '\(standardized.path, privacy: .public)'")
-        return true
-    }
-
-    /// Registers the main application bundle from an open directory descriptor. The path is recovered with
-    /// `fcntl(F_GETPATH)`; the descriptor is retained for the lifetime of the runtime so the underlying vnode
-    /// stays reachable even if the bundle is moved.
-    public func setAppBundle(fileHandle: FileHandle) throws {
-        let fd = fileHandle.fileDescriptor
-        guard fd >= 0 else {
-            throw GaragePythonRuntimeError.fileHandleUnresolvable("invalid file descriptor")
-        }
-        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        guard fcntl(fd, F_GETPATH, &buffer) != -1 else {
-            let err = String(cString: strerror(errno))
-            throw GaragePythonRuntimeError.fileHandleUnresolvable("fcntl(F_GETPATH) failed: \(err)")
-        }
-        let path = String(cString: buffer)
-        guard !path.isEmpty else {
-            throw GaragePythonRuntimeError.fileHandleUnresolvable("fcntl(F_GETPATH) returned an empty path")
-        }
-        let url = URL(fileURLWithPath: path, isDirectory: true)
-        guard setAppBundle(url: url) else {
-            throw GaragePythonRuntimeError.fileHandleUnresolvable("'\(path)' is not a directory")
-        }
-        stateLock.lock()
-        _appBundleFileHandle = fileHandle
-        stateLock.unlock()
-        logger.info("App bundle reference resolved from file handle (fd \(fd, privacy: .public)) -> '\(path, privacy: .public)'")
-    }
-
-    /// Walks up from the running bundle (`Garage.app/Contents/XPCServices/X.xpc`) to find the enclosing `.app`.
-    public static func inferAppBundleURL(from bundle: Bundle = .main) -> URL? {
-        var cursor = bundle.bundleURL.standardizedFileURL
-        for _ in 0..<8 {
-            if cursor.pathExtension == "app" {
-                return cursor
-            }
-            let parent = cursor.deletingLastPathComponent()
-            if parent.path == cursor.path { break }
-            cursor = parent
-        }
-        // Not inside an .app: when running as a plain executable, honour an adjacent Resources folder.
-        let exe = bundle.executableURL?.standardizedFileURL ?? bundle.bundleURL
-        let candidate = exe.deletingLastPathComponent().deletingLastPathComponent()
-        if candidate.pathExtension == "app" {
-            return candidate
-        }
-        return nil
     }
 
     // MARK: - Environment resolution
@@ -293,52 +182,28 @@ public final class GaragePythonRuntime: @unchecked Sendable {
             .appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true)
     }
 
-    /// Resolves the isolated environment from (in order): `GARAGE_SITE_PYTHON`, the loaded `PythonXPCService.framework`'s
-    /// resources, then for the explicitly registered and the inferred enclosing `.app` the framework's `site-python`
-    /// by path and the older `Contents/Resources/site-python`, and finally the XPC bundle's own `Resources`.
+    /// Resolves the isolated environment from (in order): `GARAGE_SITE_PYTHON`, the loaded
+    /// `PythonXPCService.framework`'s resources, then the running bundle's own `Resources`.
     public func resolveEnvironment() throws -> GaragePythonEnvironment {
         let fm = FileManager.default
-        var candidates: [(URL?, URL)] = []
+        var candidates: [URL] = []
 
         if let override = ProcessInfo.processInfo.environment[Self.sitePythonOverrideEnvironmentKey], !override.isEmpty {
-            candidates.append((nil, URL(fileURLWithPath: override, isDirectory: true)))
+            candidates.append(URL(fileURLWithPath: override, isDirectory: true))
         }
-
-        stateLock.lock()
-        let explicit = _explicitAppBundleURL
-        stateLock.unlock()
-
-        var bundleCandidates: [URL] = []
-        if let explicit = explicit { bundleCandidates.append(explicit) }
-        if let inferred = Self.inferAppBundleURL(), !bundleCandidates.contains(inferred) { bundleCandidates.append(inferred) }
-
         if let frameworkSitePython = Self.frameworkSitePythonURL {
-            candidates.append((bundleCandidates.first, frameworkSitePython))
+            candidates.append(frameworkSitePython)
         }
-
-        for bundleURL in bundleCandidates {
-            // By path, for processes that do not load the framework (the `garage` / `garage-mcp` launchers):
-            // the framework is flat as built today, or versioned (`Resources/`), then the pre-framework location.
-            let framework = bundleURL.appendingPathComponent("Contents/Frameworks/PythonXPCService.framework", isDirectory: true)
-            for sitePython in [
-                framework.appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true),
-                framework.appendingPathComponent("Resources/\(GaragePythonEnvironment.sitePythonDirectoryName)", isDirectory: true),
-                bundleURL.appendingPathComponent("Contents/Resources/\(GaragePythonEnvironment.sitePythonDirectoryName)", isDirectory: true),
-            ] where !candidates.contains(where: { $0.1.standardizedFileURL == sitePython.standardizedFileURL }) {
-                candidates.append((bundleURL, sitePython))
-            }
-        }
-
         if let ownResources = Bundle.main.resourceURL {
-            candidates.append((nil, ownResources.appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true)))
+            candidates.append(ownResources.appendingPathComponent(GaragePythonEnvironment.sitePythonDirectoryName, isDirectory: true))
         }
 
         var problems: [String] = []
-        for (bundleURL, sitePython) in candidates {
-            let env = GaragePythonEnvironment(appBundleURL: bundleURL, sitePythonURL: sitePython.standardizedFileURL)
+        for sitePython in candidates {
+            let env = GaragePythonEnvironment(sitePythonURL: sitePython.standardizedFileURL)
             let envProblems = env.validationProblems()
             if envProblems.isEmpty {
-                logger.info("Resolved Python environment: home='\(env.home.path, privacy: .public)' (app bundle: \(bundleURL?.path ?? "n/a", privacy: .public))")
+                logger.info("Resolved Python environment: home='\(env.home.path, privacy: .public)'")
                 return env
             }
             if fm.fileExists(atPath: sitePython.path) {
@@ -347,117 +212,27 @@ public final class GaragePythonRuntime: @unchecked Sendable {
                 problems.append("No site-python directory at \(sitePython.path)")
             }
         }
-
-        if bundleCandidates.isEmpty {
-            throw GaragePythonRuntimeError.appBundleNotResolved("no app bundle reference was provided and the XPC bundle is not nested inside an .app (\(Bundle.main.bundleURL.path))")
+        if Self.frameworkSitePythonURL == nil {
+            problems.append("PythonXPCService.framework is not loaded in this process (\(Bundle.main.bundleURL.path))")
         }
         throw GaragePythonRuntimeError.invalidEnvironment(problems)
     }
 
-    // MARK: - libpq
+    // MARK: - Framework libraries
 
-    /// Path of the `libpq.dylib` that was loaded into this process for psycopg (nil when unavailable).
+    /// Path of the loaded image that defines `symbol`: for libpq's and libtesseract's, the copy
+    /// `PythonXPCService.framework` links and dyld loaded with it. Nil when no loaded image defines it.
+    public static func loadedImagePath(definingSymbol symbol: String) -> String? {
+        let defaultHandle = UnsafeMutableRawPointer(bitPattern: -2)  // RTLD_DEFAULT: every loaded image
+        guard let address = dlsym(defaultHandle, symbol) else { return nil }
+        var info = Dl_info()
+        guard dladdr(address, &info) != 0, let name = info.dli_fname else { return nil }
+        return String(cString: name)
+    }
+
+    /// The libpq psycopg uses: the framework's, loaded with it. Nil when it is not loaded.
     public var libpqPath: String? {
-        stateLock.lock(); defer { stateLock.unlock() }
-        return _libpqPath
-    }
-
-    /// Locates the PostgreSQL client library shipped with the application.
-    ///
-    /// Order: `GARAGE_LIBPQ_PATH`, `<App>/Contents/Frameworks/libpq.dylib`, the legacy
-    /// `<App>/Contents/Resources/postgres/lib/libpq.dylib`, then the running bundle's own `Frameworks` folder.
-    /// Only files inside the (signed) bundle are considered; system or Homebrew copies are never used because
-    /// library validation rejects binaries signed by a different Team ID.
-    public func resolveLibpqURL(appBundleURL: URL?) -> URL? {
-        let fm = FileManager.default
-        var candidates: [URL] = []
-
-        if let override = ProcessInfo.processInfo.environment[Self.libpqPathEnvironmentKey], !override.isEmpty {
-            candidates.append(URL(fileURLWithPath: override))
-        }
-        if let bundle = appBundleURL {
-            let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
-            candidates.append(contents.appendingPathComponent("Frameworks/libpq.dylib"))
-            candidates.append(contents.appendingPathComponent("Resources/postgres/lib/libpq.dylib"))
-            candidates.append(contents.appendingPathComponent("Resources/postgres/lib/libpq.5.dylib"))
-        }
-        if let own = Bundle.main.privateFrameworksURL {
-            candidates.append(own.appendingPathComponent("libpq.dylib"))
-        }
-
-        for candidate in candidates {
-            let standardized = candidate.standardizedFileURL
-            var isDir: ObjCBool = false
-            if fm.fileExists(atPath: standardized.path, isDirectory: &isDir), !isDir.boolValue {
-                return standardized
-            }
-        }
-        return nil
-    }
-
-    /// Exports the bundled Tesseract to Python: `Contents/Frameworks/libtesseract.dylib` through
-    /// `GARAGE_LIBTESSERACT_PATH` and `Contents/Resources/tesseract/tessdata` through `TESSDATA_PREFIX`.
-    /// Only files inside the (signed) bundle are offered, as for libpq: library validation rejects a
-    /// Homebrew copy signed by another Team ID. Values already in the environment win, so a developer
-    /// can point at another build.
-    private func exportBundledTesseract(appBundleURL: URL?) {
-        let environment = ProcessInfo.processInfo.environment
-        guard let bundle = appBundleURL else { return }
-        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
-        let library = contents.appendingPathComponent("Frameworks/libtesseract.dylib")
-        guard FileManager.default.fileExists(atPath: library.path) else {
-            logger.warning("Bundled libtesseract not found at '\(library.path, privacy: .public)'; image OCR will fail")
-            return
-        }
-        if environment[Self.libtesseractPathEnvironmentKey]?.isEmpty ?? true {
-            setenv(Self.libtesseractPathEnvironmentKey, library.path, 1)
-        }
-        if environment[Self.tessdataPrefixEnvironmentKey]?.isEmpty ?? true {
-            let tessdata = contents.appendingPathComponent("Resources/tesseract/tessdata", isDirectory: true)
-            setenv(Self.tessdataPrefixEnvironmentKey, tessdata.path, 1)
-        }
-    }
-
-    /// Loads the bundled libpq into the process (`dlopen`, `RTLD_GLOBAL`) and exports its location through
-    /// `GARAGE_LIBPQ_PATH`. Loading it here, from Swift, surfaces code-signing / library-validation problems as a
-    /// clear diagnostic instead of psycopg's generic "no pq wrapper available" failure, and guarantees the copy
-    /// psycopg binds to via ctypes is the one inside the bundle.
-    private func loadBundledLibpq(appBundleURL: URL?) {
-        guard let url = resolveLibpqURL(appBundleURL: appBundleURL) else {
-            let searched = appBundleURL.map { "\($0.path)/Contents/Frameworks, \($0.path)/Contents/Resources/postgres/lib" } ?? "no app bundle resolved"
-            let message = "libpq.dylib not found (searched: \(searched)); psycopg will fall back to its own search"
-            logger.warning("\(message, privacy: .public)")
-            stateLock.lock()
-            _libpqPath = nil
-            _libpqError = message
-            stateLock.unlock()
-            return
-        }
-
-        var loadError: String?
-        stateLock.lock()
-        var handle = _libpqHandle
-        stateLock.unlock()
-        if handle == nil {
-            handle = dlopen(url.path, RTLD_NOW | RTLD_GLOBAL)
-            if handle == nil {
-                loadError = dlerror().map { String(cString: $0) } ?? "dlopen failed"
-            }
-        }
-
-        if let loadError = loadError {
-            logger.error("Failed to load bundled libpq at '\(url.path, privacy: .public)': \(loadError, privacy: .public)")
-        } else {
-            // Point psycopg (and any subprocess) at the exact library we just loaded.
-            setenv(Self.libpqPathEnvironmentKey, url.path, 1)
-            logger.info("Loaded bundled libpq from '\(url.path, privacy: .public)'")
-        }
-
-        stateLock.lock()
-        _libpqHandle = handle
-        _libpqPath = loadError == nil ? url.path : nil
-        _libpqError = loadError
-        stateLock.unlock()
+        Self.loadedImagePath(definingSymbol: "PQlibVersion")
     }
 
     // MARK: - OpenSSL
@@ -501,22 +276,14 @@ public final class GaragePythonRuntime: @unchecked Sendable {
             pass
     """
 
-    /// Python source executed right after interpreter start-up. It teaches `ctypes.util.find_library` about the
-    /// bundled libpq so psycopg's pure Python implementation (`psycopg.pq.misc.find_libpq_full_path`) resolves
-    /// it instead of probing `pg_config` / Homebrew. Mirrors `garage_rag.libpq.configure()` for the case where
-    /// `garage_rag` itself is missing or psycopg gets imported before it.
+    /// Python source executed right after interpreter start-up: points psycopg's libpq lookup at the copy the
+    /// framework loaded (`garage_rag.libpq.configure()`) before anything can import psycopg.
     static let libpqBootstrapSource = """
-    import os as _os, ctypes.util as _ctypes_util
-    _path = _os.environ.get("GARAGE_LIBPQ_PATH")
-    if _path and _os.path.isfile(_path) and getattr(_ctypes_util, "_garage_libpq_path", None) != _path:
-        _original = getattr(_ctypes_util, "_garage_original_find_library", _ctypes_util.find_library)
-        def _garage_find_library(name, _original=_original, _path=_path):
-            if name in ("pq", "libpq", "libpq.dylib", "libpq.5.dylib", "libpq.5"):
-                return _path
-            return _original(name)
-        _ctypes_util._garage_original_find_library = _original
-        _ctypes_util._garage_libpq_path = _path
-        _ctypes_util.find_library = _garage_find_library
+    try:
+        from garage_rag import libpq as _garage_libpq
+        _garage_libpq.configure()
+    except ImportError:
+        pass
     """
 
     // MARK: - Initialization
@@ -563,10 +330,7 @@ public final class GaragePythonRuntime: @unchecked Sendable {
             return .failure(error)
         }
 
-        // libpq must be resolved (and GARAGE_LIBPQ_PATH exported) before the interpreter snapshots os.environ.
-        loadBundledLibpq(appBundleURL: environment.appBundleURL ?? appBundleURL)
-        exportBundledTesseract(appBundleURL: environment.appBundleURL ?? appBundleURL)
-        // Likewise OPENSSL_CONF, before anything in the process initializes OpenSSL.
+        // OPENSSL_CONF, before anything in the process initializes OpenSSL.
         Self.exportBundledOpenSSLConfig(for: environment)
 
         if GaragePythonEmbedIsInitialized() {
@@ -625,7 +389,7 @@ public final class GaragePythonRuntime: @unchecked Sendable {
                 if sys.stderr == Python.None {
                     sys.stderr = io.open(2, mode: "w", buffering: 1, encoding: "utf-8", errors: "replace", closefd: false)
                 }
-                // Route psycopg's libpq lookup to the bundled library.
+                // Route psycopg's libpq lookup to the framework's library.
                 let builtins = try Python.attemptImport("builtins")
                 let namespace = Python.dict()
                 _ = try builtins.exec.throwing.dynamicallyCall(withArguments: [Self.libpqBootstrapSource, namespace])
@@ -810,9 +574,9 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         let version = _pythonVersion
         let sysPath = _sysPath
         let initMs = _initializationMs
-        let libpqPath = _libpqPath
-        let libpqError = _libpqError
         stateLock.unlock()
+        let libpqPath = self.libpqPath
+        let libpqError = libpqPath == nil ? "libpq is not loaded: PythonXPCService.framework should link it" : nil
 
         var errorText: String? = nil
         if case .failed(let message) = st { errorText = message }

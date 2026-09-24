@@ -74,18 +74,24 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 - `Frameworks/PythonXPCService.framework` — the shared runtime for the six
   `XPCServices/*.xpc` helpers listed under `xpc_services`. Its resources hold
   `site-python` (`//macapp/externals:site-python`): the standard library,
-  `lib-dynload` and site-packages, used by the CLI and every XPC service. It lives
-  in the framework because a sandboxed XPC service may read inside the frameworks it
-  links but not elsewhere in the app bundle. The interpreter itself is the
-  `Python.framework` from `//ext/python`, kept to the bare interpreter.
+  `lib-dynload` and site-packages, used by the CLI and every XPC service, and
+  `tessdata/eng.traineddata`. It lives in the framework because a sandboxed XPC service
+  may read inside the frameworks it links but not elsewhere in the app bundle. The
+  interpreter itself is the `Python.framework` from `//ext/python`, kept to the bare
+  interpreter.
 - Next to `site-python` is an empty `openssl.cnf`. `GaragePythonRuntime` exports it as
   `OPENSSL_CONF` before the interpreter starts, so neither the bundled `_ssl` nor
   `cryptography`'s own statically linked OpenSSL reads a configuration from outside the
   bundle (`cryptography`'s compiled-in default is Homebrew's). At start-up it also calls
   `truststore.inject_into_ssl()`, so `ssl`'s default contexts verify against the macOS
   trust store; the bundled OpenSSL ships no CA files.
-- The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
-  is mapped before the App Sandbox applies; opening it later by path is denied.
+- The framework also carries `Frameworks/libpq.dylib` and `Frameworks/libtesseract.5.5.dylib`
+  (`//macapp/externals:python_framework_libs`) and links them with load commands
+  (`@rpath`, through its `@loader_path/Frameworks` rpath). Every process that links the
+  framework (the Python XPC services, `garage`, `garage-mcp`) therefore has them mapped
+  before the App Sandbox applies, where opening them later by path is denied. Python finds
+  them among the process's loaded images (`garage_rag.native`); nothing passes their paths,
+  and the services never need to know where the app bundle is.
 
 ## A stable local signing identity
 

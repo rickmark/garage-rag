@@ -181,8 +181,8 @@ done
     _extract_static_lib("libpgcommon_a", ":" + name, "libpgcommon.a", tags)
     _extract_static_lib("libpgport_a", ":" + name, "libpgport.a", tags)
 
-    # Standalone client library, embedded into the app as `Contents/Frameworks/libpq.dylib`
-    # (signed by //macapp/externals:libpq) and loaded by psycopg through ctypes. The install
+    # Standalone client library, carried in PythonXPCService.framework's `Frameworks/libpq.dylib`
+    # (signed by //macapp/externals:libpq), linked by the framework and used by psycopg through ctypes. The install
     # name is normalised to `@rpath/libpq.dylib` so the same binary works from any location.
     #
     # This copy is pulled straight from :postgres's raw output and only its own install name
