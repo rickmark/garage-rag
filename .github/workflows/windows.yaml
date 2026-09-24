@@ -83,7 +83,8 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           # ICU's projects name one toolset; build with whichever this Visual Studio has.
           $toolset = @{ '17.0' = 'v143'; '18.0' = 'v145' }[$env:VisualStudioVersion]
-          $extra = if ($toolset) { @("/p:PlatformToolset=$toolset") } else { @() }
+          $extra = @()
+          if ($toolset) { $extra += "/p:PlatformToolset=$toolset" }
           msbuild "$env:SRC\libicu\source\allinone\allinone.sln" /m /v:minimal /nologo `
             /p:Configuration=Release /p:Platform=x64 /p:SkipUWP=true @extra
           $icu = "$env:RUNNER_TEMP\icu"
