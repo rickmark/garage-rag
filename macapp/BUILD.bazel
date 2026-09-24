@@ -44,7 +44,7 @@ appstore_xcarchive(
 sh_binary(
     name = "xcarchive_open",
     srcs = ["open_xcarchive.sh"],
-    args = ["$(location :GarageStore.xcarchive)"],
+    args = ["$(rootpath :GarageStore.xcarchive)"],
     data = [":GarageStore.xcarchive"],
     tags = ["manual"],
     visibility = ["//visibility:public"],

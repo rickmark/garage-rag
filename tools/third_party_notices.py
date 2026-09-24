@@ -2,9 +2,9 @@
 """Generate (or check) THIRD_PARTY_NOTICES.txt for everything the Garage app redistributes.
 
 The macOS app bundles a Python runtime plus every runtime package in `garage_python/uv.lock`,
-a from-source Postgres + pgvector (with ICU and zlib), OpenSSL, llama.cpp, PythonKit, Sparkle,
-the Swift gRPC/NIO/protobuf runtime pulled in by rules_swift, and third-party code vendored into
-garage_python (see NOTICE). Their licenses (MIT, BSD, Apache,
+a from-source Postgres + pgvector (with ICU and zlib), OpenSSL, llama.cpp, Tesseract +
+Leptonica, PythonKit, Sparkle, the Swift gRPC/NIO/protobuf runtime pulled in by rules_swift,
+and third-party code vendored into garage_python (see NOTICE). Their licenses (MIT, BSD, Apache,
 Unicode, PSF, LGPL, ...) require the license text to accompany binary redistribution, so this
 collects the actual license files from each upstream release into one text file that ships in
 `Garage.app/Contents/Resources`.
@@ -110,6 +110,27 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "MIT",
         "https://github.com/ggml-org/llama.cpp",
         (f"{RAW}/ggml-org/llama.cpp/v0.4.0/LICENSE",),
+    ),
+    Component(
+        "Tesseract",
+        "5.5.3",
+        "Apache-2.0",
+        "https://github.com/tesseract-ocr/tesseract",
+        (f"{RAW}/tesseract-ocr/tesseract/5.5.3/LICENSE",),
+    ),
+    Component(
+        "tessdata_fast (eng.traineddata)",
+        "4.1.0",
+        "Apache-2.0",
+        "https://github.com/tesseract-ocr/tessdata_fast",
+        (f"{RAW}/tesseract-ocr/tessdata_fast/4.1.0/LICENSE",),
+    ),
+    Component(
+        "Leptonica",
+        "1.87.0",
+        "BSD-2-Clause",
+        "http://www.leptonica.org/",
+        (f"{RAW}/DanBloomberg/leptonica/1.87.0/leptonica-license.txt",),
     ),
     Component(
         "Sparkle",
