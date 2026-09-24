@@ -19,7 +19,7 @@
 <plist version="1.0">
 <dict>
 	<key>SUFeedURL</key>
-	<string>https://rickmark.github.io/garage-rag/appcast.xml</string>
+	<string>https://garagerag.app/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>9uPTXe1BBLOmWFkrBm0fPMn9Y16BR57aI3ulI/GhNXg=</string>
 	<key>SUScheduledCheckInterval</key>

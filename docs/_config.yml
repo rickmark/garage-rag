@@ -1,7 +1,7 @@
 title: Garage Support & Documentation
 description: Official support pages, troubleshooting guides, FAQ, and privacy documentation for Garage — the local-first personal RAG and knowledge indexing system.
-url: "https://rickmark.github.io"
-baseurl: "/garage-rag"
+url: "https://garagerag.app"
+baseurl: ""
 
 # Build settings
 markdown: kramdown

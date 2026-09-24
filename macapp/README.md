@@ -251,7 +251,7 @@ a feed it could not verify.
    one release: archives from an older tag would be given this tag's URL.
 4. Upload the archive to the GitHub release under `<tag>`, copy the generated
    `appcast.xml` over `docs/appcast.xml`, and commit. GitHub Pages serves it at
-   `https://rickmark.github.io/garage-rag/appcast.xml`, which is the SUFeedURL.
+   `https://garagerag.app/appcast.xml`, which is the SUFeedURL.
 5. Before announcing it, fetch the feed and check that each `<enclosure url=…>`
    is the GitHub Releases URL of an asset that actually exists.
 
