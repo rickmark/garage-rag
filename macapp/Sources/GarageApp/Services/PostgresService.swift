@@ -337,7 +337,7 @@ final class PostgresService: ObservableObject {
             )
         }
         try FileManager.default.createDirectory(at: Paths.pgDataDir, withIntermediateDirectories: true)
-        let password = try postgresPassword()
+        let password = try await loadPassword()
         let passwordFile = Paths.appSupportDir
             .appendingPathComponent(".initdb-password-\(UUID().uuidString)")
         try Data((password + "\n").utf8).write(to: passwordFile, options: .atomic)
@@ -404,7 +404,7 @@ final class PostgresService: ObservableObject {
             // Read the password before launching anything, so a Keychain problem shows
             // up as the reason the database is down rather than as an authentication
             // failure from the first connection.
-            _ = try postgresPassword()
+            _ = try await loadPassword()
         } catch {
             status = .failed(error.localizedDescription)
             throw error
@@ -1043,37 +1043,37 @@ final class PostgresService: ObservableObject {
         return env
     }
 
+    /// The password `loadPassword()` read (as `start()` does before anything connects). Never
+    /// touches the Keychain: a read there can wait on an access prompt, which on the main actor
+    /// freezes the window. Tests keep the password in memory and have it at once.
     private func postgresPassword() throws -> String {
         if let cachedPassword {
             return cachedPassword
         }
-        // A failed read is not "no password yet". Generating one here would overwrite
-        // the cluster's real password in the Keychain (save updates the existing item)
-        // and lock the app out of its own database, so read and save errors surface
-        // as they are. Tests never reach the Keychain: load/save keep it in memory.
-        if let migration = KeychainPostgresPassword.migrateIfNeeded() {
-            appendLog(LogLine(stream: .stdout, text: migration, source: "keychain"))
+        if isRunningInTestEnvironment {
+            let resolved = try KeychainPostgresPassword.resolve(clusterExists: false)
+            cachedPassword = resolved.password
+            return resolved.password
         }
-        if let storedPassword = try KeychainPostgresPassword.load() {
-            cachedPassword = storedPassword
-            return storedPassword
+        throw PostgresError.other("The database password has not been read yet. Start the database first.")
+    }
+
+    /// Reads (or, for a new cluster, creates) the password on a background thread, moving a
+    /// login-keychain item into the App Group keychain on the way, then caches it for
+    /// `postgresPassword()`. The window stays responsive while macOS shows a Keychain prompt.
+    private func loadPassword() async throws -> String {
+        if let cachedPassword {
+            return cachedPassword
         }
-        // A cluster without a password this build can read was made by another build (the App
-        // Store and Developer ID builds share the data folder, and a locally signed build cannot
-        // read their shared Keychain item). A new password would not open it and would hide the
-        // real problem.
-        if !isRunningInTestEnvironment, isInitialized {
-            throw PostgresError.other(
-                "The database in \(Paths.pgDataDir.path) exists, but its password is not in a "
-                    + "Keychain this build can read (service \(GaragePostgresEndpoint.keychainService)). It was "
-                    + "probably created by another Garage build."
-            )
+        let clusterExists = isInitialized
+        let resolved = try await Task.detached(priority: .userInitiated) {
+            try KeychainPostgresPassword.resolve(clusterExists: clusterExists)
+        }.value
+        for line in resolved.log {
+            appendLog(LogLine(stream: .stdout, text: line, source: "keychain"))
         }
-        let generatedPassword = try KeychainPostgresPassword.generate()
-        let store = try KeychainPostgresPassword.save(generatedPassword)
-        appendLog(LogLine(stream: .stdout, text: "stored a new database password in the \(store) keychain", source: "keychain"))
-        cachedPassword = generatedPassword
-        return generatedPassword
+        cachedPassword = resolved.password
+        return resolved.password
     }
 
     private func percentEncode(_ value: String) throws -> String {
@@ -1090,24 +1090,58 @@ private enum KeychainPostgresPassword {
     // shared with the bundled launchers, which read the same item to connect.
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    // Touched from the background task `loadPassword()` runs `resolve` in.
+    private static let lock = NSLock()
     private static var inMemoryPassword: String?
     private static var migrationAttempted = false
 
-    /// Moves a login-keychain password into the App Group keychain, once per launch, so the
+    /// The cluster's password and what to log about where it came from. Reads the Keychain, which
+    /// can block on an access prompt: never call it on the main actor.
+    static func resolve(clusterExists: Bool) throws -> (password: String, log: [String]) {
+        var log: [String] = []
+        // A failed read is not "no password yet". Generating one here would overwrite
+        // the cluster's real password in the Keychain (save updates the existing item)
+        // and lock the app out of its own database, so read and save errors surface
+        // as they are. Tests never reach the Keychain: load/save keep it in memory.
+        if let migration = migrateIfNeeded() {
+            log.append(migration)
+        }
+        if let storedPassword = try load() {
+            return (storedPassword, log)
+        }
+        // A cluster without a password this build can read was made by another build (the App
+        // Store and Developer ID builds share the data folder, and a locally signed build cannot
+        // read their shared Keychain item). A new password would not open it and would hide the
+        // real problem.
+        if !isRunningInTestEnvironment, clusterExists {
+            throw PostgresError.other(
+                "The database in \(Paths.pgDataDir.path) exists, but its password is not in a "
+                    + "Keychain this build can read (service \(GaragePostgresEndpoint.keychainService)). It was "
+                    + "probably created by another Garage build."
+            )
+        }
+        let generatedPassword = try generate()
+        let store = try save(generatedPassword)
+        log.append("stored a new database password in the \(store) keychain")
+        return (generatedPassword, log)
+    }
+
+    /// Copies a login-keychain password into the App Group keychain, once per launch, so the
     /// launchers read it without a prompt. Returns a line for the log when something happened;
     /// a failure is logged too but never blocks start-up, since `load` still finds the old item.
     static func migrateIfNeeded() -> String? {
-        guard !isRunningInTestEnvironment, !migrationAttempted else { return nil }
-        migrationAttempted = true
+        let firstAttempt = lock.withLock {
+            defer { migrationAttempted = true }
+            return !migrationAttempted
+        }
+        guard !isRunningInTestEnvironment, firstAttempt else { return nil }
         do {
             switch try GaragePostgresEndpoint.migrateLegacyPassword() {
             case .groupKeychainUnavailable, .alreadyInGroupKeychain, .nothingToMigrate:
                 return nil
             case .migrated:
-                return "moved the database password into the App Group keychain (\(GaragePostgresEndpoint.keychainAccessGroup))"
-            case .migratedWithoutDeletingLegacy(let status):
-                return "copied the database password into the App Group keychain, but the login keychain "
-                    + "item could not be deleted: \(GaragePostgresEndpoint.EndpointError.describe(status))"
+                return "copied the database password into the App Group keychain (\(GaragePostgresEndpoint.keychainAccessGroup)); "
+                    + "the login keychain item stays for older builds"
             }
         } catch {
             return "could not move the database password into the App Group keychain: \(error.localizedDescription)"
@@ -1116,7 +1150,7 @@ private enum KeychainPostgresPassword {
 
     static func load() throws -> String? {
         if isRunningInTestEnvironment {
-            return inMemoryPassword
+            return lock.withLock { inMemoryPassword }
         }
         // The same read the bundled launchers do.
         return try GaragePostgresEndpoint.readPassword()
@@ -1127,7 +1161,7 @@ private enum KeychainPostgresPassword {
     @discardableResult
     static func save(_ password: String) throws -> String {
         if isRunningInTestEnvironment {
-            inMemoryPassword = password
+            lock.withLock { inMemoryPassword = password }
             return "in-memory"
         }
         if let file = GaragePostgresEndpoint.isolatedPasswordFile {

@@ -351,13 +351,14 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
   tests) use `~/Library/Application Support/GarageApp`.
 - The Postgres password is a generic-password item in the data-protection keychain, access group
   = the App Group (`GaragePostgresEndpoint` in `PythonXPCService`: read, save, and the migration
-  of the old login-keychain item, which the app runs before its first read). Any process entitled
+  of the old login-keychain item, which the app runs off the main actor before its first read and
+  which copies the item, leaving it for pre-1.5 builds). Any process entitled
   to the group with a profile-backed application identifier reads it without a prompt; a process
   without one (ad-hoc, `local_signed`) gets `errSecMissingEntitlement` and falls back to the login
   keychain, so local builds work as before. `macapp/README.md` ("The Postgres password",
-  "Provisioning profiles") has the details and the per-configuration profile table. At launch `GarageDataMigration` renames an older build's
-  per-user folder into the group container and leaves a symlink behind. It never copies, deletes or
-  overwrites anything, and it skips a `pgdata` a running postmaster still holds. Unsandboxed
+  "Provisioning profiles") has the details and the per-configuration profile table.
+- At launch `GarageDataMigration` renames an older build's per-user folder into the group
+  container and leaves a symlink behind. It never copies, deletes or overwrites anything, and it skips a `pgdata` a running postmaster still holds. Unsandboxed
   (Developer ID) builds also keep `~/Library/Application Support/GarageApp` as a link to the group
   folder on a fresh install, so the familiar path reaches the data; a folder or other link already
   there is left alone.

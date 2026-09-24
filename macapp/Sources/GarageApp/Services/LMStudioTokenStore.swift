@@ -20,10 +20,23 @@ public protocol LMStudioTokenStoring: Sendable {
 public final class KeychainLMStudioTokenStore: LMStudioTokenStoring, @unchecked Sendable {
     private let service = "me.rickmark.garage-rag.lmstudio"
     private let account = "api-token"
+    private let lock = NSLock()
+    /// What the Keychain held at the last load, save or remove; `.none` until the first. A Keychain
+    /// read can wait on an access prompt, so it happens once, not on every service start.
+    private var cached: String??
 
     public init() {}
 
     public func load() throws -> String? {
+        if let cached = lock.withLock({ cached }) {
+            return cached
+        }
+        let token = try readKeychain()
+        lock.withLock { cached = .some(token) }
+        return token
+    }
+
+    private func readKeychain() throws -> String? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -54,6 +67,7 @@ public final class KeychainLMStudioTokenStore: LMStudioTokenStoring, @unchecked 
         ]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess {
+            lock.withLock { cached = .some(token) }
             return
         }
         guard updateStatus == errSecItemNotFound else {
@@ -68,6 +82,7 @@ public final class KeychainLMStudioTokenStore: LMStudioTokenStoring, @unchecked 
         guard addStatus == errSecSuccess else {
             throw LMStudioTokenError.keychainWrite(addStatus)
         }
+        lock.withLock { cached = .some(token) }
     }
 
     public func remove() throws {
@@ -80,6 +95,7 @@ public final class KeychainLMStudioTokenStore: LMStudioTokenStoring, @unchecked 
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw LMStudioTokenError.keychainDelete(status)
         }
+        lock.withLock { cached = .some(nil) }
     }
 }
 
@@ -137,6 +153,14 @@ public enum LMStudioTokenStore {
 
     public static func load() throws -> String? {
         try storage.load()
+    }
+
+    /// `load()` on a background thread, returning whether a token is stored. Main-actor code
+    /// calls this first, so the Keychain read (and any access prompt) never blocks the window.
+    @discardableResult
+    public static func loadOffMainActor() async throws -> Bool {
+        let storage = storage
+        return try await Task.detached(priority: .userInitiated) { try storage.load() != nil }.value
     }
 
     public static func save(_ token: String) throws {

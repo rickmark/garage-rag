@@ -73,10 +73,9 @@ public enum GaragePostgresEndpoint {
         case alreadyInGroupKeychain
         /// Neither keychain holds a password (the cluster has not been created yet).
         case nothingToMigrate
-        /// The login-keychain item was copied into the group keychain and deleted.
+        /// The login-keychain item was copied into the group keychain. The old item stays, so a
+        /// build from before 1.5, which reads only the login keychain, can still open the database.
         case migrated
-        /// Copied into the group keychain, but the login-keychain copy could not be deleted.
-        case migratedWithoutDeletingLegacy(OSStatus)
     }
 
     /// The password the app stored, or nil if the app has never created the cluster. The group
@@ -123,10 +122,12 @@ public enum GaragePostgresEndpoint {
         return .legacy
     }
 
-    /// Moves the login-keychain item into the group keychain, so the launchers stop prompting.
-    /// The app calls this before its first read; it copies first and deletes the old item only
-    /// once the copy is in place, so an interruption leaves the password readable either way.
-    /// Reading the old item can show the login keychain's access prompt one last time.
+    /// Copies the login-keychain item into the group keychain, so the launchers stop prompting.
+    /// The app calls this before its first read. The old item is left in place: a build from
+    /// before 1.5 reads only the login keychain, and deleting it would lock that build out of the
+    /// database after a downgrade. Reads prefer the group copy, so the old one is never consulted
+    /// again by this build. Reading the old item can show the login keychain's access prompt one
+    /// last time.
     public static func migrateLegacyPassword() throws -> Migration {
         if isolatedPasswordFile != nil {
             return .groupKeychainUnavailable
@@ -145,10 +146,6 @@ public enum GaragePostgresEndpoint {
         guard try savePassword(password) == .group else {
             // The probe said the group keychain was usable and the write disagreed; leave the item alone.
             return .groupKeychainUnavailable
-        }
-        let deleted = SecItemDelete(legacyItemQuery() as CFDictionary)
-        guard deleted == errSecSuccess || deleted == errSecItemNotFound else {
-            return .migratedWithoutDeletingLegacy(deleted)
         }
         return .migrated
     }
