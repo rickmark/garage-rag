@@ -60,6 +60,12 @@ public enum GarageAppGroup {
         dataDirectoryOverride ?? sharedDataDirectory ?? legacyDataDirectory
     }
 
+    /// The model catalog the app last fetched from the website (`ModelCatalog` in the app),
+    /// preferred to the copy in the bundle when present.
+    public static var fetchedModelCatalog: URL {
+        dataDirectory.appendingPathComponent("models.json")
+    }
+
     /// The folder `--data-directory <path>` names, or nil. XPC services never get the app's
     /// arguments, so in them this is always nil.
     public static let dataDirectoryOverride: URL? = {

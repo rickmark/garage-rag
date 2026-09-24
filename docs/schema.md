@@ -198,7 +198,7 @@ pgvector 0.8 HNSW ceilings are hard limits — `vector` ≤ 2000 dims, `halfvec`
 
 `embedding_models.distance` (`009_model_distance.sql`) is the similarity the
 model was trained for: `cosine`, `l2` or `inner_product`. It is declared per
-model in `data/models/models.json` (or `register-model --distance` for a model
+model in `docs/.data/models.json` (or `register-model --distance` for a model
 the catalog does not list) and fixes two things that must agree: the HNSW
 operator class (`vector_cosine_ops`, `halfvec_l2_ops`, `vector_ip_ops`, …) and
 the operator search orders by (`<=>`, `<->`, `<#>`). An index built for one
@@ -209,8 +209,12 @@ cosine, which is its default.
 `models.json` is the one model catalog: the app reads it for presets and
 downloads, and `garage_rag.db.catalog` reads the same file for widths,
 `supports_mrl`, `distance` and per-provider names (`provider_refs`, e.g. an
-Ollama tag), found through `GARAGE_MODEL_MANIFEST` (the app points it at its
-bundled copy) or in the repository.
+Ollama tag), found through `GARAGE_MODEL_MANIFEST` or in the repository
+(`docs/.data/models.json`). The site serves that file as
+`https://garagerag.app/.data/models.json`; the app fetches it at launch, keeps the
+copy in its data folder when it decodes as a catalog with presets, and points
+`GARAGE_MODEL_MANIFEST` at that copy, else at the one in its bundle. A catalog
+change therefore reaches installed apps without a release.
 
 Truncation is only sound for MRL-trained models, so `supports_mrl` is declared
 per model rather than assumed. A CHECK constraint refuses to register an
