@@ -1,6 +1,9 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("//bazel:lipo.bzl", "macos_lipo_app")
 load("//bazel:notarytool.bzl", "notarytool")
 load("//bazel:pkgbuild.bzl", "pkg_install", "pkgbuild")
+
+# gazelle:exclude publish_appcast.sh
 
 # Every target here signs with a Developer ID identity or talks to the notary
 # service, so all are `manual`: `bazel build //...` (CI included) skips them and
@@ -70,6 +73,35 @@ filegroup(
     ],
     tags = ["manual"],
     visibility = ["//visibility:public"],
+)
+
+# 6. Add the notarized archive to the Sparkle feed (docs/appcast.xml), signed with the
+#    EdDSA key in the login Keychain: `aspect run //macapp/package:publish_appcast -- <tag>`.
+#    See macapp/README.md, "Cutting a release".
+sh_binary(
+    name = "publish_appcast",
+    srcs = ["publish_appcast.sh"],
+    args = [
+        "--archive",
+        "$(rootpath :GarageApp)",
+        "--generate-appcast",
+        "$(rootpath //ext/sparkle:generate_appcast)",
+        "--sign-update",
+        "$(rootpath //ext/sparkle:sign_update)",
+        "--generate-keys",
+        "$(rootpath //ext/sparkle:generate_keys)",
+        "--sparkle-plist",
+        "$(rootpath //macapp/Sources/GarageApp:Sparkle.plist)",
+    ],
+    data = [
+        ":GarageApp",
+        "//ext/sparkle:generate_appcast",
+        "//ext/sparkle:generate_keys",
+        "//ext/sparkle:sign_update",
+        "//macapp/Sources/GarageApp:Sparkle.plist",
+    ],
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:macos"],
 )
 
 pkg_install(
