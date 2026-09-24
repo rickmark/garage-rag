@@ -1051,22 +1051,27 @@ final class PostgresService: ObservableObject {
         // the cluster's real password in the Keychain (save updates the existing item)
         // and lock the app out of its own database, so read and save errors surface
         // as they are. Tests never reach the Keychain: load/save keep it in memory.
+        if let migration = KeychainPostgresPassword.migrateIfNeeded() {
+            appendLog(LogLine(stream: .stdout, text: migration, source: "keychain"))
+        }
         if let storedPassword = try KeychainPostgresPassword.load() {
             cachedPassword = storedPassword
             return storedPassword
         }
         // A cluster without a password this build can read was made by another build (the App
-        // Store and Developer ID builds share the data folder, not necessarily the Keychain item).
-        // A new password would not open it and would hide the real problem.
+        // Store and Developer ID builds share the data folder, and a locally signed build cannot
+        // read their shared Keychain item). A new password would not open it and would hide the
+        // real problem.
         if !isRunningInTestEnvironment, isInitialized {
             throw PostgresError.other(
-                "The database in \(Paths.pgDataDir.path) exists, but its password is not in this "
-                    + "build's Keychain (service \(GaragePostgresEndpoint.keychainService)). It was "
-                    + "probably created by the other Garage build."
+                "The database in \(Paths.pgDataDir.path) exists, but its password is not in a "
+                    + "Keychain this build can read (service \(GaragePostgresEndpoint.keychainService)). It was "
+                    + "probably created by another Garage build."
             )
         }
         let generatedPassword = try KeychainPostgresPassword.generate()
-        try KeychainPostgresPassword.save(generatedPassword)
+        let store = try KeychainPostgresPassword.save(generatedPassword)
+        appendLog(LogLine(stream: .stdout, text: "stored a new database password in the \(store) keychain", source: "keychain"))
         cachedPassword = generatedPassword
         return generatedPassword
     }
@@ -1081,12 +1086,33 @@ final class PostgresService: ObservableObject {
 }
 
 private enum KeychainPostgresPassword {
-    // Shared with the bundled launchers, which read the same item to connect.
-    private static let service = GaragePostgresEndpoint.keychainService
-    private static var account: String { GaragePostgresEndpoint.keychainAccount }
+    // The item, its keychains and the migration between them live in GaragePostgresEndpoint,
+    // shared with the bundled launchers, which read the same item to connect.
     private static let passwordLength = 32
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
     private static var inMemoryPassword: String?
+    private static var migrationAttempted = false
+
+    /// Moves a login-keychain password into the App Group keychain, once per launch, so the
+    /// launchers read it without a prompt. Returns a line for the log when something happened;
+    /// a failure is logged too but never blocks start-up, since `load` still finds the old item.
+    static func migrateIfNeeded() -> String? {
+        guard !isRunningInTestEnvironment, !migrationAttempted else { return nil }
+        migrationAttempted = true
+        do {
+            switch try GaragePostgresEndpoint.migrateLegacyPassword() {
+            case .groupKeychainUnavailable, .alreadyInGroupKeychain, .nothingToMigrate:
+                return nil
+            case .migrated:
+                return "moved the database password into the App Group keychain (\(GaragePostgresEndpoint.keychainAccessGroup))"
+            case .migratedWithoutDeletingLegacy(let status):
+                return "copied the database password into the App Group keychain, but the login keychain "
+                    + "item could not be deleted: \(GaragePostgresEndpoint.EndpointError.describe(status))"
+            }
+        } catch {
+            return "could not move the database password into the App Group keychain: \(error.localizedDescription)"
+        }
+    }
 
     static func load() throws -> String? {
         if isRunningInTestEnvironment {
@@ -1096,10 +1122,13 @@ private enum KeychainPostgresPassword {
         return try GaragePostgresEndpoint.readPassword()
     }
 
-    static func save(_ password: String) throws {
+    /// Stores the password and names where it went (the App Group keychain, or the login keychain
+    /// for a build without an application identifier).
+    @discardableResult
+    static func save(_ password: String) throws -> String {
         if isRunningInTestEnvironment {
             inMemoryPassword = password
-            return
+            return "in-memory"
         }
         if let file = GaragePostgresEndpoint.isolatedPasswordFile {
             // Owner-only from the moment it exists; the folder is a throwaway test folder.
@@ -1110,32 +1139,17 @@ private enum KeychainPostgresPassword {
             ) else {
                 throw PostgresError.other("could not save the Postgres password in \(file.path)")
             }
-            return
+            return "isolated data folder"
         }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-        ]
-        let attributes: [CFString: Any] = [
-            kSecValueData: Data(password.utf8),
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked,
-        ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return
-        }
-        guard updateStatus == errSecItemNotFound else {
-            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(updateStatus))")
-        }
-
-        var newItem = query
-        for (key, value) in attributes {
-            newItem[key] = value
-        }
-        let addStatus = SecItemAdd(newItem as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw PostgresError.other("could not save Postgres password in Keychain (OSStatus \(addStatus))")
+        do {
+            switch try GaragePostgresEndpoint.savePassword(password) {
+            case .group:
+                return "App Group"
+            case .legacy:
+                return "login"
+            }
+        } catch {
+            throw PostgresError.other(error.localizedDescription)
         }
     }
 

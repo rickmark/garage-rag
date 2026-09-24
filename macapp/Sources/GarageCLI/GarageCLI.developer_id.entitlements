@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer ID entitlements for the `garage` helper bundle (Garage.app/Contents/Helpers/garage.app,
+  bundle ID me.rickmark.garage-rag.garage-cli; not sandboxed). The application identifier, backed
+  by the embedded profile (macapp/GarageRAGDevIDCLI.provisionprofile), and the App Group as its
+  keychain access group are what let it read the Postgres password from the data-protection
+  keychain without a prompt. Everything here must be within what that profile authorizes.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.application-identifier</key>
+	<string>DWVXMLB45Y.me.rickmark.garage-rag.garage-cli</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>DWVXMLB45Y</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+</dict>
+</plist>

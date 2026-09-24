@@ -1,0 +1,24 @@
+#!/bin/sh
+# Garage.app/Contents/Resources/launchers/garage, reached as Garage.app/Contents/MacOS/garage (a
+# symlink to this file): the stable command-line entry point, which `garage mcp-install`
+# registrations and the docs name. The launcher itself is the helper bundle at
+# Contents/Helpers/garage.app, whose own bundle identifier, entitlements and provisioning profile
+# give it the application identifier the data-protection keychain needs. This forwards to it.
+#
+# A script rather than a symlink straight to the helper or a Mach-O forwarder: the helper's
+# @executable_path rpaths and its sandbox are set up from the path exec'd, which this makes the
+# helper's real path; in the App Store build a Mach-O here would have to be sandboxed itself, and
+# a sandboxed process cannot start a helper that carries its own sandbox. /bin/sh is neither, so
+# the helper starts exactly as if run directly. Codesign seals a script in Resources as a resource
+# and the symlink in MacOS as a symlink; a script in MacOS it would refuse as unsigned code.
+self="$0"
+while [ -L "$self" ]; do
+    target="$(readlink "$self")"
+    case "$target" in
+        /*) self="$target" ;;
+        *) self="$(dirname "$self")/$target" ;;
+    esac
+done
+here="$(cd "$(dirname "$self")" && pwd -P)"
+helper="$(cd "$here/../../Helpers/garage.app/Contents/MacOS" && pwd -P)/garage"
+exec "$helper" "$@"

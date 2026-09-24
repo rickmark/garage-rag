@@ -1,0 +1,18 @@
+#!/bin/sh
+# Garage.app/Contents/Resources/launchers/garage-mcp, reached as Garage.app/Contents/MacOS/garage-mcp
+# (a symlink to this file): the stable stdio MCP entry point, which `garage mcp-install`
+# registrations name. The server itself is the helper bundle at Contents/Helpers/garage-mcp.app,
+# whose own bundle identifier, entitlements and provisioning profile give it the application
+# identifier the data-protection keychain needs. This forwards to it; exec keeps stdin/stdout, the
+# MCP stream, on the helper. See Contents/Resources/launchers/garage for why a script.
+self="$0"
+while [ -L "$self" ]; do
+    target="$(readlink "$self")"
+    case "$target" in
+        /*) self="$target" ;;
+        *) self="$(dirname "$self")/$target" ;;
+    esac
+done
+here="$(cd "$(dirname "$self")" && pwd -P)"
+helper="$(cd "$here/../../Helpers/garage-mcp.app/Contents/MacOS" && pwd -P)/garage-mcp"
+exec "$helper" "$@"
