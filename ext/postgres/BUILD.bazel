@@ -9,7 +9,10 @@ configure_make(
     # Flags passed directly to the GNU ./configure script
     configure_options = [
         "--with-icu",
-        "--with-readline",
+        # libedit (BSD, in the macOS SDK) instead of GNU Readline, which is GPL-3.0 and
+        # can't ship in the App Store build. Only psql uses it; the app never runs psql
+        # interactively, so this just keeps line editing for ad-hoc debugging.
+        "--with-libedit-preferred",
         "--with-zlib",
         "--with-template=darwin",
         "--disable-rpath",
@@ -23,14 +26,13 @@ configure_make(
         "ARFLAGS": "crs",
         "CFLAGS": "-g",
         "CXXFLAGS": "-g",
-        # The icu/readline/zlib dylibs identify themselves as @rpath/<name>
+        # The icu/zlib dylibs identify themselves as @rpath/<name>
         # (//bazel:foreign_cc.bzl NORMALIZE_INSTALL_NAMES), so configure's test
         # program and everything built after it need somewhere to resolve that
         # against. //ext/postgres:postgres_rpath re-points these at
         # @loader_path for the shipped bundle.
         "LDFLAGS": " ".join([
             "-Wl,-rpath,$$EXT_BUILD_DEPS/libicu_shared/lib",
-            "-Wl,-rpath,$$EXT_BUILD_DEPS/libreadline_shared/lib",
             "-Wl,-rpath,$$EXT_BUILD_DEPS/libzlib_shared/lib",
         ]),
     },
@@ -119,7 +121,6 @@ done
     visibility = ["//visibility:public"],
     deps = [
         "//ext/libicu:libicu_shared",
-        "//ext/libreadline:libreadline_shared",
         "//ext/libzlib:libzlib_shared",
     ],
 )
@@ -130,7 +131,6 @@ install_name(
     deps = [
         ":postgres",
         "//ext/libicu:libicu_dylibs",
-        "//ext/libreadline:libreadline_dylibs",
         "//ext/libzlib:libzlib_dylibs",
     ],
 )
@@ -183,8 +183,8 @@ done
 #
 # This copy is pulled straight from :postgres's raw output and only its own install name
 # gets rewritten - unlike postgres/lib (see :postgres_rpath), it does NOT bundle or rewrite
-# references to the icu/readline/zlib dylibs those binaries link against. libpq itself has
-# never linked any of the three (they're pulled in by the backend/psql/pg_dump instead), so
+# references to the icu/zlib dylibs those binaries link against. libpq itself has
+# never linked either (they're pulled in by the backend/psql/pg_dump instead), so
 # this should stay a no-op; the check below turns a wrong assumption there into a loud build
 # failure instead of a silent Contents/Frameworks dlopen failure at app launch.
 genrule(
@@ -211,8 +211,8 @@ while IFS= read -r dependency; do
     [ -z "$$dependency" ] && continue
     name="$$(basename "$${dependency%% *}")"
     case "$$name" in
-        libicu*.dylib|libreadline*.dylib|libz.*.dylib|libz.dylib)
-            echo "libpq_dylib: libpq.dylib unexpectedly depends on $$name now that //ext/postgres:postgres links icu/readline/zlib as dylibs." >&2
+        libicu*.dylib|libz.*.dylib|libz.dylib)
+            echo "libpq_dylib: libpq.dylib unexpectedly depends on $$name now that //ext/postgres:postgres links icu/zlib as dylibs." >&2
             echo "libpq_dylib: this standalone Contents/Frameworks copy does not bundle it; package $$name alongside libpq.dylib (or make this dep static again) before shipping." >&2
             exit 1
             ;;
@@ -248,7 +248,6 @@ cc_library(
         ":libpgport_import",
         ":libpq_import",
         "//ext:libicu",
-        "//ext:libreadline",
         "//ext:libzlib",
     ],
 )

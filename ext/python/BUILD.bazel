@@ -16,7 +16,8 @@ configure_make(
         "--without-ensurepip",
         "--with-static-libpython",
         "--with-openssl=$$EXT_BUILD_DEPS/openssl",
-        "--with-readline=readline",
+        # libedit (BSD, in the macOS SDK), not GNU Readline (GPL-3.0).
+        "--with-readline=editline",
     ],
     copts = [
         "-DDATE=\\\"\\\\\\\"Jan_01_1970\\\\\\\"\\\"",
@@ -25,7 +26,6 @@ configure_make(
     env = {
         "AR": "/usr/bin/ar",
         "ARFLAGS": "crs",
-        "LIBREADLINE_LIBS": "-lreadline -lncurses",
         "PYTHONAPPSDIR": "$$INSTALLDIR$$/",
     },
     lib_source = "@python_source//:python_source",
@@ -51,7 +51,6 @@ done
 """,
     visibility = ["//visibility:public"],
     deps = [
-        "//ext:libreadline",
         "//ext:libzlib",
         "//ext:openssl",
     ],

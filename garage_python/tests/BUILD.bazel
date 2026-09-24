@@ -159,6 +159,9 @@ py_test(
 py_test(
     name = "test_grpc_operations",
     srcs = ["test_grpc_operations.py"],
+    # These start a real gRPC server on 127.0.0.1. --nosandbox_default_allow_network (the
+    # preset) makes the darwin sandbox refuse even a loopback bind.
+    tags = ["requires-network"],  # keep
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/ops",
@@ -181,6 +184,9 @@ py_test(
 py_test(
     name = "test_grpc_server",
     srcs = ["test_grpc_server.py"],
+    # These start a real gRPC server on 127.0.0.1. --nosandbox_default_allow_network (the
+    # preset) makes the darwin sandbox refuse even a loopback bind.
+    tags = ["requires-network"],  # keep
     deps = [
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
@@ -241,6 +247,9 @@ py_test(
 py_test(
     name = "test_ingest_gateway",
     srcs = ["test_ingest_gateway.py"],
+    # These start a real gRPC server on 127.0.0.1. --nosandbox_default_allow_network (the
+    # preset) makes the darwin sandbox refuse even a loopback bind.
+    tags = ["requires-network"],  # keep
     deps = [
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/ingest",
@@ -265,6 +274,9 @@ py_test(
 py_test(
     name = "test_embed_xpc",
     srcs = ["test_embed_xpc.py"],
+    # These start a real gRPC server on 127.0.0.1. --nosandbox_default_allow_network (the
+    # preset) makes the darwin sandbox refuse even a loopback bind.
+    tags = ["requires-network"],  # keep
     deps = [
         "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/proto",
