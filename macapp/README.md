@@ -140,8 +140,9 @@ piece of code, `GaragePostgresEndpoint` in `Sources/PythonXPCService`, which kno
   this process", so nothing has to know which build it is.
 
 Migration is the app's job: before its first read, `migrateLegacyPassword` copies a
-login-keychain item into the App Group keychain and then deletes the old item (one last access
-prompt, if the ACL does not already list this build). Reads fall back to the login keychain until
+login-keychain item into the App Group keychain (one last access prompt, if the ACL does not
+already list this build) off the main thread, so a prompt never freezes the window. The old item
+stays, so a build from before 1.5, which reads only the login keychain, still opens the database. Reads fall back to the login keychain until
 that has happened, so a launcher started before the updated app never sees "no password". The
 result is a line in the Database log (`keychain` source).
 

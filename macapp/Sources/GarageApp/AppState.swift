@@ -153,11 +153,13 @@ final class AppState: ObservableObject {
         firstRun.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         firstRun.attach(to: self)
 
-        do {
-            lmStudioTokenConfigured = try LMStudioTokenStore.load() != nil
-        } catch {
-            lastCommandSucceeded = false
-            lastCommandOutput = error.localizedDescription
+        Task {
+            do {
+                lmStudioTokenConfigured = try await LMStudioTokenStore.loadOffMainActor()
+            } catch {
+                lastCommandSucceeded = false
+                lastCommandOutput = error.localizedDescription
+            }
         }
 
         fetchPresetModels()
@@ -400,7 +402,7 @@ final class AppState: ObservableObject {
 
     /// "Reset Database": stops every service, deletes the Postgres cluster, and relaunches the app,
     /// which creates a new, empty database (`finishDatabaseReset`). Only what Garage built goes: the
-    /// sources' own files, downloaded model files, logs, garage.json and the Keychain password stay.
+    /// sources' own files, downloaded model files, logs, garage.json and the database password stay.
     func resetDatabaseAndRelaunch() async {
         guard !isResettingDatabase else { return }
         isResettingDatabase = true
