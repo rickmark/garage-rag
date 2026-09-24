@@ -74,6 +74,12 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   is mapped before the App Sandbox applies; opening it later by path is denied.
 
 ## A stable local signing identity
+- Next to `site-python` is an empty `openssl.cnf`. `GaragePythonRuntime` exports it as
+  `OPENSSL_CONF` before the interpreter starts, so neither the bundled `_ssl` nor
+  `cryptography`'s own statically linked OpenSSL reads a configuration from outside the
+  bundle (`cryptography`'s compiled-in default is Homebrew's). At start-up it also calls
+  `truststore.inject_into_ssl()`, so `ssl`'s default contexts verify against the macOS
+  trust store; the bundled OpenSSL ships no CA files.
 
 The app keeps two secrets in the macOS Keychain — the Postgres superuser
 password (`PostgresService`) and the LM Studio API token (`LMStudioTokenStore`)

@@ -130,6 +130,7 @@ name = "garage-rag"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "cryptography", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "grpcio", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "httpx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -149,6 +150,7 @@ dependencies = [
     { name = "regex", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "rich", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "sqlalchemy", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "truststore", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "typer", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "uvicorn", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
@@ -164,6 +166,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.2.2" },
     { name = "cryptography", specifier = "<44.0.0" },
     { name = "grpcio", specifier = ">=1.68.0" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.68.0" },
@@ -188,6 +191,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "tree-sitter", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "tree-sitter-swift", marker = "extra == 'dev'", specifier = ">=0.7" },
+    { name = "truststore", specifier = ">=0.10" },
     { name = "typer", specifier = ">=0.15" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]

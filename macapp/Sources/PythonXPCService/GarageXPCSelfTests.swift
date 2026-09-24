@@ -235,6 +235,37 @@ public enum GarageXPCStandardSelfTests {
         }
     }
 
+    /// Verifies OpenSSL reads the bundle's `openssl.cnf` and that default TLS contexts have a trust store to verify
+    /// against. Offline: it inspects the configuration and makes no connection.
+    public static func tlsTrust(runtime: GaragePythonRuntime = .shared) -> GarageXPCSelfTest {
+        GarageXPCSelfTest(name: "TLS Trust", description: "OPENSSL_CONF names the bundled openssl.cnf, and ssl's default contexts verify against the system trust store.") {
+            guard let env = runtime.environment else {
+                throw GarageXPCSelfTestFailure("Python environment not resolved", details: runtime.statusSnapshot().error ?? "")
+            }
+            let expected = GaragePythonRuntime.bundledOpenSSLConfigURL(for: env)?.path
+            // getenv, not ProcessInfo: the runtime set these with setenv after launch.
+            let actual = getenv(GaragePythonRuntime.opensslConfEnvironmentKey).map { String(cString: $0) }
+            let certFile = getenv("SSL_CERT_FILE").map { String(cString: $0) } ?? "(unset)"
+            guard let expected, actual == expected else {
+                throw GarageXPCSelfTestFailure("OPENSSL_CONF does not name the bundled openssl.cnf", details: "expected: \(expected ?? "(no openssl.cnf next to site-python)")\nactual:   \(actual ?? "(unset)")")
+            }
+            let ssl = try Python.attemptImport("ssl")
+            let contextModule = String(ssl.SSLContext.__module__) ?? ""
+            var lines = ["OPENSSL_CONF: \(expected)", "OpenSSL: \(String(ssl.OPENSSL_VERSION) ?? "unknown")"]
+            if contextModule.hasPrefix("truststore") {
+                let truststore = try Python.attemptImport("truststore")
+                lines.append("Trust: macOS trust store (truststore \(String(truststore.__version__) ?? "?"))")
+            } else {
+                let count = Int(ssl.create_default_context().cert_store_stats()["x509_ca"]) ?? 0
+                guard count > 0 else {
+                    throw GarageXPCSelfTestFailure("Default TLS contexts have no CA certificates", details: "ssl.SSLContext is \(contextModule).SSLContext and loads 0 CAs; SSL_CERT_FILE=\(certFile)")
+                }
+                lines.append("Trust: \(count) CA certificates (SSL_CERT_FILE=\(certFile))")
+            }
+            return lines.joined(separator: "\n")
+        }
+    }
+
     /// Connects to PostgreSQL with psycopg and runs `SELECT version()` plus a pgvector extension probe.
     public static func database(urlProvider: @escaping @Sendable () -> String?) -> GarageXPCSelfTest {
         GarageXPCSelfTest(name: "Database Connection", description: "Opens a psycopg connection to GARAGE_DATABASE_URL, runs SELECT version() and checks the vector extension.") {

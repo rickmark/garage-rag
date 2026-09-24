@@ -255,6 +255,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
                 tests.append(GarageXPCStandardSelfTests.sitePackages(modules: requiredPythonModules))
             }
             tests.append(GarageXPCStandardSelfTests.libpq(runtime: runtime))
+            tests.append(GarageXPCStandardSelfTests.tlsTrust(runtime: runtime))
             tests.append(GarageXPCStandardSelfTests.database(urlProvider: { [weak self] in self?.databaseURL }))
             tests.append(GarageXPCStandardSelfTests.grpcConnection(hostProvider: { [weak self] in self?.grpcTarget }))
         }

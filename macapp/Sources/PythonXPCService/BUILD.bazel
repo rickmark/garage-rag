@@ -89,8 +89,11 @@ swift_binary(
 # The embedded interpreter's home (stdlib, lib-dynload, site-packages) lives in this framework's
 # resources. Sandboxed XPC services may read inside the frameworks they link, but not elsewhere in
 # the app bundle, so this is the one place the App Store build's Python services can load it from.
+# `openssl.cnf`, next to `site-python`, is the empty OpenSSL configuration GaragePythonRuntime
+# exports as OPENSSL_CONF.
 apple_resource_group(
     name = "site_python_resources",
+    resources = ["openssl.cnf"],
     structured_resources = ["//macapp/externals:site-python"],
 )
 
