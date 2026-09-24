@@ -1,0 +1,286 @@
+name: Windows build
+
+# Postgres (with pgvector, ICU and zlib) and CPython built from source on Windows,
+# from the same pinned sources the macOS app bundles.
+#
+# The macOS build goes through Bazel (//ext/postgres, //ext/python and friends), and
+# those rules are Darwin-only: the darwin configure template, Python.framework,
+# dsymutil, install_name_tool. Windows uses each project's own MSVC build instead:
+#
+# - `postgres`: ICU (allinone.sln) and zlib (CMake), then Postgres with meson and
+#   pgvector with Makefile.win. The smoke test initdbs an ICU cluster and applies
+#   data/sql twice, as test_postgres.py does.
+# - `python`: CPython with PCbuild\build.bat. PCbuild fetches its own pinned
+#   externals (OpenSSL, zlib, sqlite, xz, bzip2, libffi) rather than //ext's.
+# - `garage`: garage_rag installed on the built interpreter, running
+#   test_postgres.py against the built server (psycopg loads the built libpq.dll).
+#
+# tools/windows/fetch_ext.py reads the url and sha256 out of ext/*/*.MODULE.bazel,
+# so a version bump there moves this build too. The Postgres sysv_shmem patch and
+# the mmap postgresql.conf defaults are not applied: they exist for the macOS App
+# Sandbox, and Windows has its own shared memory implementation.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "ext/postgres/**"
+      - "ext/pgvector/**"
+      - "ext/libicu/**"
+      - "ext/libzlib/**"
+      - "ext/python/**"
+      - "data/sql/**"
+      - "garage_python/**"
+      - "tools/windows/**"
+      - ".github/workflows/windows.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Paths
+        run: |
+          "SRC=$env:RUNNER_TEMP\src" >> $env:GITHUB_ENV
+          "DEPS=$env:RUNNER_TEMP\deps" >> $env:GITHUB_ENV
+          "PGROOT=$env:RUNNER_TEMP\pgsql" >> $env:GITHUB_ENV
+      - name: Build tools
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --upgrade meson ninja pkgconf
+          choco install winflexbison3 --no-progress -y
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Fetch sources
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python tools/windows/fetch_ext.py --dest $env:SRC postgres libicu libzlib pgvector
+
+      - name: Restore ICU
+        id: icu-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\icu
+          key: icu-windows-x64-${{ hashFiles('ext/libicu/libicu.MODULE.bazel', '.github/workflows/windows.yaml') }}
+      - name: Build ICU
+        if: steps.icu-cache.outputs.cache-hit != 'true'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          # ICU's projects name one toolset; build with whichever this Visual Studio has.
+          $toolset = @{ '17.0' = 'v143'; '18.0' = 'v145' }[$env:VisualStudioVersion]
+          $extra = if ($toolset) { @("/p:PlatformToolset=$toolset") } else { @() }
+          msbuild "$env:SRC\libicu\source\allinone\allinone.sln" /m /v:minimal /nologo `
+            /p:Configuration=Release /p:Platform=x64 /p:SkipUWP=true @extra
+          $icu = "$env:RUNNER_TEMP\icu"
+          New-Item -ItemType Directory -Force "$icu\bin", "$icu\lib", "$icu\include" | Out-Null
+          Copy-Item "$env:SRC\libicu\bin64\icu*.dll" "$icu\bin"
+          Copy-Item "$env:SRC\libicu\lib64\icu*.lib" "$icu\lib"
+          Copy-Item -Recurse "$env:SRC\libicu\include\unicode" "$icu\include"
+      - name: Build zlib
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake -S "$env:SRC\libzlib" -B "$env:SRC\zlib-build" -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$env:DEPS" `
+            -DZLIB_BUILD_TESTING=OFF -DZLIB_BUILD_STATIC=OFF -DZLIB_BUILD_MINIZIP=OFF
+          cmake --build "$env:SRC\zlib-build"
+          cmake --install "$env:SRC\zlib-build"
+          Get-ChildItem -Recurse "$env:DEPS" | Select-Object -ExpandProperty FullName
+      - name: pkg-config files for ICU and zlib
+        # Neither ICU's MSBuild nor meson's MSVC zlib lookup gives meson something to
+        # find, so describe both, and nothing else: PKG_CONFIG_LIBDIR replaces the
+        # default search path, which keeps Strawberry Perl's MinGW .pc files out.
+        run: |
+          $pc = "$env:DEPS\pkgconfig"
+          New-Item -ItemType Directory -Force $pc | Out-Null
+          $icu = "$env:RUNNER_TEMP\icu" -replace '\\', '/'
+          $deps = "$env:DEPS" -replace '\\', '/'
+          $zlib = Get-ChildItem "$env:DEPS\lib" -Filter *.lib | Select-Object -First 1
+          if (-not $zlib) { throw "no zlib import library in $env:DEPS\lib" }
+          @"
+          prefix=$icu
+          Name: icu-uc
+          Description: ICU common
+          Version: 76.1
+          Libs: -L`${prefix}/lib -licuuc -licudt
+          Cflags: -I`${prefix}/include
+          "@ | Set-Content "$pc\icu-uc.pc"
+          @"
+          prefix=$icu
+          Name: icu-i18n
+          Description: ICU internationalization
+          Version: 76.1
+          Requires: icu-uc
+          Libs: -L`${prefix}/lib -licuin
+          Cflags: -I`${prefix}/include
+          "@ | Set-Content "$pc\icu-i18n.pc"
+          @"
+          prefix=$deps
+          Name: zlib
+          Description: zlib
+          Version: 1.3.2
+          Libs: -L`${prefix}/lib -l$($zlib.BaseName)
+          Cflags: -I`${prefix}/include
+          "@ | Set-Content "$pc\zlib.pc"
+          Get-ChildItem $pc | ForEach-Object { "== $($_.Name)"; Get-Content $_ }
+          "PKG_CONFIG=pkgconf" >> $env:GITHUB_ENV
+          "PKG_CONFIG_LIBDIR=$pc" >> $env:GITHUB_ENV
+
+      - name: Build Postgres
+        # The same feature set as the macOS configure: ICU and zlib, no OpenSSL.
+        # Everything else is off rather than auto, so nothing the runner happens to
+        # have installed (Strawberry Perl, OpenSSL, Python) sneaks in.
+        env:
+          CC: cl
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          meson setup "$env:SRC\pg-build" "$env:SRC\postgres" --prefix="$env:PGROOT" `
+            --buildtype=release --auto-features=disabled -Dssl=none -Dicu=enabled -Dzlib=enabled
+          meson compile -C "$env:SRC\pg-build"
+          meson install -C "$env:SRC\pg-build" --quiet
+          # Ship the ICU and zlib DLLs next to the binaries that load them.
+          Copy-Item "$env:RUNNER_TEMP\icu\bin\*.dll", "$env:DEPS\bin\*.dll" "$env:PGROOT\bin"
+      - name: Build pgvector
+        working-directory: ${{ runner.temp }}\src\pgvector
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          nmake /NOLOGO /F Makefile.win
+          nmake /NOLOGO /F Makefile.win install
+      - name: Smoke test
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $bin = "$env:PGROOT\bin"
+          $data = "$env:RUNNER_TEMP\pgdata"
+          & "$bin\initdb.exe" -D $data -U postgres -A trust -E UTF8 --locale=C `
+            --locale-provider=icu --icu-locale=en-US
+          & "$bin\pg_ctl.exe" -D $data -l "$env:RUNNER_TEMP\postgres.log" -o "-p 5433" -w start
+          try {
+            $psql = @("-X", "-v", "ON_ERROR_STOP=1", "-h", "localhost", "-p", "5433", "-U", "postgres")
+            & "$bin\psql.exe" @psql -d postgres -c "CREATE DATABASE garage_smoke"
+            # Twice: the migrations are meant to be re-applied.
+            foreach ($pass in 1, 2) {
+              Get-ChildItem data\sql\*.sql | Sort-Object Name | ForEach-Object {
+                & "$bin\psql.exe" @psql -q -d garage_smoke -f $_.FullName
+              }
+            }
+            @"
+          SELECT version();
+          SELECT extname, extversion FROM pg_extension ORDER BY extname;
+          SELECT datlocprovider, datlocale FROM pg_database WHERE datname = current_database();
+          SELECT '[1,2,3]'::vector <-> '[3,2,1]'::vector AS l2,
+                 binary_quantize('[1,-2,3]'::vector) AS bq,
+                 similarity('garage', 'garages') AS trgm,
+                 'a' < 'B' COLLATE "en-US-x-icu" AS icu_order;
+          "@ | Set-Content "$env:RUNNER_TEMP\smoke.sql"
+            & "$bin\psql.exe" @psql -d garage_smoke -f "$env:RUNNER_TEMP\smoke.sql"
+          } finally {
+            & "$bin\pg_ctl.exe" -D $data -m fast -w stop
+            Get-Content "$env:RUNNER_TEMP\postgres.log"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-windows-x64
+          path: ${{ runner.temp }}\pgsql
+          if-no-files-found: error
+
+  python:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Paths
+        run: |
+          "SRC=$env:RUNNER_TEMP\src" >> $env:GITHUB_ENV
+          "PYROOT=$env:RUNNER_TEMP\python" >> $env:GITHUB_ENV
+      - name: Fetch sources
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python tools/windows/fetch_ext.py --dest $env:SRC python
+      - name: Build CPython
+        # Tkinter is not built; the macOS framework leaves it out too.
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          & "$env:SRC\python\PCbuild\build.bat" -e -p x64 -c Release --no-tkinter
+      - name: Smoke test
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = "$env:SRC\python\PCbuild\amd64\python.exe"
+          & $py -c "import sys, ssl, zlib, sqlite3, ctypes, lzma, bz2, hashlib; print(sys.version); print(ssl.OPENSSL_VERSION)"
+          & $py -m test -j0 --quiet test_zlib test_ssl test_ctypes test_sqlite3
+      - name: Lay out an install
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = "$env:SRC\python\PCbuild\amd64\python.exe"
+          & $py "$env:SRC\python\PC\layout" --copy "$env:PYROOT" --include-stable --include-venv --include-dev
+          & "$env:PYROOT\python.exe" -c "import sys, ssl; print(sys.executable, sys.version)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-windows-x64
+          path: ${{ runner.temp }}\python
+          if-no-files-found: error
+
+  garage:
+    # garage_rag on the built interpreter, against the built Postgres.
+    needs: [postgres, python]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: postgres-windows-x64
+          path: ${{ runner.temp }}\pgsql
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-windows-x64
+          path: ${{ runner.temp }}\python
+      - name: Start Postgres
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $bin = "$env:RUNNER_TEMP\pgsql\bin"
+          # psycopg finds libpq.dll on PATH.
+          $bin >> $env:GITHUB_PATH
+          & "$bin\initdb.exe" -D "$env:RUNNER_TEMP\pgdata" -U postgres -A trust -E UTF8 --locale=C `
+            --locale-provider=icu --icu-locale=en-US
+          & "$bin\pg_ctl.exe" -D "$env:RUNNER_TEMP\pgdata" -l "$env:RUNNER_TEMP\postgres.log" -o "-p 5433" -w start
+      - name: Install garage_rag
+        working-directory: garage_python
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv venv --python "$env:RUNNER_TEMP\python\python.exe" .venv
+          uv pip install --python .venv -e . pytest-asyncio
+          .venv\Scripts\garage.exe --help
+      - name: test_postgres.py
+        working-directory: garage_python
+        env:
+          GARAGE_TEST_DATABASE_URL: postgresql://postgres@localhost:5433/postgres
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .venv\Scripts\python.exe -m pytest -q tests/test_postgres.py
+      - name: Stop Postgres
+        if: always()
+        run: |
+          & "$env:RUNNER_TEMP\pgsql\bin\pg_ctl.exe" -D "$env:RUNNER_TEMP\pgdata" -m fast -w stop
+          Get-Content "$env:RUNNER_TEMP\postgres.log"

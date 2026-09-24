@@ -130,6 +130,10 @@ the server is touched. Put new tests that need real SQL there, and keep logic te
     `--build_tests_only` and `--noapple_generate_dsym`.
 - Run it by hand from the Actions tab (workflow_dispatch) when a Python-only change needs the Bazel
   build.
+- **`.github/workflows/windows.yaml`** builds Postgres (with pgvector, ICU and zlib) and CPython from
+  source on `windows-latest`, from the pins in `ext/*/*.MODULE.bazel` (read by
+  `tools/windows/fetch_ext.py`), with each project's own MSVC build rather than Bazel. It then runs
+  `test_postgres.py` on the built interpreter against the built server.
 - `.github/actions/setup-aspect` installs the Aspect CLI pinned in `tools/tools.lock.json` for the
   runner's OS and CPU.
 
