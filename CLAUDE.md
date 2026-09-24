@@ -362,6 +362,11 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
   `select()` in an inert backend instead, since Apple rejects self-updating apps, and Sparkle
   never enters that dependency graph. The appcast lives at `docs/appcast.xml` on the Jekyll
   site; `macapp/README.md` covers the signing-key setup and release flow.
+- `FirstRunCoordinator` (+ `Views/FirstRunView.swift`) is the first-run setup assistant that replaces
+  the sidebar UI until the user finishes or skips it (`garage.firstRun.completed` default): wait for
+  services → pick template sources → pick embedding/distillation models → connect MCP clients. It
+  goes through the same `AppState.addSource` / `registerModel` / `setFactsModel` operations and
+  `GarageMCPService` registration as the Sources, Models and MCP pages.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this

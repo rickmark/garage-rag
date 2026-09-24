@@ -88,6 +88,10 @@ struct MenuBarView: View {
                 NotificationCenter.default.post(name: .garageShowSplash, object: nil)
             }
 
+            Button("Setup Assistant…") {
+                GarageApp.presentFirstRun(appState: appState, openWindow: openWindow)
+            }
+
             Button("Quit Garage") {
                 AppDelegate.quit()
             }

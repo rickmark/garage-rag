@@ -3,11 +3,16 @@ import SwiftUI
 
 @main
 struct GarageApp: App {
+    /// The main window's scene id, so menu items can recreate it with
+    /// `openWindow(id:)` after a `--background` launch closed it.
+    static let mainWindowID = "garage.main"
+
     @StateObject private var appState = AppState()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup("Garage") {
+        WindowGroup("Garage", id: Self.mainWindowID) {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 760, minHeight: 520)
@@ -25,6 +30,9 @@ struct GarageApp: App {
             }
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesButton(updater: appState.updater)
+                Button("Setup Assistant…") {
+                    showFirstRun()
+                }
             }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit Garage") {
@@ -53,6 +61,25 @@ struct GarageApp: App {
             window.makeKeyAndOrderFront(nil)
         }
         NotificationCenter.default.post(name: .garageShowSplash, object: nil)
+    }
+
+    /// Re-runs the setup assistant: opens the main window (recreating it when a
+    /// `--background` launch closed it) and flips the coordinator, which
+    /// `ContentView` renders from `appState` rather than from the notification.
+    private func showFirstRun() {
+        Self.presentFirstRun(appState: appState, openWindow: openWindow)
+    }
+
+    @MainActor
+    static func presentFirstRun(appState: AppState, openWindow: OpenWindowAction) {
+        openWindow(id: mainWindowID)
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.title == "Garage" {
+            window.makeKeyAndOrderFront(nil)
+        }
+        // Closes the splash sheet in any window that is showing it.
+        NotificationCenter.default.post(name: .garageShowFirstRun, object: nil)
+        appState.firstRun.begin(force: true)
     }
 
     private var menuBarSymbol: String {

@@ -41,6 +41,9 @@ public struct MCPClientConfig: Identifiable, Equatable {
     public var path: URL
     public var existsOnDisk: Bool
     public var isRegistered: Bool
+    /// A config that lives in the current project (e.g. `.mcp.json`), shared with
+    /// collaborators, as opposed to a per-user client config.
+    public var isProjectScoped: Bool
     public var note: String
 
     public init(
@@ -49,6 +52,7 @@ public struct MCPClientConfig: Identifiable, Equatable {
         path: URL,
         existsOnDisk: Bool,
         isRegistered: Bool,
+        isProjectScoped: Bool = false,
         note: String = ""
     ) {
         self.id = id
@@ -56,6 +60,7 @@ public struct MCPClientConfig: Identifiable, Equatable {
         self.path = path
         self.existsOnDisk = existsOnDisk
         self.isRegistered = isRegistered
+        self.isProjectScoped = isProjectScoped
         self.note = note
     }
 }
@@ -269,6 +274,7 @@ final class GarageMCPService: ObservableObject {
                 path: target.path,
                 existsOnDisk: exists,
                 isRegistered: isRegistered,
+                isProjectScoped: target.projectScoped,
                 note: target.note
             )
         }

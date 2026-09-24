@@ -63,9 +63,10 @@ extension AppState {
         await runOperation(triggersMaintenance: true) { try await $0.addSource(spec).message }
     }
 
-    /// Registers a preset model (dims from the preset, else the known-model table).
+    /// Registers a preset model (dims from the preset, else the known-model table),
+    /// optionally making it the default for search and backfill.
     @discardableResult
-    func registerModel(preset: ModelPresetEntry) async -> Bool {
+    func registerModel(preset: ModelPresetEntry, makeDefault: Bool = false) async -> Bool {
         let dims = preset.effectiveDims
         let ref = preset.modelRef
         return await runOperation(triggersMaintenance: true) {
@@ -73,7 +74,8 @@ extension AppState {
                 slug: preset.slug,
                 dims: dims > 0 ? dims : nil,
                 modelRef: ref.flatMap { $0.isEmpty || $0 == preset.slug ? nil : $0 },
-                provider: preset.provider ?? "llama_xpc"
+                provider: preset.provider ?? "llama_xpc",
+                makeDefault: makeDefault
             ).message
         }
     }
