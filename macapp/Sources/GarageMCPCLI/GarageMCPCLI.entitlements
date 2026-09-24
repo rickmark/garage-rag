@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App Store entitlements for the `garage-mcp` helper bundle (Garage.app/Contents/Helpers/garage-mcp.app,
+  bundle ID me.rickmark.garage-rag.mcp-server-cli). The same as the `garage` helper's
+  (GarageCLI.entitlements, which explains each entry): its own sandbox rather than inherit, since an
+  MCP client spawns it through the Contents/MacOS/garage-mcp forwarder, never GarageApp; the App
+  Group for the shared data folder and as the keychain access group of the Postgres password; and
+  the application identifier its provisioning profile backs.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.application-identifier</key>
+	<string>DWVXMLB45Y.me.rickmark.garage-rag.mcp-server-cli</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>DWVXMLB45Y</string>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

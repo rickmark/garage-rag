@@ -52,16 +52,41 @@ aspect run //macapp/Sources/PythonXPCService:python_embed_smoke -- /path/to/Gara
 What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 (`macos_application(name = "GarageApp")`):
 
-- `MacOS/garage` and `MacOS/garage-mcp` — Swift launchers (`//macapp/Sources/GarageCLI:garage`,
-  `//macapp/Sources/GarageMCPCLI:garage-mcp`, sharing `Sources/GarageLauncher`) that embed the
-  bundled Python and run `garage_rag`'s Typer app or the stdio MCP server in-process. When a
-  command needs the database and nothing listens on port 14824, the launcher opens Garage.app
+- `Helpers/garage.app` and `Helpers/garage-mcp.app` — the Swift launchers
+  (`//macapp/Sources/GarageCLI:garage_app`, `//macapp/Sources/GarageMCPCLI:garage_mcp_app`,
+  sharing `Sources/GarageLauncher`; see `bazel/launcher_app.bzl`) that embed the bundled Python and
+  run `garage_rag`'s Typer app or the stdio MCP server in-process. Each is a small helper app bundle
+  of its own (`LSUIElement`, no Dock icon) with its own bundle identifier
+  (`me.rickmark.garage-rag.garage-cli`, `me.rickmark.garage-rag.mcp-server-cli`), entitlements and
+  provisioning profile: that is what gives the launcher the application identifier the
+  data-protection keychain demands, so it reads the Postgres password from the App Group without
+  a prompt (see "The Postgres password" below). `Contents/Helpers` is one of the nested-code
+  locations codesign, notarization and App Store validation walk.
+- `MacOS/garage` and `MacOS/garage-mcp` — the stable command-line entry points, which
+  `garage mcp-install --stdio` registrations and the docs name: symlinks to
+  `Resources/launchers/garage` and `garage-mcp`, `/bin/sh` forwarders that `exec` the helper
+  bundle's executable (`Contents/Helpers/garage.app/Contents/MacOS/garage`) by its real path.
+  Three constraints pick this shape. Codesign treats every file in `Contents/MacOS` as nested code
+  that must carry its own signature, which a script cannot, but it seals a symlink there as a
+  symlink (`link_launchers.sh`, the app's `ipa_post_processor`, creates the two links before
+  signing, since Bazel cannot ship a symlink as a source file). A symlink straight to the helper's
+  Mach-O would leave the helper's `@executable_path` rpaths and its sandbox to be set up from a
+  path in `Contents/MacOS` (dyld resolves that on current macOS, but the script does not depend on
+  it). And a Mach-O forwarder would, in the App Store build, have to be sandboxed itself, and a
+  sandboxed process cannot start a helper that carries its own sandbox; `/bin/sh` is not sandboxed,
+  so the helper starts exactly as if run directly, with its own code identity and sandbox.
+  When a command needs the database and nothing listens on port 14824, the launcher opens Garage.app
   hidden (`--background`: services start, no window) and waits for Postgres; it then reads the
   database password from the Keychain and exports `GARAGE_DATABASE_URL` itself. An explicit
   `GARAGE_DATABASE_URL` wins; `GARAGE_NO_APP_LAUNCH=1` fails instead of opening the app.
   `garage-mcp` does not wait for Postgres (only its tool calls use the database, and the MCP
   handshake must not sit behind a cold start) unless the app has never stored a password, and
-  never mirrors its stdout (the MCP stream) into the unified log.
+  never mirrors its stdout (the MCP stream) into the unified log. The launcher finds the app it
+  lives in by walking up from its own executable to the outermost `.app`
+  (`Launcher.containingAppBundle`), which is where `Frameworks/Python.framework`,
+  `Frameworks/PythonXPCService.framework/site-python` and `Resources/models.json` are.
+  `//macapp/Sources/GarageApp:bundle_layout_test` checks this layout and runs `garage version`
+  through the forwarder.
 - `Resources/postgres` — Postgres 18 + pgvector + Apache AGE built from source
   (`//ext/postgres`, `//ext/pgvector`, `//ext/age`, vendored through
   `//macapp/externals:postgres_output`), with `libpq` in `Frameworks/`. AGE's Cypher
@@ -87,11 +112,41 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 - The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
   is mapped before the App Sandbox applies; opening it later by path is denied.
 
+## The Postgres password
+
+`PostgresService` generates the Postgres superuser password on the first launch and keeps it in
+the macOS Keychain as a generic-password item (service `com.rickmark.garage.postgres`, account:
+the login user). The app and the bundled `garage` / `garage-mcp` launchers read it through one
+piece of code, `GaragePostgresEndpoint` in `Sources/PythonXPCService`, which knows two keychains:
+
+- **The App Group keychain** (the data-protection keychain, access group
+  `DWVXMLB45Y.group.me.rickmark.garage-rag`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`,
+  never synchronized). Access there is decided by entitlements, not by a per-application access
+  list: every process signed into the group whose `com.apple.application-identifier` a
+  provisioning profile backs reads the item without a prompt. That is the Developer ID and App
+  Store builds of the app *and of the two launcher helper bundles*, which is the whole reason the
+  launchers are bundles with profiles of their own (a bare command-line tool cannot embed one, and
+  without one `SecItem` answers `errSecMissingEntitlement`, -34018).
+- **The login keychain**, the item every build used before, whose ACL names applications by
+  designated requirement and asks "GarageApp wants to access key…" for each new signature. Builds
+  with no application identifier (ad-hoc, `--config=local_signed`) still keep the password there:
+  `GaragePostgresEndpoint` tries the App Group keychain first and takes -34018 as "not usable by
+  this process", so nothing has to know which build it is.
+
+Migration is the app's job: before its first read, `migrateLegacyPassword` copies a
+login-keychain item into the App Group keychain and then deletes the old item (one last access
+prompt, if the ACL does not already list this build). Reads fall back to the login keychain until
+that has happened, so a launcher started before the updated app never sees "no password". The
+result is a line in the Database log (`keychain` source).
+
+The LM Studio API token (`LMStudioTokenStore`) stays in the login keychain: only the app reads it.
+
 ## A stable local signing identity
 
 The app keeps two secrets in the macOS Keychain — the Postgres superuser
-password (`PostgresService`) and the LM Studio API token (`LMStudioTokenStore`)
-— and a Keychain item's ACL names the application by its *designated
+password (`PostgresService`; in the login keychain only for builds without an application
+identifier, see above) and the LM Studio API token (`LMStudioTokenStore`)
+— and a login-keychain item's ACL names the application by its *designated
 requirement*. For an ad-hoc signature that requirement is
 
 ```
@@ -146,19 +201,68 @@ Things worth knowing:
 embeds the development profile `macapp/GarageRAGDevelopmentApp.provisionprofile`, so the sandboxed
 store build runs on the Macs that profile lists. An Apple Distribution–signed build with a store
 profile cannot launch locally. Uploading re-signs the archive in Xcode (Organizer → Distribute App)
-with Apple Distribution and the store profile, `macapp/GarageMacAppConnect.provisionprofile`; run
+with Apple Distribution and the store profiles: `macapp/GarageMacAppConnect.provisionprofile` for
+the app, `macapp/GarageRAGAppStoreCLI.provisionprofile` for `Contents/Helpers/garage.app` and
+`macapp/GarageRAGAppStoreMCP.provisionprofile` for `Contents/Helpers/garage-mcp.app` (one per
+bundle identifier; see "Provisioning profiles" below for how Organizer picks them). Run
 Validate App first so Xcode confirms it re-signs the nested code (Postgres in `Resources/`, the
-site-packages extensions, `Python.framework`). To run a store build on another Mac, add that Mac to
-the development profile in the developer portal and replace the file.
+site-packages extensions, `Python.framework`, the two helper bundles). To run a store build on
+another Mac, add that Mac to the development profiles in the developer portal and replace the files.
 
 `--config=appstore` is a fastbuild, so it shares the `//ext` builds (Postgres, ICU, Python,
 llama.cpp, …) with the ad-hoc and Developer ID configs; only the codesign steps differ. Build the
 archive you upload with `--config=appstore_release`, which is the same config plus
 `--compilation_mode=opt` and therefore rebuilds everything optimized.
 
-The first launch of a store build on a Mac that already ran the Developer ID build asks for Keychain
-access to the Postgres password item (`com.rickmark.garage.postgres`): the Developer ID build created
-it, and its access list names only that signature. Answer **Always Allow** once.
+The store and Developer ID builds share the Postgres password through the App Group keychain (see
+"The Postgres password"), so neither prompts for it. The one remaining prompt is the migration of an
+item an older build left in the login keychain: answer **Always Allow** once, and the item moves.
+
+### Provisioning profiles
+
+The signed configurations embed a provisioning profile in the app and in each launcher helper
+bundle; the profile is what backs the `com.apple.application-identifier` entitlement, and that
+identifier is what the data-protection (App Group) keychain requires. The files live in `macapp/`
+(`exports_files(glob(["*"]))` in `macapp/BUILD.bazel` exports them) and are selected per
+configuration in `Sources/GarageApp/BUILD.bazel` and `bazel/launcher_app.bzl`:
+
+| Bundle | App ID | `--config=developer_id` (Developer ID Application) | `--config=appstore` (macOS App Development) | Upload (Mac App Store, chosen in Xcode) |
+|---|---|---|---|---|
+| `Garage.app` | `me.rickmark.garage-rag` | `GarageRAGDeveloperID.provisionprofile` | `GarageRAGDevelopmentApp.provisionprofile` | `GarageMacAppConnect.provisionprofile` |
+| `Contents/Helpers/garage.app` | `me.rickmark.garage-rag.garage-cli` | `GarageRAGDevIDCLI.provisionprofile` | `GarageRAGDevelopmentCLI.provisionprofile` | `GarageRAGAppStoreCLI.provisionprofile` |
+| `Contents/Helpers/garage-mcp.app` | `me.rickmark.garage-rag.mcp-server-cli` | `GarageRAGDevIDMCP.provisionprofile` | `GarageRAGDevelopmentMCP.provisionprofile` | `GarageRAGAppStoreMCP.provisionprofile` |
+
+Every profile is checked in. The upload column is not part of any Bazel configuration: Xcode
+Organizer re-signs the archive with Apple Distribution and those profiles (see "App Store
+configuration" above), and the three App Store files in `macapp/` are kept for that step only.
+`provisioning_profile_slot` in `macapp/BUILD.bazel` stands in for a missing
+file with a `manual` genrule that fails the configuration embedding it, with a message naming the
+file to add; the default configuration never selects one, so a fork without the profiles still
+builds. Drop the downloaded file in under that name and the slot gives way to the file.
+
+At upload, Organizer walks the nested code and needs a Mac App Store profile per bundle
+identifier: `me.rickmark.garage-rag`, `.garage-cli` and `.mcp-server-cli`. With automatic
+signing it matches them by bundle identifier from the team's profiles (the App IDs must exist in
+the portal with App Groups enabled); with manual signing the Distribute App sheet lists the app
+and each helper and asks for a profile for each: `GarageMacAppConnect` for `Garage.app`,
+`GarageRAGAppStoreCLI` for `garage.app`, `GarageRAGAppStoreMCP` for `garage-mcp.app`. There is no
+`ExportOptions.plist` export path in this repository; if one is added, its `provisioningProfiles`
+map must name all three bundle identifiers.
+
+Each helper App ID (developer portal → Identifiers → App IDs, platform macOS) needs the **App
+Groups** capability with `group.me.rickmark.garage-rag` assigned; the portal writes the
+team-prefixed form, `DWVXMLB45Y.group.me.rickmark.garage-rag`, into the profile, which is the
+value the entitlements use for both `com.apple.security.application-groups` and
+`keychain-access-groups`. Every profile then needs: for Developer ID, type *Developer ID
+Application* with the Developer ID certificate; for `--config=appstore`, type *macOS App
+Development* with the Apple Development certificate and this Mac's provisioning UDID (the same list
+`GarageRAGDevelopmentApp` carries); for upload, type *Mac App Store Connect* with the Apple
+Distribution certificate. In Xcode Organizer's Distribute App flow, manual signing asks for a
+profile per bundle, the two helpers included; automatic signing finds them by App ID.
+
+Entitlements must stay within what the profile authorizes, or codesign rejects the build (rules_apple
+validates them against the profile first). `security cms -D -i <profile> | plutil -extract
+Entitlements xml1 -o - -` shows what a profile allows.
 
 ## Why Postgres is built from source
 
@@ -286,7 +390,8 @@ The hardened runtime turns on library validation, so a `Sparkle` dylib still
 carrying the Sparkle Project's Team ID would refuse to load into Garage.
 rules_apple's imported-framework processor re-signs `Sparkle.framework/Versions/B`
 with the embedding app's identity when it bundles it, and `macos_lipo_app`
-re-signs the nested `Updater.app` and `XPCServices/*.xpc` on the way to
+re-signs the nested `Updater.app`, the launcher helper bundles in `Contents/Helpers`
+(with the entitlements each carries) and `XPCServices/*.xpc` on the way to
 notarization.
 
 ## First-run setup assistant

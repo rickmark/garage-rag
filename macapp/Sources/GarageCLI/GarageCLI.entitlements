@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App Store entitlements for the `garage` helper bundle (Garage.app/Contents/Helpers/garage.app,
+  bundle ID me.rickmark.garage-rag.garage-cli).
+
+  Not com.apple.security.inherit: that only works in a child of an already sandboxed process, and
+  the helper is started from Terminal (through the Contents/MacOS/garage forwarder), never by
+  GarageApp; with it the process traps at launch. So it carries its own sandbox, with what it
+  needs to reach the app's data: loopback Postgres (network.client), garage.json and the model
+  catalog in the shared data folder (the App Group), the same library validation exemption as
+  the Python XPC services for the interpreter and extension modules, and the application
+  identifier its provisioning profile backs, which is what makes the Postgres password readable
+  from the data-protection keychain (keychain-access-groups: the App Group) without a prompt.
+  The Postgres binaries the app starts keep GarageServer.entitlements.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.application-identifier</key>
+	<string>DWVXMLB45Y.me.rickmark.garage-rag.garage-cli</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>DWVXMLB45Y</string>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
+	</array>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

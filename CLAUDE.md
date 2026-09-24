@@ -342,9 +342,18 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
 - The data folder (`pgdata`, `models`, `logs`, `garage.json`) is `Library/Application Support/GarageApp`
   in the App Group container, `Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp` under the home folder, so the App Store and Developer ID
   builds share one corpus. Both sign the app and its six XPC services with the team-prefixed group
-  (`GarageAppGroup` in `PythonXPCService`); the Developer ID build carries only that entitlement
-  (`macapp/externals/GarageAppGroup.entitlements`). Unentitled builds (locally signed, tests) use
-  `~/Library/Application Support/GarageApp`. At launch `GarageDataMigration` renames an older build's
+  (`GarageAppGroup` in `PythonXPCService`); the Developer ID app adds its application identifier
+  and team identifier, backed by the embedded `macapp/GarageRAGDeveloperID.provisionprofile`
+  (`macapp/Sources/GarageApp/GarageDeveloperID.entitlements`), while its XPC services carry only
+  the group (`macapp/externals/GarageAppGroup.entitlements`). Unentitled builds (locally signed,
+  tests) use `~/Library/Application Support/GarageApp`.
+- The Postgres password is a generic-password item in the data-protection keychain, access group
+  = the App Group (`GaragePostgresEndpoint` in `PythonXPCService`: read, save, and the migration
+  of the old login-keychain item, which the app runs before its first read). Any process entitled
+  to the group with a profile-backed application identifier reads it without a prompt; a process
+  without one (ad-hoc, `local_signed`) gets `errSecMissingEntitlement` and falls back to the login
+  keychain, so local builds work as before. `macapp/README.md` ("The Postgres password",
+  "Provisioning profiles") has the details and the per-configuration profile table. At launch `GarageDataMigration` renames an older build's
   per-user folder into the group container and leaves a symlink behind. It never copies, deletes or
   overwrites anything, and it skips a `pgdata` a running postmaster still holds. Unsandboxed
   (Developer ID) builds also keep `~/Library/Application Support/GarageApp` as a link to the group
@@ -363,11 +372,19 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which
   drives `GarageIngestXPCService` via `IngestClient`.
-- `garage` and `garage-mcp` in `Contents/MacOS` are Swift launchers (`Sources/GarageLauncher`)
-  for people at a terminal and for stdio MCP clients. When a command needs the database and
-  nothing listens on 14824 they open the app hidden (`--background`), then read the Postgres
-  password from the Keychain and export `GARAGE_DATABASE_URL`; stdio registrations therefore
-  carry no database URL. Only these Mach-O launchers do this; `garage` from a venv is untouched.
+- `garage` and `garage-mcp` are Swift launchers (`Sources/GarageLauncher`) for people at a
+  terminal and for stdio MCP clients, packaged as helper app bundles in `Contents/Helpers`
+  (`garage.app` = `me.rickmark.garage-rag.garage-cli`, `garage-mcp.app` =
+  `me.rickmark.garage-rag.mcp-server-cli`; `bazel/launcher_app.bzl`), each with its own
+  entitlements and provisioning profile so it can read the App Group keychain. The stable paths
+  `Contents/MacOS/garage` and `garage-mcp` are symlinks (made by `link_launchers.sh`, the app's
+  `ipa_post_processor`; codesign rejects a script in `MacOS` but seals a symlink) to `/bin/sh`
+  forwarders in `Resources/launchers` that `exec` the helper by its real path (not Mach-O: a
+  sandboxed forwarder could not start a helper with its own sandbox). When a command needs the
+  database and nothing listens on 14824
+  they open the app hidden (`--background`), then read the Postgres password from the Keychain
+  and export `GARAGE_DATABASE_URL`; stdio registrations therefore carry no database URL. Only
+  these bundled launchers do this; `garage` from a venv is untouched.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.

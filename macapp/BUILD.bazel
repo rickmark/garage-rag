@@ -5,11 +5,31 @@ load(
     "xcodeproj",
 )
 load("//bazel:macos_application.bzl", "appstore_macos_application", "developer_id_macos_application")
+load("//bazel:provisioning.bzl", "provisioning_profile_slot")
 load("//bazel:xcarchive.bzl", "appstore_xcarchive")
 
 exports_files(
     glob(["*"]),
     visibility = ["//visibility:public"],
+)
+
+# Provisioning profiles the signed configurations embed (see "Provisioning profiles" in
+# README.md for the full table). A file present in this directory is exported above and its slot
+# declares nothing; a slot whose file is missing (a fork, a profile removed to be reissued) stands
+# in for it, failing only the configuration that embeds it, with a message that names the file.
+# The launcher helper bundles' store-configuration profiles are macOS App Development ones, like
+# the app's GarageRAGDevelopmentApp; their Developer ID ones are GarageRAGDevIDCLI and
+# GarageRAGDevIDMCP, named directly in their BUILD files like the app's GarageRAGDeveloperID.
+provisioning_profile_slot(
+    name = "GarageRAGDevelopmentCLI.provisionprofile",
+    bundle_id = "me.rickmark.garage-rag.garage-cli",
+    kind = "macOS App Development",
+)
+
+provisioning_profile_slot(
+    name = "GarageRAGDevelopmentMCP.provisionprofile",
+    bundle_id = "me.rickmark.garage-rag.mcp-server-cli",
+    kind = "macOS App Development",
 )
 
 filegroup(
@@ -91,6 +111,12 @@ xcodeproj(
             "//macapp/Sources/ModelDownloadXPCService:ModelDownloadXPCService",
         ),
         top_level_target(
+            "//macapp/Sources/GarageCLI:garage_app",
+        ),
+        top_level_target(
+            "//macapp/Sources/GarageMCPCLI:garage_mcp_app",
+        ),
+        top_level_target(
             "//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests",
         ),
         top_level_target(
@@ -110,15 +136,16 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# The launcher helper bundles (Garage.app/Contents/Helpers/garage.app and garage-mcp.app).
 alias(
     name = "garage",
-    actual = "//macapp/Sources/GarageCLI:garage",
+    actual = "//macapp/Sources/GarageCLI:garage_app",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "garage-mcp",
-    actual = "//macapp/Sources/GarageMCPCLI:garage-mcp",
+    actual = "//macapp/Sources/GarageMCPCLI:garage_mcp_app",
     visibility = ["//visibility:public"],
 )
 

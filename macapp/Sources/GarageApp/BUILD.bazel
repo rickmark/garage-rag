@@ -1,6 +1,8 @@
 load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
+load("//bazel:launcher_app.bzl", "bundle_archive")
 load("//bazel:version.bzl", "macapp_version")
 
 swift_library(
@@ -41,8 +43,14 @@ macapp_version(
 macos_application(
     name = "GarageApp",
     additional_contents = {
-        "//macapp/Sources/GarageCLI:garage": "MacOS",
-        "//macapp/Sources/GarageMCPCLI:garage-mcp": "MacOS",
+        # The launchers: helper bundles, with the bundle identifier, entitlements and provisioning
+        # profile each needs to read the Postgres password from the App Group keychain (see
+        # //bazel:launcher_app.bzl), and the forwarder scripts that link_launchers.sh links from the
+        # documented paths Contents/MacOS/garage and garage-mcp.
+        "//macapp/Sources/GarageCLI:garage_app": "Helpers",
+        "//macapp/Sources/GarageMCPCLI:garage_mcp_app": "Helpers",
+        "//macapp/Sources/GarageCLI:garage": "Resources/launchers",
+        "//macapp/Sources/GarageMCPCLI:garage-mcp": "Resources/launchers",
         "//macapp/externals:libpq": "Frameworks",
         "//macapp/externals:libtesseract": "Frameworks",
         "//macapp/externals:postgres_output": "Resources/postgres",
@@ -58,9 +66,11 @@ macos_application(
     bundle_id = "me.rickmark.garage-rag",
     bundle_name = "Garage",
     codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
+    # Developer ID: the App Group plus the application identifier its profile backs, so the app
+    # keeps the Postgres password in the App Group keychain the launchers read without a prompt.
     entitlements = select({
         "//bazel:is_store": ":Garage.entitlements",
-        "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",
+        "//bazel:is_developer_id": ":GarageDeveloperID.entitlements",
         "//conditions:default": None,
     }),
     executable_name = "GarageApp",
@@ -73,11 +83,17 @@ macos_application(
         "//bazel:is_store": [],
         "//conditions:default": [":Sparkle.plist"],
     }),
+    # Links Contents/MacOS/garage and garage-mcp to the forwarders in Resources/launchers before
+    # the bundle is signed (a symlink is what codesign accepts there; a script is not).
+    ipa_post_processor = ":link_launchers.sh",
     minimum_os_version = "14.0",
     # Store builds sign with Apple Development and this development profile, so they run on
     # registered Macs; Xcode re-signs with Apple Distribution (GarageMacAppConnect) on upload.
+    # Developer ID builds embed the Developer ID profile, which backs the application identifier
+    # in GarageDeveloperID.entitlements (the data-protection keychain refuses one without it).
     provisioning_profile = select({
         "//bazel:is_store": "//macapp:GarageRAGDevelopmentApp.provisionprofile",
+        "//bazel:is_developer_id": "//macapp:GarageRAGDeveloperID.provisionprofile",
         "//conditions:default": None,
     }),
     version = ":GarageAppVersion",
@@ -94,4 +110,21 @@ macos_application(
         ":GarageApp_lib",
         "//ext/python:python_framework",
     ],
+)
+
+# The bundle's launcher layout: the forwarders in Contents/MacOS, the helper bundles in
+# Contents/Helpers with their identifiers, and `garage version` run through the forwarder.
+# gazelle:exclude bundle_layout_test.sh
+# gazelle:exclude link_launchers.sh
+bundle_archive(
+    name = "GarageApp_archive",
+    app = ":GarageApp",
+)
+
+sh_test(
+    name = "bundle_layout_test",
+    size = "medium",
+    srcs = ["bundle_layout_test.sh"],
+    args = ["$(rootpath :GarageApp_archive)"],
+    data = [":GarageApp_archive"],
 )

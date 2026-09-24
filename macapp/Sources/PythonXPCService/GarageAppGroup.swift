@@ -5,8 +5,11 @@ import Security
 ///
 /// Both distributions sign with it: the App Store build (sandboxed) and the Developer ID build
 /// (not sandboxed). The identifier carries the team prefix, the macOS form, which a Developer ID
-/// app may use without a provisioning profile. Keeping the data in the group container is what
-/// lets both builds open the same database, models and logs.
+/// app may use for the group *container* without a provisioning profile. Keeping the data in the
+/// group container is what lets both builds open the same database, models and logs. The same
+/// identifier is the access group of the shared Keychain item (`GaragePostgresEndpoint`); that use
+/// needs an application identifier backed by a provisioning profile, which the Developer ID and App
+/// Store builds of the app and of the launcher helper bundles embed.
 public enum GarageAppGroup {
     public static let identifier = "DWVXMLB45Y.group.me.rickmark.garage-rag"
 

@@ -92,7 +92,9 @@ final class GarageGRPCService: ObservableObject {
         // McpInstall / McpStatus name the command MCP clients spawn, `garage-mcp`; without
         // this the server would name its own embedded interpreter, which clients cannot run.
         if FileManager.default.isExecutableFile(atPath: Paths.garageMCP.path) {
-            env["GARAGE_MCP_EXECUTABLE"] = Paths.garageMCP.resolvingSymlinksInPath().path
+            // Not resolved through symlinks: Contents/MacOS/garage-mcp is a link to the forwarder script,
+            // and the link is the stable path a client registration must keep.
+            env["GARAGE_MCP_EXECUTABLE"] = Paths.garageMCP.standardizedFileURL.path
         }
         // The model catalog RegisterModel reads widths and distance metrics from:
         // the app's own models.json, so the presets and the pipeline agree.

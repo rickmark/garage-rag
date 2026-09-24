@@ -1,6 +1,8 @@
+import Security
 import XCTest
 import PythonXPCService
 @testable import GarageApp
+@testable import PythonXPCService_protocol
 
 /// `--data-directory` is what keeps a UI test's "Reset Database" away from the real cluster, so a
 /// path that reaches real data must be refused rather than used or silently ignored.
@@ -68,5 +70,37 @@ final class GarageAppGroupTests: XCTestCase {
 
     func testTheRealKeychainItemIsUsedWithoutAnOverride() {
         XCTAssertEqual(GaragePostgresEndpoint.keychainService, "com.rickmark.garage.postgres")
+        XCTAssertNil(GaragePostgresEndpoint.isolatedPasswordFile)
+    }
+
+    /// The shared item lives in the data-protection keychain under the App Group, which the app and
+    /// the launcher helper bundles are all entitled to; the login-keychain item it replaces has
+    /// neither key, so a build without an application identifier still finds its own item.
+    func testThePasswordItemIsInTheAppGroupKeychain() {
+        XCTAssertEqual(GaragePostgresEndpoint.keychainAccessGroup, GarageAppGroup.identifier)
+        let group = GaragePostgresEndpoint.groupItemQuery()
+        XCTAssertEqual(group[kSecAttrAccessGroup] as? String, "DWVXMLB45Y.group.me.rickmark.garage-rag")
+        XCTAssertEqual(group[kSecUseDataProtectionKeychain] as? Bool, true)
+        XCTAssertEqual(group[kSecAttrSynchronizable] as? Bool, false)
+        XCTAssertEqual(group[kSecAttrService] as? String, GaragePostgresEndpoint.keychainService)
+        XCTAssertEqual(group[kSecAttrAccount] as? String, NSUserName())
+
+        let legacy = GaragePostgresEndpoint.legacyItemQuery()
+        XCTAssertNil(legacy[kSecAttrAccessGroup])
+        XCTAssertNil(legacy[kSecUseDataProtectionKeychain])
+        XCTAssertEqual(legacy[kSecAttrService] as? String, GaragePostgresEndpoint.keychainService)
+        XCTAssertEqual(legacy[kSecAttrAccount] as? String, NSUserName())
+    }
+
+    /// The test host is signed without a provisioning profile, so the data-protection keychain refuses
+    /// it with errSecMissingEntitlement; that is reported as "unavailable", never as an error or as a
+    /// missing password, which is what keeps unentitled builds on the login keychain.
+    func testAnUnentitledProcessSeesTheGroupKeychainAsUnavailable() throws {
+        switch try GaragePostgresEndpoint.readGroupPassword() {
+        case .unavailable, .notFound:
+            break
+        case .found:
+            XCTFail("the unit test host should not be able to read the shared password item")
+        }
     }
 }

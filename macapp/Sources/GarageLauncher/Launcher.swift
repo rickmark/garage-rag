@@ -3,8 +3,9 @@ import Foundation
 import PythonKit
 import PythonXPCService
 
-/// One of the Mach-O launchers bundled in `Garage.app/Contents/MacOS`: which Python
-/// entry point it runs and how.
+/// One of the launchers bundled as helper apps in `Garage.app/Contents/Helpers` (reached
+/// through `Contents/MacOS/<name>`, a link to the forwarder script in `Resources/launchers`):
+/// which Python entry point it runs and how.
 public struct LauncherEntryPoint {
     let module: String
     let function: String
@@ -62,7 +63,7 @@ public enum Launcher {
     public static func run(_ entry: LauncherEntryPoint) -> Never {
         let executable = executablePath()
         let appBundle = containingAppBundle(of: executable)
-        exportMCPLauncherPath(nextTo: executable)
+        exportMCPLauncherPath(appBundle: appBundle, executable: executable)
         exportModelManifest(in: appBundle)
 
         if entry.needsDatabase(CommandLine.arguments) {
@@ -88,30 +89,51 @@ public enum Launcher {
         exit(status)
     }
 
-    /// This binary's real path. `Bundle.main` cannot say: for an executable inside
-    /// `Contents/MacOS` it is the app bundle, whose executable is GarageApp.
+    /// This binary's real path, links resolved and `..` removed (the `Contents/MacOS`
+    /// forwarder execs the helper by a relative path). `Bundle.main` is the helper
+    /// bundle, not the app whose Frameworks and Resources the launcher needs.
     static func executablePath() -> URL {
         var size: UInt32 = 0
         _ = _NSGetExecutablePath(nil, &size)
         var buffer = [CChar](repeating: 0, count: Int(size) + 1)
         guard _NSGetExecutablePath(&buffer, &size) == 0 else {
-            return URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+            return URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
         }
-        return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath()
+        return URL(fileURLWithPath: String(cString: buffer)).standardizedFileURL.resolvingSymlinksInPath()
     }
 
-    /// `Garage.app` for `Garage.app/Contents/MacOS/<launcher>`, else nil.
+    /// The outermost `.app` the launcher runs from: `Garage.app` for the helper bundle at
+    /// `Garage.app/Contents/Helpers/<helper>.app/Contents/MacOS/<launcher>`, and also for a
+    /// bare `Garage.app/Contents/MacOS/<launcher>`. Nil outside an app bundle.
     static func containingAppBundle(of executable: URL) -> URL? {
-        let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return bundle.pathExtension == "app" ? bundle : nil
+        var outermost: URL?
+        var cursor = executable.deletingLastPathComponent()
+        while cursor.pathComponents.count > 1 {
+            if cursor.pathExtension == "app" {
+                outermost = cursor
+            }
+            cursor = cursor.deletingLastPathComponent()
+        }
+        return outermost
+    }
+
+    /// The stable `garage-mcp` entry point an MCP client can run: `Contents/MacOS/garage-mcp`
+    /// of the app, which forwards to the helper bundle. Next to the executable when the
+    /// launcher is not inside the app.
+    static func mcpLauncherPath(appBundle: URL?, executable: URL) -> String? {
+        var candidates: [URL] = []
+        if let appBundle {
+            candidates.append(appBundle.appendingPathComponent("Contents/MacOS/garage-mcp", isDirectory: false))
+        }
+        candidates.append(executable.deletingLastPathComponent().appendingPathComponent("garage-mcp", isDirectory: false))
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }?.path
     }
 
     /// Tells Python where the bundled `garage-mcp` is, so `mcp-install` / `mcp-status`
     /// name the stdio entry point an MCP client can run (sys.executable names an
     /// interpreter the bundle does not ship).
-    private static func exportMCPLauncherPath(nextTo executable: URL) {
-        let path = executable.deletingLastPathComponent().appendingPathComponent("garage-mcp").path
-        if FileManager.default.isExecutableFile(atPath: path) {
+    private static func exportMCPLauncherPath(appBundle: URL?, executable: URL) {
+        if let path = mcpLauncherPath(appBundle: appBundle, executable: executable) {
             setenv("GARAGE_MCP_EXECUTABLE", path, 1)
         }
     }

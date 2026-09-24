@@ -150,7 +150,8 @@ enum Paths {
         postgresBinDir.appendingPathComponent(name)
     }
 
-    /// The frozen `garage` CLI binary (packaged) or the venv's `garage` script (dev).
+    /// The bundled `garage` entry point, `Contents/MacOS/garage` (the forwarder to the helper bundle), or
+    /// the venv's `garage` script (dev).
     static var garageCLI: URL {
         if let aux = Bundle.main.url(forAuxiliaryExecutable: "garage"),
            FileManager.default.fileExists(atPath: aux.path) {
@@ -180,7 +181,8 @@ enum Paths {
         return bundled
     }
 
-    /// The frozen `garage-mcp` binary (packaged) or the venv's script (dev).
+    /// The bundled `garage-mcp` entry point, `Contents/MacOS/garage-mcp` (the forwarder to the helper
+    /// bundle, the stable path a stdio registration keeps), or the venv's script (dev).
     static var garageMCP: URL {
         if let aux = Bundle.main.url(forAuxiliaryExecutable: "garage-mcp"),
            FileManager.default.fileExists(atPath: aux.path) {
