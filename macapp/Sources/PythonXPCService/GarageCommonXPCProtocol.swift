@@ -183,7 +183,6 @@ public struct GarageXPCStatusReport: Codable, Equatable, Sendable {
     public var uptimeSeconds: Double
     /// Overall lifecycle: `bootstrapping`, `ready`, `degraded`, `failed`.
     public var lifecycle: String
-    public var appBundlePath: String?
     public var logFilePath: String?
     public var python: GarageXPCPythonStatus
     public var services: [GarageXPCManagedServiceStatus]
@@ -199,7 +198,6 @@ public struct GarageXPCStatusReport: Codable, Equatable, Sendable {
         pid: Int32,
         uptimeSeconds: Double,
         lifecycle: String,
-        appBundlePath: String? = nil,
         logFilePath: String? = nil,
         python: GarageXPCPythonStatus,
         services: [GarageXPCManagedServiceStatus] = [],
@@ -213,7 +211,6 @@ public struct GarageXPCStatusReport: Codable, Equatable, Sendable {
         self.pid = pid
         self.uptimeSeconds = uptimeSeconds
         self.lifecycle = lifecycle
-        self.appBundlePath = appBundlePath
         self.logFilePath = logFilePath
         self.python = python
         self.services = services

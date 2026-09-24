@@ -207,12 +207,12 @@ public enum GarageXPCStandardSelfTests {
         }
     }
 
-    /// Verifies the bundled libpq was preloaded and that psycopg binds to that exact library.
+    /// Verifies the framework's libpq is loaded and that psycopg binds to that exact library.
     public static func libpq(runtime: GaragePythonRuntime = .shared) -> GarageXPCSelfTest {
-        GarageXPCSelfTest(name: "libpq", description: "Bundled libpq.dylib is loaded (dlopen) and psycopg resolves its pq wrapper to it.") {
+        GarageXPCSelfTest(name: "libpq", description: "PythonXPCService.framework's libpq.dylib is loaded with it and psycopg resolves its pq wrapper to it.") {
             let status = runtime.statusSnapshot()
             guard let path = status.libpqPath else {
-                throw GarageXPCSelfTestFailure("Bundled libpq.dylib could not be loaded", details: status.libpqError ?? "unknown error")
+                throw GarageXPCSelfTestFailure("libpq.dylib is not loaded", details: status.libpqError ?? "unknown error")
             }
             let ctypesUtil = try Python.attemptImport("ctypes.util")
             let found = String(ctypesUtil.find_library("libpq.dylib")) ?? "None"
@@ -263,6 +263,26 @@ public enum GarageXPCStandardSelfTests {
                 lines.append("Trust: \(count) CA certificates (SSL_CERT_FILE=\(certFile))")
             }
             return lines.joined(separator: "\n")
+        }
+    }
+
+    /// Verifies the framework's libtesseract is loaded, that garage_rag uses that copy, and that its English data
+    /// is in the framework's `tessdata`.
+    public static func libtesseract() -> GarageXPCSelfTest {
+        GarageXPCSelfTest(name: "libtesseract", description: "PythonXPCService.framework's libtesseract is loaded with it and garage_rag's OCR uses it and the framework's tessdata.") {
+            guard let path = GaragePythonRuntime.loadedImagePath(definingSymbol: "TessVersion") else {
+                throw GarageXPCSelfTestFailure("libtesseract is not loaded", details: "PythonXPCService.framework should link it")
+            }
+            let tesseract = try Python.attemptImport("garage_rag.extract.tesseract")
+            let found = String(tesseract._find_library()) ?? "None"
+            if found != path {
+                throw GarageXPCSelfTestFailure("garage_rag resolves libtesseract to a different file", details: "expected: \(path)\nfound:    \(found)")
+            }
+            guard let datapath = String(tesseract._datapath(path)) else {
+                throw GarageXPCSelfTestFailure("No eng.traineddata beside the framework's libtesseract", details: path)
+            }
+            let version = String(tesseract.version()) ?? "unknown"
+            return ["Path: \(path)", "Version: \(version)", "tessdata: \(datapath)"].joined(separator: "\n")
         }
     }
 

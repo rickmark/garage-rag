@@ -16,7 +16,8 @@ Two more things every test needs, added here rather than per target:
   libpq set-up before psycopg is imported.
 - libpq. psycopg's pure-Python implementation needs a libpq dylib; the Bazel
   interpreter has none. On macOS the tests get the one this repo builds for
-  the app, through the same `GARAGE_LIBPQ_PATH` the app itself sets.
+  the app: `garage_python/tests/conftest.py` loads it from `GARAGE_TEST_LIBPQ`,
+  as PythonXPCService.framework does in the app, and garage_rag finds it loaded.
 """
 
 load("@aspect_rules_py//py:defs.bzl", _py_pytest_test = "py_pytest_test")
@@ -52,7 +53,7 @@ def py_test(name, deps = [], data = [], **kwargs):
         env = select({
             # Relative to the runfiles root, which is the test's working directory. Only
             # on macOS: elsewhere the filegroup is empty and $(rootpath) would fail.
-            "@platforms//os:macos": dict(env, GARAGE_LIBPQ_PATH = "$(rootpath %s)" % _LIBPQ),
+            "@platforms//os:macos": dict(env, GARAGE_TEST_LIBPQ = "$(rootpath %s)" % _LIBPQ),
             "//conditions:default": env,
         }),
         **kwargs

@@ -219,9 +219,10 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
 - **Extract** (`extract/`) — dispatch by extension with lazy imports (Markdown/`text.py`,
   PDF/`pdf.py` with `pypdf`→`pdfplumber` per-page escalation, Office/`office.py`,
   images/`image.py` via Tesseract only, in-process through libtesseract's C API (`extract/tesseract.py`
-  over ctypes, fed pixels Pillow decoded; the app bundles `//ext/tesseract` as `Frameworks/libtesseract.dylib`
-  over a codec-less `//ext/leptonica` and exports `GARAGE_LIBTESSERACT_PATH`/`TESSDATA_PREFIX`; elsewhere a
-  Homebrew libtesseract is found), code verbatim via `text.py`).
+  over ctypes, fed pixels Pillow decoded; `PythonXPCService.framework` carries `//ext/tesseract` (over a
+  codec-less `//ext/leptonica`) in its `Frameworks` folder with `tessdata` beside it and links it, as it does
+  libpq, so `garage_rag.native` finds the loaded copy; elsewhere the linker's search applies), code verbatim
+  via `text.py`).
 - **Quality gate** (`extract/quality.py`) — content-based backstop against non-prose text (repeated
   line shapes, timestamp prefixes, hex/base64 density) that path rules alone miss.
 - **Attribute** (`attribute/`) — precedence-ordered signals, each recording its `evidence`: git
