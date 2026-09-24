@@ -15,7 +15,7 @@ struct GarageApp: App {
         WindowGroup("Garage", id: Self.mainWindowID) {
             ContentView()
                 .environmentObject(appState)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: MainWindowSizing.minimumSize.width, minHeight: MainWindowSizing.minimumSize.height)
                 .onAppear {
                     appDelegate.appState = appState
                     appState.launch()

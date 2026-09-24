@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import PythonXPCService
 
 /// Detects whether the code is currently running within a test environment.
 public var isRunningInTestEnvironment: Bool {
@@ -120,7 +121,10 @@ public enum LMStudioTokenStore {
             if let _storage {
                 return _storage
             }
-            let defaultStore: LMStudioTokenStoring = isRunningInTestEnvironment ? InMemoryLMStudioTokenStore() : KeychainLMStudioTokenStore()
+            // An overridden data folder (UI tests) stays off the Keychain as well: the real token is not
+            // the test's to read, and a rebuilt app would wait on a Keychain access prompt.
+            let isolated = isRunningInTestEnvironment || GarageAppGroup.dataDirectoryOverride != nil
+            let defaultStore: LMStudioTokenStoring = isolated ? InMemoryLMStudioTokenStore() : KeychainLMStudioTokenStore()
             _storage = defaultStore
             return defaultStore
         }

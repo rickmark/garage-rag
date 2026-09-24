@@ -63,10 +63,20 @@ struct ContentView: View {
             BugNub()
                 .padding(.bottom, 48)
         }
-        .background(WindowReader { window = $0 })
+        .background(WindowReader { resolved in
+            window = resolved
+            // Already showing the assistant when the window appears: a first launch, or the relaunch
+            // after "Reset Database", which restores the last frame.
+            if appState.firstRun.isActive {
+                MainWindowSizing.sizeForFirstRun(resolved)
+            }
+        })
         .onChange(of: appState.firstRun.isActive) { wasActive, isActive in
-            // The assistant fits the window's minimum size; the pages behind it want more room.
-            if wasActive, !isActive, let window {
+            // The assistant has its own size; the pages behind it want at least the working size.
+            guard let window, wasActive != isActive else { return }
+            if isActive {
+                MainWindowSizing.sizeForFirstRun(window)
+            } else {
                 MainWindowSizing.growAfterFirstRun(window)
             }
         }

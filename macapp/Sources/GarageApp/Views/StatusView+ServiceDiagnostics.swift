@@ -428,13 +428,6 @@ extension StatusView {
                     .buttonStyle(.bordered)
                     .disabled(isTesting || service.isChecking)
 
-                    Button("Ping") {
-                        Task { await appState.xpcServices.refresh(serviceId: service.id) }
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                    .disabled(service.isChecking || appState.xpcServices.isRefreshingAll)
-
                     Button("Restart") {
                         Task { await appState.xpcServices.restart(serviceId: service.id) }
                     }

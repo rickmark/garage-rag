@@ -10,10 +10,12 @@ public enum GaragePostgresEndpoint {
     /// Fixed, non-default port so this never collides with a system Postgres on 5432.
     public static let port = 14824
     public static let databaseName = "garage-rag"
-    /// A separate item when the data folder is overridden (UI tests), so an isolated cluster never
-    /// reads or replaces the real database's password.
-    public static var keychainService: String {
-        GarageAppGroup.dataDirectoryOverride == nil ? "com.rickmark.garage.postgres" : "com.rickmark.garage.postgres.isolated"
+    public static let keychainService = "com.rickmark.garage.postgres"
+    /// Where the password lives instead when the data folder is overridden (UI tests): inside that
+    /// throwaway folder, so an isolated cluster never reads or replaces the real database's password,
+    /// and a rebuilt (newly ad-hoc signed) app never waits on a Keychain access prompt at launch.
+    public static var isolatedPasswordFile: URL? {
+        GarageAppGroup.dataDirectoryOverride?.appendingPathComponent("postgres-password", isDirectory: false)
     }
     public static var keychainAccount: String { NSUserName() }
     public static var username: String { NSUserName() }
@@ -35,6 +37,10 @@ public enum GaragePostgresEndpoint {
 
     /// The password the app stored, or nil if the app has never created the cluster.
     public static func readPassword() throws -> String? {
+        if let file = isolatedPasswordFile {
+            guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+            return try String(contentsOf: file, encoding: .utf8)
+        }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: keychainService,

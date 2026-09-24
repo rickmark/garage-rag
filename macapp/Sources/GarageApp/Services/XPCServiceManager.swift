@@ -237,7 +237,9 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
                 if Task.isCancelled { break }
                 let (managerLogs, streamLogs) = buffer.drain()
                 guard !managerLogs.isEmpty || !streamLogs.isEmpty else { continue }
-                await MainActor.run {
+                // Hand the main actor this iteration's values: the weak captures are vars, which a
+                // concurrently-executing closure may not read. Both types are @MainActor, so Sendable.
+                await MainActor.run { [manager, osLogStreamService] in
                     if !managerLogs.isEmpty {
                         manager?.appendLogs(managerLogs)
                     }

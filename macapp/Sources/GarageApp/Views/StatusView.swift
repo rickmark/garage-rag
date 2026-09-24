@@ -221,7 +221,8 @@ struct StatusView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             } else {
-                Text("\(stats.uningestedElements)")
+                // The headline is what's in the corpus; what's still pending goes in the caption.
+                Text("\(stats.documentsCount)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
 
                 ProgressView(value: stats.ingestionProgressFraction)
@@ -230,11 +231,11 @@ struct StatusView: View {
                 if stats.uningestedElements > 0 {
                     let total = max(stats.totalExpectedElements, stats.totalSeenFiles)
                     if total > 0 {
-                        Text("\(stats.uningestedElements) not ingested (\(stats.documentsCount) of \(total) files indexed)")
+                        Text("\(stats.documentsCount) of \(total) files ingested (\(stats.uningestedElements) pending)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("\(stats.uningestedElements) element(s) not ingested")
+                        Text("\(stats.documentsCount) ingested (\(stats.uningestedElements) pending)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

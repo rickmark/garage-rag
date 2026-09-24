@@ -221,6 +221,13 @@ final class AppState: ObservableObject {
     func startPostgres() async {
         do {
             try await postgres.start()
+            // The migrations in data/sql are idempotent and meant to be re-applied, so bring the
+            // schema up to date at start rather than waiting for Apply on the Database page.
+            // applyMigrations() also starts MCP and gRPC and refreshes what the pages show.
+            if postgres.status == .needsMigration {
+                await applyMigrations()
+                return
+            }
             if postgres.status == .running {
                 // Each daemon starts independently: an MCP failure must not keep the gRPC backend down.
                 try? await mcp.start()
@@ -338,6 +345,7 @@ final class AppState: ObservableObject {
                 }
             }
         } catch {
+            logger.error("Corpus stats query failed: \(error.localizedDescription, privacy: .public)")
             var fallback = self.corpusStats
             if fallback.sourcesCount == 0 {
                 fallback.sourcesCount = registeredSources.count
