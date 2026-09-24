@@ -20,12 +20,12 @@ final class SourcesUITests: GarageUITestCase {
         open(section: "sources", file: file, line: line)
         let slugField = element(identifier: "sources.form.slug")
         XCTAssertTrue(slugField.waitForExistence(timeout: 15), "no slug field", file: file, line: line)
-        replaceText(in: slugField, with: slug)
-        replaceText(in: element(identifier: "sources.form.root"), with: root.path)
+        replaceText(in: slugField, with: slug, file: file, line: line)
+        replaceText(in: element(identifier: "sources.form.root"), with: root.path, file: file, line: line)
 
         let submit = element(identifier: "sources.form.submit")
         XCTAssertTrue(waitForEnabled(submit), "Add / Update Source stayed disabled", file: file, line: line)
-        submit.click()
+        click(submit)
         XCTAssertTrue(
             element(identifier: "sources.row.\(slug)").waitForExistence(timeout: 30),
             "the new source did not appear in the list",
@@ -152,7 +152,7 @@ final class SourcesUITests: GarageUITestCase {
         replaceText(in: element(identifier: "sources.form.root"), with: second.path)
         let submit = element(identifier: "sources.form.submit")
         XCTAssertTrue(waitForEnabled(submit, timeout: 10), "Add / Update Source is disabled while maintenance runs")
-        submit.click()
+        click(submit)
 
         XCTAssertTrue(
             element(identifier: "sources.row.uitest-more").waitForExistence(timeout: 15),
