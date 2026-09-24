@@ -59,6 +59,7 @@ macos_application(
         "//docs:config_schema": "Resources",
         "//data/notices:third_party_notices": "Resources",
         "//garage_python:LICENSE": "Resources",
+        ":PrivacyInfo.xcprivacy": "Resources",
     },
     app_icons = ["//macapp:GarageApp.xcassets"],
     bundle_id = "me.rickmark.garage-rag",

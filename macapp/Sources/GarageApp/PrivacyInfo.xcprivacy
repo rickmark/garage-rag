@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	The app's privacy manifest, copied to Contents/Resources (see `additional_contents`
+	in this directory's BUILD.bazel). It covers every binary in the bundle: the app,
+	its launchers and XPC services, PythonXPCService.framework (CPython, libpq,
+	Tesseract) and the bundled Postgres, all of which ship as the app's own code.
+
+	Garage collects no data and does no tracking. The required-reason APIs:
+	- UserDefaults: the app's own preferences (splash, first run, MCP registrations).
+	- File timestamps: modification dates of the files in the sources the user picked,
+	  so ingest can skip unchanged files, and of the app's own logs and data folder.
+	- System boot time: monotonic clocks (mach_absolute_time) in Swift, CPython and
+	  Postgres, used only to measure elapsed time.
+	- Disk space: statfs/statvfs in the bundled CPython and Postgres, used to check
+	  that there is room before writing.
+	Update this file when a new required-reason API or a network request that
+	collects data is added.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+				<string>3B52.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
