@@ -63,6 +63,7 @@ struct ContentView: View {
             List(AppSection.allCases, selection: $selection) { section in
                 Label(section.rawValue, systemImage: section.symbol)
                     .tag(section)
+                    .accessibilityIdentifier("sidebar.\(section)")
             }
             .navigationSplitViewColumnWidth(190)
         } detail: {

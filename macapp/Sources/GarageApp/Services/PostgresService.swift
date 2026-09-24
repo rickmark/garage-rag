@@ -328,7 +328,8 @@ final class PostgresService: ObservableObject {
         // The corpus is still in the pre-App-Group folder (GarageDataMigration could not move it,
         // usually because a postgres was still running from it). A new, empty cluster here would
         // hide it, so refuse and let the next launch finish the move.
-        if !isRunningInTestEnvironment, GarageDataMigration.hasUnmigratedCluster() {
+        if !isRunningInTestEnvironment, GarageAppGroup.dataDirectoryOverride == nil,
+           GarageDataMigration.hasUnmigratedCluster() {
             throw PostgresError.other(
                 "The database is still in \(GarageAppGroup.legacyDataDirectory.path) and could not be moved "
                     + "into the shared folder \(Paths.appSupportDir.path). Quit every copy of Garage, "

@@ -224,3 +224,13 @@ alias(
     name = "distribute_appstore",
     actual = ":universal_store",
 )
+
+# rules_apple's tree-artifact bundling, which rules_xcodeproj always turns on
+# (`--define=apple.experimental.tree_artifact_outputs=1` in its bazelrc). Its bundler
+# copies `framework` resources as they are rather than unpacking zips; see
+# //bazel:codesign.bzl's framework_as_directory.
+config_setting(
+    name = "tree_artifact_outputs",
+    define_values = {"apple.experimental.tree_artifact_outputs": "1"},
+    visibility = ["//visibility:public"],
+)

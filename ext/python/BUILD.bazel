@@ -112,6 +112,10 @@ codesign(
     name = "python_framework",
     src = ":python_framework_raw",
     out = "Python.framework",
+    framework_as_directory = select({
+        "//bazel:tree_artifact_outputs": True,
+        "//conditions:default": False,
+    }),
     is_framework = True,
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",

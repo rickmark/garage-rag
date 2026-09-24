@@ -194,6 +194,32 @@ final class AppStateTests: XCTestCase {
         XCTAssertNil(AppState.databaseResetParent(in: ["GarageApp", GarageAppLaunch.databaseResetArgument, "0"]))
     }
 
+    func testRelaunchArgumentsCarryTheResetParent() {
+        XCTAssertEqual(
+            AppState.relaunchArguments(parentPID: 4242, currentArguments: ["GarageApp"]),
+            [GarageAppLaunch.databaseResetArgument, "4242"]
+        )
+    }
+
+    func testRelaunchArgumentsForwardTheDataDirectoryOverride() {
+        let arguments = AppState.relaunchArguments(
+            parentPID: 4242,
+            currentArguments: ["GarageApp", GarageAppLaunch.dataDirectoryArgument, "/tmp/garage-ui-test", "--other"]
+        )
+        XCTAssertEqual(arguments, [
+            GarageAppLaunch.databaseResetArgument, "4242",
+            GarageAppLaunch.dataDirectoryArgument, "/tmp/garage-ui-test",
+        ])
+    }
+
+    func testRelaunchArgumentsDoNotForwardAnEarlierResetParent() {
+        let arguments = AppState.relaunchArguments(
+            parentPID: 7,
+            currentArguments: ["GarageApp", GarageAppLaunch.databaseResetArgument, "4242"]
+        )
+        XCTAssertEqual(arguments, [GarageAppLaunch.databaseResetArgument, "7"])
+    }
+
     func testWaitForExitReturnsAtOnceForAProcessThatIsGone() async {
         let started = Date()
         // Above macOS's pid ceiling, so no such process.

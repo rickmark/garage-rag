@@ -414,7 +414,7 @@ final class AppState: ObservableObject {
     private func relaunchAfterDatabaseReset() {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
-        configuration.arguments = [GarageAppLaunch.databaseResetArgument, String(getpid())]
+        configuration.arguments = Self.relaunchArguments(parentPID: getpid(), currentArguments: CommandLine.arguments)
         // Before the new instance can start anything: a quit from here on must leave its services alone.
         markHandedOffToRelaunch()
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
@@ -446,6 +446,18 @@ final class AppState: ObservableObject {
         RunLoop.main.perform {
             NSApp.terminate(nil)
         }
+    }
+
+    /// Arguments for the instance a reset launches: the reset flag with this pid, and the
+    /// `--data-directory` override when this instance runs on one. LaunchServices passes neither the
+    /// arguments nor the environment on, and without it the new instance would open the real folder.
+    nonisolated static func relaunchArguments(parentPID: pid_t, currentArguments: [String]) -> [String] {
+        var arguments = [GarageAppLaunch.databaseResetArgument, String(parentPID)]
+        if let flag = currentArguments.firstIndex(of: GarageAppLaunch.dataDirectoryArgument),
+           flag + 1 < currentArguments.count {
+            arguments += [GarageAppLaunch.dataDirectoryArgument, currentArguments[flag + 1]]
+        }
+        return arguments
     }
 
     /// Second half of a reset, once Postgres has initialized a new cluster: apply the schema,

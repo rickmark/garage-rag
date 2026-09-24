@@ -83,6 +83,9 @@ xcodeproj(
             "//macapp/Tests/GarageAppUITests:GarageAppUITests",
         ),
         top_level_target(
+            "//macapp/Tests/GarageAppResetUITests:GarageAppResetUITests",
+        ),
+        top_level_target(
             "//macapp/Tests/LlamaClientTests:LlamaClientTests",
         ),
     ],
