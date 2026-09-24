@@ -37,7 +37,7 @@ py_test(
 py_test(
     name = "test_config",
     srcs = ["test_config.py"],
-    data = ["//data/schema:config_schema"],
+    data = ["//docs:config_schema"],
     deps = [
         "//garage_python/src/garage_rag/config",
         "@pypi//pytest",
@@ -146,7 +146,7 @@ py_test(
     name = "test_model_catalog",
     srcs = ["test_model_catalog.py"],
     data = [
-        "//data/models:model_manifest",
+        "//docs:model_manifest",
         "//data/sql:sql_schema",
     ],
     deps = [
@@ -160,7 +160,7 @@ py_test(
 py_test(
     name = "test_registry_dims",
     srcs = ["test_registry_dims.py"],
-    data = ["//data/models:model_manifest"],
+    data = ["//docs:model_manifest"],
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",

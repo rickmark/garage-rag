@@ -108,8 +108,13 @@ enum Paths {
         return bundledPostgresConf
     }
 
-    /// Path to models.json manifest file.
+    /// Path to the models.json manifest: the one last fetched from the website (`ModelCatalog`),
+    /// else the copy in the bundle.
     static var modelsJSON: URL {
+        let fetched = ModelCatalog.fetchedURL
+        if FileManager.default.fileExists(atPath: fetched.path) {
+            return fetched
+        }
         if let resourceURL = Bundle.main.url(forResource: "models", withExtension: "json") {
             return resourceURL
         }
@@ -120,11 +125,11 @@ enum Paths {
         if FileManager.default.fileExists(atPath: bundled.path) {
             return bundled
         }
-        let bundledDataModels = root.appendingPathComponent("data/models/models.json")
+        let bundledDataModels = root.appendingPathComponent("docs/.data/models.json")
         if FileManager.default.fileExists(atPath: bundledDataModels.path) {
             return bundledDataModels
         }
-        let devPath = devRepoRoot.appendingPathComponent("data/models/models.json")
+        let devPath = devRepoRoot.appendingPathComponent("docs/.data/models.json")
         if FileManager.default.fileExists(atPath: devPath.path) {
             return devPath
         }

@@ -24,6 +24,11 @@ plugins:
   - jekyll-sitemap
   - jekyll-redirect-from
 
+# Jekyll skips dot-directories; .data holds files the app and editors fetch from the site
+# (models.json, garage.schema.json).
+include:
+  - .data
+
 exclude:
   - Gemfile
   - Gemfile.lock

@@ -21,3 +21,16 @@ jekyll_site(
     jekyll = "@bundle//bin:jekyll",
     visibility = ["//visibility:public"],
 )
+
+# Served from the site under /.data/ (https://garagerag.app/.data/...), and bundled into the app.
+filegroup(
+    name = "model_manifest",
+    srcs = [".data/models.json"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "config_schema",
+    srcs = [".data/garage.schema.json"],
+    visibility = ["//visibility:public"],
+)

@@ -249,7 +249,7 @@ def config_schema(
         bool,
         typer.Option(
             "--publish",
-            help="Write to data/schema/ in the repository, where it is committed and served from.",
+            help="Write to docs/.data/ in the repository, where it is committed and the website serves it.",
         ),
     ] = False,
 ) -> None:

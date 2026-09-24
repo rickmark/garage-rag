@@ -36,7 +36,7 @@ final class GarageConfigLoaderTests: XCTestCase {
         // allow_cloud_enrichment is a retired key: a config that still carries it must load.
         let json = """
         {
-            "$schema": "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/garage.schema.json",
+            "$schema": "https://garagerag.app/.data/garage.schema.json",
             "database": {
                 "url": "postgresql+psycopg:///rag"
             },
