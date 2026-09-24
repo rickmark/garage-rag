@@ -52,14 +52,14 @@ codesign(
     visibility = ["//visibility:public"],
 )
 
-# libtesseract, shipped as `Contents/Frameworks/libtesseract.dylib` and loaded in-process by
-# garage_rag.extract.tesseract through ctypes. Like libpq it must carry the app's Team ID
-# for library validation. GarageApp's Python runtime exports its location
-# (GARAGE_LIBTESSERACT_PATH) along with the language data's (TESSDATA_PREFIX).
+# libtesseract, shipped inside PythonXPCService.framework (see python_framework_libs) and used
+# by garage_rag.extract.tesseract through ctypes. Like libpq it must carry the app's Team ID
+# for library validation. Named for its install name (@rpath/libtesseract.5.5.dylib), which is
+# what the framework's load command asks dyld for.
 codesign(
     name = "libtesseract",
     src = "//ext/tesseract",
-    out = "libtesseract.dylib",
+    out = "libtesseract.5.5.dylib",
     options = ["runtime"],
     signing_identity = select({
         "//bazel:is_developer_id": "Developer ID Application: Richard Penwell (DWVXMLB45Y)",
@@ -69,7 +69,8 @@ codesign(
     visibility = ["//visibility:public"],
 )
 
-# `Contents/Resources/tesseract/tessdata/eng.traineddata`, the TESSDATA_PREFIX above.
+# `PythonXPCService.framework/tessdata/eng.traineddata`, next to the framework's `Frameworks`
+# folder, where garage_rag.extract.tesseract looks for it.
 copy_to_directory(
     name = "tessdata_output",
     srcs = ["//ext/tesseract:tessdata"],
@@ -79,9 +80,10 @@ copy_to_directory(
     visibility = ["//visibility:public"],
 )
 
-# PostgreSQL client library shipped as `Contents/Frameworks/libpq.dylib`. psycopg's pure
-# Python implementation loads it through ctypes; it must carry the app's Team ID
-# (hardened runtime / library validation rejects the Homebrew copy) and the runtime option.
+# PostgreSQL client library, shipped inside PythonXPCService.framework (see
+# python_framework_libs). psycopg's pure Python implementation uses it through ctypes; it must
+# carry the app's Team ID (hardened runtime / library validation rejects the Homebrew copy) and
+# the runtime option.
 codesign(
     name = "libpq",
     src = "//ext:libpq_dylib",
@@ -92,6 +94,21 @@ codesign(
         "//bazel:is_store": STORE_IDENTITY,
         "//conditions:default": "-",
     }),
+    visibility = ["//visibility:public"],
+)
+
+# `PythonXPCService.framework/Frameworks/`: the libraries the framework links with load
+# commands (`@rpath`, resolved through its `@loader_path/Frameworks` rpath). dyld loads them
+# when a service or launcher starts, before the App Sandbox applies, and Python finds them among
+# the process's loaded images; nothing locates them by path.
+copy_to_directory(
+    name = "python_framework_libs",
+    srcs = [
+        ":libpq",
+        ":libtesseract",
+    ],
+    out = "Frameworks",
+    root_paths = ["macapp/externals"],
     visibility = ["//visibility:public"],
 )
 

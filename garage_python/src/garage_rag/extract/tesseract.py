@@ -5,11 +5,11 @@ image to a temp file for it, and reloads the language model every time. Here the
 pixels Pillow already decoded go straight to ``TessBaseAPISetImage``, and each
 thread keeps one initialised engine, so the model loads once.
 
-The library is found, in order, at ``GARAGE_LIBTESSERACT_PATH`` (GarageApp's
-Python runtime exports its bundled ``Contents/Frameworks/libtesseract.dylib``),
-the usual Homebrew locations, then the dynamic linker's search. Language data
-comes from ``TESSDATA_PREFIX`` when set (the app exports its bundled
-``Resources/tesseract/tessdata``), else the library's compiled-in default.
+In the app, ``PythonXPCService.framework`` links libtesseract, so it is already
+loaded (:func:`garage_rag.native.loaded_library`) and its English data sits in the
+framework's ``tessdata`` folder, beside the ``Frameworks`` folder that holds the
+library. Elsewhere (a venv) the dynamic linker's search finds the library, and
+Tesseract's own default (or ``TESSDATA_PREFIX``) finds the data.
 """
 
 from __future__ import annotations
@@ -19,17 +19,13 @@ import ctypes.util
 import os
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image
 
-LIBRARY_ENV = "GARAGE_LIBTESSERACT_PATH"
-TESSDATA_ENV = "TESSDATA_PREFIX"
-LANGUAGE = "eng"
+from garage_rag.native import loaded_library
 
-_HOMEBREW_CANDIDATES = (
-    "/opt/homebrew/lib/libtesseract.dylib",
-    "/usr/local/lib/libtesseract.dylib",
-)
+LANGUAGE = "eng"
 
 # TessPageIteratorLevel / TessPageSegMode values from publictypes.h.
 _RIL_WORD = 3
@@ -51,26 +47,29 @@ class Word:
 
 
 def _find_library() -> str:
-    explicit = os.environ.get(LIBRARY_ENV)
-    if explicit:
-        return explicit
-    for candidate in _HOMEBREW_CANDIDATES:
-        if os.path.exists(candidate):
-            return candidate
+    loaded = loaded_library("tesseract")
+    if loaded:
+        return loaded
     found = ctypes.util.find_library("tesseract")
     if found:
         return found
-    raise TesseractUnavailable(
-        f"libtesseract not found (set {LIBRARY_ENV}, or install tesseract so it is on the linker's search path)"
-    )
+    raise TesseractUnavailable("libtesseract not found: not loaded by the app's framework, nor on the linker's path")
+
+
+def _datapath(library: str) -> str | None:
+    """The framework's ``tessdata`` for a library in its ``Frameworks`` folder, else None
+    (Tesseract's own default, or ``TESSDATA_PREFIX``)."""
+    tessdata = Path(library).parent.parent / "tessdata"
+    return str(tessdata) if (tessdata / f"{LANGUAGE}.traineddata").is_file() else None
 
 
 _lib_lock = threading.Lock()
 _lib: ctypes.CDLL | None = None
+_lib_datapath: str | None = None
 
 
 def _library() -> ctypes.CDLL:
-    global _lib
+    global _lib, _lib_datapath
     with _lib_lock:
         if _lib is not None:
             return _lib
@@ -117,6 +116,7 @@ def _library() -> ctypes.CDLL:
         lib.TessResultIteratorGetUTF8Text.restype = ctypes.POINTER(ctypes.c_char)
         lib.TessDeleteText.argtypes = [ctypes.POINTER(ctypes.c_char)]
         _lib = lib
+        _lib_datapath = _datapath(path)
         return lib
 
 
@@ -130,7 +130,7 @@ class _Engine:
     def __init__(self) -> None:
         self.lib = _library()
         self.api = self.lib.TessBaseAPICreate()
-        datapath = os.environ.get(TESSDATA_ENV)
+        datapath = _lib_datapath
         rc = self.lib.TessBaseAPIInit3(self.api, datapath.encode() if datapath else None, LANGUAGE.encode())
         if rc != 0:
             self.lib.TessBaseAPIDelete(self.api)

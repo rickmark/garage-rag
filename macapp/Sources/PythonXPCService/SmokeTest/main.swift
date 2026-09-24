@@ -4,23 +4,10 @@ import PythonXPCService
 
 /// Command line smoke test for the embedded Python runtime used by the XPC services.
 ///
-/// Usage: `python_embed_smoke <path/to/Garage.app>` (or set `GARAGE_SITE_PYTHON` to a site-python directory).
+/// Usage: `python_embed_smoke`. It links PythonXPCService.framework like the services, so site-python, libpq and
+/// libtesseract come from the framework it loads (or set `GARAGE_SITE_PYTHON` to another site-python directory).
 /// Exits non-zero when the interpreter fails to start or any self test fails.
-let arguments = CommandLine.arguments.dropFirst()
 let runtime = GaragePythonRuntime.shared
-
-if let appPath = arguments.first {
-    guard let handle = FileHandle(forReadingAtPath: appPath) else {
-        fputs("cannot open \(appPath)\n", stderr)
-        exit(2)
-    }
-    do {
-        try runtime.setAppBundle(fileHandle: handle)
-    } catch {
-        fputs("setAppBundle(fileHandle:) failed: \(error.localizedDescription)\n", stderr)
-        exit(2)
-    }
-}
 
 // Initialize from a GCD worker exactly like GarageXPCServiceBase.bootstrap() does (host queue → ensurePythonReady),
 // so the large-stack hop inside initializeIfNeeded() is exercised rather than the 8 MB main thread.
@@ -52,6 +39,7 @@ let tests: [GarageXPCSelfTest] = [
     GarageXPCStandardSelfTests.sitePackages(modules: ["grpc", "psycopg", "google.protobuf", "garage_rag"]),
     GarageXPCStandardSelfTests.libpq(runtime: runtime),
     GarageXPCStandardSelfTests.tlsTrust(runtime: runtime),
+    GarageXPCStandardSelfTests.libtesseract(),
     GarageXPCStandardSelfTests.serviceModule("garage_rag.ingest", attributes: ["ingest_xpc", "cancel_ingest"]),
     GarageXPCStandardSelfTests.serviceModule("garage_rag.service.server", attributes: ["create_grpc_server"]),
     GarageXPCStandardSelfTests.database(urlProvider: { ProcessInfo.processInfo.environment[GarageXPCConfigurationKey.databaseURL] }),

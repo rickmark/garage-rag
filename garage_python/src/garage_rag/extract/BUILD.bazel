@@ -18,6 +18,7 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/native",
         "@pypi//openpyxl",
         "@pypi//pdfplumber",
         "@pypi//pillow",

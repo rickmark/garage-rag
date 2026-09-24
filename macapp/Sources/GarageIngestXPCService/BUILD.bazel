@@ -17,7 +17,6 @@ swift_library(
 macos_xpc_service(
     name = "GarageIngestXPCService",
     additional_linker_inputs = [
-        "//macapp/externals:libpq",
         "//ext/python:python_framework",
         "//ext/pythonkit:PythonKit",
         "//macapp/Sources/PythonXPCService:PythonXPCService_signed",
@@ -31,10 +30,6 @@ macos_xpc_service(
     }),
     infoplists = ["Info.plist"],
     linkopts = [
-        # Load libpq at launch, before the App Sandbox applies: a later dlopen of it by path is
-        # otherwise blocked in the sandboxed (App Store) build.
-        "-needed_library",
-        "$(location //macapp/externals:libpq)",
         "-F$(location //ext/python:python_framework)/..",
         "-framework",
         "Python",

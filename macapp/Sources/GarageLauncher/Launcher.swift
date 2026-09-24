@@ -131,13 +131,10 @@ public enum Launcher {
     }
 
     /// Starts the isolated interpreter (PyConfig API) with `home`, stdlib, `lib-dynload`
-    /// and `site-packages` from `site-python` in `PythonXPCService.framework`, exactly
-    /// like the XPC services do.
-    private static func startPython(appBundle: URL?) -> Bool {
+    /// and `site-packages` from `site-python` in `PythonXPCService.framework`, which the
+    /// launcher links, exactly like the XPC services do.
+    private static func startPython() -> Bool {
         let runtime = GaragePythonRuntime.shared
-        if let appBundle {
-            runtime.setAppBundle(url: appBundle)
-        }
         switch runtime.initializeIfNeeded() {
         case .success(let env):
             if isDebugging {
@@ -155,7 +152,7 @@ public enum Launcher {
     }
 
     private static func runPython(_ entry: LauncherEntryPoint, appBundle: URL?) -> Int32 {
-        guard startPython(appBundle: appBundle) else {
+        guard startPython() else {
             return 1
         }
         do {
@@ -173,7 +170,7 @@ public enum Launcher {
                 if isDebugging {
                     let env = ProcessInfo.processInfo.environment
                     fputs("[GARAGE_CLI] Dynamic Python: \(env["PYTHON_LIBRARY"] ?? "default")\n", stderr)
-                    fputs("[GARAGE_CLI] Dynamic Postgres: \(env["GARAGE_LIBPQ_PATH"] ?? "default")\n", stderr)
+                    fputs("[GARAGE_CLI] libpq: \(GaragePythonRuntime.shared.libpqPath ?? "not loaded")\n", stderr)
                     fputs("[GARAGE_CLI] Python sys.path: \(sys.path)\n", stderr)
                 }
 

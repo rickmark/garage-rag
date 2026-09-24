@@ -256,6 +256,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
             }
             tests.append(GarageXPCStandardSelfTests.libpq(runtime: runtime))
             tests.append(GarageXPCStandardSelfTests.tlsTrust(runtime: runtime))
+            tests.append(GarageXPCStandardSelfTests.libtesseract())
             tests.append(GarageXPCStandardSelfTests.database(urlProvider: { [weak self] in self?.databaseURL }))
             tests.append(GarageXPCStandardSelfTests.grpcConnection(hostProvider: { [weak self] in self?.grpcTarget }))
         }
@@ -291,7 +292,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
                 status: .failed,
                 durationMs: status.initializationMs ?? 0,
                 summary: "Python environment failed to load",
-                details: (status.error ?? "unknown error") + "\nApp bundle: \(runtime.appBundleURL?.path ?? "unresolved")",
+                details: status.error ?? "unknown error",
                 errorMessage: status.error
             ), at: 0)
             for test in selfTests() where test.requiresPython {
@@ -335,7 +336,6 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
             pid: ProcessInfo.processInfo.processIdentifier,
             uptimeSeconds: uptime,
             lifecycle: lifecycle.rawValue,
-            appBundlePath: runtime.appBundleURL?.path,
             logFilePath: GarageFileLogger.logFileURL(named: logFileName).path,
             python: runtime.statusSnapshot(),
             services: host.statusSnapshot(),

@@ -1,8 +1,9 @@
 """garage_rag.extract.tesseract: finding libtesseract, and OCR through its C API.
 
-The recognition tests need a real libtesseract and English language data. Bazel
-supplies the ones the app bundles (//ext/tesseract) on macOS through
-GARAGE_LIBTESSERACT_PATH / GARAGE_TEST_TESSDATA_FILE; elsewhere they skip.
+The recognition tests need a real libtesseract and English language data. On macOS
+Bazel supplies the ones the app bundles (//ext/tesseract): conftest.py loads the
+library from GARAGE_TEST_LIBTESSERACT, as the app's framework does, and
+GARAGE_TEST_TESSDATA_FILE names the data. Elsewhere they skip.
 """
 
 from __future__ import annotations
@@ -17,33 +18,39 @@ from garage_rag.extract import tesseract
 
 
 @pytest.fixture
-def no_library_env(monkeypatch):
-    monkeypatch.delenv(tesseract.LIBRARY_ENV, raising=False)
-    monkeypatch.setattr(tesseract, "_HOMEBREW_CANDIDATES", ())
+def nothing_loaded(monkeypatch):
+    monkeypatch.setattr(tesseract, "loaded_library", lambda name: None)
     monkeypatch.setattr(tesseract.ctypes.util, "find_library", lambda name: None)
 
 
-def test_explicit_path_wins(monkeypatch, no_library_env, tmp_path):
-    homebrew = tmp_path / "libtesseract.dylib"
-    homebrew.touch()
-    monkeypatch.setattr(tesseract, "_HOMEBREW_CANDIDATES", (str(homebrew),))
-    monkeypatch.setenv(tesseract.LIBRARY_ENV, "/Applications/Garage.app/Contents/Frameworks/libtesseract.dylib")
-    assert tesseract._find_library() == "/Applications/Garage.app/Contents/Frameworks/libtesseract.dylib"
+def test_the_loaded_library_wins(monkeypatch, nothing_loaded):
+    framework = (
+        "/Applications/Garage.app/Contents/Frameworks/PythonXPCService.framework/Frameworks/libtesseract.5.5.dylib"
+    )
+    monkeypatch.setattr(tesseract, "loaded_library", lambda name: framework)
+    monkeypatch.setattr(tesseract.ctypes.util, "find_library", lambda name: f"/usr/lib/lib{name}.dylib")
+    assert tesseract._find_library() == framework
 
 
-def test_homebrew_then_linker_search(monkeypatch, no_library_env, tmp_path):
-    homebrew = tmp_path / "libtesseract.dylib"
-    monkeypatch.setattr(tesseract, "_HOMEBREW_CANDIDATES", (str(homebrew),))
+def test_then_the_linker_search(monkeypatch, nothing_loaded):
     monkeypatch.setattr(tesseract.ctypes.util, "find_library", lambda name: f"/usr/lib/lib{name}.dylib")
     assert tesseract._find_library() == "/usr/lib/libtesseract.dylib"
 
-    homebrew.touch()
-    assert tesseract._find_library() == str(homebrew)
 
-
-def test_missing_library_says_how_to_fix_it(no_library_env):
-    with pytest.raises(tesseract.TesseractUnavailable, match=tesseract.LIBRARY_ENV):
+def test_missing_library_is_unavailable(nothing_loaded):
+    with pytest.raises(tesseract.TesseractUnavailable, match="not loaded"):
         tesseract._find_library()
+
+
+def test_data_comes_from_the_frameworks_tessdata(tmp_path):
+    framework = tmp_path / "PythonXPCService.framework"
+    (framework / "Frameworks").mkdir(parents=True)
+    (framework / "tessdata").mkdir()
+    library = framework / "Frameworks" / "libtesseract.5.5.dylib"
+    assert tesseract._datapath(str(library)) is None, "no language data yet"
+
+    (framework / "tessdata" / "eng.traineddata").touch()
+    assert tesseract._datapath(str(library)) == str(framework / "tessdata")
 
 
 @pytest.mark.parametrize(
@@ -60,14 +67,15 @@ def test_transparency_goes_onto_white():
 
 
 needs_library = pytest.mark.skipif(
-    not os.environ.get(tesseract.LIBRARY_ENV) or not os.environ.get("GARAGE_TEST_TESSDATA_FILE"),
+    not os.environ.get("GARAGE_TEST_LIBTESSERACT") or not os.environ.get("GARAGE_TEST_TESSDATA_FILE"),
     reason="needs the bundled libtesseract and tessdata (Bazel supplies them on macOS)",
 )
 
 
 @pytest.fixture
 def tessdata(monkeypatch):
-    monkeypatch.setenv(tesseract.TESSDATA_ENV, str(Path(os.environ["GARAGE_TEST_TESSDATA_FILE"]).resolve().parent))
+    # Tesseract's own variable, read when no datapath is passed: the test build is not in a framework.
+    monkeypatch.setenv("TESSDATA_PREFIX", str(Path(os.environ["GARAGE_TEST_TESSDATA_FILE"]).resolve().parent))
 
 
 def _sentence(mode: str = "RGB") -> Image.Image:
