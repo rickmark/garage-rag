@@ -338,8 +338,18 @@ final class GarageGRPCService: ObservableObject {
             let response = try await client.search(request, callOptions: callOptions)
             return response
         } catch {
-            throw GarageGRPCError.searchFailed(error.localizedDescription)
+            throw GarageGRPCError.searchFailed(Self.describe(error))
         }
+    }
+
+    /// The server's own message for a failed RPC. A `GRPCStatus` has no localized description, so
+    /// `localizedDescription` reads "The operation couldn't be completed. (GRPC.GRPCStatus error 1.)"
+    /// instead of, say, "no default model registered … run 'garage register-model' first".
+    nonisolated static func describe(_ error: Error) -> String {
+        if let status = error as? GRPCStatus {
+            return status.message ?? "\(status.code)"
+        }
+        return error.localizedDescription
     }
 
     func listDocuments(
@@ -375,7 +385,7 @@ final class GarageGRPCService: ObservableObject {
         do {
             return try await client.listDocuments(request, callOptions: callOptions)
         } catch {
-            throw GarageGRPCError.searchFailed(error.localizedDescription)
+            throw GarageGRPCError.searchFailed(Self.describe(error))
         }
     }
 
@@ -392,7 +402,7 @@ final class GarageGRPCService: ObservableObject {
         do {
             return try await client.getDocument(request, callOptions: callOptions)
         } catch {
-            throw GarageGRPCError.searchFailed(error.localizedDescription)
+            throw GarageGRPCError.searchFailed(Self.describe(error))
         }
     }
 
@@ -411,7 +421,7 @@ final class GarageGRPCService: ObservableObject {
             let statusRes = try await client.getStatus(Garage_StatusRequest(), callOptions: callOptions)
             queries.append("GetStatus: ready=\(statusRes.isReady), pid=\(statusRes.pid), db=\(statusRes.dbStatus), type=\(statusRes.serverType)")
         } catch {
-            errors.append("GetStatus error: \(error.localizedDescription)")
+            errors.append("GetStatus error: \(Self.describe(error))")
         }
 
         // 2. GetVersion
@@ -419,7 +429,7 @@ final class GarageGRPCService: ObservableObject {
             let versionRes = try await client.getVersion(Garage_VersionRequest(), callOptions: callOptions)
             queries.append("GetVersion: version=\(versionRes.version)")
         } catch {
-            errors.append("GetVersion error: \(error.localizedDescription)")
+            errors.append("GetVersion error: \(Self.describe(error))")
         }
 
         // 3. ListModels
@@ -427,7 +437,7 @@ final class GarageGRPCService: ObservableObject {
             let modelsRes = try await client.listModels(Garage_ListModelsRequest(), callOptions: callOptions)
             queries.append("ListModels: returned \(modelsRes.models.count) registered model(s)")
         } catch {
-            errors.append("ListModels error: \(error.localizedDescription)")
+            errors.append("ListModels error: \(Self.describe(error))")
         }
 
         // 4. ListSources
@@ -435,7 +445,7 @@ final class GarageGRPCService: ObservableObject {
             let sourcesRes = try await client.listSources(Garage_ListSourcesRequest(), callOptions: callOptions)
             queries.append("ListSources: returned \(sourcesRes.sources.count) configured source(s)")
         } catch {
-            errors.append("ListSources error: \(error.localizedDescription)")
+            errors.append("ListSources error: \(Self.describe(error))")
         }
 
         // 5. GetStats
@@ -443,7 +453,7 @@ final class GarageGRPCService: ObservableObject {
             let statsRes = try await client.getStats(Garage_StatsRequest(), callOptions: callOptions)
             queries.append("GetStats: docs=\(statsRes.documents), chunks=\(statsRes.chunks)")
         } catch {
-            errors.append("GetStats error: \(error.localizedDescription)")
+            errors.append("GetStats error: \(Self.describe(error))")
         }
 
         let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0

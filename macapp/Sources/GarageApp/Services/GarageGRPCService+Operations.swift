@@ -29,10 +29,7 @@ extension GarageGRPCService {
             if error is CancellationError || Task.isCancelled {
                 throw CancellationError()
             }
-            if let status = error as? GRPCStatus {
-                throw GarageGRPCError.rpcFailed(status.message ?? "\(status.code)")
-            }
-            throw GarageGRPCError.rpcFailed(error.localizedDescription)
+            throw GarageGRPCError.rpcFailed(Self.describe(error))
         }
     }
 

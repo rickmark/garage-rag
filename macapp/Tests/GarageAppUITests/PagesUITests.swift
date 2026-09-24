@@ -39,7 +39,9 @@ final class PagesUITests: GarageUITestCase {
         }
     }
 
-    func testSearchOnAnEmptyCorpusFindsNothing() throws {
+    /// Hybrid search needs an embedding model; on a new install none is registered, and the page
+    /// says so instead of failing without a reason.
+    func testSearchWithoutAModelSaysToRegisterOne() throws {
         try launchApp()
         waitForBackend()
         open(section: "search")
@@ -49,8 +51,9 @@ final class PagesUITests: GarageUITestCase {
         // The plain-style field only takes focus when the click lands on its text area.
         query.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).click()
         app.typeText("system architecture\n")
-        XCTAssertTrue(element(text: "No Results Found").waitForExistence(timeout: 60), "a search of an empty corpus did not end in No Results Found")
-        XCTAssertFalse(element(text: "Search Failed").exists, "a search of an empty corpus failed")
+        XCTAssertTrue(element(text: "Search Failed").waitForExistence(timeout: 60), "a search with no registered model did not report a failure")
+        XCTAssertTrue(element(textContaining: "register").exists, "the failure does not say to register a model")
+        XCTAssertTrue(button(label: "Retry").exists, "the failure offers no Retry")
     }
 
     func testMCPServerPageShowsStatusAndControls() throws {

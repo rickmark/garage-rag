@@ -5,7 +5,7 @@ import XCTest
 /// Base for the XCUITests: every test launches the real app on its own throwaway `--data-directory`,
 /// so it gets a new cluster, config and models folder and never touches the real corpus.
 ///
-/// Launch arguments set the two launch-time preferences in the argument domain, which overrides
+/// Launch arguments set the launch-time preferences in the argument domain, which overrides
 /// UserDefaults for that run without writing them. A test that clicks a control that saves a
 /// preference (the splash's "Show this window at launch", the setup assistant's Finish or Skip)
 /// does write the real `me.rickmark.garage-rag` domain, so tests leave those controls alone or
@@ -54,12 +54,15 @@ class GarageUITestCase: XCTestCase {
     /// Launches Garage on this test's data folder and waits for its main window (or, with
     /// `firstRunCompleted: false`, the setup assistant).
     @discardableResult
-    func launchApp(showSplash: Bool = false, firstRunCompleted: Bool = true) throws -> XCUIApplication {
+    func launchApp(showSplash: Bool = false, firstRunCompleted: Bool = true, automaticMaintenance: Bool = false) throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--data-directory", dataDirectory.path,
             "-garage.splash.showAtLaunch", showSplash ? "YES" : "NO",
             "-garage.firstRun.completed", firstRunCompleted ? "YES" : "NO",
+            // Off unless a test is about it: adding a source then starts a scan and ingest of every
+            // source, which makes the source a test just added busy (not removable) until it ends.
+            "-scheduledMaintenanceEnabled", automaticMaintenance ? "YES" : "NO",
             // Start from a clean window each time rather than the last run's restored state.
             "-ApplePersistenceIgnoreState", "YES",
         ]
@@ -126,6 +129,12 @@ class GarageUITestCase: XCTestCase {
     func element(text: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@ OR title == %@ OR value == %@ OR placeholderValue == %@", text, text, text, text)
+        ).firstMatch
+    }
+
+    func element(textContaining fragment: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", fragment, fragment)
         ).firstMatch
     }
 

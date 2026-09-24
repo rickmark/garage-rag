@@ -115,8 +115,10 @@ final class AppState: ObservableObject {
         mcp = mcpService
         grpc = grpcService
 
-        if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
-            scheduledMaintenanceEnabled = storedEnabled
+        // `bool(forKey:)` rather than `as? Bool`: a launch argument (`-scheduledMaintenanceEnabled NO`,
+        // as the UI tests pass) arrives as the string "NO", which only `bool(forKey:)` converts.
+        if UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) != nil {
+            scheduledMaintenanceEnabled = UserDefaults.standard.bool(forKey: Self.scheduledMaintenanceEnabledKey)
         } else {
             scheduledMaintenanceEnabled = true
         }
