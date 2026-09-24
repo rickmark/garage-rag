@@ -31,7 +31,11 @@ open macapp/Garage.xcodeproj
 # Unit tests
 aspect test //macapp/Tests/GarageAppUnitTests:GarageAppUnitTests
 aspect test //macapp/Tests/LlamaClientTests:LlamaClientTests
-aspect test //macapp/Tests/GarageAppUITests:GarageAppUITests
+
+# XCUITests (manual: quit Garage first; needs UI automation permission). Each test runs the
+# real app on a throwaway --data-directory; see macapp/Tests/GarageAppUITests.
+aspect run //:xcodeproj
+xcodebuild test -project macapp/Garage.xcodeproj -scheme GarageAppUITests -destination 'platform=macOS'
 
 # Distribution: thinned + notarized apps and .pkg installers (Developer ID),
 # or an App Store xcarchive
@@ -70,16 +74,16 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   in the framework because a sandboxed XPC service may read inside the frameworks it
   links but not elsewhere in the app bundle. The interpreter itself is the
   `Python.framework` from `//ext/python`, kept to the bare interpreter.
-- The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
-  is mapped before the App Sandbox applies; opening it later by path is denied.
-
-## A stable local signing identity
 - Next to `site-python` is an empty `openssl.cnf`. `GaragePythonRuntime` exports it as
   `OPENSSL_CONF` before the interpreter starts, so neither the bundled `_ssl` nor
   `cryptography`'s own statically linked OpenSSL reads a configuration from outside the
   bundle (`cryptography`'s compiled-in default is Homebrew's). At start-up it also calls
   `truststore.inject_into_ssl()`, so `ssl`'s default contexts verify against the macOS
   trust store; the bundled OpenSSL ships no CA files.
+- The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
+  is mapped before the App Sandbox applies; opening it later by path is denied.
+
+## A stable local signing identity
 
 The app keeps two secrets in the macOS Keychain — the Postgres superuser
 password (`PostgresService`) and the LM Studio API token (`LMStudioTokenStore`)
