@@ -315,7 +315,7 @@ with the Status page's quick-add cards.
 - `LlamaXPCService` runs llama.cpp in-process (`Sources/LlamaEngine`, linked from `//ext/llama_cpp` with Metal and Accelerate). Besides its XPC interface it listens on `http://127.0.0.1:8790` with the llama-server routes (`/health`, `/props`, `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/completion`, `/tokenize`, `/detokenize`, `/v1/rerank`); that port is how the Python `llama_xpc` provider embeds and distills facts. `GARAGE_LLAMA_HTTP_PORT` in the helper's environment overrides the port; the Python side reads `embedding.llama_host` from `garage.json`.
 - `XPCServiceManager` — pings all six helpers, streams their logs into the app, runs their in-service self tests and can restart or terminate them.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres and every helper to stop on every quit path (Cmd+Q, Dock quit, menu item).
-- Views: Status, Sources & Ingest, Models, Search, Documents, Logs, MCP Server. Sources
+- Views: Status, Sources, Models, Search, Documents, Logs, MCP Server. Sources
   provides manual ingestion and an optional persisted schedule that ingests all
   sources and then backfills every registered model. The Models view
   provides controls for Llama models and embedding models: it includes

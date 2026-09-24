@@ -289,7 +289,7 @@ enum PageStatus {
 
         return PageStatusItem(
             section: .sources,
-            title: "Sources & Ingest",
+            title: "Sources",
             severity: severity,
             statusHeadline: headline,
             statusDetails: details,

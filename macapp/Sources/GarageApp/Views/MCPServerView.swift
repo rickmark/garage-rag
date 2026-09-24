@@ -636,7 +636,7 @@ struct MCPServerView: View {
                 LabeledContent("Transport", value: "HTTP (Loopback) & Stdio (CLI)")
                 LabeledContent("Database Dependency", value: appState.postgres.status == .running ? "PostgreSQL Connected (Port \(appState.postgres.port))" : "PostgreSQL Disconnected")
 
-                Text("The app runs `garage-mcp` as a loopback-only HTTP service on \(appState.mcp.host):\(appState.mcp.port). Client registrations continue to use their own stdio process when invoked by external tools.")
+                Text("The app runs `garage-mcp` as a loopback-only HTTP service on \(appState.mcp.host):\(String(appState.mcp.port)). Client registrations continue to use their own stdio process when invoked by external tools.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)

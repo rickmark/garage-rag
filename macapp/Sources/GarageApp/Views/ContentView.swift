@@ -1,10 +1,11 @@
 import SwiftUI
+import AppKit
 import PythonXPCService
 
 enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
     case database = "Database"
-    case sources = "Sources & Ingest"
+    case sources = "Sources"
     case documents = "Documents"
     case models = "Models"
     case mcp = "MCP Server"
@@ -48,6 +49,7 @@ struct ContentView: View {
     @State private var activeSheet: ActiveSheet?
     @State private var pendingPresentation: Task<Void, Never>?
     @AppStorage(SplashPreferences.showAtLaunchKey) private var showSplashAtLaunch = true
+    @State private var window: NSWindow?
 
     var body: some View {
         Group {
@@ -60,6 +62,13 @@ struct ContentView: View {
         .overlay(alignment: .bottomTrailing) {
             BugNub()
                 .padding(.bottom, 48)
+        }
+        .background(WindowReader { window = $0 })
+        .onChange(of: appState.firstRun.isActive) { wasActive, isActive in
+            // The assistant fits the window's minimum size; the pages behind it want more room.
+            if wasActive, !isActive, let window {
+                MainWindowSizing.growAfterFirstRun(window)
+            }
         }
         .onAppear(perform: presentSplashAtLaunchIfNeeded)
         .onReceive(NotificationCenter.default.publisher(for: .garageShowSplash)) { _ in

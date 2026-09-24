@@ -132,10 +132,7 @@ extension StatusView {
                         isGrpcExpanded.toggle()
                     }
                 } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
+                    DisclosureChevron(isExpanded: isExpanded)
                 }
                 .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
                 .buttonStyle(.plain)
@@ -165,7 +162,7 @@ extension StatusView {
                         Text("Garage gRPC Daemon")
                             .font(.subheadline.bold())
 
-                        Text("\(appState.grpc.host):\(appState.grpc.port)")
+                        Text(verbatim: "\(appState.grpc.host):\(appState.grpc.port)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
 
@@ -219,14 +216,6 @@ extension StatusView {
                     .controlSize(.small)
                     .buttonStyle(.bordered)
                     .disabled(isTestingGrpc)
-
-                    Button(isExpanded ? "Hide Test" : "Expand Test") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isGrpcExpanded.toggle()
-                        }
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
                 }
             }
 
@@ -332,10 +321,7 @@ extension StatusView {
                         }
                     }
                 } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
+                    DisclosureChevron(isExpanded: isExpanded)
                 }
                 .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
                 .buttonStyle(.plain)
@@ -456,18 +442,6 @@ extension StatusView {
                     .buttonStyle(.borderedProminent)
                     .tint(service.isRunning ? .orange : .blue)
                     .disabled(service.isChecking || appState.xpcServices.isRestartingAll)
-
-                    Button(isExpanded ? "Hide Test" : "Expand Test") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if isExpanded {
-                                expandedServiceIds.remove(service.id)
-                            } else {
-                                expandedServiceIds.insert(service.id)
-                            }
-                        }
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
                 }
             }
 

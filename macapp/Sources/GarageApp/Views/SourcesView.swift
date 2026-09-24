@@ -33,7 +33,7 @@ struct SourcesView: View {
             }
             .padding(20)
         }
-        .navigationTitle("Sources & Ingest")
+        .navigationTitle("Sources")
         .onAppear {
             refreshSourcesAndTestDisk()
         }
@@ -329,45 +329,10 @@ struct SourcesView: View {
         let isCurrentIngest = appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug
 
         return VStack(alignment: .leading, spacing: 8) {
-            // Header Row: Slug, Badges, and Per-Source Ingest/Scan Actions
+            // Header Row: Slug and Per-Source Ingest/Scan Actions
             HStack(alignment: .center, spacing: 6) {
                 Text(source.slug)
                     .font(.headline)
-
-                originBadge(for: source.origin)
-
-                if isCurrentIngest {
-                    StatusBadge("INGESTING", tint: .blue)
-                }
-
-                if source.expectedElements > 0 {
-                    if source.documentCount >= source.expectedElements {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
-                    } else {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
-                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
-                    }
-                } else {
-                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
-                }
-
-                if !source.enabled {
-                    StatusBadge("DISABLED", tint: .secondary)
-                }
-
-                if source.includeCode {
-                    StatusBadge("CODE", tint: .purple)
-                }
-
-                if let access = accessResult {
-                    if access.isAccessible {
-                        StatusBadge("DISK OK", tint: .green)
-                    } else if access.requiresTCCPermission || access.tccCategory != nil {
-                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
-                    } else {
-                        StatusBadge("DISK INACCESSIBLE", tint: .red)
-                    }
-                }
 
                 Spacer()
 
@@ -460,7 +425,46 @@ struct SourcesView: View {
                     }
                     .accessibilityLabel("Source actions")
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .frame(width: 24)
+                }
+            }
+
+            // Badges wrap onto more lines rather than widening the card.
+            WrappingHStack {
+                originBadge(for: source.origin)
+
+                if isCurrentIngest {
+                    StatusBadge("INGESTING", tint: .blue)
+                }
+
+                if source.expectedElements > 0 {
+                    if source.documentCount >= source.expectedElements {
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
+                    } else {
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
+                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
+                    }
+                } else {
+                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
+                }
+
+                if !source.enabled {
+                    StatusBadge("DISABLED", tint: .secondary)
+                }
+
+                if source.includeCode {
+                    StatusBadge("CODE", tint: .purple)
+                }
+
+                if let access = accessResult {
+                    if access.isAccessible {
+                        StatusBadge("DISK OK", tint: .green)
+                    } else if access.requiresTCCPermission || access.tccCategory != nil {
+                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
+                    } else {
+                        StatusBadge("DISK INACCESSIBLE", tint: .red)
+                    }
                 }
             }
 
@@ -816,6 +820,7 @@ struct SourcesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
         }
     }

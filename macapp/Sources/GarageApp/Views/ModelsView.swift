@@ -410,21 +410,11 @@ struct ModelsView: View {
                             .disabled(llama.isBusy)
                         }
 
-                        // Verify SHA-256 button for downloaded file
-                        Button {
-                            Task {
-                                await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256)
-                            }
-                        } label: {
-                            if isVerifying {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Label("Verify SHA-256", systemImage: "checkmark.shield")
-                            }
+                        // Verifying is started from the actions menu; show that it is running.
+                        if isVerifying {
+                            ProgressView().controlSize(.mini)
+                                .help("Verifying the file's SHA-256 checksum")
                         }
-                        .controlSize(.small)
-                        .disabled(isVerifying)
-                        .help("Verify file SHA-256 checksum against preset specification")
                     }
 
                     // Backfill Embeddings button
@@ -434,14 +424,12 @@ struct ModelsView: View {
                     .controlSize(.small)
                     .disabled(notReady || appState.backfill.isRunning)
 
-                    // Test Embeddings button
-                    Button("Test") {
-                        selectForTesting(item: item)
-                    }
-                    .controlSize(.small)
-
                     // Context Menu for additional actions
                     Menu {
+                        Button("Test Embeddings") {
+                            selectForTesting(item: item)
+                        }
+
                         Button("Use in Configuration Form") {
                             populateForm(from: item)
                         }
@@ -484,6 +472,7 @@ struct ModelsView: View {
                     }
                     .accessibilityLabel("Model actions")
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .frame(width: 20)
                 }
             }
@@ -977,6 +966,7 @@ struct ModelsView: View {
                         }
                         .accessibilityLabel("Model actions")
                         .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
                         .frame(width: 20)
                     }
                 }
