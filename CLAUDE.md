@@ -112,7 +112,7 @@ the server is touched. Put new tests that need real SQL there, and keep logic te
 - **CI** runs them in the Linux `python` job (`.github/workflows/ci.yaml`) against a
   `pgvector/pgvector` service container. The macOS Bazel job has no server, so they skip there.
 - **Never point it at the app's own cluster.** The vendored Postgres (`//ext/postgres`, port 14824,
-  password in the Keychain) holds the real corpus. It is for end-to-end app testing, the launchers,
+  password in its data folder) holds the real corpus. It is for end-to-end app testing, the launchers,
   and the tests of the vendored build itself.
 
 ### CI
@@ -368,7 +368,7 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
 - `garage` and `garage-mcp` in `Contents/MacOS` are Swift launchers (`Sources/GarageLauncher`)
   for people at a terminal and for stdio MCP clients. When a command needs the database and
   nothing listens on 14824 they open the app hidden (`--background`), then read the Postgres
-  password from the Keychain and export `GARAGE_DATABASE_URL`; stdio registrations therefore
+  password from `postgres-password` in the data folder and export `GARAGE_DATABASE_URL`; stdio registrations therefore
   carry no database URL. Only these Mach-O launchers do this; `garage` from a venv is untouched.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage

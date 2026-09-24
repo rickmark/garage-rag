@@ -57,7 +57,7 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   bundled Python and run `garage_rag`'s Typer app or the stdio MCP server in-process. When a
   command needs the database and nothing listens on port 14824, the launcher opens Garage.app
   hidden (`--background`: services start, no window) and waits for Postgres; it then reads the
-  database password from the Keychain and exports `GARAGE_DATABASE_URL` itself. An explicit
+  database password from the data folder and exports `GARAGE_DATABASE_URL` itself. An explicit
   `GARAGE_DATABASE_URL` wins; `GARAGE_NO_APP_LAUNCH=1` fails instead of opening the app.
   `garage-mcp` does not wait for Postgres (only its tool calls use the database, and the MCP
   handshake must not sit behind a cold start) unless the app has never stored a password, and
@@ -95,10 +95,10 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
 
 ## A stable local signing identity
 
-The app keeps two secrets in the macOS Keychain — the Postgres superuser
-password (`PostgresService`) and the LM Studio API token (`LMStudioTokenStore`)
-— and a Keychain item's ACL names the application by its *designated
-requirement*. For an ad-hoc signature that requirement is
+The app keeps the LM Studio API token (`LMStudioTokenStore`) in the macOS
+Keychain, and a Keychain item's ACL names the application by its *designated
+requirement*. (The Postgres password is not in the Keychain: see "The database
+password" below.) For an ad-hoc signature that requirement is
 
 ```
 identifier "me.rickmark.garage-rag" and cdhash H"<hash of this exact build>"
@@ -162,9 +162,19 @@ llama.cpp, …) with the ad-hoc and Developer ID configs; only the codesign step
 archive you upload with `--config=appstore_release`, which is the same config plus
 `--compilation_mode=opt` and therefore rebuilds everything optimized.
 
-The first launch of a store build on a Mac that already ran the Developer ID build asks for Keychain
-access to the Postgres password item (`com.rickmark.garage.postgres`): the Developer ID build created
-it, and its access list names only that signature. Answer **Always Allow** once.
+### The database password
+
+The Postgres password lives in `postgres-password` in the data folder, owner-only (mode 0600), not in
+the Keychain (`GaragePostgresEndpoint.passwordFile`). Every Garage process reaches that folder through
+the app group: both builds, their XPC services and the `garage` / `garage-mcp` launchers, which as bare
+command-line tools could never share a Keychain item with the app. A Keychain item's ACL names one
+signature, so each re-signed release, each switch between the store and Developer ID builds, and each
+launcher got an access prompt; the app read it on the main thread, so the prompt froze the window.
+
+Builds before 1.5 kept the password in the legacy keychain (`com.rickmark.garage.postgres`). On the
+first start of an existing cluster without the file, the app reads that item off the main thread,
+writes the file and leaves the item in place for an older build. That read can still ask once; the
+window stays responsive while it does. A new cluster never consults the Keychain.
 
 ## Why Postgres is built from source
 

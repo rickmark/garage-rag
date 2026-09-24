@@ -63,6 +63,9 @@ codesign(
     src = ":garage_mcp_bin",
     entitlements = select({
         "//bazel:is_store": "//macapp/externals:GarageLauncher.entitlements",
+        # The app group alone, as the app and its XPC services carry: the launcher then reads
+        # the same data folder (and database password file) as the app.
+        "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],

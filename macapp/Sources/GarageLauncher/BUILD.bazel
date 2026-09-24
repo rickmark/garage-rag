@@ -1,7 +1,7 @@
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
 # Shared by the bundled `garage` and `garage-mcp` launchers: interpreter start-up,
-# starting the app when its database is down, and the Keychain-backed database URL.
+# starting the app when its database is down, and the database URL.
 swift_library(
     name = "GarageLauncher",
     srcs = glob(["*.swift"]),

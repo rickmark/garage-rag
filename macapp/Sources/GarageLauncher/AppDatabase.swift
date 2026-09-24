@@ -4,7 +4,7 @@ import PythonXPCService
 
 /// Gets a launcher connected to the app's private Postgres: starts Garage.app
 /// hidden when nothing is listening, then exports `GARAGE_DATABASE_URL` with the
-/// password read from the Keychain. Runs before Python starts, so the interpreter's
+/// password read from the shared data folder (`GaragePostgresEndpoint.passwordFile`). Runs before Python starts, so the interpreter's
 /// environment already has the URL.
 ///
 /// With `waitUntilReady` false (`garage-mcp`) the app is started but not waited

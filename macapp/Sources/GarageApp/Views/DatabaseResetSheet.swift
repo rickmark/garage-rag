@@ -134,7 +134,7 @@ struct DatabaseResetSheet: View {
             title: "Models, logs and settings",
             detail: "Downloaded model files, logs, and garage.json. The sources garage.json declares are registered again automatically."
         ),
-        ResetItem(title: "The database password", detail: "It stays in your Keychain; the new database uses it."),
+        ResetItem(title: "The database password", detail: "It stays in the data folder; the new database uses it."),
     ]
 }
 

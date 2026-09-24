@@ -156,6 +156,9 @@ final class GarageGRPCService: ObservableObject {
             status = .starting
 
             do {
+                // Reads the token off the main actor the first time, so a Keychain prompt never
+                // blocks the window; environment() then gets it from the store's cache.
+                try await LMStudioTokenStore.loadOffMainActor()
                 let options = try environment()
                 let result = try await client.startServer(host: host, port: currentPort, options: options)
                 if !result.success {

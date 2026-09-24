@@ -280,7 +280,7 @@ class GarageUITestCase: XCTestCase {
     /// Quits what this test started through the app's own quit path, then kills anything left by pid,
     /// and only processes whose arguments name this test's folder (never by name: that could reach a
     /// real Garage), then deletes the folder, which holds the isolated cluster's password too
-    /// (`GaragePostgresEndpoint.isolatedPasswordFile`).
+    /// (`GaragePostgresEndpoint.passwordFile`).
     private func cleanUp() {
         guard let dataDirectory else { return }
         let ours: (pid_t) -> Bool = { Self.isAlive($0) && Self.arguments(of: $0).contains(dataDirectory.path) }
