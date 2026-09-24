@@ -185,21 +185,28 @@ struct ModelsView: View {
                         .frame(width: 170)
 
                     if !modelDownload.downloadedModels.isEmpty {
-                        Button("Verify All SHA-256") {
+                        Button("Verify") {
                             verifyAllDownloadedModels()
                         }
                         .controlSize(.small)
                         .disabled(modelDownload.isBusy)
                     }
 
-                    Button("Backfill All (*)") {
+                    Button("Embed All") {
                         backfillAllModels()
                     }
                     .disabled(appState.registeredModels.isEmpty || notReady || appState.backfill.isRunning)
+                    .accessibilityIdentifier("models.embedAll")
 
-                    Button("Refresh") {
+                    Button {
                         refreshAll()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(.borderless)
+                    .help("Refresh models")
+                    .accessibilityLabel("Refresh models")
+                    .accessibilityIdentifier("models.refresh")
                     .disabled(busy || appState.isFetchingModels)
                 }
 
@@ -245,9 +252,6 @@ struct ModelsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(item.name)
-                            .font(.headline)
-
                         providerBadge(for: item.provider)
 
                         if item.isDefault {
@@ -278,6 +282,9 @@ struct ModelsView: View {
                             StatusBadge("DOWNLOADING", tint: .orange)
                         }
                     }
+
+                    Text(item.name)
+                        .font(.headline)
 
                     HStack(spacing: 8) {
                         Text("Slug: \(item.slug)")
@@ -313,7 +320,12 @@ struct ModelsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if let expectedSha = item.effectiveSha256 {
+                    // A computed hash that matches the expected one replaces it rather than repeating it.
+                    let verifiedMatch = verification.map { v in
+                        v.isValid && v.computedSha256.caseInsensitiveCompare(item.effectiveSha256 ?? "") == .orderedSame
+                    } ?? false
+
+                    if let expectedSha = item.effectiveSha256, !verifiedMatch {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.shield")
                                 .font(.caption2)
@@ -338,7 +350,7 @@ struct ModelsView: View {
                             Image(systemName: v.isValid ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .font(.caption2)
                                 .foregroundStyle(v.isValid ? .green : .red)
-                            Text("Computed SHA-256: \(v.computedSha256)")
+                            Text("\(verifiedMatch ? "Verified" : "Computed") SHA-256: \(v.computedSha256)")
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(v.isValid ? .green : .red)
                                 .textSelection(.enabled)
@@ -410,38 +422,26 @@ struct ModelsView: View {
                             .disabled(llama.isBusy)
                         }
 
-                        // Verify SHA-256 button for downloaded file
-                        Button {
-                            Task {
-                                await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256)
-                            }
-                        } label: {
-                            if isVerifying {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Label("Verify SHA-256", systemImage: "checkmark.shield")
-                            }
+                        // Verifying is started from the actions menu; show that it is running.
+                        if isVerifying {
+                            ProgressView().controlSize(.mini)
+                                .help("Verifying the file's SHA-256 checksum")
                         }
-                        .controlSize(.small)
-                        .disabled(isVerifying)
-                        .help("Verify file SHA-256 checksum against preset specification")
                     }
 
                     // Backfill Embeddings button
-                    Button("Backfill") {
+                    Button("Embed") {
                         backfillModel(slug: item.slug)
                     }
                     .controlSize(.small)
                     .disabled(notReady || appState.backfill.isRunning)
 
-                    // Test Embeddings button
-                    Button("Test") {
-                        selectForTesting(item: item)
-                    }
-                    .controlSize(.small)
-
                     // Context Menu for additional actions
                     Menu {
+                        Button("Test Embeddings") {
+                            selectForTesting(item: item)
+                        }
+
                         Button("Use in Configuration Form") {
                             populateForm(from: item)
                         }
@@ -452,7 +452,7 @@ struct ModelsView: View {
                             }
                         }
 
-                        Button("Backfill Embeddings") {
+                        Button("Embed") {
                             backfillModel(slug: item.slug)
                         }
                         .disabled(notReady || appState.backfill.isRunning)
@@ -469,7 +469,7 @@ struct ModelsView: View {
 
                         if isDownloaded, let dl = downloadedInfo {
                             Divider()
-                            Button("Verify SHA-256 Checksum") {
+                            Button("Verify") {
                                 Task { await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256) }
                             }
                             Button("Reveal in Finder") {
@@ -484,6 +484,7 @@ struct ModelsView: View {
                     }
                     .accessibilityLabel("Model actions")
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .frame(width: 20)
                 }
             }
@@ -717,7 +718,7 @@ struct ModelsView: View {
                     }
                 }
 
-                Toggle("Make default model for search and backfill", isOn: $makeDefault)
+                Toggle("Make default model for search and embedding", isOn: $makeDefault)
 
                 HStack {
                     Button("Register \(provider.displayName) Model") {
@@ -844,9 +845,6 @@ struct ModelsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(item.name)
-                            .font(.headline)
-
                         providerBadge(for: item.provider)
 
                         if isFactsModel {
@@ -863,6 +861,9 @@ struct ModelsView: View {
                             StatusBadge("DOWNLOADING", tint: .orange)
                         }
                     }
+
+                    Text(item.name)
+                        .font(.headline)
 
                     HStack(spacing: 8) {
                         Text("Slug: \(item.slug)")
@@ -963,7 +964,7 @@ struct ModelsView: View {
 
                     if isDownloaded, let dl = downloadedInfo {
                         Menu {
-                            Button("Verify SHA-256 Checksum") {
+                            Button("Verify") {
                                 Task { await modelDownload.verifyModelFile(path: dl.path, expectedSha256: item.effectiveSha256) }
                             }
                             Button("Reveal in Finder") {
@@ -977,6 +978,7 @@ struct ModelsView: View {
                         }
                         .accessibilityLabel("Model actions")
                         .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
                         .frame(width: 20)
                     }
                 }
@@ -1069,10 +1071,10 @@ struct ModelsView: View {
     var backfillOutputSection: some View {
         Group {
             if !appState.backfill.logs.isEmpty {
-                GroupBox("Embedding Backfill Output") {
+                GroupBox("Embedding Output") {
                     LogTableView(
                         lines: appState.backfill.logs,
-                        sourceName: "Backfill",
+                        sourceName: "Embed",
                         onClear: { appState.backfill.clearLogs() }
                     )
                     .frame(minHeight: 180, maxHeight: 300)

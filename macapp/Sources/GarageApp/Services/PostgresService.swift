@@ -816,17 +816,9 @@ final class PostgresService: ObservableObject {
         }
     }
 
-    /// The whole dashboard in one round trip: overall corpus counts, the
-    /// per-model embedded-chunk counts, and documents per source.
-    ///
-    /// The `emb_*` table names are only known at runtime (one table per
-    /// registered model), which is why the per-model counts go through
-    /// `query_to_xml` — it is the one way to count a dynamically named table
-    /// from plain SQL. `embedding_models` itself is read the same way so that a
-    /// database with the core schema but not the registry still reports its
-    /// core counts instead of failing outright. `format(%I)` plus the
-    /// `^emb_[a-z0-9_]+$` filter keep a hostile `table_name` from becoming
-    /// injected SQL.
+    /// Overall corpus counts and documents per source. The per-model counts come
+    /// from `modelRegistrySQL` and `countEmbeddings`: the bundled Postgres is built
+    /// without libxml, so `query_to_xml` cannot count a dynamically named table here.
     private static let corpusStatsSQL = """
     WITH latest_runs AS (
         SELECT DISTINCT ON (source_id) seen_count, indexed_count
@@ -849,41 +841,6 @@ final class PostgresService: ObservableObject {
         FROM sources s
         LEFT JOIN documents d ON d.source_id = s.id
         GROUP BY s.id, s.slug
-    ),
-    registry AS (
-        SELECT x.ord, x.slug, x.table_name, x.is_default
-        FROM xmltable(
-            '/table/row'
-            PASSING (
-                CASE WHEN to_regclass('public.embedding_models') IS NULL THEN NULL
-                     ELSE query_to_xml(
-                         'SELECT id, slug, table_name, is_default FROM embedding_models',
-                         false, false, ''
-                     )
-                END
-            )
-            COLUMNS ord int PATH 'id',
-                    slug text PATH 'slug',
-                    table_name text PATH 'table_name',
-                    is_default boolean PATH 'is_default'
-        ) x
-    ),
-    models AS (
-        SELECT
-            r.ord,
-            r.slug,
-            r.table_name,
-            r.is_default,
-            coalesce(
-                (xpath(
-                    '/row/c/text()',
-                    query_to_xml(format('SELECT count(*) AS c FROM public.%I', r.table_name), false, true, '')
-                ))[1]::text::bigint,
-                0
-            ) AS embedded_count
-        FROM registry r
-        WHERE r.table_name ~ '^emb_[a-z0-9_]+$'
-          AND to_regclass(format('public.%I', r.table_name)) IS NOT NULL
     )
     SELECT tag, c1, c2, c3, c4, c5, c6, c7, c8
     FROM (
@@ -898,13 +855,18 @@ final class PostgresService: ObservableObject {
                expected_elements::text AS c8
         FROM core
         UNION ALL
-        SELECT 1, ord, 'model', slug, table_name, is_default::text, embedded_count::text, '', '', '', ''
-        FROM models
-        UNION ALL
         SELECT 2, ord, 'source', slug, document_count::text, '', '', '', '', '', ''
         FROM per_source
     ) stat_rows
     ORDER BY section, ord;
+    """
+
+    /// Registered models and whether each one's vector table exists. A separate statement so that a
+    /// database without the registry (`004_registry.sql`) still reports its core counts.
+    private static let modelRegistrySQL = """
+    SELECT slug, table_name, is_default::text, (to_regclass(format('public.%I', table_name)) IS NOT NULL)::text
+    FROM embedding_models
+    ORDER BY id;
     """
 
     /// Queries the Postgres database for overall corpus, ingestion, and embedding statistics.
@@ -915,18 +877,12 @@ final class PostgresService: ObservableObject {
         var core: [String] = []
         var modelStats: [CorpusStats.ModelEmbeddingStats] = []
         var sourceDocumentCounts: [String: Int] = [:]
+        var existingModelTables: Set<String> = []
 
         for row in rows {
             switch row.first {
             case "core":
                 core = Array(row.dropFirst())
-            case "model" where row.count >= 5:
-                modelStats.append(CorpusStats.ModelEmbeddingStats(
-                    slug: row[1],
-                    tableName: row[2],
-                    isDefault: row[3] == "t" || row[3] == "true",
-                    embeddedCount: Int(row[4]) ?? 0
-                ))
             case "source" where row.count >= 3:
                 sourceDocumentCounts[row[1]] = Int(row[2]) ?? 0
             default:
@@ -937,6 +893,20 @@ final class PostgresService: ObservableObject {
         guard core.count >= 8 else {
             throw PostgresError.other("unexpected stats output: \(rows)")
         }
+
+        // Without the registry there is nothing to count; the core counts still stand.
+        for row in (try? await commandRunner().query(Self.modelRegistrySQL)) ?? [] where row.count >= 4 {
+            modelStats.append(CorpusStats.ModelEmbeddingStats(
+                slug: row[0],
+                tableName: row[1],
+                isDefault: row[2] == "true",
+                embeddedCount: 0
+            ))
+            if row[3] == "true" {
+                existingModelTables.insert(row[1])
+            }
+        }
+        modelStats = try await countEmbeddings(for: modelStats, existingTables: existingModelTables)
 
         // The headline "embedded" number is the default model's, so the
         // progress bar tracks the model search actually uses.
@@ -958,6 +928,35 @@ final class PostgresService: ObservableObject {
             sourceDocumentCounts: sourceDocumentCounts,
             lastUpdated: Date()
         )
+    }
+
+    /// Counts each model's `emb_<slug>` table in a second statement. Table names cannot be bound as
+    /// parameters, and the bundled Postgres has no libxml for `query_to_xml`, so the statement is built
+    /// here from names that exist and match the `emb_` pattern `db/models.py` generates.
+    private func countEmbeddings(
+        for models: [CorpusStats.ModelEmbeddingStats],
+        existingTables: Set<String>
+    ) async throws -> [CorpusStats.ModelEmbeddingStats] {
+        let countable = models.filter {
+            existingTables.contains($0.tableName) && $0.tableName.range(of: "^emb_[a-z0-9_]+$", options: .regularExpression) != nil
+        }
+        guard !countable.isEmpty else { return models }
+
+        let sql = countable
+            .map { "SELECT '\($0.tableName)', count(*) FROM public.\"\($0.tableName)\"" }
+            .joined(separator: " UNION ALL ")
+        var counts: [String: Int] = [:]
+        for row in try await commandRunner().query(sql) where row.count >= 2 {
+            counts[row[0]] = Int(row[1]) ?? 0
+        }
+        return models.map { model in
+            CorpusStats.ModelEmbeddingStats(
+                slug: model.slug,
+                tableName: model.tableName,
+                isDefault: model.isDefault,
+                embeddedCount: counts[model.tableName] ?? 0
+            )
+        }
     }
 
     private var isFailed: Bool {
@@ -1089,6 +1088,17 @@ private enum KeychainPostgresPassword {
     static func save(_ password: String) throws {
         if isRunningInTestEnvironment {
             inMemoryPassword = password
+            return
+        }
+        if let file = GaragePostgresEndpoint.isolatedPasswordFile {
+            // Owner-only from the moment it exists; the folder is a throwaway test folder.
+            guard FileManager.default.createFile(
+                atPath: file.path,
+                contents: Data(password.utf8),
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw PostgresError.other("could not save the Postgres password in \(file.path)")
+            }
             return
         }
         let query: [CFString: Any] = [

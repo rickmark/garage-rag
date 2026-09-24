@@ -48,6 +48,9 @@ struct FirstRunView: View {
             }
             .background(Color(nsColor: .controlBackgroundColor))
         }
+        // A container, so the identifier names this group instead of replacing the
+        // identifiers of every control inside it.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("firstRun.root")
     }
 
@@ -339,7 +342,7 @@ struct FirstRunSettingUpPage: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: 620, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func checkRow(_ check: FirstRunServiceCheck) -> some View {
@@ -396,7 +399,8 @@ struct FirstRunSelectDataPage: View {
 
     private var coordinator: FirstRunCoordinator { appState.firstRun }
 
-    private let columns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 12, alignment: .top)]
+    // Three columns at the assistant's width (MainWindowSizing.assistantSize).
+    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 12, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -483,6 +487,7 @@ struct FirstRunSelectDataPage: View {
         .padding(12)
         .background(Color.orange.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("firstRun.diskAccess")
     }
 
@@ -621,7 +626,7 @@ struct FirstRunSelectModelsPage: View {
 
             FirstRunSectionTitle(
                 title: "Text embedding models",
-                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and backfill."
+                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and embed with them."
             )
 
             if coordinator.embeddingPresets.isEmpty {
@@ -856,6 +861,7 @@ struct FirstRunSetupAgentPage: View {
         }
         .padding(12)
         .background(FirstRunStyle.cardBackground(selected: false))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("firstRun.mcpServer")
     }
 

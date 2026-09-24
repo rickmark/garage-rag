@@ -237,7 +237,9 @@ private final class XPCLogReceiverAdapter: NSObject, GarageXPCLogReceiverProtoco
                 if Task.isCancelled { break }
                 let (managerLogs, streamLogs) = buffer.drain()
                 guard !managerLogs.isEmpty || !streamLogs.isEmpty else { continue }
-                await MainActor.run {
+                // Hand the main actor this iteration's values: the weak captures are vars, which a
+                // concurrently-executing closure may not read. Both types are @MainActor, so Sendable.
+                await MainActor.run { [manager, osLogStreamService] in
                     if !managerLogs.isEmpty {
                         manager?.appendLogs(managerLogs)
                     }
@@ -803,17 +805,15 @@ public final class XPCServiceManager: ObservableObject {
         connection.resume()
         streamingConnections[key] = connection
 
-        // Hand over the app bundle, then opt this connection in to live log streaming on the service side.
+        // Opt this connection in to live log streaming on the service side.
         if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }) as? GarageCommonXPCServiceProtocol {
-            Self.configureBundle(on: proxy) {
-                proxy.subscribeToLogStream { subscribed in
-                    if subscribed {
-                        logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
-                    } else {
-                        logger.warning("Service '\(bundleId, privacy: .public)' declined the log streaming subscription")
-                    }
+            proxy.subscribeToLogStream { subscribed in
+                if subscribed {
+                    logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
+                } else {
+                    logger.warning("Service '\(bundleId, privacy: .public)' declined the log streaming subscription")
                 }
             }
         }
@@ -871,27 +871,6 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
-    /// Shared app bundle handshake: hands the helper an open descriptor of the app bundle first (so it can
-    /// resolve the bundle even when the path is not readable from its sandbox), then the URL as a fallback.
-    nonisolated static func configureBundle(on proxy: GarageCommonXPCServiceProtocol, completion: @escaping () -> Void) {
-        let bundleURL = Bundle.main.bundleURL
-        let sendURL = {
-            proxy.setAppBundleReference(bundleURL) { _, _ in
-                completion()
-            }
-        }
-
-        if let bundleHandle = FileHandle(forReadingAtPath: Bundle.main.bundlePath) {
-            proxy.setAppBundleFileHandle(bundleHandle) { _, _ in
-                sendURL()
-            }
-            // The descriptor is duplicated into the XPC message when the call is encoded; release our copy.
-            try? bundleHandle.close()
-        } else {
-            sendURL()
-        }
-    }
-
     /// Invalidates `connection` (which fails every call pending on it) once the timeout elapses, unless the returned
     /// task is cancelled first. Every one-shot helper call goes through this so a hung helper cannot wedge a caller.
     private static func invalidate(_ connection: NSXPCConnection, bundleId: String, afterNanoseconds timeoutNanoseconds: UInt64) -> Task<Void, Error> {
@@ -927,9 +906,7 @@ public final class XPCServiceManager: ObservableObject {
                 return
             }
 
-            configureBundle(on: proxy) {
-                body(proxy, relay)
-            }
+            body(proxy, relay)
         }
     }
 
@@ -957,12 +934,10 @@ public final class XPCServiceManager: ObservableObject {
                 return
             }
 
-            configureBundle(on: proxy) {
-                proxy.ping { reply in
-                    let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-                    let pid = connection.processIdentifier
-                    relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
-                }
+            proxy.ping { reply in
+                let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+                let pid = connection.processIdentifier
+                relay.resume(returning: (pid: pid, latencyMs: durationMs, response: reply))
             }
         }
     }
@@ -1079,10 +1054,8 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                Self.configureBundle(on: proxy) {
-                    proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
-                        relay.resume(returning: (isOk, output ?? "No output"))
-                    }
+                proxy.embedTexts([testString], model: "mxbai-embed-xsmall") { isOk, output in
+                    relay.resume(returning: (isOk, output ?? "No output"))
                 }
             }
 
@@ -1162,9 +1135,7 @@ public final class XPCServiceManager: ObservableObject {
                     relay.resume(throwing: NSError(domain: "LlamaTest", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Llama XPC proxy"]))
                     return
                 }
-                Self.configureBundle(on: proxy) {
-                    proxy.ping { reply in relay.resume(returning: reply) }
-                }
+                proxy.ping { reply in relay.resume(returning: reply) }
             }
 
             let healthResponse: String? = try await withCheckedThrowingContinuation { continuation in
@@ -1315,10 +1286,8 @@ public final class XPCServiceManager: ObservableObject {
                     return
                 }
 
-                Self.configureBundle(on: proxy) {
-                    proxy.runDiagnostic { isOk, sum, det in
-                        relay.resume(returning: (isOk, sum ?? (isOk ? "Garage backend healthy" : "Diagnostic failed"), det ?? ""))
-                    }
+                proxy.runDiagnostic { isOk, sum, det in
+                    relay.resume(returning: (isOk, sum ?? (isOk ? "Garage backend healthy" : "Diagnostic failed"), det ?? ""))
                 }
             }
 

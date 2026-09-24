@@ -33,7 +33,7 @@ struct SourcesView: View {
             }
             .padding(20)
         }
-        .navigationTitle("Sources & Ingest")
+        .navigationTitle("Sources")
         .onAppear {
             refreshSourcesAndTestDisk()
         }
@@ -53,6 +53,12 @@ struct SourcesView: View {
 
     // MARK: - Disk Access Section
 
+    /// The root-volume picker and its explanation only matter while access is missing
+    /// or the last check found a source path Garage cannot read.
+    private var needsDiskAccess: Bool {
+        !appState.volumeAccess.status.isGranted || appState.volumeAccess.lastTestResult?.isAccessible == false
+    }
+
     private var diskAccessSection: some View {
         GroupBox("App Sandbox & Disk Access") {
             VStack(alignment: .leading, spacing: 10) {
@@ -68,19 +74,11 @@ struct SourcesView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                }
-
-                Text("To allow Garage to ingest documents across your system within the macOS Sandbox, select your root hard-drive (e.g. Macintosh HD or '/'). Disk access is verified for each configured ingest source path.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Button("Select Root Hard Drive…") {
-                        appState.promptAndSelectRootVolume()
-                        _ = appState.testVolumeAccess()
-                    }
-                    Button("Test Ingest Paths & Disk Access") {
-                        _ = appState.testVolumeAccess()
+                    if needsDiskAccess {
+                        Button("Select Root Hard Drive…") {
+                            appState.promptAndSelectRootVolume()
+                            _ = appState.testVolumeAccess()
+                        }
                     }
                     Button("Open Privacy Settings…") {
                         appState.openPrivacySettings(for: .fullDiskAccess)
@@ -91,25 +89,42 @@ struct SourcesView: View {
                         }
                         .foregroundStyle(.red)
                     }
+                    Button {
+                        _ = appState.testVolumeAccess()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Re-check disk access for every ingest source path")
+                    .accessibilityLabel("Re-check disk access")
+                    .accessibilityIdentifier("sources.diskAccess.refresh")
+                }
+
+                if needsDiskAccess {
+                    Text("To allow Garage to ingest documents across your system within the macOS Sandbox, select your root hard-drive (e.g. Macintosh HD or '/'). Disk access is verified for each configured ingest source path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let testResult = appState.volumeAccess.lastTestResult {
                     Divider()
-                    HStack(spacing: 8) {
-                        Image(systemName: testResult.isAccessible ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(testResult.isAccessible ? Color.green : Color.orange)
-                            .font(.caption)
-                        Text("Overall Disk Access:")
-                            .font(.caption.bold())
-                        Text(testResult.isAccessible ? "All Paths Accessible" : "Attention Needed")
-                            .font(.caption.bold())
-                            .foregroundStyle(testResult.isAccessible ? .green : .orange)
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: testResult.isAccessible ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(testResult.isAccessible ? Color.green : Color.orange)
+                                .font(.caption)
+                            Text("Overall Disk Access:")
+                                .font(.caption.bold())
+                            Text(testResult.isAccessible ? "All Paths Accessible" : "Attention Needed")
+                                .font(.caption.bold())
+                                .foregroundStyle(testResult.isAccessible ? .green : .orange)
+                        }
                         Text(testResult.message)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                     .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.primary.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
@@ -259,39 +274,29 @@ struct SourcesView: View {
                         Button("Cancel Scan") {
                             appState.cancelScan()
                         }
-                    } else {
-                        Button("Scan All Sources") {
-                            scanAllSources()
-                        }
-                        .disabled(appState.registeredSources.isEmpty || notReady)
-                    }
-
-                    if appState.isIngesting {
+                    } else if appState.isIngesting {
                         Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
                             Task { await appState.cancelIngest() }
                         }
                         .disabled(appState.ingestService.isCancelling)
                     } else {
-                        Button("Ingest All Sources") {
-                            ingestAllSources()
+                        Button("Scan & Ingest All") {
+                            scanAndIngest(slug: "*")
                         }
                         .disabled(appState.registeredSources.isEmpty || notReady)
+                        .accessibilityIdentifier("sources.scanIngestAll")
                     }
 
-                    Button("Sync Config → DB") {
-                        run { try await $0.syncSources().message }
+                    Button {
+                        syncSources()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(.borderless)
+                    .help("Sync sources: add database-only sources to the config file, then apply the config file to the database")
+                    .accessibilityLabel("Sync sources")
+                    .accessibilityIdentifier("sources.sync")
                     .disabled(notReady)
-
-                    Button("Import DB → Config") {
-                        run { try await $0.importSourcesToConfig().message }
-                    }
-                    .disabled(notReady)
-
-                    Button("Refresh Sources") {
-                        refreshSourcesAndTestDisk()
-                    }
-                    .disabled(appState.isFetchingSources)
                 }
 
                 if appState.registeredSources.isEmpty {
@@ -301,7 +306,7 @@ struct SourcesView: View {
                             .foregroundStyle(.secondary)
                         Text("No sources configured yet.")
                             .font(.headline)
-                        Text("Add a source below, or define sources in your ~/.garage.json config file and click 'Sync Config → DB'.")
+                        Text("Add a source below, or define sources in your ~/.garage.json config file and click the refresh button.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -329,45 +334,11 @@ struct SourcesView: View {
         let isCurrentIngest = appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug
 
         return VStack(alignment: .leading, spacing: 8) {
-            // Header Row: Slug, Badges, and Per-Source Ingest/Scan Actions
+            // Header Row: Slug and Per-Source Ingest/Scan Actions
             HStack(alignment: .center, spacing: 6) {
                 Text(source.slug)
                     .font(.headline)
-
-                originBadge(for: source.origin)
-
-                if isCurrentIngest {
-                    StatusBadge("INGESTING", tint: .blue)
-                }
-
-                if source.expectedElements > 0 {
-                    if source.documentCount >= source.expectedElements {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
-                    } else {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
-                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
-                    }
-                } else {
-                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
-                }
-
-                if !source.enabled {
-                    StatusBadge("DISABLED", tint: .secondary)
-                }
-
-                if source.includeCode {
-                    StatusBadge("CODE", tint: .purple)
-                }
-
-                if let access = accessResult {
-                    if access.isAccessible {
-                        StatusBadge("DISK OK", tint: .green)
-                    } else if access.requiresTCCPermission || access.tccCategory != nil {
-                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
-                    } else {
-                        StatusBadge("DISK INACCESSIBLE", tint: .red)
-                    }
-                }
+                    .accessibilityIdentifier("sources.row.\(source.slug)")
 
                 Spacer()
 
@@ -381,20 +352,14 @@ struct SourcesView: View {
                         .tint(.red)
                         .disabled(appState.ingestService.isCancelling)
                     } else {
-                        Button("Ingest") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode)
+                        Button("Scan & Ingest") {
+                            scanAndIngest(slug: source.slug, includeCode: source.includeCode)
                         }
                         .controlSize(.small)
                         .buttonStyle(.borderedProminent)
-                        .disabled(notReady)
+                        .disabled(notReady || appState.isScanning)
+                        .accessibilityIdentifier("sources.row.\(source.slug).scanIngest")
                     }
-
-                    Button("Scan") {
-                        scanSource(slug: source.slug, includeCode: source.includeCode)
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                    .disabled(notReady)
 
                     Menu {
                         Button("Ingest (Include Code)") {
@@ -460,7 +425,46 @@ struct SourcesView: View {
                     }
                     .accessibilityLabel("Source actions")
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .frame(width: 24)
+                }
+            }
+
+            // Badges wrap onto more lines rather than widening the card.
+            WrappingHStack {
+                originBadge(for: source.origin)
+
+                if isCurrentIngest {
+                    StatusBadge("INGESTING", tint: .blue)
+                }
+
+                if source.expectedElements > 0 {
+                    if source.documentCount >= source.expectedElements {
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
+                    } else {
+                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
+                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
+                    }
+                } else {
+                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
+                }
+
+                if !source.enabled {
+                    StatusBadge("DISABLED", tint: .secondary)
+                }
+
+                if source.includeCode {
+                    StatusBadge("CODE", tint: .purple)
+                }
+
+                if let access = accessResult {
+                    if access.isAccessible {
+                        StatusBadge("DISK OK", tint: .green)
+                    } else if access.requiresTCCPermission || access.tccCategory != nil {
+                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
+                    } else {
+                        StatusBadge("DISK INACCESSIBLE", tint: .red)
+                    }
                 }
             }
 
@@ -756,10 +760,12 @@ struct SourcesView: View {
 
                 LabeledContent("Slug") {
                     TextField("dropbox", text: $slug).textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("sources.form.slug")
                 }
                 LabeledContent("Root") {
                     HStack {
                         TextField("~/Dropbox", text: $root).textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("sources.form.root")
                         Button("Choose…") { chooseRoot() }
                     }
                 }
@@ -778,11 +784,13 @@ struct SourcesView: View {
                         addOrUpdateSource()
                     }
                     .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
+                    .accessibilityIdentifier("sources.form.submit")
 
                     Button("Remove Source", role: .destructive) {
                         removeSource(slug: slug)
                     }
                     .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
+                    .accessibilityIdentifier("sources.form.remove")
 
                     Button("Clear Form") {
                         slug = ""
@@ -804,7 +812,7 @@ struct SourcesView: View {
     private var scheduledMaintenanceSection: some View {
         GroupBox("Scheduled maintenance") {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle("Run ingest and backfill automatically", isOn: $appState.scheduledMaintenanceEnabled)
+                Toggle("Run ingest and embedding automatically", isOn: $appState.scheduledMaintenanceEnabled)
                 Picker("Every", selection: $appState.scheduledMaintenanceInterval) {
                     Text("15 minutes").tag(TimeInterval(15 * 60))
                     Text("1 hour").tag(TimeInterval(60 * 60))
@@ -812,10 +820,11 @@ struct SourcesView: View {
                     Text("24 hours").tag(TimeInterval(24 * 60 * 60))
                 }
                 .disabled(!appState.scheduledMaintenanceEnabled)
-                Text("Each run ingests all sources, then backfills all registered models. The first run starts after the selected interval.")
+                Text("Each run ingests all sources, then embeds new chunks with every registered model. The first run starts after the selected interval.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
         }
     }
@@ -888,12 +897,26 @@ struct SourcesView: View {
         }
     }
 
-    private func scanAllSources() {
+    /// Scans first so the expected-element counts are current, then ingests; a failed or
+    /// cancelled scan stops there.
+    private func scanAndIngest(slug: String, includeCode: Bool = false) {
         guard !appState.isIngesting else { return }
         busy = true
         Task {
-            await appState.scanSources(source: "*")
+            if await appState.scanSources(source: slug, includeCode: includeCode) {
+                _ = await appState.ingestSource(slug: slug, options: IngestOptions(includeCode: includeCode))
+            }
             busy = false
+        }
+    }
+
+    /// Import adds only the sources the config file lacks, then sync applies the file (declared
+    /// sources win), so the two end up listing the same sources without either discarding one.
+    private func syncSources() {
+        run { grpc in
+            let imported = try await grpc.importSourcesToConfig().message
+            let synced = try await grpc.syncSources().message
+            return [imported, synced].filter { !$0.isEmpty }.joined(separator: "\n")
         }
     }
 
@@ -902,14 +925,6 @@ struct SourcesView: View {
         Task {
             let options = IngestOptions(includeCode: includeCode, force: force)
             _ = await appState.ingestSource(slug: slug, options: options)
-            busy = false
-        }
-    }
-
-    private func ingestAllSources() {
-        busy = true
-        Task {
-            _ = await appState.ingestSource(slug: "*")
             busy = false
         }
     }

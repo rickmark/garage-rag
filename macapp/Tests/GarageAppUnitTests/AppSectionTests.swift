@@ -10,7 +10,7 @@ final class AppSectionTests: XCTestCase {
     func testAppSectionIdentifiers() {
         XCTAssertEqual(AppSection.status.id, "Status")
         XCTAssertEqual(AppSection.database.id, "Database")
-        XCTAssertEqual(AppSection.sources.id, "Sources & Ingest")
+        XCTAssertEqual(AppSection.sources.id, "Sources")
         XCTAssertEqual(AppSection.documents.id, "Documents")
         XCTAssertEqual(AppSection.models.id, "Models")
         XCTAssertEqual(AppSection.mcp.id, "MCP Server")

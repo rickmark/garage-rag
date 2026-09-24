@@ -192,6 +192,7 @@ struct DatabaseView: View {
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                 }
 

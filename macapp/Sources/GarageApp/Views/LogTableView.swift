@@ -227,7 +227,7 @@ public struct LogTableView: View {
 
             TableColumn("PID") { line in
                 if let pid = line.pid {
-                    Text("\(pid)")
+                    Text(verbatim: "\(pid)")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                 } else {
@@ -291,7 +291,7 @@ public struct LogTableView: View {
                     LogLevelBadge(level: line.level)
                     LogStreamBadge(stream: line.stream)
                     if let pid = line.pid {
-                        Text("PID: \(pid)")
+                        Text(verbatim: "PID: \(pid)")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                         Text("•")

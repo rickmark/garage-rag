@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 @testable import GarageApp
 
-final class GarageAppUITests: XCTestCase {
+final class SectionViewHostingTests: XCTestCase {
 
     @MainActor
     func testNavigationBetweenAllSections() {

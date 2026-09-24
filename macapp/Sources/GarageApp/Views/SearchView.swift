@@ -69,6 +69,7 @@ public struct SearchView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                     TextField("Search corpus (e.g., 'system architecture', 'API design')…", text: $query)
+                        .accessibilityIdentifier("search.query")
                         .textFieldStyle(.plain)
                         .onSubmit { runSearch() }
                     if !query.isEmpty {

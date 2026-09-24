@@ -159,6 +159,12 @@ public final class GaragePythonRuntime: @unchecked Sendable {
     /// Where libtesseract looks for `eng.traineddata`.
     public static let tessdataPrefixEnvironmentKey = "TESSDATA_PREFIX"
 
+    /// Environment variable naming the configuration file OpenSSL loads when it initializes. The runtime points it
+    /// at the empty `openssl.cnf` shipped next to `site-python`, so no OpenSSL in the process reads a configuration
+    /// from outside the bundle: `cryptography`'s statically linked copy defaults to `/opt/homebrew/etc/openssl@3`.
+    public static let opensslConfEnvironmentKey = "OPENSSL_CONF"
+    public static let opensslConfFileName = "openssl.cnf"
+
     public init() {
         pythonQueue.setSpecific(key: pythonQueueKey, value: true)
     }
@@ -454,6 +460,47 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         stateLock.unlock()
     }
 
+    // MARK: - OpenSSL
+
+    /// The `openssl.cnf` shipped next to `site-python` (in `PythonXPCService.framework`), or nil when there is none.
+    public static func bundledOpenSSLConfigURL(for environment: GaragePythonEnvironment) -> URL? {
+        let url = environment.home.deletingLastPathComponent().appendingPathComponent(opensslConfFileName, isDirectory: false)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else {
+            return nil
+        }
+        return url
+    }
+
+    /// Exports `OPENSSL_CONF` naming the bundled `openssl.cnf`, replacing any value inherited from a shell (a
+    /// Homebrew user's would bring its configuration back). Returns the exported path, or nil when the bundle has
+    /// no `openssl.cnf`, in which case the environment is left alone.
+    @discardableResult
+    public static func exportBundledOpenSSLConfig(for environment: GaragePythonEnvironment) -> String? {
+        guard let url = bundledOpenSSLConfigURL(for: environment) else {
+            logger.warning("No \(opensslConfFileName, privacy: .public) next to '\(environment.home.path, privacy: .public)'; OPENSSL_CONF left unchanged")
+            return nil
+        }
+        setenv(opensslConfEnvironmentKey, url.path, 1)
+        return url.path
+    }
+
+    /// Python source executed right after interpreter start-up. It makes `ssl`'s default contexts verify against the
+    /// macOS trust store (`truststore`), since the bundled OpenSSL has no CA files of its own. If `truststore` cannot
+    /// be imported it falls back to `certifi`'s bundle through `SSL_CERT_FILE`, unless the caller already set one.
+    static let trustStoreBootstrapSource = """
+    import os as _os
+    try:
+        import truststore as _truststore
+        _truststore.inject_into_ssl()
+    except Exception:
+        try:
+            import certifi as _certifi
+            _os.environ.setdefault("SSL_CERT_FILE", _certifi.where())
+        except Exception:
+            pass
+    """
+
     /// Python source executed right after interpreter start-up. It teaches `ctypes.util.find_library` about the
     /// bundled libpq so psycopg's pure Python implementation (`psycopg.pq.misc.find_libpq_full_path`) resolves
     /// it instead of probing `pg_config` / Homebrew. Mirrors `garage_rag.libpq.configure()` for the case where
@@ -519,6 +566,8 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         // libpq must be resolved (and GARAGE_LIBPQ_PATH exported) before the interpreter snapshots os.environ.
         loadBundledLibpq(appBundleURL: environment.appBundleURL ?? appBundleURL)
         exportBundledTesseract(appBundleURL: environment.appBundleURL ?? appBundleURL)
+        // Likewise OPENSSL_CONF, before anything in the process initializes OpenSSL.
+        Self.exportBundledOpenSSLConfig(for: environment)
 
         if GaragePythonEmbedIsInitialized() {
             logger.warning("Interpreter already initialized before GaragePythonRuntime; adopting existing interpreter")
@@ -580,6 +629,8 @@ public final class GaragePythonRuntime: @unchecked Sendable {
                 let builtins = try Python.attemptImport("builtins")
                 let namespace = Python.dict()
                 _ = try builtins.exec.throwing.dynamicallyCall(withArguments: [Self.libpqBootstrapSource, namespace])
+                // Default TLS contexts verify against the system trust store.
+                _ = try builtins.exec.throwing.dynamicallyCall(withArguments: [Self.trustStoreBootstrapSource, Python.dict()])
             } catch {
                 postInitError = Self.describe(error)
             }

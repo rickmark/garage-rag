@@ -15,6 +15,10 @@ py_library(
         "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/mcp_server",
         "//garage_python/src/garage_rag/search",
+        # Imported by the macOS app's embedded interpreter at start-up (GaragePythonRuntime), not by
+        # garage_rag, so gazelle cannot see them; they must still ship in site-packages.
+        "@pypi//certifi",  # keep
+        "@pypi//truststore",  # keep
     ],
 )
 

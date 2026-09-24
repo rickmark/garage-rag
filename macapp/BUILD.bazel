@@ -50,8 +50,22 @@ sh_binary(
     visibility = ["//visibility:public"],
 )
 
-xcodeproj(
+# `aspect run //:xcodeproj`: rules_xcodeproj's installer plus the Xcode build settings it
+# has no attribute for (see generate_xcodeproj.sh).
+# gazelle:exclude generate_xcodeproj.sh
+sh_binary(
     name = "xcodeproj",
+    # rules_xcodeproj marks its generator testonly (the project includes test targets).
+    testonly = True,
+    srcs = ["generate_xcodeproj.sh"],
+    args = ["$(rootpath :xcodeproj_generator)"],
+    data = [":xcodeproj_generator"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+xcodeproj(
+    name = "xcodeproj_generator",
     project_name = "Garage",
     tags = ["manual"],
     top_level_targets = [
@@ -81,9 +95,6 @@ xcodeproj(
         ),
         top_level_target(
             "//macapp/Tests/GarageAppUITests:GarageAppUITests",
-        ),
-        top_level_target(
-            "//macapp/Tests/GarageAppResetUITests:GarageAppResetUITests",
         ),
         top_level_target(
             "//macapp/Tests/LlamaClientTests:LlamaClientTests",

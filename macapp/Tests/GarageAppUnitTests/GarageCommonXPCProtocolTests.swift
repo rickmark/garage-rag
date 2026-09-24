@@ -8,7 +8,6 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
     var logsStdout = "sample stdout line 1\nsample stdout line 2\n"
     var logsStderr = "sample stderr error 1\n"
     var didClearLogs = false
-    var receivedAppBundleURL: URL?
 
     func ping(with reply: @escaping (String) -> Void) {
         reply(pingResponse)
@@ -16,16 +15,6 @@ final class MockCommonXPCService: NSObject, GarageCommonXPCServiceProtocol {
 
     func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void) {
         reply("MockCommonXPCService", 12345, 99.5, "ready")
-    }
-
-    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        receivedAppBundleURL = bundleURL
-        _ = bundleURL.startAccessingSecurityScopedResource()
-        reply(true, nil)
-    }
-
-    func setAppBundleFileHandle(_ bundleHandle: FileHandle, with reply: @escaping (Bool, String?) -> Void) {
-        reply(true, nil)
     }
 
     func updateConfiguration(_ options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
@@ -138,22 +127,6 @@ final class GarageCommonXPCProtocolTests: XCTestCase {
             XCTAssertFalse(numberFormatted.contains(","), "Port \(port) number formatted grouping never should not have commas: \(numberFormatted)")
             XCTAssertEqual(numberFormatted, "\(port)")
         }
-    }
-
-    func testMockCommonXPCServiceSetAppBundleReference() async throws {
-        let mockService = MockCommonXPCService()
-        let testBundleURL = URL(fileURLWithPath: "/Applications/Garage.app")
-        let fileRefURL = (testBundleURL as NSURL).fileReferenceURL() ?? testBundleURL
-
-        let expectation = expectation(description: "setAppBundleReference")
-        mockService.setAppBundleReference(fileRefURL) { success, message in
-            XCTAssertTrue(success)
-            XCTAssertNil(message)
-            expectation.fulfill()
-        }
-
-        await fulfillment(of: [expectation], timeout: 2.0)
-        XCTAssertNotNil(mockService.receivedAppBundleURL)
     }
 
     func testMockCommonXPCServiceRunDiagnostic() async throws {

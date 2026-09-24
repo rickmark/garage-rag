@@ -1,4 +1,4 @@
-load("@rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@rules_apple//apple:macos.bzl", "macos_ui_test")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
 swift_library(
@@ -6,30 +6,27 @@ swift_library(
     testonly = True,
     srcs = glob(["**/*.swift"]),
     module_name = "GarageAppUITests",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
-    deps = [
-        "//macapp/Sources/GarageApp:GarageApp_lib",
-    ],
 )
 
-macos_unit_test(
+# XCUITests that drive the real app, each on a throwaway --data-directory. Manual, never part of
+# `aspect test //...`: the app's Postgres uses the fixed port 14824 and its quit path stops XPC
+# services by executable name, so they refuse to run while another Garage is running, and the test
+# runner needs UI automation permission. Run them from the generated Xcode project
+# (`aspect run //:xcodeproj`, scheme GarageAppUITests, or `xcodebuild test`); rules_apple's default
+# macOS runner injects the bundle into the host like a unit test and has no UI-test mode.
+macos_ui_test(
     name = "GarageAppUITests",
-    additional_linker_inputs = [
-        "//ext/python:python_framework",
-    ],
     bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
     bundle_name = "GarageAppUITests",
-    # GarageApp_lib -> PythonXPCService -> GaragePythonEmbed calls the CPython C
-    # API, so the test bundle has to link the interpreter like the app does.
-    linkopts = [
-        "-F$(location //ext/python:python_framework)/..",
-        "-framework",
-        "Python",
-    ],
     minimum_os_version = "14.0",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":GarageAppUITests_lib",
-        "//ext/python:python_framework",
+    tags = [
+        "exclusive",
+        "local",
+        "manual",
     ],
+    test_host = "//macapp/Sources/GarageApp:GarageApp",
+    visibility = ["//visibility:public"],
+    deps = [":GarageAppUITests_lib"],
 )

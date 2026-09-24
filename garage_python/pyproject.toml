@@ -46,6 +46,11 @@ dependencies = [
     # gRPC & Protobuf
     "grpcio>=1.68.0",
     "protobuf>=5.29.0",
+    # Not imported by garage_rag: the macOS app's embedded interpreter imports them at start-up so
+    # ssl's default contexts verify against the system trust store (certifi is the fallback). The
+    # bundled OpenSSL has no CA files of its own.
+    "truststore>=0.10",
+    "certifi>=2024.2.2",
 ]
 
 [project.optional-dependencies]

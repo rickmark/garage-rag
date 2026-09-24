@@ -31,7 +31,11 @@ open macapp/Garage.xcodeproj
 # Unit tests
 aspect test //macapp/Tests/GarageAppUnitTests:GarageAppUnitTests
 aspect test //macapp/Tests/LlamaClientTests:LlamaClientTests
-aspect test //macapp/Tests/GarageAppUITests:GarageAppUITests
+
+# XCUITests (manual: quit Garage first; needs UI automation permission). Each test runs the
+# real app on a throwaway --data-directory; see macapp/Tests/GarageAppUITests.
+aspect run //:xcodeproj
+xcodebuild test -project macapp/Garage.xcodeproj -scheme GarageAppUITests -destination 'platform=macOS'
 
 # Distribution: thinned + notarized apps and .pkg installers (Developer ID),
 # or an App Store xcarchive
@@ -70,6 +74,12 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   in the framework because a sandboxed XPC service may read inside the frameworks it
   links but not elsewhere in the app bundle. The interpreter itself is the
   `Python.framework` from `//ext/python`, kept to the bare interpreter.
+- Next to `site-python` is an empty `openssl.cnf`. `GaragePythonRuntime` exports it as
+  `OPENSSL_CONF` before the interpreter starts, so neither the bundled `_ssl` nor
+  `cryptography`'s own statically linked OpenSSL reads a configuration from outside the
+  bundle (`cryptography`'s compiled-in default is Homebrew's). At start-up it also calls
+  `truststore.inject_into_ssl()`, so `ssl`'s default contexts verify against the macOS
+  trust store; the bundled OpenSSL ships no CA files.
 - The four Python XPC services also link `Frameworks/libpq.dylib` at load time, so it
   is mapped before the App Sandbox applies; opening it later by path is denied.
 
@@ -315,7 +325,7 @@ with the Status page's quick-add cards.
 - `LlamaXPCService` runs llama.cpp in-process (`Sources/LlamaEngine`, linked from `//ext/llama_cpp` with Metal and Accelerate). Besides its XPC interface it listens on `http://127.0.0.1:8790` with the llama-server routes (`/health`, `/props`, `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/completion`, `/tokenize`, `/detokenize`, `/v1/rerank`); that port is how the Python `llama_xpc` provider embeds and distills facts. `GARAGE_LLAMA_HTTP_PORT` in the helper's environment overrides the port; the Python side reads `embedding.llama_host` from `garage.json`.
 - `XPCServiceManager` — pings all six helpers, streams their logs into the app, runs their in-service self tests and can restart or terminate them.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres and every helper to stop on every quit path (Cmd+Q, Dock quit, menu item).
-- Views: Status, Sources & Ingest, Models, Search, Documents, Logs, MCP Server. Sources
+- Views: Status, Sources, Models, Search, Documents, Logs, MCP Server. Sources
   provides manual ingestion and an optional persisted schedule that ingests all
   sources and then backfills every registered model. The Models view
   provides controls for Llama models and embedding models: it includes

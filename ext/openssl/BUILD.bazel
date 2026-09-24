@@ -9,6 +9,12 @@ configure_make(
         "no-unit-test",
         "no-docs",
         "no-ui-console",
+        # OPENSSLDIR is compiled in as the default home of openssl.cnf and the CA files. Left to the
+        # default it is the Bazel sandbox's prefix, which names the build user's home and never exists
+        # on another Mac. OpenSSL resolves it at build time, so it cannot be bundle-relative: point it
+        # at a fixed path that does not exist. The embedded Python reads its configuration from
+        # OPENSSL_CONF (the bundle's openssl.cnf) and verifies TLS against the macOS trust store.
+        "--openssldir=/opt/garage-openssl",
     ],
     env = {
         "AR": "/usr/bin/ar",
@@ -18,6 +24,12 @@ configure_make(
     out_static_libs = [
         "libssl.a",
         "libcrypto.a",
+    ],
+    # `install_sw` (libraries, headers, modules), not `install`: the latter also runs
+    # `install_ssldirs`, which would try to create the fixed OPENSSLDIR above.
+    targets = [
+        "",
+        "install_sw",
     ],
     visibility = ["//visibility:public"],
 )
