@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 
 # Which bundled PostgreSQL major version to build against: 18 (//ext/postgres, default) or
-# the 19 beta (//ext/postgres19). pgvector, the app bundle and PythonXPCService all go
+# the 19 beta (//ext/postgres19). pgvector, Apache AGE, the app bundle and PythonXPCService all go
 # through the aliases below, so flipping this switches the whole tree:
 #   aspect build //:macapp --//ext:postgres_version=19    (or --config=pg19)
 # A cluster initdb'd by one major version won't start under the other - switching an
@@ -60,6 +60,12 @@ alias(
 alias(
     name = "pgvector",
     actual = "//ext/pgvector:pgvector",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "age",
+    actual = "//ext/age:age",
     visibility = ["//visibility:public"],
 )
 
@@ -147,6 +153,7 @@ alias(
 test_suite(
     name = "tests",
     tests = [
+        "//ext/age:age_build_test",
         "//ext/python:python_framework_codesign_test",
     ],
 )

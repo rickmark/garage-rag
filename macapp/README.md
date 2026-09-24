@@ -62,9 +62,11 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   `garage-mcp` does not wait for Postgres (only its tool calls use the database, and the MCP
   handshake must not sit behind a cold start) unless the app has never stored a password, and
   never mirrors its stdout (the MCP stream) into the unified log.
-- `Resources/postgres` — Postgres 18 + pgvector built from source (`//ext/postgres`,
-  `//ext/pgvector`, vendored through `//macapp/externals:postgres_output`), with
-  `libpq` in `Frameworks/`.
+- `Resources/postgres` — Postgres 18 + pgvector + Apache AGE built from source
+  (`//ext/postgres`, `//ext/pgvector`, `//ext/age`, vendored through
+  `//macapp/externals:postgres_output`), with `libpq` in `Frameworks/`. AGE's Cypher
+  parser is generated with the hermetic `rules_bison`/`rules_flex` toolchains, since the
+  Bison 2.3 in macOS is too old for its grammar.
 - `Resources/schema` — the SQL migrations, `Resources/postgresql.conf`, the model
   manifest and the config JSON schema.
 - `Frameworks/PythonXPCService.framework` — the shared runtime for the six
@@ -191,7 +193,8 @@ The Bazel build carries two Postgres externals: `//ext/postgres` (18, the
 default) and `//ext/postgres19` (19beta4, pinned by commit). Both share one
 build definition (`ext/postgres/postgres.bzl`); each has its own copy of the
 sandbox patch, since 19 replaced the semaphore/shmem sizing API the patch hooks
-into. Select 19 for the whole tree (pgvector, the bundled server, libpq) with:
+into. Select 19 for the whole tree (pgvector, Apache AGE's PG19 release line, the bundled
+server, libpq) with:
 
 ```bash
 aspect build //:macapp --config=pg19   # same as --//ext:postgres_version=19

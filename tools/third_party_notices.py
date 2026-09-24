@@ -2,7 +2,7 @@
 """Generate (or check) THIRD_PARTY_NOTICES.txt for everything the Garage app redistributes.
 
 The macOS app bundles a Python runtime plus every runtime package in `garage_python/uv.lock`,
-a from-source Postgres + pgvector (with ICU and zlib), OpenSSL, llama.cpp, Tesseract +
+a from-source Postgres + pgvector + Apache AGE (with ICU and zlib), OpenSSL, llama.cpp, Tesseract +
 Leptonica, PythonKit, Sparkle, the Swift gRPC/NIO/protobuf runtime pulled in by rules_swift,
 and third-party code vendored into garage_python (see NOTICE). Their licenses (MIT, BSD, Apache,
 Unicode, PSF, LGPL, ...) require the license text to accompany binary redistribution, so this
@@ -82,6 +82,17 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         "PostgreSQL",
         "https://github.com/pgvector/pgvector",
         (f"{RAW}/pgvector/pgvector/v0.8.6/LICENSE",),
+    ),
+    Component(
+        "Apache AGE",
+        "1.8.0",
+        "Apache-2.0",
+        "https://age.apache.org/",
+        # PG18/v1.8.0-rc0 (the tag's slash does not survive a raw URL, so the commit)
+        (
+            f"{RAW}/apache/age/e43dc1a12b78fba4acef9835b2b10379b8d243b4/LICENSE",
+            f"{RAW}/apache/age/e43dc1a12b78fba4acef9835b2b10379b8d243b4/NOTICE",
+        ),
     ),
     Component(
         "ICU",

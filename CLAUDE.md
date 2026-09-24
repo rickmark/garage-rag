@@ -153,6 +153,10 @@ depends on the `//ext:postgres`/`postgres_rpath`/`libpq`/`libpq_dylib` aliases, 
 version package directly. Each package carries its own `sysv_shmem.patch`; a change to one patch
 usually needs porting to the other.
 
+Apache AGE (`//ext/age`, graph queries in openCypher) is built beside pgvector, from the AGE release
+line matching the selected major (`ext/age/pg18`, `ext/age/pg19`). `001_extensions.sql` creates it
+only where the server has it installed, so Homebrew and the CI image, which lack it, still migrate.
+
 Without a Swift toolchain (Linux, Claude Code on the web) there is still a syntax gate:
 
 ```bash
