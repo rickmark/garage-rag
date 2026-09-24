@@ -2,13 +2,14 @@
 """Generate (or check) THIRD_PARTY_NOTICES.txt for everything the Garage app redistributes.
 
 The macOS app bundles a Python runtime plus every runtime package in `garage_python/uv.lock`,
-a from-source Postgres + pgvector (with ICU, zlib and readline), OpenSSL, PythonKit, and the
-Swift gRPC/NIO/protobuf runtime pulled in by rules_swift. Their licenses (MIT, BSD, Apache,
+a from-source Postgres + pgvector (with ICU and zlib), OpenSSL, llama.cpp, PythonKit, Sparkle,
+the Swift gRPC/NIO/protobuf runtime pulled in by rules_swift, and third-party code vendored into
+garage_python (see NOTICE). Their licenses (MIT, BSD, Apache,
 Unicode, PSF, LGPL, ...) require the license text to accompany binary redistribution, so this
 collects the actual license files from each upstream release into one text file that ships in
 `Garage.app/Contents/Resources`.
 
-    # regenerate after changing uv.lock or anything under ext/ (needs network)
+    # regenerate after changing uv.lock, ext/, or vendored code (needs network)
     python3 tools/third_party_notices.py
 
     # offline: fail if the committed file no longer covers the lockfile + NATIVE_COMPONENTS
@@ -52,7 +53,8 @@ class Component:
     license_urls: tuple[str, ...]
 
 
-# Keep in sync with ext/*.MODULE.bazel and the swift_proto deps of rules_swift (MODULE.bazel).
+# Everything shipped that uv.lock does not cover: ext/*.MODULE.bazel, the swift_proto deps of
+# rules_swift (MODULE.bazel), and third-party code vendored into garage_python (see NOTICE).
 # Components that are built but not shipped in the app are omitted.
 NATIVE_COMPONENTS: tuple[Component, ...] = (
     Component(
@@ -101,18 +103,32 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         (f"{RAW}/madler/zlib/v1.3.2/LICENSE",),
     ),
     Component(
-        "GNU Readline",
-        "8.3",
-        "GPL-3.0-or-later",
-        "https://tiswww.case.edu/php/chet/readline/rltop.html",
-        (f"{RAW}/spdx/license-list-data/v3.25.0/text/GPL-3.0-or-later.txt",),
-    ),
-    Component(
         "llama.cpp (includes ggml)",
         "0.4.0",
         "MIT",
         "https://github.com/ggml-org/llama.cpp",
         (f"{RAW}/ggml-org/llama.cpp/v0.4.0/LICENSE",),
+    ),
+    Component(
+        "Sparkle",
+        "2.10.0",
+        "MIT (and bundled third-party licenses)",
+        "https://sparkle-project.org/",
+        (f"{RAW}/sparkle-project/Sparkle/2.10.0/LICENSE",),
+    ),
+    Component(
+        "LangExtract (vendored subset, modified)",
+        "1.7.0",
+        "Apache-2.0",
+        "https://github.com/google/langextract",
+        (f"{RAW}/google/langextract/v1.7.0/LICENSE",),
+    ),
+    Component(
+        "langchain-text-splitters (reimplemented in garage_rag.ingest.splitters)",
+        "1.1.2",
+        "MIT",
+        "https://github.com/langchain-ai/langchain",
+        (f"{RAW}/langchain-ai/langchain/langchain-text-splitters%3D%3D1.1.2/LICENSE",),
     ),
     Component(
         "PythonKit",
@@ -215,12 +231,7 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
 
 # Packages whose wheel and sdist ship no license file: take it from the upstream repository instead.
 # `{version}` is filled from uv.lock so a version bump follows the matching upstream tag.
-LICENSE_OVERRIDES: dict[str, tuple[str, ...]] = {
-    "langchain-text-splitters": (
-        f"{RAW}/langchain-ai/langchain/langchain-text-splitters%3D%3D{{version}}/LICENSE",
-    ),
-    "langsmith": (f"{RAW}/langchain-ai/langsmith-sdk/v{{version}}/LICENSE",),
-}
+LICENSE_OVERRIDES: dict[str, tuple[str, ...]] = {}
 
 # Names inside a wheel's .dist-info (or sdist root) that hold license/notice text.
 _LICENSE_NAME = re.compile(
@@ -249,7 +260,8 @@ def _marker_applies(marker: str | None) -> bool:
         raise ValueError(
             f"unsupported marker in uv.lock (extend _marker_applies): {marker}"
         )
-    return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - literal-only expression
+    # Literal-only expression: every variable was substituted above.
+    return bool(eval(expr, {"__builtins__": {}}, {}))
 
 
 def runtime_packages(lockfile: Path = LOCKFILE) -> list[dict]:
