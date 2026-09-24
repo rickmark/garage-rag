@@ -22,6 +22,11 @@ final class AppState: ObservableObject {
     /// job never blocks an ordinary operation.
     let backfill: OperationRunner
     let enrichFacts: OperationRunner
+    /// Scans run here rather than on `garage`: walking a folder can take minutes, and on the general
+    /// runner it would turn away every other operation ("A garage command is already running").
+    let scanner: OperationRunner
+    /// The slug a running scan covers ("*" for all sources), or nil when no scan runs.
+    @Published private(set) var scanningSource: String?
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -108,6 +113,7 @@ final class AppState: ObservableObject {
         garage = OperationRunner(label: "garage")
         backfill = OperationRunner(label: "garage backfill")
         enrichFacts = OperationRunner(label: "garage enrich-facts")
+        scanner = OperationRunner(label: "garage scan")
         let grpcService = GarageGRPCService(postgres: postgres)
         let mcpService = GarageMCPService(postgres: postgres)
         // Client registration (McpInstall) goes over gRPC.
@@ -115,8 +121,10 @@ final class AppState: ObservableObject {
         mcp = mcpService
         grpc = grpcService
 
-        if let storedEnabled = UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) as? Bool {
-            scheduledMaintenanceEnabled = storedEnabled
+        // `bool(forKey:)` rather than `as? Bool`: a launch argument (`-scheduledMaintenanceEnabled NO`,
+        // as the UI tests pass) arrives as the string "NO", which only `bool(forKey:)` converts.
+        if UserDefaults.standard.object(forKey: Self.scheduledMaintenanceEnabledKey) != nil {
+            scheduledMaintenanceEnabled = UserDefaults.standard.bool(forKey: Self.scheduledMaintenanceEnabledKey)
         } else {
             scheduledMaintenanceEnabled = true
         }
@@ -133,6 +141,7 @@ final class AppState: ObservableObject {
         grpc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         backfill.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         enrichFacts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        scanner.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         garage.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.volumeAccess.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         self.ingestService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -377,6 +386,7 @@ final class AppState: ObservableObject {
         garage.cancel()
         backfill.cancel()
         enrichFacts.cancel()
+        scanner.cancel()
         // xpcServices.terminateAll() already runs XPCServiceManager.stopAnyRunningInstances().
         xpcServices.terminateAll()
     }
@@ -396,6 +406,7 @@ final class AppState: ObservableObject {
         garage.cancel()
         backfill.cancel()
         enrichFacts.cancel()
+        scanner.cancel()
         await mcp.stop()
         await grpc.stop()
         await postgres.stop()
@@ -702,11 +713,21 @@ final class AppState: ObservableObject {
             logger.info("Scan skipped because ingestion is in progress.")
             return false
         }
+        guard !isScanning else {
+            lastCommandSucceeded = false
+            lastCommandOutput = "A scan is already running."
+            return false
+        }
         guard postgres.status == .running else { return false }
-        let succeeded = await runOperation { try await $0.scan(source: source, includeCode: includeCode).message }
+        scanningSource = source
+        defer { scanningSource = nil }
+        let grpc = self.grpc
+        let result = await scanner.run { _ in try await grpc.scan(source: source, includeCode: includeCode).message }
+        lastCommandOutput = result.output
+        lastCommandSucceeded = result.succeeded
         await fetchRegisteredSources()
         await fetchCorpusStats()
-        return succeeded
+        return result.succeeded
     }
 
     /// Runs one operation over gRPC on the general runner and shows what it reports.
@@ -847,6 +868,8 @@ final class AppState: ObservableObject {
             osLogStreamService.clearLogs(for: .embed)
         case "Enrich Facts", "garage enrich-facts":
             enrichFacts.clearLogs()
+        case "Scan", "garage scan":
+            scanner.clearLogs()
         case "MCP Server":
             mcp.clearLogs()
             osLogStreamService.clearLogs(for: .mcp)
@@ -945,11 +968,19 @@ final class AppState: ObservableObject {
     }
 
     var isScanning: Bool {
-        garage.isRunning
+        scanner.isRunning
     }
 
     func cancelScan() {
-        garage.cancel()
+        scanner.cancel()
+    }
+
+    /// True while a scan or ingest covers `slug`: it cannot be removed or reconciled until that ends.
+    func isBusy(source slug: String) -> Bool {
+        let scanning = scanningSource.map { $0 == "*" || $0 == slug } ?? false
+        let current = ingestService.currentSource
+        let ingesting = ingestService.isRunning && (current == nil || current == "*" || current == slug)
+        return scanning || ingesting
     }
 
     func cancelIngest() async {

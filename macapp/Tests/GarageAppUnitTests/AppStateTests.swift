@@ -612,4 +612,49 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.lastCommandSucceeded, false)
         XCTAssertEqual(state.lastCommandOutput, "Cannot scan while ingestion is in progress.")
     }
+
+    // MARK: - Scans on their own runner
+
+    @MainActor
+    func testIsScanningTracksOnlyTheScanRunner() {
+        let state = AppState()
+        state.garage.isRunning = true
+        XCTAssertFalse(state.isScanning, "an ordinary operation on the general runner is not a scan")
+
+        state.scanner.isRunning = true
+        XCTAssertTrue(state.isScanning)
+    }
+
+    @MainActor
+    func testQuickOperationsRunWhileAScanDoes() async {
+        let state = AppState()
+        state.scanner.isRunning = true
+
+        let succeeded = await state.runOperation { _ in "removed source notes" }
+
+        XCTAssertTrue(succeeded, "a scan turned away an ordinary operation: \(state.lastCommandOutput)")
+        XCTAssertEqual(state.lastCommandOutput, "removed source notes")
+    }
+
+    @MainActor
+    func testASecondScanIsTurnedAway() async {
+        let state = AppState()
+        state.scanner.isRunning = true
+
+        let result = await state.scanSources(source: "*")
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandOutput, "A scan is already running.")
+    }
+
+    @MainActor
+    func testEverySourceIsBusyDuringAnIngestOfAll() {
+        let state = AppState()
+        XCTAssertFalse(state.isBusy(source: "notes"))
+
+        state.setIngestingForTesting(true)
+
+        XCTAssertTrue(state.isBusy(source: "notes"))
+        XCTAssertTrue(state.isBusy(source: "documents"))
+    }
 }
