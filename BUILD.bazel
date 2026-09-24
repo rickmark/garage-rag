@@ -4,6 +4,9 @@
 # the @pypi hub does not expose), not a Bazel target.
 # gazelle:exclude tools/swiftcheck
 
+# tools/windows is run by .github/workflows/windows.yaml with the runner's Python, outside Bazel.
+# gazelle:exclude tools/windows
+
 exports_files(
     [
         "README.md",
