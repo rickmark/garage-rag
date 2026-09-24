@@ -262,7 +262,11 @@ enum PageStatus {
             } else if appState.isScanning {
                 severity = .info
                 headline = "Scanning Sources"
-                details = "Scanning configured sources to calculate element counts."
+                if let scan = appState.scanProgress {
+                    details = "Counting items in \(scan.source == "*" ? "configured sources" : scan.source): \(StatusView.soFarText(scan.totalItems))."
+                } else {
+                    details = "Scanning configured sources to calculate element counts."
+                }
                 quickAction = PageStatusItem.QuickAction(label: "Cancel Scan") {
                     appState.cancelScan()
                 }

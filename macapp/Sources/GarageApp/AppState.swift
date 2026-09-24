@@ -59,6 +59,8 @@ final class AppState: ObservableObject {
     @Published var registeredSources: [RegisteredSource] = []
     @Published private(set) var isFetchingSources = false
     @Published var corpusStats = CorpusStats()
+    /// What the running scan has found so far; nil when no scan is running.
+    @Published var scanProgress: ScanProgress?
     @Published private(set) var isFetchingStats = false
     @Published private(set) var isApplyingMigrations = false
     @Published var scheduledMaintenanceEnabled: Bool {
@@ -704,6 +706,14 @@ final class AppState: ObservableObject {
     }
     #endif
 
+    /// Items a running scan has found: `sourceItems` in `source`, the one being walked, and
+    /// `totalItems` across every source the scan has covered.
+    struct ScanProgress: Equatable {
+        var source: String
+        var sourceItems: Int
+        var totalItems: Int
+    }
+
     /// Performs a scan on configured sources to calculate item counts and update expected element totals.
     @discardableResult
     func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
@@ -720,9 +730,22 @@ final class AppState: ObservableObject {
         }
         guard postgres.status == .running else { return false }
         scanningSource = source
-        defer { scanningSource = nil }
+        scanProgress = ScanProgress(source: source, sourceItems: 0, totalItems: 0)
+        defer {
+            scanningSource = nil
+            scanProgress = nil
+        }
         let grpc = self.grpc
-        let result = await scanner.run { _ in try await grpc.scan(source: source, includeCode: includeCode).message }
+        let result = await scanner.run { [weak self] _ in
+            try await grpc.scan(source: source, includeCode: includeCode) { status in
+                guard status.phase != "finished" else { return }
+                self?.scanProgress = ScanProgress(
+                    source: status.source,
+                    sourceItems: Int(status.sourceItems),
+                    totalItems: Int(status.totalItems)
+                )
+            }.message
+        }
         lastCommandOutput = result.output
         lastCommandSucceeded = result.succeeded
         await fetchRegisteredSources()

@@ -29,7 +29,7 @@ service GarageService {
     rpc ListSources (ListSourcesRequest) returns (ListSourcesResponse);
     rpc AddSource (AddSourceRequest) returns (AddSourceResponse);
     rpc RemoveSource (RemoveSourceRequest) returns (RemoveSourceResponse);
-    rpc Scan (ScanRequest) returns (ScanResponse);
+    rpc Scan (ScanRequest) returns (stream ScanStatus);
     rpc SyncSources (SyncSourcesRequest) returns (SyncSourcesResponse);
     rpc ImportSourcesToConfig (ImportSourcesToConfigRequest) returns (ImportSourcesToConfigResponse);
     rpc Reconcile (ReconcileRequest) returns (ReconcileResponse);
@@ -342,6 +342,17 @@ message ScanResponse {
     repeated SourceScanStatus sources = 1;
     int64 total_items = 2;
     string message = 3;
+}
+
+// One step of a scan: phase is progress (a running count while a source is walked) |
+// source (one source finished; result) | finished (summary, the last message).
+message ScanStatus {
+    string phase = 1;
+    string source = 2;
+    int64 source_items = 3;       // found so far in `source`
+    int64 total_items = 4;        // found so far across every source in this scan
+    SourceScanStatus result = 5;  // phase = source
+    ScanResponse summary = 6;     // phase = finished
 }
 
 message SyncSourcesRequest {
