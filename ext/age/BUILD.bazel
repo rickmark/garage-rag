@@ -52,6 +52,11 @@ make(
         "age.dylib",
     ],
     postfix_script = "dsymutil $$INSTALLDIR/lib/age.dylib -o $$INSTALLDIR/lib/age.dylib.dSYM",
+    # lib_source is one generated directory (age_source, see age.bzl). rules_foreign_cc takes
+    # its parent as the source root and links it into the build dir, read-only, so give make a
+    # writable copy of the tree first. `exec "$@"` keeps make on the same command line, so it
+    # still gets the toolchain variables rules_foreign_cc sets inline; the copy runs once.
+    tool_prefix = "sh -c '[ -f Makefile ] || cp -RL age_source/. . && chmod -R u+w . && exec \"$$@\"' sh",
     visibility = ["//visibility:public"],
     deps = [
         "//ext:postgres",
