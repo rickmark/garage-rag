@@ -6,6 +6,7 @@ swift_binary(
     name = "garage_bin",
     srcs = ["main.swift"],
     additional_linker_inputs = [
+        ":Info.plist",
         "//ext/python:python_framework",
     ],
     linkopts = [
@@ -30,7 +31,21 @@ swift_binary(
         "-rpath",
         "-Xlinker",
         "@loader_path/../Frameworks/Python.framework",
-    ],
+    ] + select({
+        # The store build sandboxes the launcher on its own (GarageLauncher.entitlements), which needs
+        # an embedded Info.plist with a bundle identifier. Other builds keep signing as the bare name.
+        "//bazel:is_store": [
+            "-Xlinker",
+            "-sectcreate",
+            "-Xlinker",
+            "__TEXT",
+            "-Xlinker",
+            "__info_plist",
+            "-Xlinker",
+            "$(location :Info.plist)",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         "//ext/python:python_3_13",
         # Interpreter start-up, app launch and the database URL, shared with garage-mcp.
@@ -43,7 +58,7 @@ codesign(
     name = "garage",
     src = ":garage_bin",
     entitlements = select({
-        "//bazel:is_store": "//macapp/externals:GarageServer.entitlements",
+        "//bazel:is_store": "//macapp/externals:GarageLauncher.entitlements",
         "//conditions:default": None,
     }),
     options = ["runtime"],
