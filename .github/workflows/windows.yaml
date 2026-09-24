@@ -76,7 +76,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\icu
-          key: icu-windows-x64-${{ hashFiles('ext/libicu/libicu.MODULE.bazel', '.github/workflows/windows.yaml') }}
+          key: icu-windows-x64-${{ hashFiles('ext/libicu/libicu.MODULE.bazel') }}
       - name: Build ICU
         if: steps.icu-cache.outputs.cache-hit != 'true'
         run: |
@@ -104,7 +104,9 @@ jobs:
       - name: pkg-config files for ICU and zlib
         # Neither ICU's MSBuild nor meson's MSVC zlib lookup gives meson something to
         # find, so describe both, and nothing else: PKG_CONFIG_LIBDIR replaces the
-        # default search path, which keeps Strawberry Perl's MinGW .pc files out.
+        # default search path, which keeps Strawberry Perl's MinGW .pc files out. The
+        # variable is not called prefix: pkgconf on Windows redefines prefix as the .pc
+        # file's grandparent directory.
         run: |
           $pc = "$env:DEPS\pkgconfig"
           New-Item -ItemType Directory -Force $pc | Out-Null
@@ -113,29 +115,29 @@ jobs:
           $zlib = Get-ChildItem "$env:DEPS\lib" -Filter *.lib | Select-Object -First 1
           if (-not $zlib) { throw "no zlib import library in $env:DEPS\lib" }
           @"
-          prefix=$icu
+          root=$icu
           Name: icu-uc
           Description: ICU common
           Version: 76.1
-          Libs: -L`${prefix}/lib -licuuc -licudt
-          Cflags: -I`${prefix}/include
+          Libs: -L`${root}/lib -licuuc -licudt
+          Cflags: -I`${root}/include
           "@ | Set-Content "$pc\icu-uc.pc"
           @"
-          prefix=$icu
+          root=$icu
           Name: icu-i18n
           Description: ICU internationalization
           Version: 76.1
           Requires: icu-uc
-          Libs: -L`${prefix}/lib -licuin
-          Cflags: -I`${prefix}/include
+          Libs: -L`${root}/lib -licuin
+          Cflags: -I`${root}/include
           "@ | Set-Content "$pc\icu-i18n.pc"
           @"
-          prefix=$deps
+          root=$deps
           Name: zlib
           Description: zlib
           Version: 1.3.2
-          Libs: -L`${prefix}/lib -l$($zlib.BaseName)
-          Cflags: -I`${prefix}/include
+          Libs: -L`${root}/lib -l$($zlib.BaseName)
+          Cflags: -I`${root}/include
           "@ | Set-Content "$pc\zlib.pc"
           Get-ChildItem $pc | ForEach-Object { "== $($_.Name)"; Get-Content $_ }
           "PKG_CONFIG=pkgconf" >> $env:GITHUB_ENV
