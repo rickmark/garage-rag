@@ -9,6 +9,11 @@ enum SplashLinks {
     static let patreon = URL(string: "https://www.patreon.com/rickmark")!
     static let linkedin = URL(string: "https://linkedin.com/in/penwellr")!
     static let releases = URL(string: "https://github.com/rickmark/garage-rag/releases")!
+    /// Bundled license texts for everything Garage redistributes (`//data/notices`). Nil in
+    /// `swift run`, where there is no app bundle to carry it.
+    static var thirdPartyNotices: URL? {
+        Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "txt")
+    }
 }
 
 /// UserDefaults key + helpers controlling whether the splash appears at launch.
@@ -229,6 +234,14 @@ struct SplashView: View {
                 .accessibilityIdentifier("splash.showAtLaunch")
 
             Spacer()
+
+            if let notices = SplashLinks.thirdPartyNotices {
+                Button("Acknowledgements") {
+                    NSWorkspace.shared.open(notices)
+                }
+                .buttonStyle(.link)
+                .accessibilityIdentifier("splash.acknowledgements")
+            }
 
             Button("Continue") {
                 dismiss()

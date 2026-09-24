@@ -16,3 +16,7 @@ bazel run @uv -- lock --directory garage_python
 
 # Accept any resulting MODULE.bazel.lock changes.
 bazel mod deps --lockfile_mode=update
+
+# The app redistributes every locked runtime package; refresh their license texts.
+# //data/notices:third_party_notices_test fails until this is committed.
+python3 tools/third_party_notices.py

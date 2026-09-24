@@ -21,6 +21,7 @@ gazelle_python_manifest(
 
 exports_files(
     [
+        "LICENSE",
         "pyproject.toml",
         "uv.lock",
     ],
