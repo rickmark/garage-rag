@@ -56,7 +56,20 @@ make(
     # its parent as the source root and links it into the build dir, read-only, so give make a
     # writable copy of the tree first. `exec "$@"` keeps make on the same command line, so it
     # still gets the toolchain variables rules_foreign_cc sets inline; the copy runs once.
-    tool_prefix = "sh -c '[ -f Makefile ] || cp -RL age_source/. . && chmod -R u+w . && exec \"$$@\"' sh",
+    # Unsandboxed builds (the Xcode project's) also link whatever else sits in that parent,
+    # including outputs a rule no longer declares, such as the bare src/ age.bzl once wrote: so
+    # remove any link named like a top-level entry of the tree before copying over it. chmod
+    # runs even when the copy fails, or the read-only half-copy blocks every later build's cleanup.
+    tool_prefix = " ".join([
+        "sh -c '",
+        "if [ ! -f Makefile ]; then",
+        "for entry in age_source/* age_source/.[!.]*; do",
+        "name=$${entry##*/}; [ -L \"$$name\" ] && rm -f \"$$name\";",
+        "done;",
+        "cp -RL age_source/. .; status=$$?; chmod -R u+w .; [ $$status -eq 0 ] || exit $$status;",
+        "fi;",
+        "exec \"$$@\"' sh",
+    ]),
     visibility = ["//visibility:public"],
     deps = [
         "//ext:postgres",
