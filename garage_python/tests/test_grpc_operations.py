@@ -18,10 +18,10 @@ import grpc
 import pytest
 
 from garage_rag.config import Settings, reset_settings
+from garage_rag.ingest.scanner import SourceScanResult
 from garage_rag.ops.backfill import BackfillEvent
 from garage_rag.ops.facts import EnrichEvent, EnrichSummary
 from garage_rag.ops.models import RegisteredModel
-from garage_rag.ingest.scanner import SourceScanResult
 from garage_rag.ops.sources import AddSourceResult, RemoveSourceResult, ScanEvent, SyncResult
 from garage_rag.proto.garage_pb2 import (
     AddSourceRequest,
