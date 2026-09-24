@@ -22,7 +22,7 @@ import time
 from collections.abc import Callable, Iterator
 from concurrent import futures
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import grpc
 
@@ -86,6 +86,7 @@ from garage_rag.proto.garage_pb2 import (
     RemoveSourceResponse,
     ScanRequest,
     ScanResponse,
+    ScanStatus,
     SearchHit,
     SearchRequest,
     SearchResponse,
@@ -111,6 +112,9 @@ from garage_rag.proto.garage_pb2_grpc import (
     GarageServiceServicer,
     add_GarageServiceServicer_to_server,
 )
+
+if TYPE_CHECKING:
+    from garage_rag.ingest.scanner import SourceScanResult
 
 logger = logging.getLogger(__name__)
 
@@ -645,30 +649,53 @@ class GarageRpcServicer(GarageServiceServicer):
         )
 
     @_grpc_errors
-    def Scan(self, request: ScanRequest, context: grpc.ServicerContext) -> ScanResponse:
-        """Count items per source and record the expected totals."""
-        from garage_rag.ops.sources import scan_sources
+    def Scan(self, request: ScanRequest, context: grpc.ServicerContext) -> Iterator[ScanStatus]:
+        """Count items per source and record the expected totals, streaming the running count."""
+        from garage_rag.ops.sources import ScanEvent, scan_sources
 
-        results = scan_sources(request.source or "*", include_code=request.include_code)
-        total = sum(r.item_count for r in results)
-        return ScanResponse(
-            sources=[
-                SourceScanStatus(
-                    source=r.source_slug,
-                    kind=r.kind,
-                    root=str(r.root),
-                    item_count=r.item_count,
-                    item_type=r.item_type,
-                    duration_seconds=r.duration_seconds,
-                    error=r.error or "",
+        def source_status(r: SourceScanResult) -> SourceScanStatus:
+            return SourceScanStatus(
+                source=r.source_slug,
+                kind=r.kind,
+                root=str(r.root),
+                item_count=r.item_count,
+                item_type=r.item_type,
+                duration_seconds=r.duration_seconds,
+                error=r.error or "",
+            )
+
+        def run(emit: Callable[[ScanStatus], None]) -> object:
+            def on_event(event: ScanEvent) -> None:
+                emit(
+                    ScanStatus(
+                        phase=event.phase,
+                        source=event.source,
+                        source_items=event.source_items,
+                        total_items=event.total_items,
+                        result=source_status(event.result) if event.result is not None else None,
+                    )
                 )
-                for r in results
-            ],
-            total_items=total,
-            message=(
-                f"Scanned {len(results)} source(s): {total:,} items" if results else "no sources registered to scan"
-            ),
-        )
+
+            results = scan_sources(request.source or "*", include_code=request.include_code, on_event=on_event)
+            total = sum(r.item_count for r in results)
+            emit(
+                ScanStatus(
+                    phase="finished",
+                    total_items=total,
+                    summary=ScanResponse(
+                        sources=[source_status(r) for r in results],
+                        total_items=total,
+                        message=(
+                            f"Scanned {len(results)} source(s): {total:,} items"
+                            if results
+                            else "no sources registered to scan"
+                        ),
+                    ),
+                )
+            )
+            return results
+
+        yield from _stream_events(run, context)
 
     @_grpc_errors
     def SyncSources(self, request: SyncSourcesRequest, context: grpc.ServicerContext) -> SyncSourcesResponse:

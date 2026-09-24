@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from pydantic import ValidationError
 from sqlalchemy import func
@@ -111,7 +113,31 @@ def remove_source(slug: str) -> RemoveSourceResult:
     return RemoveSourceResult(slug=slug, deleted_documents=int(count))
 
 
-def scan_sources(source: str = "*", *, include_code: bool = False) -> list[SourceScanResult]:
+ScanPhase = Literal["progress", "source"]
+
+
+@dataclass(frozen=True)
+class ScanEvent:
+    """One step of a scan.
+
+    ``progress``: ``source_items`` found so far in ``source`` while it is walked.
+    ``source``: ``source`` is done and ``result`` holds its count. ``total_items``
+    runs across every source the call scans.
+    """
+
+    phase: ScanPhase
+    source: str
+    source_items: int
+    total_items: int
+    result: SourceScanResult | None = None
+
+
+def scan_sources(
+    source: str = "*",
+    *,
+    include_code: bool = False,
+    on_event: Callable[[ScanEvent], None] | None = None,
+) -> list[SourceScanResult]:
     """Count items per source and record the expected totals.
 
     ``*`` means every *enabled* source; a disabled one must be named to be scanned.
@@ -126,12 +152,25 @@ def scan_sources(source: str = "*", *, include_code: bool = False) -> list[Sourc
             sources = [row]
         session.expunge_all()
 
+    def emit(event: ScanEvent) -> None:
+        if on_event is not None:
+            on_event(event)
+
     results: list[SourceScanResult] = []
+    found_before = 0
     with session_scope() as session:
         for src in sources:
-            result = scan_source(src, include_code=include_code)
+            slug = src.slug
+
+            def on_progress(count: int, slug: str = slug, before: int = found_before) -> None:
+                emit(ScanEvent("progress", slug, count, before + count))
+
+            emit(ScanEvent("progress", slug, 0, found_before))
+            result = scan_source(src, include_code=include_code, on_progress=on_progress)
             results.append(result)
             persist_scan_result(session, result)
+            found_before += result.item_count
+            emit(ScanEvent("source", slug, result.item_count, found_before, result))
     return results
 
 

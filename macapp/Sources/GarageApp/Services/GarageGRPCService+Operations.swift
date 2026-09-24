@@ -51,11 +51,26 @@ extension GarageGRPCService {
         return try await call { try await $0.removeSource(request, callOptions: $1) }
     }
 
-    func scan(source: String, includeCode: Bool) async throws -> Garage_ScanResponse {
+    /// Counts items per source, handing each status (the running count while a source is
+    /// walked, then its result) to `onStatus`; returns the summary the stream ends with.
+    func scan(
+        source: String,
+        includeCode: Bool,
+        onStatus: @MainActor (Garage_ScanStatus) -> Void = { _ in }
+    ) async throws -> Garage_ScanResponse {
         var request = Garage_ScanRequest()
         request.source = source
         request.includeCode = includeCode
-        return try await call(timeout: .minutes(10)) { try await $0.scan(request, callOptions: $1) }
+        return try await call(timeout: .minutes(10)) { client, options in
+            var summary = Garage_ScanResponse()
+            for try await status in client.scan(request, callOptions: options) {
+                onStatus(status)
+                if status.phase == "finished" {
+                    summary = status.summary
+                }
+            }
+            return summary
+        }
     }
 
     func syncSources(dryRun: Bool = false) async throws -> Garage_SyncSourcesResponse {

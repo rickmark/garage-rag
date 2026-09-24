@@ -100,7 +100,11 @@ struct StatusView: View {
                                 Text(src.slug)
                                     .font(.caption.bold())
                                 Spacer()
-                                if src.expectedElements > 0 {
+                                if let scan = appState.scanProgress, scan.source == src.slug {
+                                    Text("Scanning: \(Self.soFarText(scan.sourceItems))")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue)
+                                } else if src.expectedElements > 0 {
                                     let uningested = max(0, src.expectedElements - src.documentCount)
                                     Text("\(uningested) uningested (\(src.documentCount) of \(src.expectedElements) docs)")
                                         .font(.caption)
@@ -153,10 +157,20 @@ struct StatusView: View {
                     .foregroundStyle(.blue)
                 Text("Sources")
                     .font(.subheadline.bold())
+                if appState.scanProgress != nil {
+                    ProgressView().controlSize(.small)
+                }
             }
 
             Text("\(effectiveSourcesCount)")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
+
+            if let scan = appState.scanProgress {
+                Text("Scanning: \(Self.soFarText(scan.totalItems))")
+                    .font(.caption.bold())
+                    .foregroundStyle(.blue)
+                    .accessibilityIdentifier("status.sources.scanProgress")
+            }
 
             if effectiveSourcesCount == 0 {
                 Text("No sources configured")
@@ -222,8 +236,15 @@ struct StatusView: View {
                     .lineLimit(2)
             } else {
                 // The headline is what's in the corpus; what's still pending goes in the caption.
-                Text("\(stats.documentsCount)")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                // Nothing indexed yet (a first run): the scan comes first.
+                if stats.documentsCount == 0 {
+                    Text(Self.waitingOnScan)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(stats.documentsCount)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                }
 
                 ProgressView(value: stats.ingestionProgressFraction)
                     .progressViewStyle(.linear)
@@ -301,7 +322,11 @@ struct StatusView: View {
                 Text("Embedding…")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.blue)
-            } else if stats.unembeddedChunks == 0 && stats.totalChunks > 0 {
+            } else if stats.totalChunks == 0 {
+                Text(Self.waitingForIngest)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            } else if stats.unembeddedChunks == 0 {
                 Text("Complete")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.green)
@@ -348,6 +373,16 @@ struct StatusView: View {
             .buttonStyle(.link)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The Ingestion card's headline while nothing is indexed yet, e.g. on a first run.
+    static let waitingOnScan = "Waiting on scan"
+    /// The Chunk Embedding card's headline while there are no chunks to embed.
+    static let waitingForIngest = "Waiting for ingest"
+
+    /// "12,345 so far": how a running scan's count reads.
+    nonisolated static func soFarText(_ count: Int) -> String {
+        "\(count.formatted()) so far"
     }
 
     // MARK: - System Health Header

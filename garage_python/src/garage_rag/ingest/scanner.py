@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +73,33 @@ class SourceScanResult:
 
 ScanResult = SourceScanResult
 
+# Called with the number of items a scan has found so far in the source it is walking.
+ScanProgress = Callable[[int], None]
+
+# How often a scan reports its running count.
+PROGRESS_INTERVAL_SECONDS = 0.25
+
+
+class _ProgressTicker:
+    """Passes a running count to ``on_progress`` at most once per ``PROGRESS_INTERVAL_SECONDS``.
+
+    A walk visits many thousands of directories; reporting each one would flood the
+    stream the app reads the count from.
+    """
+
+    def __init__(self, on_progress: ScanProgress | None) -> None:
+        self._on_progress = on_progress
+        self._interval = PROGRESS_INTERVAL_SECONDS
+        self._last = time.monotonic()
+
+    def __call__(self, count: int) -> None:
+        if self._on_progress is None:
+            return
+        now = time.monotonic()
+        if now - self._last >= self._interval:
+            self._last = now
+            self._on_progress(count)
+
 
 # ---------------------------------------------------------------------------
 # 1. Filesystem scanner
@@ -84,11 +112,13 @@ def scan_filesystem(
     source_slug: str = "",
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
     """Count indexable files in a filesystem tree.
 
     ``exclude_prefixes`` are root-relative directory prefixes (``"Library/"``);
     matching subtrees are pruned before descent, mirroring ``walker.walk``.
+    ``on_progress`` receives the running file count as the walk goes.
     """
     start_time = time.perf_counter()
     if not root.exists():
@@ -118,11 +148,13 @@ def scan_filesystem(
     file_count = 0
     dir_count = 0
     skipped_ext = 0
+    tick = _ProgressTicker(on_progress)
 
     try:
         for parent_str, dirnames, filenames in os.walk(str(root), followlinks=False):
             parent = Path(parent_str)
             dir_count += 1
+            tick(file_count)
 
             # Prune excluded directories in-place
             dirnames[:] = [
@@ -190,6 +222,7 @@ def scan_git(
     source_slug: str = "",
     include_code: bool = False,
     exclude_prefixes: tuple[str, ...] = (),
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
     """Count the files ingest will walk in a git working tree.
 
@@ -203,6 +236,7 @@ def scan_git(
         source_slug=source_slug,
         include_code=include_code,
         exclude_prefixes=exclude_prefixes,
+        on_progress=on_progress,
     )
     result.kind = "git"
     if result.error is None:
@@ -289,6 +323,7 @@ def scan_sqlite(
     root: Path,
     *,
     source_slug: str = "",
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
     """Count total database records across SQLite database(s)."""
     start_time = time.perf_counter()
@@ -319,7 +354,9 @@ def scan_sqlite(
     total_records = 0
     all_table_counts: dict[str, dict[str, int]] = {}
     any_thread_counted = False
+    tick = _ProgressTicker(on_progress)
     for db_path in db_files:
+        tick(total_records)
         rows, tbls, is_thread_count = _count_sqlite_database_rows(db_path)
         total_records += rows
         all_table_counts[db_path.name] = tbls
@@ -349,6 +386,7 @@ def scan_maildir(
     root: Path,
     *,
     source_slug: str = "",
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
     """Count email message files in a Maildir or Apple Mail directory."""
     start_time = time.perf_counter()
@@ -365,11 +403,13 @@ def scan_maildir(
 
     message_count = 0
     folder_count = 0
+    tick = _ProgressTicker(on_progress)
 
     for parent_str, _dirnames, filenames in os.walk(str(root), followlinks=False):
         parent_name = os.path.basename(parent_str).lower()
         is_maildir_box = parent_name in ("cur", "new", "tmp")
         folder_count += 1
+        tick(message_count)
 
         for filename in filenames:
             if _is_hidden(filename):
@@ -436,6 +476,7 @@ def scan_feed(
     root: Path,
     *,
     source_slug: str = "",
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
     """Count feed entries across RSS/Atom/JSON feed files."""
     start_time = time.perf_counter()
@@ -464,7 +505,9 @@ def scan_feed(
 
     total_entries = 0
     feed_details: dict[str, int] = {}
+    tick = _ProgressTicker(on_progress)
     for feed_path in feed_files:
+        tick(total_entries)
         items = _count_feed_items(feed_path)
         total_entries += items
         feed_details[feed_path.name] = items
@@ -489,8 +532,12 @@ def scan_source(
     source: Source | Any,
     *,
     include_code: bool = False,
+    on_progress: ScanProgress | None = None,
 ) -> SourceScanResult:
-    """Scan a source to count its items according to its kind."""
+    """Scan a source to count its items according to its kind.
+
+    ``on_progress`` receives the running item count while the source is walked.
+    """
     slug = getattr(source, "slug", str(source))
     kind = getattr(source, "kind", "filesystem")
     root_val = getattr(source, "root", source)
@@ -507,21 +554,25 @@ def scan_source(
                 source_slug=slug,
                 include_code=include_code,
                 exclude_prefixes=prefixes,
+                on_progress=on_progress,
             )
         case "sqlite":
             result = scan_sqlite(
                 root,
                 source_slug=slug,
+                on_progress=on_progress,
             )
         case "maildir":
             result = scan_maildir(
                 root,
                 source_slug=slug,
+                on_progress=on_progress,
             )
         case "feed":
             result = scan_feed(
                 root,
                 source_slug=slug,
+                on_progress=on_progress,
             )
         case _:
             result = scan_filesystem(
@@ -529,6 +580,7 @@ def scan_source(
                 source_slug=slug,
                 include_code=include_code,
                 exclude_prefixes=prefixes,
+                on_progress=on_progress,
             )
 
     log.info(

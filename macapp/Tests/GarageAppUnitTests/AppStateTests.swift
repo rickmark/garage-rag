@@ -600,6 +600,7 @@ final class AppStateTests: XCTestCase {
 
         let scanResult = await state.scanSources()
         XCTAssertFalse(scanResult)
+        XCTAssertNil(state.scanProgress, "a scan that never ran leaves no progress behind")
     }
 
     @MainActor
