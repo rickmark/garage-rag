@@ -88,10 +88,10 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.RemoveSourceRequest.SerializeToString,
                 response_deserializer=garage__pb2.RemoveSourceResponse.FromString,
                 _registered_method=True)
-        self.Scan = channel.unary_unary(
+        self.Scan = channel.unary_stream(
                 '/garage.GarageService/Scan',
                 request_serializer=garage__pb2.ScanRequest.SerializeToString,
-                response_deserializer=garage__pb2.ScanResponse.FromString,
+                response_deserializer=garage__pb2.ScanStatus.FromString,
                 _registered_method=True)
         self.SyncSources = channel.unary_unary(
                 '/garage.GarageService/SyncSources',
@@ -476,10 +476,10 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     request_deserializer=garage__pb2.RemoveSourceRequest.FromString,
                     response_serializer=garage__pb2.RemoveSourceResponse.SerializeToString,
             ),
-            'Scan': grpc.unary_unary_rpc_method_handler(
+            'Scan': grpc.unary_stream_rpc_method_handler(
                     servicer.Scan,
                     request_deserializer=garage__pb2.ScanRequest.FromString,
-                    response_serializer=garage__pb2.ScanResponse.SerializeToString,
+                    response_serializer=garage__pb2.ScanStatus.SerializeToString,
             ),
             'SyncSources': grpc.unary_unary_rpc_method_handler(
                     servicer.SyncSources,
@@ -867,12 +867,12 @@ class GarageService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(
+        return grpc.experimental.unary_stream(
             request,
             target,
             '/garage.GarageService/Scan',
             garage__pb2.ScanRequest.SerializeToString,
-            garage__pb2.ScanResponse.FromString,
+            garage__pb2.ScanStatus.FromString,
             options,
             channel_credentials,
             insecure,

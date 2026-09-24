@@ -21,7 +21,8 @@ from garage_rag.config import Settings, reset_settings
 from garage_rag.ops.backfill import BackfillEvent
 from garage_rag.ops.facts import EnrichEvent, EnrichSummary
 from garage_rag.ops.models import RegisteredModel
-from garage_rag.ops.sources import AddSourceResult, RemoveSourceResult, SyncResult
+from garage_rag.ingest.scanner import SourceScanResult
+from garage_rag.ops.sources import AddSourceResult, RemoveSourceResult, ScanEvent, SyncResult
 from garage_rag.proto.garage_pb2 import (
     AddSourceRequest,
     BackfillRequest,
@@ -73,6 +74,33 @@ class TestSources:
             res = client.remove_source("docs")
         assert res.deleted_documents == 12
         assert res.message == "removed docs (12 documents)"
+
+    def test_scan_streams_running_count_then_summary(self, client: GarageClient, tmp_path: Path) -> None:
+        done = SourceScanResult("docs", "filesystem", tmp_path, item_count=1234, item_type="files")
+
+        def fake(source, *, include_code, on_event):
+            on_event(ScanEvent("progress", "docs", 0, 0))
+            on_event(ScanEvent("progress", "docs", 1000, 1000))
+            on_event(ScanEvent("source", "docs", 1234, 1234, done))
+            return [done]
+
+        with patch("garage_rag.ops.sources.scan_sources", side_effect=fake) as op:
+            statuses = list(client.scan("docs"))
+        assert op.call_args.args == ("docs",)
+        assert [s.phase for s in statuses] == ["progress", "progress", "source", "finished"]
+        assert statuses[1].source == "docs" and statuses[1].source_items == 1000
+        assert statuses[2].result.item_count == 1234
+        assert not statuses[1].HasField("result")
+        summary = statuses[-1].summary
+        assert summary.total_items == 1234 and [s.source for s in summary.sources] == ["docs"]
+        assert summary.message == "Scanned 1 source(s): 1,234 items"
+
+    def test_scan_unknown_source_is_not_found(self, client: GarageClient) -> None:
+        with (
+            patch("garage_rag.ops.sources.scan_sources", side_effect=LookupError("no such source: gone")),
+            pytest.raises(RuntimeError, match="NOT_FOUND"),
+        ):
+            list(client.scan("gone"))
 
     def test_sync_reports_lines_and_undeclared(self, client: GarageClient) -> None:
         result = SyncResult(

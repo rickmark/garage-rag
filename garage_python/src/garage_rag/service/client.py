@@ -63,7 +63,7 @@ from garage_rag.proto.garage_pb2 import (
     RemoveSourceRequest,
     RemoveSourceResponse,
     ScanRequest,
-    ScanResponse,
+    ScanStatus,
     SearchRequest,
     SearchResponse,
     SetDefaultModelRequest,
@@ -221,8 +221,8 @@ class GarageClient:
     def remove_source(self, slug: str) -> RemoveSourceResponse:
         return self._invoke_unary("RemoveSource", RemoveSourceRequest(slug=slug), RemoveSourceResponse)
 
-    def scan(self, source: str = "*", include_code: bool = False) -> ScanResponse:
-        return self._invoke_unary("Scan", ScanRequest(source=source, include_code=include_code), ScanResponse)
+    def scan(self, source: str = "*", include_code: bool = False) -> Iterator[ScanStatus]:
+        return self._invoke_stream("Scan", ScanRequest(source=source, include_code=include_code), ScanStatus)
 
     def sync_sources(self, dry_run: bool = False) -> SyncSourcesResponse:
         return self._invoke_unary("SyncSources", SyncSourcesRequest(dry_run=dry_run), SyncSourcesResponse)

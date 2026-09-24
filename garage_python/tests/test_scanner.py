@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from garage_rag.cli import app
 from garage_rag.db.models import CorpusClass, Source, TrustTier
+from garage_rag.ingest import scanner
 from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import (
     scan_feed,
@@ -365,6 +366,96 @@ def test_scan_source_dispatcher(tmp_path: Path) -> None:
     res_sqlite = scan_source(src_sqlite)
     assert res_sqlite.kind == "sqlite"
     assert res_sqlite.item_type == "records"
+
+
+# ---------------------------------------------------------------------------
+# 6b. Running count while a source is walked
+# ---------------------------------------------------------------------------
+
+
+def test_scan_filesystem_reports_a_running_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner, "PROGRESS_INTERVAL_SECONDS", 0.0)
+    for name in ("a", "b", "c"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "one.md").write_text("# one", encoding="utf-8")
+        (tmp_path / name / "two.txt").write_text("two", encoding="utf-8")
+
+    counts: list[int] = []
+    res = scan_filesystem(tmp_path, source_slug="fs", on_progress=counts.append)
+
+    assert res.item_count == 6
+    assert counts, "a walk over several directories reports its count"
+    assert counts == sorted(counts)
+    assert counts[-1] <= res.item_count
+
+
+def test_scan_progress_is_throttled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner, "PROGRESS_INTERVAL_SECONDS", 3600.0)
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "note.md").write_text("# note", encoding="utf-8")
+
+    counts: list[int] = []
+    scan_filesystem(tmp_path, source_slug="fs", on_progress=counts.append)
+    assert counts == []
+
+
+def test_scan_source_passes_progress_to_every_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner, "PROGRESS_INTERVAL_SECONDS", 0.0)
+    (tmp_path / "cur").mkdir()
+    (tmp_path / "cur" / "1.host:2,S").write_text("From: a@b.com\n\nBody")
+    (tmp_path / "feed.xml").write_text("<rss><channel><item/></channel></rss>", encoding="utf-8")
+    with sqlite3.connect(tmp_path / "data.db") as conn:
+        conn.execute("CREATE TABLE t (x INTEGER)")
+    for kind in ("filesystem", "git", "maildir", "sqlite", "feed"):
+        counts: list[int] = []
+        src = Source(
+            slug=f"{kind}-src",
+            kind=kind,
+            root=str(tmp_path),
+            default_class=CorpusClass.DOCUMENT,
+            default_trust=TrustTier.AUTHORED,
+        )
+        scan_source(src, on_progress=counts.append)
+        assert counts, f"{kind} scan reported no progress"
+
+
+def test_scan_sources_events_carry_per_source_and_running_totals(tmp_path: Path) -> None:
+    from contextlib import contextmanager
+
+    from garage_rag.ingest.scanner import SourceScanResult
+    from garage_rag.ops.sources import ScanEvent, scan_sources
+
+    sources = [MagicMock(slug="a"), MagicMock(slug="b")]
+    session = MagicMock()
+    session.query.return_value.filter_by.return_value.order_by.return_value.all.return_value = sources
+
+    @contextmanager
+    def fake_scope():
+        yield session
+
+    def fake_scan(src, *, include_code, on_progress):
+        on_progress(2)
+        return SourceScanResult(src.slug, "filesystem", tmp_path, item_count=5, item_type="files")
+
+    events: list[ScanEvent] = []
+    with (
+        patch("garage_rag.ops.sources.session_scope", fake_scope),
+        patch("garage_rag.ops.sources.scan_source", side_effect=fake_scan),
+        patch("garage_rag.ops.sources.persist_scan_result"),
+    ):
+        results = scan_sources("*", on_event=events.append)
+
+    assert [r.item_count for r in results] == [5, 5]
+    assert [(e.phase, e.source, e.source_items, e.total_items) for e in events] == [
+        ("progress", "a", 0, 0),
+        ("progress", "a", 2, 2),
+        ("source", "a", 5, 5),
+        ("progress", "b", 0, 5),
+        ("progress", "b", 2, 7),
+        ("source", "b", 5, 10),
+    ]
+    assert events[2].result is results[0]
 
 
 # ---------------------------------------------------------------------------

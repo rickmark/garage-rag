@@ -27,6 +27,27 @@ final class StatusViewTests: XCTestCase {
         XCTAssertNotNil(controller.view)
     }
 
+    func testScanCountReadsSoFar() {
+        XCTAssertEqual(StatusView.soFarText(0), "0 so far")
+        XCTAssertEqual(StatusView.soFarText(42), "42 so far")
+    }
+
+    func testWaitingHeadlines() {
+        XCTAssertEqual(StatusView.waitingOnScan, "Waiting on scan")
+        XCTAssertEqual(StatusView.waitingForIngest, "Waiting for ingest")
+    }
+
+    @MainActor
+    func testStatusViewRendersAScanInProgressOnAnEmptyCorpus() {
+        let appState = AppState()
+        appState.registeredSources = [RegisteredSource(slug: "docs", root: "/tmp/docs")]
+        appState.scanProgress = AppState.ScanProgress(source: "docs", sourceItems: 1234, totalItems: 1234)
+        appState.corpusStats = CorpusStats()
+
+        let controller = NSHostingController(rootView: StatusView().environmentObject(appState))
+        XCTAssertNotNil(controller.view)
+    }
+
     @MainActor
     func testStatusViewDefaultInitializer() {
         let appState = AppState()
