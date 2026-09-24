@@ -2160,3 +2160,199 @@ Every Python process links our framework, and a sandboxed service may read insid
 - the `garage` CLI starting Python from the new location;
 - the macapp unit tests;
 - then commit and push `claude/store-sandbox-python` for folding into PR #15.
+
+---
+
+# Check of store-sandbox-python on main
+
+2026-09-23 17:30–18:25 MDT. PR #15 was squash-merged into `main` as `0e0b7dc`. Following the coordinating
+session's instructions, `claude/store-sandbox-python` was rebased with
+`git rebase --onto origin/main 898c0e6` (898c0e6 is `55a494c`'s parent, and was the old PR branch head). Only
+`55a494c` was replayed, as **`4dd0739`**, with **no conflicts**. The commit is signed; Secretive held the signature
+for about 4 minutes until it was approved. Worktree: `~/Developer/garage-merge-check`. The archived session's
+`~/Developer/garage-sandbox` worktree was clean and has been detached so the branch could be checked out here.
+
+Rules held: no notarize, installer, pkgbuild, install target, `xcarchive_open` or upload; nothing in
+/Applications; tests against Homebrew's Postgres (`GARAGE_TEST_DATABASE_URL=postgresql://localhost:5432/postgres`); no
+TCC prompt; no Reset Database. Backups taken with `ditto` into `~/GarageBackup-20260923/` (the cluster was `shut down`
+both times):
+- `before-merge-check-5d9b86a`, taken 14:37 before any launch, 838 MB;
+- `before-devid-4dd0739`, taken after the store run and before the Developer ID build's first launch, 838 MB.
+
+**Not pushed:** `git push --force-with-lease=claude/store-sandbox-python:55a494c0 origin claude/store-sandbox-python`
+was refused by this session's permission policy (auto mode treats a force-push as destructive). The rebased branch
+is only local, at `4dd0739`. The owner needs to run that push, or allow it.
+
+An earlier merge-based check of `97e3dd2` + `55a494c` (a signed local merge, `5d9b86a`, never pushed) was superseded
+by the rebase. Its full test run had passed **32/32** on a cold output base in 13m44s.
+
+## 1. `aspect test //... --bazel-flag=--test_output=errors`: **PASS, 32/32** (7m30s)
+
+29 targets were cache hits: their inputs were identical to the merge run above, which executed all of them. The
+three macapp targets re-ran.
+
+| Target | Result |
+|---|---|
+| `//ext/python:python_framework_codesign_test` (the only `codesign_test` in the repo) | PASSED, 24.1s |
+| `//garage_python/tests:test_postgres` | PASSED: **16 passed**, none skipped, against Homebrew PG 18 |
+| `//macapp/Tests/GarageAppUnitTests:GarageAppUnitTests` | PASSED, 50.4s: **245 tests, 0 failures** |
+| `//macapp/Tests/GarageAppUITests:GarageAppUITests` | PASSED, 3.3s |
+| `//macapp/Tests/LlamaClientTests:LlamaClientTests` | PASSED, 3.4s |
+| the 26 other `garage_python/tests:*` and `//bazel:preset.update_test` | PASSED |
+
+## 2. Both app builds
+
+`aspect build //macapp:GarageStore.app` (6m32s) and `aspect build //macapp/package:GarageApp` (9m45s) both pass. They were
+extracted with `ditto -x -k` into `~/GarageTest/store-4dd0739/` and `~/GarageTest/devid-4dd0739/`.
+`~/GarageTest` had been deleted, as the M3 reported, and was recreated. Both builds report **build number 151**,
+down from 224–225 on the PR branch, presumably because the build number counts commits and the squash merge
+shortened the history.
+
+| Check | Store (`Apple Development: Rick Penwell (23E5F7Z5L7)`) | Developer ID (`Developer ID Application: Richard Penwell (DWVXMLB45Y)`) |
+|---|---|---|
+| (a) `codesign --verify --deep --strict` | **OK** | **OK** |
+| (b) app size | **635 MB** | **596 MB** |
+| (b) `site-python` location | `Contents/Frameworks/PythonXPCService.framework/site-python`, 474 MB | same path, 436 MB |
+| (c) `Contents/Resources/site-python` | **absent** | **absent** |
+| (c) `PythonXPCService.framework/Resources/site-python` | absent | absent |
+| (d) `@rpath/libpq.dylib` in `otool -L` (ingest, embed, `GarageXPCService`, MCP) | **4/4** | **4/4** |
+| `site-python/config-3.13-darwin` | **gone** | **gone** |
+| `/opt/homebrew` or `/usr/local` in `strings -a` of `garage`, `garage-mcp`, `GarageApp`, `PythonXPCService.framework/PythonXPCService`, 6 XPC executables | **0 in all 10** | **0 in all 10** |
+| Bundle-wide `grep -rl /opt/homebrew` | 1 file: `cryptography/…/_rust.abi3.so` | same 1 file |
+
+- **The `ba8e7d0` checks.** The PythonKit patch applies: the `PythonKit` external repo builds with it and every
+  binary compiles. The bundle-wide Homebrew count falls from the M3's **11 files to 1**. The one left is
+  `cryptography`'s statically linked OpenSSL (`OPENSSLDIR: "/opt/homebrew/etc/openssl@3"`), which
+  `claude/bundle-hygiene` neutralizes with `OPENSSL_CONF`.
+- **Space saved by dropping `config-3.13-darwin`: about 15 MB per build.** The directory held `libpython3.13.a` and
+  `libpython3.13.dylib`, 7.2 MB each (in the Python build both are symlinks to the interpreter, which
+  `copy_to_directory` dereferences), plus `Makefile` (212 KB), `python.o`, `config.c` and the Setup files.
+- **`sysconfig` still works.** I ran a `Py_BytesMain` host, compiled against the bundle's own `Python.framework`, with
+  `PYTHONHOME=<site-python>`. `sysconfig.get_config_vars()` returned **1052 vars** from `_sysconfigdata__darwin_darwin`
+  (`VERSION 3.13`, `EXT_SUFFIX .cpython-313-darwin.so`), and `get_platform()` returned `macosx-27.0-arm64`.
+- **New finding: the store build ships unthinned universal2 wheels.** Its `site-python` is 38 MB larger than the
+  Developer ID one. All of the difference is in `site-packages`: `grpc` +19 MB, `cryptography` +9.7 MB, `lxml` +8.9 MB,
+  `uuid_utils`, `charset_normalizer`. Example: `grpc/_cython/cygrpc*.so` is `x86_64 arm64` (37.6 MB) in the store
+  build and `arm64` (18.3 MB) in the Developer ID build. So `//macapp/package`'s `lipo.bzl` pass thins the
+  Developer ID build, and nothing equivalent runs on `//macapp:GarageStore.app`. The CPython `lib-dynload` modules
+  are arm64 in both.
+
+## 3. Store build launch
+
+Launched 18:12:52 with nothing else running and the cluster `shut down`. A `log stream` for sandbox denials had been
+started beforehand.
+
+- **Up:** Postgres 14824, MCP 8787 and gRPC 50051 at **+7s**, llama 8790 at **+18s**. The app and all six XPC services
+  were running. MCP answers `initialize` over HTTP (`serverInfo.name = garage-rag`). llama `/health` returns 503
+  because no model is loaded.
+- **Self tests** (unified log, `GarageXPCSelfTests` category; the services run them at bootstrap). All four Python
+  services pass `Logging`, `Python Runtime`, `Standard Library Extensions`, `Site Packages`, `libpq` and
+  `Service Module`. The MCP service also passes `Database Connection`. `Database Connection` and `gRPC Connection`
+  are **skipped** in the other three services because their configuration isn't pushed yet at bootstrap (unchanged
+  behaviour). **No Python-service self test failed.**
+  - The one failure in the log is **llama's `HTTP API`** at 18:13:09.5, one second *before* 8790 started listening
+    (18:13:10). It ran only that once. It is a start-up ordering race in `LlamaXPCService`, unrelated to this
+    branch.
+- **Sandbox denials from Garage processes during the run:**
+
+  | Denial | Process | Count |
+  |---|---|---|
+  | `system-info vfs.disk-space` | GarageApp, GarageEmbedXPCService | 75 (noise) |
+  | `system-info net.link.addr` | MCP, llama, postgres, psql | 2 each (noise) |
+  | `file-read-data /opt/homebrew/etc/openssl@3/openssl.cnf` | GarageMCPServerService | **1**: the `cryptography` read, this is the baseline for bundle-hygiene |
+  | anything under `site-python`, `Contents/Frameworks`, or `libpq` | none | **0** |
+
+  A `file-read-xattr` on `~/Developer/garage/macapp/Garage.xcodeproj` came from `duetexpertd`, not from Garage.
+- **⌘Q** (System Events): the app was gone within about 1s, no listeners were left, and `pg_controldata` reported
+  **`shut down`**.
+
+## 4. Developer ID build and the `garage` CLI
+
+Launched after the second backup, with the store build not running. All listeners were up by +17s.
+
+- `GARAGE_DEBUG=1 Contents/MacOS/garage stats` — **PASS**, exit 0, with no Keychain prompt:
+  ```
+  [GARAGE_CLI] Python home: …/devid-4dd0739/Garage.app/Contents/Frameworks/PythonXPCService.framework/site-python
+  [GARAGE_CLI] Dynamic Postgres: …/devid-4dd0739/Garage.app/Contents/Frameworks/libpq.dylib
+  ```
+  So the launcher, which doesn't load `PythonXPCService.framework`, finds `site-python` by path. Every table shows
+  **0 rows**: this group-container cluster holds no sources, documents or models right now.
+- `Contents/MacOS/garage search "test"` — **exit 134 (SIGABRT)**, two pre-existing problems, neither from this branch:
+  1. With no models registered, the CLI prints a raw traceback ending in `LookupError: no default model registered,
+     and the configured embedding.default_model 'bge-m3' is not registered either; run 'garage register-model' first`
+     rather than a one-line error.
+  2. **The launcher then aborts:** `Fatal Python error: PyThreadState_Get: the function must be called with the GIL
+     held … the GIL is released`. The symbolicated crash report (`~/Library/Logs/DiagnosticReports/garage-2026-09-23-181854.ips`)
+     shows the chain:
+     ```
+     BaseException_dealloc ← Py_DecRef ← PyReference.deinit ← destroy for PythonError
+       ← -[__SwiftNativeNSError dealloc] ← Launcher.runPython(_:appBundle:)
+     ```
+     `runPython`'s outer `catch` prints the error inside `withGIL`, but the `PythonError` it holds (and the
+     exception it references) is released when the `catch` scope ends, **outside the GIL**. So **every CLI command
+     that ends in a Python exception exits 134 and leaves a crash report.** `55a494c` changes only a doc comment in
+     `Launcher.swift`, so this is on `main`. A likely fix is to drop the last reference inside `withGIL`, for example
+     by converting the error to a `String` there and not letting the `Error` escape the closure.
+- ⌘Q: clean, no listeners left, **`shut down`**.
+
+## 5. `PythonXPCService.framework` layout: flat (shallow)
+
+```
+PythonXPCService.framework/
+  Info.plist
+  PythonXPCService          (install name @rpath/PythonXPCService.framework/PythonXPCService)
+  _CodeSignature/
+  site-python/              (474 MB store / 436 MB Developer ID, 23,512 sealed files)
+```
+`codesign -dvvv`: `Format=bundle with Mach-O thin (arm64)`, `Sealed Resources version=2 rules=10 files=23512`,
+`Info.plist entries=19`, `flags=0x10000(runtime)`. codesign never prints the word "shallow". The evidence is
+`Info.plist` and `_CodeSignature` sitting at the bundle root, with no `Versions/` or `Resources/`. For contrast, the
+`Python.framework` next to it is versioned: `Headers`, `Python` and `Resources` are symlinks into
+`Versions/Current` → `Versions/3.13`.
+
+**Validation risk.** `codesign --strict` accepts the flat layout and the app runs. macOS frameworks are documented
+as versioned, though, and App Store Connect has historically rejected flat macOS frameworks. I could not test that
+here: it needs an upload or `altool --validate-app`, both off limits. Treat it as a **likely upload blocker until
+proven otherwise.**
+
+**Feasibility of making it versioned:**
+- **rules_apple 5.1.0 has no option for it.** `macos_framework` uses the `apple_product_type.framework` rule
+  descriptor, whose `bundle_locations` are the defaults: no `Contents/`, resources at the root. That is the iOS
+  layout. Nothing in `macos_framework`'s attributes overrides it. The only versioned handling in rules_apple is in
+  `framework_import_support.bzl`, for *imported* frameworks (`has_versioned_framework_files`).
+- **A post-processing step is feasible, and the hook already exists.** `//bazel:codesign.bzl` (the
+  `PythonXPCService_signed` target) already handles versioned bundles for `Python.framework`: when a `Versions/`
+  directory exists, it repoints `Versions/Current` and the top-level `Python`, `Headers` and `Resources` symlinks, then
+  signs each version and the bundle. For `PythonXPCService.framework`, a step before signing would have to:
+  1. move `PythonXPCService` → `Versions/A/PythonXPCService`, `Info.plist` → `Versions/A/Resources/Info.plist`, and
+     `site-python` → `Versions/A/Resources/site-python`;
+  2. add `Versions/Current → A` and the top-level `PythonXPCService` and `Resources` symlinks;
+  3. `install_name_tool -id @rpath/PythonXPCService.framework/Versions/A/PythonXPCService` before signing. Consumers
+     linked against the flat install name keep resolving through the top-level symlink, but relinking them gives the
+     canonical path;
+  4. sign `Versions/A`, then the bundle (the existing branch). The Python-specific cleanup in that branch
+     (`rm -rf …/lib`, `bin`) would need to be gated to `Python.framework`.
+- **The runtime is ready for it.** `GaragePythonRuntime.resolveEnvironment()` already probes
+  `PythonXPCService.framework/Resources/site-python` by path. `Bundle(identifier:).resourceURL` would become
+  `Versions/A/Resources`, which is where `site-python` would then be.
+- `lipo.bzl` would need to walk into `Versions/A/Resources/site-python` for its `test/` cleanup; it already lists that
+  path.
+
+Not changed, as asked.
+
+## 6. Summary
+
+| Step | Result |
+|---|---|
+| Rebase onto `main` | **clean**, `55a494c` → `4dd0739` |
+| `aspect test //...` | **32/32** |
+| Store build: codesign, layout, libpq, strings | **PASS**; +38 MB unthinned universal2 wheels (new finding) |
+| Developer ID build: same checks | **PASS** |
+| `ba8e7d0` checks | **PASS**: 0 Homebrew strings in binaries; 1 file in the whole bundle (`cryptography`); config dir gone (~15 MB); sysconfig OK |
+| Store launch, services, self tests, ⌘Q | **PASS**; llama `HTTP API` start-up race (pre-existing) |
+| Developer ID `garage stats` | **PASS** |
+| Developer ID `garage search` | **FAIL, pre-existing:** the launcher aborts (SIGABRT) whenever Python raises |
+| Framework layout | flat/shallow; versioning feasible as a post-process in `codesign.bzl` |
+| Force-push of the rebased branch | **not done**: refused by the permission policy, owner action needed |
+
+State left behind: no Garage running, cluster `shut down`, both builds in `~/GarageTest/{store,devid}-4dd0739/`.
