@@ -2,6 +2,8 @@
 layout: default
 title: Contact & Support
 description: Contact the maintainers, submit bug reports, request features, and get support for Garage.
+redirect_from:
+  - /contact.html
 ---
 
 # Contact & Support
