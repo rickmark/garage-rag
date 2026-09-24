@@ -6,7 +6,6 @@ import SwiftUI
 /// The button renders nothing at all when the running build can't update itself
 /// (App Store builds, or a Developer ID build made without a signing key): a
 /// permanently disabled menu item just invites the user to wonder what is wrong.
-/// `SplashView` shows the reason instead, where there is room to explain it.
 struct CheckForUpdatesButton: View {
     @ObservedObject var updater: UpdaterService
 
