@@ -148,11 +148,55 @@ class GarageUITestCase: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
     }
 
-    /// Replaces a text field's contents.
-    func replaceText(in field: XCUIElement, with text: String) {
-        field.click()
+    /// Replaces a text field's contents. The field is scrolled into view and clicked until it holds
+    /// keyboard focus: a click on a field at the edge of its scroll view lands on the edge instead,
+    /// and typing then fails with "Neither element nor any descendant has keyboard focus".
+    func replaceText(in field: XCUIElement, with text: String, file: StaticString = #filePath, line: UInt = #line) {
+        let focused = waitUntil(timeout: 15) {
+            reveal(field)
+            field.click()
+            return waitUntil(timeout: 1) { (field.value(forKey: "hasKeyboardFocus") as? Bool) == true }
+        }
+        XCTAssertTrue(focused, "\(field) never took keyboard focus", file: file, line: line)
         field.typeKey("a", modifierFlags: .command)
         field.typeText(text)
+    }
+
+    /// Clicks `element` once it is scrolled into view.
+    func click(_ element: XCUIElement) {
+        reveal(element)
+        element.click()
+    }
+
+    /// Scrolls the scroll view holding `element` until the element sits well inside its visible
+    /// frame. macOS UI tests do not scroll before a click, and pages grow while they run (the
+    /// Sources page's progress boxes push its form down), so an element can sit at or past the
+    /// bottom edge. A no-op for an element that is not in a scroll view or is already in view.
+    func reveal(_ element: XCUIElement) {
+        let scrollView = app.scrollViews.containing(NSPredicate(format: "identifier == %@", element.identifier)).firstMatch
+        guard !element.identifier.isEmpty, scrollView.exists else { return }
+        let margin: CGFloat = 60
+        var step: CGFloat = -120
+        for _ in 0..<40 {
+            let visible = scrollView.frame.insetBy(dx: 0, dy: min(margin, scrollView.frame.height / 4))
+            let frame = element.frame
+            let offset: CGFloat
+            if frame.maxY > visible.maxY {
+                offset = frame.maxY - visible.maxY
+            } else if frame.minY < visible.minY {
+                offset = frame.minY - visible.minY
+            } else {
+                return
+            }
+            // Which way a scroll delta moves content depends on the system's scrolling setting, so
+            // learn it from the first step: flip the sign when the element moved the wrong way.
+            let delta = offset > 0 ? step : -step
+            scrollView.scroll(byDeltaX: 0, deltaY: delta)
+            let moved = element.frame.minY - frame.minY
+            if moved != 0, (moved > 0) == (offset > 0) {
+                step = -step
+            }
+        }
     }
 
     func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval = 30) -> Bool {
