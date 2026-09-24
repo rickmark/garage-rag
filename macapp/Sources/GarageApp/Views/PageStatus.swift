@@ -317,7 +317,7 @@ enum PageStatus {
         } else if appState.postgres.status == .running && appState.registeredModels.isEmpty {
             severity = .warning
             headline = "No Models Registered"
-            details = "Register an embedding model to enable semantic retrieval."
+            details = "Register a text embedding model to enable semantic retrieval."
             quickAction = nil
         } else if hasActiveDownloads {
             severity = .info

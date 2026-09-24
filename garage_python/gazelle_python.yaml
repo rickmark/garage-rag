@@ -53,7 +53,6 @@ manifest:
     pypdfium2_cfg: pypdfium2
     pypdfium2_cli: pypdfium2
     pypdfium2_raw: pypdfium2
-    pytesseract: pytesseract
     pytest: pytest
     python_multipart: python_multipart
     referencing: referencing

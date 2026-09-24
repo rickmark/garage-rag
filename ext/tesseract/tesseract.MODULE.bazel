@@ -1,0 +1,20 @@
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_archive(
+    name = "tesseract",
+    build_file = "@//ext/tesseract:tesseract.BUILD.bazel",
+    sha256 = "9218e62793116d42a9f6d14cd9348518b27f382096eea3d0f2d1a24616bb5884",
+    strip_prefix = "tesseract-5.5.3",
+    urls = ["https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz"],
+)
+
+# The "fast" (integer LSTM) English model: a quarter the size of tessdata_best and the
+# accuracy difference does not matter for the confidence-gated local pass it serves.
+http_file(
+    name = "tessdata_eng",
+    downloaded_file_path = "eng.traineddata",
+    sha256 = "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    urls = ["https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata"],
+)

@@ -44,8 +44,56 @@ def _transition_app_impl(ctx):
     target = ctx.attr.app[0]
     orig_executable = target[DefaultInfo].files_to_run.executable
 
-    executable = ctx.actions.declare_file(ctx.label.name)
-    if orig_executable:
+    # Not `ctx.label.name`: these targets are named `Garage.app`, and Gatekeeper
+    # treats an exec'd file whose path ends in `.app` as an app bundle. An
+    # unsigned script with a provenance xattr fails that assessment, so
+    # syspolicyd SIGKILLs the launcher and `bazel run` exits 137 before the app
+    # ever starts.
+    executable = ctx.actions.declare_file(ctx.label.name.removesuffix(".app") + "_run")
+    bundle_info = target[AppleBundleInfo] if AppleBundleInfo in target else None
+    if bundle_info and bundle_info.archive:
+        # Not rules_apple's runner: it unzips into a fresh `mktemp -d` and deletes
+        # it when the app exits. Garage's database reset launches a new instance
+        # from its own bundle and then quits, so that cleanup pulls the bundle
+        # (Postgres, Python, the icon) out from under the new instance. Unzip into
+        # a fixed folder instead, replaced by the next `bazel run` and never
+        # deleted on exit, and exec the binary so its output stays in the terminal.
+        archive_rlocation = ctx.workspace_name + "/" + bundle_info.archive.short_path
+        bundle_dir = bundle_info.bundle_name + bundle_info.bundle_extension
+        runner_content = """#!/bin/bash
+set -euo pipefail
+ARCHIVE=""
+if [ -n "${{RUNFILES_DIR:-}}" ] && [ -f "${{RUNFILES_DIR}}/{archive}" ]; then
+    ARCHIVE="${{RUNFILES_DIR}}/{archive}"
+elif [ -f "${{0}}.runfiles/{archive}" ]; then
+    ARCHIVE="${{0}}.runfiles/{archive}"
+elif [ -n "${{RUNFILES_MANIFEST_FILE:-}}" ]; then
+    ARCHIVE="$(grep -m 1 "^{archive} " "${{RUNFILES_MANIFEST_FILE}}" 2>/dev/null | cut -d' ' -f2- || true)"
+fi
+if [ -z "$ARCHIVE" ] || [ ! -f "$ARCHIVE" ]; then
+    echo "Error: could not locate the app archive ({archive})" >&2
+    exit 1
+fi
+
+RUN_DIR="${{TMPDIR:-/tmp}}/garage-bazel-run/{name}"
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+unzip -qq "$ARCHIVE" -d "$RUN_DIR"
+APP="$RUN_DIR/{bundle_dir}"
+EXECUTABLE="$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist")"
+exec "$APP/Contents/MacOS/$EXECUTABLE" "$@"
+""".format(
+            archive = archive_rlocation,
+            bundle_dir = bundle_dir,
+            name = ctx.label.name.removesuffix(".app"),
+        )
+        ctx.actions.write(
+            output = executable,
+            content = runner_content,
+            is_executable = True,
+        )
+        runfiles = ctx.runfiles(files = [bundle_info.archive]).merge(target[DefaultInfo].default_runfiles)
+    elif orig_executable:
         rlocation = ctx.workspace_name + "/" + orig_executable.short_path
         runner_content = """#!/bin/bash
 set -euo pipefail

@@ -154,6 +154,10 @@ public final class GaragePythonRuntime: @unchecked Sendable {
     /// and exported by the runtime itself once the bundled copy has been resolved, so `garage_rag` (and the
     /// ctypes hook installed at start-up) always point psycopg at the signed library inside the bundle.
     public static let libpqPathEnvironmentKey = "GARAGE_LIBPQ_PATH"
+    /// The bundled `libtesseract.dylib`, loaded in-process by garage_rag.extract.tesseract through ctypes.
+    public static let libtesseractPathEnvironmentKey = "GARAGE_LIBTESSERACT_PATH"
+    /// Where libtesseract looks for `eng.traineddata`.
+    public static let tessdataPrefixEnvironmentKey = "TESSDATA_PREFIX"
 
     public init() {
         pythonQueue.setSpecific(key: pythonQueueKey, value: true)
@@ -385,6 +389,29 @@ public final class GaragePythonRuntime: @unchecked Sendable {
         return nil
     }
 
+    /// Exports the bundled Tesseract to Python: `Contents/Frameworks/libtesseract.dylib` through
+    /// `GARAGE_LIBTESSERACT_PATH` and `Contents/Resources/tesseract/tessdata` through `TESSDATA_PREFIX`.
+    /// Only files inside the (signed) bundle are offered, as for libpq: library validation rejects a
+    /// Homebrew copy signed by another Team ID. Values already in the environment win, so a developer
+    /// can point at another build.
+    private func exportBundledTesseract(appBundleURL: URL?) {
+        let environment = ProcessInfo.processInfo.environment
+        guard let bundle = appBundleURL else { return }
+        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+        let library = contents.appendingPathComponent("Frameworks/libtesseract.dylib")
+        guard FileManager.default.fileExists(atPath: library.path) else {
+            logger.warning("Bundled libtesseract not found at '\(library.path, privacy: .public)'; image OCR will fail")
+            return
+        }
+        if environment[Self.libtesseractPathEnvironmentKey]?.isEmpty ?? true {
+            setenv(Self.libtesseractPathEnvironmentKey, library.path, 1)
+        }
+        if environment[Self.tessdataPrefixEnvironmentKey]?.isEmpty ?? true {
+            let tessdata = contents.appendingPathComponent("Resources/tesseract/tessdata", isDirectory: true)
+            setenv(Self.tessdataPrefixEnvironmentKey, tessdata.path, 1)
+        }
+    }
+
     /// Loads the bundled libpq into the process (`dlopen`, `RTLD_GLOBAL`) and exports its location through
     /// `GARAGE_LIBPQ_PATH`. Loading it here, from Swift, surfaces code-signing / library-validation problems as a
     /// clear diagnostic instead of psycopg's generic "no pq wrapper available" failure, and guarantees the copy
@@ -491,6 +518,7 @@ public final class GaragePythonRuntime: @unchecked Sendable {
 
         // libpq must be resolved (and GARAGE_LIBPQ_PATH exported) before the interpreter snapshots os.environ.
         loadBundledLibpq(appBundleURL: environment.appBundleURL ?? appBundleURL)
+        exportBundledTesseract(appBundleURL: environment.appBundleURL ?? appBundleURL)
 
         if GaragePythonEmbedIsInitialized() {
             logger.warning("Interpreter already initialized before GaragePythonRuntime; adopting existing interpreter")

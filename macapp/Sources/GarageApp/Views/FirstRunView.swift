@@ -78,7 +78,7 @@ struct FirstRunView: View {
 
             Spacer()
 
-            Text("Everything Garage indexes stays on this Mac. Communications never reach a cloud API.")
+            Text("Garage keeps its index on this Mac and never sends it to the cloud. Agents you connect receive only the excerpts their searches return, and may send those to their own cloud model.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -141,11 +141,13 @@ struct FirstRunView: View {
     private var headerSubtitle: String {
         switch coordinator.step {
         case .settingUp:
-            "Garage is starting its private database and background services. This only takes a moment the first time."
+            coordinator.isAfterDatabaseReset
+                ? "The database was reset. Garage is creating a new, empty one and will register the sources in garage.json again."
+                : "Garage is starting its private database and background services. This only takes a moment the first time."
         case .selectData:
             "Choose what Garage should index. You can add, remove or fine-tune sources any time from the Sources page."
         case .selectModels:
-            "Pick the embedding model that powers search, and optionally a distillation model that extracts facts from your documents."
+            "Optionally pick a distillation model that extracts facts from your documents, then the text embedding model that powers search."
         case .setupAgent:
             "Connect your AI assistants to Garage's MCP server so they can search your corpus."
         }
@@ -594,29 +596,6 @@ struct FirstRunSelectModelsPage: View {
             }
 
             FirstRunSectionTitle(
-                title: "Embedding models",
-                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and backfill."
-            )
-
-            if coordinator.embeddingPresets.isEmpty {
-                Text("No embedding presets were found in models.json.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(coordinator.embeddingPresets) { preset in
-                        modelRow(
-                            preset,
-                            selected: coordinator.selectedEmbeddingSlugs.contains(preset.slug),
-                            registered: appState.registeredModels.contains { $0.slug == preset.slug }
-                        ) {
-                            coordinator.toggleEmbedding(preset)
-                        }
-                    }
-                }
-            }
-
-            FirstRunSectionTitle(
                 title: "Distillation model",
                 subtitle: "Optional. A small instruction-tuned model that gleans atomic facts from your documents and answers rag_ask over MCP. One model is active at a time (facts.model in garage.json)."
             )
@@ -635,6 +614,29 @@ struct FirstRunSelectModelsPage: View {
                             activeForFacts: appState.factsModel == preset.slug
                         ) {
                             coordinator.toggleDistillation(preset)
+                        }
+                    }
+                }
+            }
+
+            FirstRunSectionTitle(
+                title: "Text embedding models",
+                subtitle: "Turn document chunks into vectors for semantic search. Pick at least one; the first becomes the default. Each model keeps its own vector table, so you can add more later and backfill."
+            )
+
+            if coordinator.embeddingPresets.isEmpty {
+                Text("No text embedding presets were found in models.json.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(coordinator.embeddingPresets) { preset in
+                        modelRow(
+                            preset,
+                            selected: coordinator.selectedEmbeddingSlugs.contains(preset.slug),
+                            registered: appState.registeredModels.contains { $0.slug == preset.slug }
+                        ) {
+                            coordinator.toggleEmbedding(preset)
                         }
                     }
                 }
@@ -771,6 +773,12 @@ struct FirstRunSetupAgentPage: View {
                     .background(Color.primary.opacity(0.04))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
+
+            Text("A connected agent receives the excerpts its searches return — only those, not your whole index — and may send them to its own cloud model, including excerpts from Messages and Mail if you index them. What happens to them then is up to that agent's privacy terms, not Garage's.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("firstRun.agentPrivacy")
 
             Text("You can always revisit this from the MCP Server page, where you can also test tool calls against the running server.")
                 .font(.caption)

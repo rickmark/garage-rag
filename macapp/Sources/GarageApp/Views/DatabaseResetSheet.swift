@@ -3,8 +3,9 @@ import SwiftUI
 /// Confirms "Reset Database". It spells out that everything Garage built from the user's files goes
 /// (the index, facts, conversation memory) and that the files themselves stay, then hands off to
 /// `AppState.resetDatabaseAndRelaunch()`, which stops the services, deletes the cluster and
-/// relaunches the app to create a new one. Back Up First… writes the same dump as the Database page's
-/// Back Up… without leaving the sheet, so the old database can be restored after the reset.
+/// relaunches the app into the setup assistant to create a new one. Back Up First… writes the same
+/// dump as the Database page's Back Up… without leaving the sheet, so the old database can be
+/// restored after the reset.
 @MainActor
 struct DatabaseResetSheet: View {
     @EnvironmentObject var appState: AppState
@@ -34,9 +35,10 @@ struct DatabaseResetSheet: View {
             ResetSection(title: "Kept", systemImage: "checkmark.circle", tint: .green, items: keptItems)
 
             Text(
-                "Garage stops its services, deletes \(Paths.displayPath(of: Paths.pgDataDir)), and relaunches to create a new "
-                    + "database. Afterwards, register your embedding models again on the Models page and run "
-                    + "ingest to rebuild the index, or bring a backup back with Restore… on the Database page."
+                "Garage stops its services, deletes \(Paths.displayPath(of: Paths.pgDataDir)), and relaunches into "
+                    + "the setup assistant, which creates a new database, registers the sources in garage.json "
+                    + "again, and walks you through choosing models. Skip it to set things up yourself from the "
+                    + "Status page, or bring a backup back with Restore… on the Database page."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -118,7 +120,7 @@ struct DatabaseResetSheet: View {
             ),
             ResetItem(
                 title: "Registrations and history",
-                detail: "Registered sources and embedding models, authorship, and ingest history."
+                detail: "Registered sources and text embedding models, authorship, and ingest history."
             ),
         ]
     }

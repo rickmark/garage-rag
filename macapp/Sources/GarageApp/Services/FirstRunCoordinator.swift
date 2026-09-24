@@ -270,8 +270,8 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
             extra(id: "icloud-drive", title: "iCloud Drive", subtitle: "Documents synced through iCloud", symbol: "icloud", root: "~/Library/Mobile Documents/com~apple~CloudDocs"),
             shared(.dropbox, subtitle: "Your Dropbox folder", symbol: "shippingbox"),
             extra(id: "developer", title: "Developer", subtitle: "Code repositories under ~/Developer", symbol: "chevron.left.forwardslash.chevron.right", root: "~/Developer", kind: "git", corpusClass: "code"),
-            shared(.messages, subtitle: "iMessage and SMS history (never leaves this Mac)", symbol: "message"),
-            shared(.mail, subtitle: "Local mailboxes (never leaves this Mac)", symbol: "envelope"),
+            shared(.messages, subtitle: "iMessage and SMS history (Garage never sends it off this Mac)", symbol: "message"),
+            shared(.mail, subtitle: "Local mailboxes (Garage never sends them off this Mac)", symbol: "envelope"),
         ]
     }
 
@@ -362,6 +362,12 @@ final class FirstRunCoordinator: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var progressMessage: String?
+    /// This run follows "Reset Database": page 1 creates the new database and
+    /// registers garage.json's sources again before the user picks anything.
+    @Published private(set) var isAfterDatabaseReset = false
+    /// Page 1 has finished the reset (`AppState.finishDatabaseReset`). Until it
+    /// has, skipping hands the rest of the reset to the background.
+    private var hasFinishedDatabaseReset = false
 
     // Page 2 — data
     @Published private(set) var sourceTemplates: [FirstRunSourceTemplate] = []
@@ -410,12 +416,17 @@ final class FirstRunCoordinator: ObservableObject {
 
     /// Opens the assistant on its first page. `force` re-runs it even when it
     /// has been completed before (the "Setup Assistant…" menu item).
-    func begin(force: Bool = false) {
-        guard force || !hasCompleted else { return }
+    /// `afterDatabaseReset` is the relaunch after "Reset Database": it always
+    /// runs, and never takes the "already configured" shortcut, since
+    /// garage.json still lists the sources the empty database has lost.
+    func begin(force: Bool = false, afterDatabaseReset: Bool = false) {
+        guard force || afterDatabaseReset || !hasCompleted else { return }
         // A re-run requested while a page is still registering sources or models
         // would reset the picks that commit is iterating; the running assistant
         // already shows its progress, so just keep it.
         guard !(isActive && isWorking) else { return }
+        isAfterDatabaseReset = afterDatabaseReset
+        hasFinishedDatabaseReset = false
         errorMessage = nil
         progressMessage = nil
         registrationSummary = nil
@@ -426,7 +437,7 @@ final class FirstRunCoordinator: ObservableObject {
         selectedEmbeddingSlugs = []
         selectedDistillationSlug = nil
         selectedClientIDs = []
-        startReadinessLoop(skipIfConfigured: !force)
+        startReadinessLoop(skipIfConfigured: !force && !afterDatabaseReset)
     }
 
     /// Marks the assistant done and returns to the main window.
@@ -436,9 +447,21 @@ final class FirstRunCoordinator: ObservableObject {
         defaults.set(true, forKey: FirstRunPreferences.completedKey)
         isActive = false
         isWorking = false
-        // Sources and models added through the assistant already queue the
-        // debounced ingest/backfill run via `runOperation`, so only refresh here.
+        let resetStillPending = isAfterDatabaseReset && !hasFinishedDatabaseReset
+        isAfterDatabaseReset = false
         guard let appState else { return }
+        // Skipped before page 1 got through a reset: finish it without the
+        // assistant, so the main window comes up on the new, unconfigured database.
+        if resetStillPending {
+            Task {
+                await appState.startPostgres()
+                await appState.finishDatabaseReset()
+                appState.resumeMaintenanceAfterFirstRun()
+            }
+            return
+        }
+        // Indexing held back while the assistant was open starts now, with the models it chose.
+        appState.resumeMaintenanceAfterFirstRun()
         Task {
             await appState.fetchRegisteredSources()
             await appState.fetchRegisteredModels()
@@ -527,6 +550,16 @@ final class FirstRunCoordinator: ObservableObject {
                 errorMessage = "Services did not become ready in time. Check the Logs page for details, then retry."
             }
             return
+        }
+
+        if isAfterDatabaseReset, !hasFinishedDatabaseReset {
+            isWorking = true
+            progressMessage = "Registering the sources in garage.json again…"
+            await appState.finishDatabaseReset()
+            progressMessage = nil
+            isWorking = false
+            if Task.isCancelled { return }
+            hasFinishedDatabaseReset = true
         }
 
         await appState.fetchRegisteredSources()

@@ -81,11 +81,11 @@ struct MenuBarView: View {
             CheckForUpdatesButton(updater: appState.updater)
 
             Button("About & Support…") {
-                NSApp.activate(ignoringOtherApps: true)
-                for window in NSApp.windows where window.title == "Garage" {
-                    window.makeKeyAndOrderFront(nil)
-                }
-                NotificationCenter.default.post(name: .garageShowSplash, object: nil)
+                showInMainWindow(.garageShowSplash)
+            }
+
+            Button("Report a Bug…") {
+                showInMainWindow(.garageShowBugReport)
             }
 
             Button("Setup Assistant…") {
@@ -98,6 +98,17 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 260)
+    }
+
+    /// Brings the main window forward and asks it to put up a dialog. The
+    /// menu bar popover can't host one itself - it closes the moment focus
+    /// moves.
+    private func showInMainWindow(_ notification: Notification.Name) {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.title == "Garage" {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NotificationCenter.default.post(name: notification, object: nil)
     }
 
     private var startStopTitle: String {

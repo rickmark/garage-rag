@@ -85,7 +85,7 @@ struct ModelsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 // ===== Embedding Models =====
                 sectionHeading(
-                    "Embedding Models",
+                    "Text Embedding Models",
                     subtitle: "Vector models that index the corpus and power hybrid search. Each registered model gets its own embedding table."
                 )
 

@@ -36,7 +36,7 @@ Garage contains no client for any cloud AI service. The language models it uses 
 
 Garage does not send your content to third-party services.
 
-If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. Many clients send what they receive, together with your conversation, to their own cloud model provider, and that can include excerpts from private communications (Messages, Mail) if you have indexed them. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
 ## 4. User Control
 

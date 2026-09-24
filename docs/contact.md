@@ -15,8 +15,19 @@ We welcome questions, bug reports, feature suggestions, and security vulnerabili
 ### 1. Bug Reports & Issues
 If you encounter a bug, crash, or unexpected behavior in `GarageApp` or the `garage` CLI:
 
-- **Open a GitHub Issue**: [github.com/rickmark/garage-rag/issues](https://github.com/rickmark/garage-rag/issues)
-- Please include:
+**From inside GarageApp (recommended)**: choose **Help → Report a Bug…** (⇧⌘B), click the ladybug tab on
+the right edge of the main window, pick **Report a Bug…** from the menu bar, or click **Report a Bug** in the **Logs** view to start with the log stream you are
+already looking at. Describe what happened and Garage assembles the rest — version, macOS build,
+database and helper service state, corpus counts, registered models, and optionally the most recent log
+lines.
+
+The report is built entirely on your Mac and shown to you in full before anything happens to it. Your
+home directory, user name, e-mail addresses, and any secrets are replaced with placeholders
+automatically, and indexed documents, messages, and search results are never included. From there you
+can copy it, save it as Markdown, or open a pre-filled GitHub issue in your browser — where you get one
+more chance to read it before posting.
+
+**By hand**: [open a GitHub Issue](https://github.com/rickmark/garage-rag/issues) and include:
   - macOS version and hardware architecture (e.g., macOS 15.0 Sequoia, Apple Silicon M3)
   - Garage version / commit hash
   - Relevant sanitized log snippets (see below)
@@ -43,6 +54,9 @@ Logs are stored locally on your machine at:
 - **PostgreSQL Service**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/postgres.log`
 - **Ingestion & CLI Pipeline**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/ingest.log`
 - **MCP HTTP Server**: `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/logs/mcp.log`
+
+If you file through **Help → Report a Bug…**, the steps below are already applied to anything the
+reporter attaches — they matter when you paste log snippets by hand.
 
 ### Sanitization Guidelines
 1. **Redact Usernames and Paths**: Replace your home directory name (e.g., `/Users/yourname/`) with `/Users/username/`.

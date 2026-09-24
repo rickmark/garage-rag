@@ -200,7 +200,8 @@ is behind `select()`s on `//bazel:is_store`:
   into the app's `Info.plist` for the same configurations.
 
 The app never shows a disabled "Check for Updates…"; when the running build
-can't update itself the item is absent and the splash explains why instead.
+can't update itself the item is simply absent. Whether to check automatically is
+Sparkle's own question, asked on the second launch.
 
 ### The signing key
 
@@ -280,16 +281,23 @@ four-page assistant instead of the sidebar UI:
 2. **Select your data** — template sources (Documents, Desktop, Downloads, iCloud Drive, Dropbox,
    `~/Developer`, Messages, Mail) with unavailable ones greyed out, plus a custom folder chooser.
    "Next" sends an `AddSource` RPC for each pick; "I'll decide later" moves on without adding any.
-3. **Select your models** — embedding presets (featured first; the first pick becomes the default)
-   and an optional fact-distillation preset from `models.json`. "Next" sends `RegisterModel` for
-   each embedding model, sets `facts.model`/`facts.provider` for the distillation pick, and, if
-   enabled, queues GGUF downloads through the model download XPC service.
+3. **Select your models** — an optional fact-distillation preset, then text embedding presets (featured
+   first; the first pick becomes the default) from `models.json`; distillation comes first so the
+   second section is not missed below a long embedding list. "Next" sends `RegisterModel` for each
+   embedding model, sets `facts.model`/`facts.provider` for the distillation pick, and, if enabled,
+   queues GGUF downloads through the model download XPC service.
 4. **Set up your agent** — MCP server status/port and the detected client configs (Claude Desktop,
    Claude Code, Cursor, …); "Connect selected agents" registers Garage in each selected config.
 
 The flow lives in `Services/FirstRunCoordinator.swift` (state + the commands each page runs) and
 `Views/FirstRunView.swift` (the pages). It can be re-run any time from **Garage ▸ Setup Assistant…**
 or the menu bar item, and skipped from any page.
+
+**Reset Database…** relaunches into the assistant too, whether or not it was completed before. There
+page 1 also creates the new, empty database and registers the sources in `~/.garage.json` again
+(`AppState.finishDatabaseReset`) before offering the rest. Skipping before page 1 gets that far
+finishes the reset in the background, so the main window comes up on the new database, unconfigured,
+with the Status page's quick-add cards.
 
 ## App architecture
 

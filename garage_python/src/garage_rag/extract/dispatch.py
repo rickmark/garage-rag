@@ -1,7 +1,7 @@
 """Extension -> extractor routing.
 
 Extractors are imported lazily. A corpus walk touches tens of thousands of files
-but usually only a handful of types, and importing pdfplumber/openpyxl/pytesseract
+but usually only a handful of types, and importing pdfplumber/openpyxl/libtesseract
 up front for a run that never meets a PDF or a spreadsheet is pure startup cost.
 """
 

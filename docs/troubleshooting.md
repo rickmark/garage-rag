@@ -67,9 +67,11 @@ rm -f ~/Library/Application\ Support/GarageApp/pgdata/postmaster.pid
   imported from Messages and Mail, and the source, model, author and ingest records.
 - **Kept:** your original files, downloaded model files, logs, `garage.json` and the Keychain password.
 
-Garage stops its services, deletes the database folder and relaunches itself to create a new database.
-The sources in `garage.json` are registered again automatically. Register your embedding models on the
-Models page, then run ingest to rebuild the index.
+Garage stops its services, deletes the database folder and relaunches into the setup assistant. Its
+first page creates the new database and registers the sources in `garage.json` again; the next pages
+let you add sources, choose embedding models and connect your agents. **Skip setup** finishes the
+reset without the assistant and leaves you on the Status page to set things up yourself. Either way,
+run ingest afterwards to rebuild the index.
 
 To keep a way back, press **Back Up First…** in the confirmation sheet before resetting. It saves the
 same dump as **Back Up…**, and **Restore…** on the Database page loads it into the new database.
@@ -186,5 +188,6 @@ to the same folder, so `~/Library/Application Support/GarageApp/logs/` works too
 
 <div class="callout callout-info">
   <div class="callout-title">Need to Submit Logs for Support?</div>
-  <p>Read our <a href="{{ '/contact.html' | relative_url }}">Contact & Log Sanitization Guide</a> to ensure your personal notes or confidential documents are removed before sharing log snippets.</p>
+  <p>The quickest route is <strong>Report a Bug</strong> in GarageApp's <strong>Logs</strong> view (also under <strong>Help &rarr; Report a Bug&hellip;</strong>). It attaches the recent log lines along with version and service state, redacts your home directory, user name, e-mail addresses and secrets, and shows you the finished report before anything leaves your Mac.</p>
+  <p>If you would rather paste log snippets by hand, read our <a href="{{ '/contact.html' | relative_url }}">Contact &amp; Log Sanitization Guide</a> first to ensure your personal notes or confidential documents are removed.</p>
 </div>

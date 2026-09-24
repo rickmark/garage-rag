@@ -102,11 +102,10 @@ provider, through the same loopback-only client.
 ### What these layers do not cover — MCP clients
 
 The MCP server hands search results and document excerpts, communications
-included, to whichever client is connected to it. When that client is Claude
-Desktop or Claude Code, it sends what it receives to its own model provider
-under its own terms. Garage does not, but connecting such a client is a decision
-about where retrieved content goes; `rag_search` results carry each hit's
-`corpus_class` so a client can tell communications apart.
+included, to whichever client is connected to it, and that client may send them
+to its own model provider; see [What connected agents receive](#what-connected-agents-receive).
+`rag_search` results carry each hit's `corpus_class` so a client can tell
+communications apart.
 
 ## macOS permissions (TCC)
 
@@ -173,6 +172,22 @@ Browser clients additionally need their origin allowed explicitly, with
 **No transport-level encryption.** Plain HTTP. Fine over loopback; if you expose
 it, terminate TLS and authenticate at a reverse proxy. Do not put this on a
 network you do not control.
+
+## What connected agents receive
+
+The MCP server answers whichever client you connect: Claude Desktop, Claude
+Code, Cursor, or anything else you register. An agent receives the excerpts its
+searches return (`rag_search`, `get_document`, and the answers from `rag_ask` /
+`rag_generate`), only those, not the whole index. Most agents run their model in
+the cloud, so they send those excerpts, with your conversation, to their model
+provider. That includes excerpts from Messages and Mail if you have indexed
+them: the MCP tools serve communications like any other content, and the egress
+guard above governs Garage's own cloud calls, not a client's.
+
+What happens to an excerpt after an agent receives it is governed by that
+agent's terms and privacy policy, not Garage's. If an indexed source should not
+reach a cloud model, do not connect a cloud-hosted agent, or leave that source
+out of the index.
 
 ## What is stored, and where
 

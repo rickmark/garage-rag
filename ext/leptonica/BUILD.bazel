@@ -1,0 +1,31 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+# Static Leptonica, the image library under //ext/tesseract, built with no codecs at all:
+# garage_rag.extract.tesseract hands libtesseract pixels Pillow already decoded
+# (TessBaseAPISetImage), so Leptonica never reads or writes an image file.
+cmake(
+    name = "leptonica",
+    build_args = [
+        "--",
+        "-j",
+    ],
+    cache_entries = {
+        "BUILD_PROG": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_GIF": "OFF",
+        "ENABLE_JPEG": "OFF",
+        "ENABLE_OPENJPEG": "OFF",
+        "ENABLE_PNG": "OFF",
+        "ENABLE_TIFF": "OFF",
+        "ENABLE_WEBP": "OFF",
+        "ENABLE_ZLIB": "OFF",
+        "SW_BUILD": "OFF",
+    },
+    env = {
+        "AR": "/usr/bin/ar",
+    },
+    lib_source = "@leptonica//:leptonica_source",
+    out_static_libs = ["libleptonica.a"],
+    visibility = ["//visibility:public"],
+)

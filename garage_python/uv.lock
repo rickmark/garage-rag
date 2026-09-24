@@ -142,7 +142,6 @@ dependencies = [
     { name = "psycopg", extra = ["pool"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pydantic", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pypdf", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "pytesseract", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pytest", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "python-docx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "python-pptx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -178,7 +177,6 @@ requires-dist = [
     { name = "psycopg", extras = ["pool"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.7.4" },
     { name = "pypdf", specifier = ">=6.16" },
-    { name = "pytesseract", specifier = ">=0.3.13" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "python-docx", specifier = ">=1.2" },
@@ -614,19 +612,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ec/78/a52cb80611339ec95f35c7a10d7bfe7a6f97f3b50a35a9f94283d062512e/pypdfium2-5.13.0.tar.gz", hash = "sha256:7ca2d8e31bd8d0d40c496416b7d8bea423388669ffd494929f50e8c3a82326b8", size = 273639, upload-time = "2026-08-13T10:58:15.837Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/08/99/1fe58428b69d2722dcbcfaa08ce71834a332c5b518fd58874bcef936b823/pypdfium2-5.13.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:da5c7b74eebf40b5c1fbe1de01aa1edc8827a79fb1efd999616bc20dcaf77ba4", size = 3507415, upload-time = "2026-08-13T10:57:43.978Z" },
-]
-
-[[package]]
-name = "pytesseract"
-version = "0.3.13"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "pillow", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/a6/7d679b83c285974a7cb94d739b461fa7e7a9b17a3abfd7bf6cbc5c2394b0/pytesseract-0.3.13.tar.gz", hash = "sha256:4bf5f880c99406f52a3cfc2633e42d9dc67615e69d8a509d74867d3baddb5db9", size = 17689, upload-time = "2024-08-16T02:33:56.762Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/33/8312d7ce74670c9d39a532b2c246a853861120486be9443eebf048043637/pytesseract-0.3.13-py3-none-any.whl", hash = "sha256:7a99c6c2ac598360693d83a416e36e0b33a67638bb9d77fdcac094a3589d4b34", size = 14705, upload-time = "2024-08-16T02:36:10.09Z" },
 ]
 
 [[package]]
