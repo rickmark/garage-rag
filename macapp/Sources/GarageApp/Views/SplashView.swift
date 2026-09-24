@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import GarageUpdater
 
 // MARK: - Constants
 
@@ -7,6 +8,12 @@ import AppKit
 enum SplashLinks {
     static let patreon = URL(string: "https://www.patreon.com/rickmark")!
     static let linkedin = URL(string: "https://linkedin.com/in/penwellr")!
+    static let releases = URL(string: "https://github.com/rickmark/garage-rag/releases")!
+    /// Bundled license texts for everything Garage redistributes (`//data/notices`). Nil in
+    /// `swift run`, where there is no app bundle to carry it.
+    static var thirdPartyNotices: URL? {
+        Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "txt")
+    }
 }
 
 /// UserDefaults key + helpers controlling whether the splash appears at launch.
@@ -78,11 +85,16 @@ struct SplashView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @AppStorage(SplashPreferences.showAtLaunchKey) private var showAtLaunch = true
+    @ObservedObject private var updater: UpdaterService
 
     let version: AppVersionInfo
 
-    init(version: AppVersionInfo = AppVersionInfo()) {
+    init(
+        version: AppVersionInfo = AppVersionInfo(),
+        updater: UpdaterService = UpdaterService.shared
+    ) {
         self.version = version
+        _updater = ObservedObject(wrappedValue: updater)
     }
 
     var body: some View {
@@ -94,6 +106,7 @@ struct SplashView: View {
             VStack(spacing: 14) {
                 supportCard
                 hireCard
+                updateCard
             }
             .padding(.horizontal, 28)
 
@@ -171,6 +184,47 @@ struct SplashView: View {
             }
             .accessibilityIdentifier("splash.hire")
         }
+    }
+
+    private var updateCard: some View {
+        card(symbol: "arrow.down.circle.fill", tint: .green, title: "Stay up to date") {
+            if updater.isAvailable {
+                Text("Garage can install new versions itself, verifying each one against the release signing key before it replaces the app.")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Check for updates automatically", isOn: $updater.automaticallyChecksForUpdates)
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("splash.automaticUpdates")
+
+                if let lastChecked = lastUpdateCheckDescription {
+                    Text(lastChecked)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(updater.unavailableReason ?? "")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("splash.updatesUnavailable")
+            }
+
+            HStack(spacing: 8) {
+                CheckForUpdatesButton(updater: updater)
+
+                Button {
+                    openURL(SplashLinks.releases)
+                } label: {
+                    Label("Release notes", systemImage: "arrow.up.right.square")
+                }
+                .accessibilityIdentifier("splash.releases")
+            }
+        }
+    }
+
+    /// e.g. "Last checked Sep 21, 2026 at 4:07 PM." — nil before the first check.
+    private var lastUpdateCheckDescription: String? {
+        guard let date = updater.lastUpdateCheckDate else { return nil }
+        return "Last checked \(date.formatted(date: .abbreviated, time: .shortened))."
     }
 
     private var footer: some View {
