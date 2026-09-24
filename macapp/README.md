@@ -124,7 +124,7 @@ Things worth knowing:
   has no Apple-issued chain, so it cannot notarize and cannot carry hardened
   runtime (library validation rejects its Team ID) — `//bazel:codesign.bzl`
   strips `--options=runtime` for it exactly as it does for ad-hoc. Release
-  builds still go through `--config=developer_id` / `--config=appstore`.
+  builds still go through `--config=developer_id` / `--config=appstore_release`.
 
 ### App Store configuration
 
@@ -136,6 +136,11 @@ with Apple Distribution and the store profile, `macapp/GarageMacAppConnect.provi
 Validate App first so Xcode confirms it re-signs the nested code (Postgres in `Resources/`, the
 site-packages extensions, `Python.framework`). To run a store build on another Mac, add that Mac to
 the development profile in the developer portal and replace the file.
+
+`--config=appstore` is a fastbuild, so it shares the `//ext` builds (Postgres, ICU, Python,
+llama.cpp, …) with the ad-hoc and Developer ID configs; only the codesign steps differ. Build the
+archive you upload with `--config=appstore_release`, which is the same config plus
+`--compilation_mode=opt` and therefore rebuilds everything optimized.
 
 The first launch of a store build on a Mac that already ran the Developer ID build asks for Keychain
 access to the Postgres password item (`com.rickmark.garage.postgres`): the Developer ID build created
