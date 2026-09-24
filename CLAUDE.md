@@ -332,6 +332,10 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) na
   health, test calls) and a llama-server-compatible HTTP API on `127.0.0.1:8790` for the Python
   `llama_xpc` provider (`backfill`, `enrich-facts` run in their own process). `MockLlamaServerEngine`
   in `macapp/Tests/LlamaTestSupport` is the only other `LlamaInferenceEngine` and is test-only.
+- `GarageUpdater` wraps Sparkle (`//ext/sparkle`) for Developer ID builds; App Store builds
+  `select()` in an inert backend instead, since Apple rejects self-updating apps, and Sparkle
+  never enters that dependency graph. The appcast lives at `docs/appcast.xml` on the Jekyll
+  site; `macapp/README.md` covers the signing-key setup and release flow.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this

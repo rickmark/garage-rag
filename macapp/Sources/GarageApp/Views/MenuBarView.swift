@@ -1,3 +1,4 @@
+import GarageUpdater
 import SwiftUI
 
 struct MenuBarView: View {
@@ -76,6 +77,8 @@ struct MenuBarView: View {
             }
 
             Divider()
+
+            CheckForUpdatesButton(updater: appState.updater)
 
             Button("About & Support…") {
                 NSApp.activate(ignoringOtherApps: true)

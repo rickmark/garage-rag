@@ -1,3 +1,4 @@
+import GarageUpdater
 import SwiftUI
 
 @main
@@ -21,6 +22,9 @@ struct GarageApp: App {
                 Button("About Garage…") {
                     showSplash()
                 }
+            }
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesButton(updater: appState.updater)
             }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit Garage") {

@@ -1,0 +1,69 @@
+"""Sparkle: the Developer ID auto-update framework and its release tooling.
+
+Only the Developer ID build of Garage embeds Sparkle — App Store builds update
+through the App Store, and Apple rejects apps that update themselves. The
+`//bazel:is_store` selects in `//macapp/Sources/GarageUpdater` are what keep it
+out of that configuration.
+"""
+
+load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
+
+alias(
+    name = "Sparkle",
+    actual = "@sparkle//:Sparkle",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sparkle",
+    actual = ":Sparkle",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "LICENSE",
+    actual = "@sparkle//:LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# Release tooling, runnable as `bazel run //ext/sparkle:<tool> -- <args>`.
+# See `macapp/README.md` for how they fit into cutting a release.
+
+# One-time setup: generates the EdDSA key pair, stores the private half in the
+# login Keychain, and prints the public half for `Sparkle.plist`'s SUPublicEDKey.
+native_binary(
+    name = "generate_keys",
+    src = "@sparkle//:bin/generate_keys",
+    out = "generate_keys",
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:public"],
+)
+
+# Signs a single update archive with the private key from the Keychain.
+native_binary(
+    name = "sign_update",
+    src = "@sparkle//:bin/sign_update",
+    out = "sign_update",
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:public"],
+)
+
+# Builds (or updates) the appcast from a directory of notarized update archives,
+# signing each entry along the way.
+native_binary(
+    name = "generate_appcast",
+    src = "@sparkle//:bin/generate_appcast",
+    out = "generate_appcast",
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:public"],
+)
+
+# Produces the binary delta patches that `generate_appcast` attaches to an
+# appcast entry so returning users download a diff rather than a whole app.
+native_binary(
+    name = "binary_delta",
+    src = "@sparkle//:bin/BinaryDelta",
+    out = "BinaryDelta",
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,38 @@
+"""Sparkle's prebuilt binary distribution (`Sparkle-<version>.tar.xz`)."""
+
+load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "LICENSE",
+    "bin/BinaryDelta",
+    "bin/generate_appcast",
+    "bin/generate_keys",
+    "bin/sign_update",
+])
+
+# Sparkle.framework is a *versioned* macOS framework: the real payload lives in
+# `Versions/B/` and everything at the top level is a compatibility symlink into
+# `Versions/Current/`. rules_apple's imported-framework processor understands
+# that layout — it copies only the current version, re-creates the symlinks, and
+# re-signs `Versions/B` with the embedding app's identity (which matters: the
+# hardened runtime enables library validation, so a `Sparkle` dylib still
+# carrying the Sparkle Project's Team ID would refuse to load into Garage).
+#
+# The glob deliberately keeps the top-level symlinks. The processor derives the
+# framework root from the common prefix of its inputs and picks the framework
+# binary out of them, so a glob restricted to `Versions/B/**` would leave it
+# unable to find either.
+#
+# `Versions/B/_CodeSignature` is dropped because it seals the unmodified upstream
+# binary; it is regenerated when the framework is re-signed. The `_CodeSignature`
+# directories of the *nested* bundles (Updater.app, XPCServices/*.xpc) are kept —
+# those bundles are separate processes that keep their own seals.
+apple_dynamic_framework_import(
+    name = "Sparkle",
+    framework_imports = glob(
+        ["Sparkle.framework/**"],
+        exclude = ["Sparkle.framework/Versions/B/_CodeSignature/**"],
+    ),
+)

@@ -177,11 +177,15 @@ for p in sorted(macho_files, key=lambda x: len(x.split("/")), reverse=True):
     cmd.append(p)
     subprocess.run(cmd, check=True, capture_output=True)
 
-# 4. Codesign nested bundles (frameworks, plugins, XPC services) deepest first
+# 4. Codesign nested bundles (frameworks, plugins, XPC services, helper apps)
+#    deepest first. Nested .app bundles matter for Sparkle: the framework carries
+#    Updater.app, and leaving it signed by the Sparkle Project would mix Team IDs
+#    inside a notarized bundle. os.walk starts at app_bundle itself, so the
+#    top-level .app is never in `dirs` -- only genuinely nested ones are.
 nested_bundles = []
 for root, dirs, files in os.walk(app_bundle):
     for d in dirs:
-        if d.endswith(".framework") or d.endswith(".xpc") or d.endswith(".bundle") or d.endswith(".plugin"):
+        if d.endswith(".framework") or d.endswith(".xpc") or d.endswith(".bundle") or d.endswith(".plugin") or d.endswith(".app"):
             p = os.path.join(root, d)
             if not os.path.islink(p):
                 nested_bundles.append(p)

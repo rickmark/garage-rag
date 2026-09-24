@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Sparkle's Info.plist keys, merged into the app's Info.plist for Developer ID
+	builds only (see the `infoplists` select in this directory's BUILD.bazel).
+	App Store builds embed no Sparkle and get none of these keys.
+
+	SUPublicEDKey is the public half of the EdDSA key pair that signs appcast
+	entries, and belongs in version control: the app verifies every download
+	against it. The private half lives in the login Keychain of whoever runs
+	`aspect run //ext/sparkle:generate_keys` and is never committed — losing it
+	means minting a new pair and shipping the new public key in a release users
+	already trust, so back it up rather than regenerating.
+
+	SUEnableAutomaticChecks is deliberately absent: without it Sparkle asks the
+	user once, on an early launch, whether it may check automatically, which is
+	the right default for an app that otherwise never talks to the network.
+-->
+<plist version="1.0">
+<dict>
+	<key>SUFeedURL</key>
+	<string>https://rickmark.github.io/garage-rag/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9uPTXe1BBLOmWFkrBm0fPMn9Y16BR57aI3ulI/GhNXg=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+</dict>
+</plist>

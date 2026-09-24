@@ -12,6 +12,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         "//macapp/Sources/GarageApp:GarageApp_lib",
+        "//macapp/Sources/GarageUpdater",
         "//macapp/Sources/IngestClient",
         "//macapp/Sources/LlamaClient",
         "//macapp/Sources/MCPServerClient",
