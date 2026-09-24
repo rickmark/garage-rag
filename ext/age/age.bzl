@@ -53,9 +53,19 @@ def age_source(name, repo, tags = []):
         name = name + "_scanner",
         srcs = [repo + "//:src/backend/parser/ag_scanner.l"],
         outs = [SCANNER_C],
-        # The scanner declares `%option backup`; PGXS only reads that report to assert there is
-        # no backing up, so discard it rather than leave an undeclared file behind.
-        cmd = "M4=$(M4) $(FLEX) --backup-file=/dev/null --outfile=$@ $<",
+        # The scanner declares `%option backup`, so flex always writes `lex.backup` to its working
+        # directory (upstream flex has no option to redirect it; PGXS only reads it to assert there
+        # is no backing up). Run it from a scratch directory, which takes absolute paths for the
+        # tool, m4, input and output. --noline keeps sandbox paths out of the generated file.
+        cmd = """
+abs() { case "$$1" in /*) echo "$$1" ;; *) echo "$$PWD/$$1" ;; esac; }
+flex=$$(abs $(FLEX)) m4=$$(abs $(M4)) src=$$(abs $<) out=$$(abs $@)
+tmp=$$(mktemp -d)
+(cd "$$tmp" && M4="$$m4" "$$flex" --noline --outfile="$$out" "$$src")
+rc=$$?
+rm -rf "$$tmp"
+exit $$rc
+""",
         tags = tags,
         toolchains = [
             "@rules_flex//flex:current_flex_toolchain",
