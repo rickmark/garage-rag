@@ -107,6 +107,15 @@ to its own model provider; see [What connected agents receive](#what-connected-a
 `rag_search` results carry each hit's `corpus_class` so a client can tell
 communications apart.
 
+### Outside the guard — the app's own downloads
+
+GarageApp's Swift code makes three kinds of request that carry no corpus content
+and so do not go through `net/egress.py`: it fetches
+`https://garagerag.app/.data/models.json` at every launch (`ModelCatalog.refresh`),
+downloads a model from Hugging Face when you pick one, and, in the Developer ID
+build only, checks `https://garagerag.app/appcast.xml` for updates once you allow
+Sparkle to. The [privacy policy](support/privacy-policy.html) lists them for users.
+
 ## macOS permissions (TCC)
 
 Messages and Mail are protected by Transparency, Consent, and Control. Without

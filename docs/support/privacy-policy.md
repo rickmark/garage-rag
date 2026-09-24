@@ -8,7 +8,7 @@ redirect_from:
 
 # Privacy Policy
 
-**Effective Date:** September 12, 2026  
+**Effective Date:** September 24, 2026  
 **Application:** Garage & GarageApp  
 **Developer:** Rick Mark
 
@@ -16,7 +16,7 @@ redirect_from:
 
 ## 1. Overview & Local-First Philosophy
 
-Garage is designed from the ground up as a **local-first** personal knowledge indexing and retrieval application. We respect your privacy and have designed the application so that it does not collect, track, or sell user data, and does not transmit your content anywhere except to a model server you configure yourself (section 4).
+Garage is designed from the ground up as a **local-first** personal knowledge indexing and retrieval application. We respect your privacy and have designed the application so that it does not collect, track, or sell user data, and does not transmit your content anywhere except to a model server you configure yourself (section 4). The few requests the application makes on its own, to fetch its model list, models you download, and updates, carry none of your data (section 5).
 
 ---
 
@@ -60,7 +60,19 @@ If you connect an MCP client such as Claude Desktop or Claude Code to Garage, th
 
 ---
 
-## 5. Security & Access Control
+## 5. Network Requests the Application Makes
+
+Apart from the model server you configure (section 4), Garage connects to the internet only for the following. None of these requests contains your documents, communications, search queries, or any identifier for you or your device.
+
+- **Model list.** Each time it starts, GarageApp downloads the current list of recommended models (`https://garagerag.app/.data/models.json`) so its Models page and setup assistant can offer them. The request is an ordinary HTTPS download of a public file; it sends no data about you or your library.
+- **Model downloads.** When you choose to download a model, GarageApp downloads that model file from Hugging Face (`huggingface.co`). It downloads nothing until you ask.
+- **Update checks (website download only).** The version of GarageApp downloaded from this website can check `https://garagerag.app/appcast.xml` for new versions. It checks automatically only if you agree when it first asks. The App Store version gets updates from the App Store instead and makes no update checks of its own.
+
+Like any server, garagerag.app (hosted on GitHub Pages) and Hugging Face receive the network information that every web request carries, such as your IP address and the app's user agent, and handle it under their own privacy policies. Garage does not receive or keep that information.
+
+---
+
+## 6. Security & Access Control
 
 - **Keychain Security**: Database superuser passwords and optional API tokens (e.g., LM Studio API keys) are stored securely in the native **macOS Keychain**.
 - **Loopback Isolation**: The embedded HTTP MCP server binds exclusively to `127.0.0.1` with DNS-rebinding guards and origin validation, preventing web pages and remote networks from accessing your corpus.
@@ -68,19 +80,19 @@ If you connect an MCP client such as Claude Desktop or Claude Code to Garage, th
 
 ---
 
-## 6. Children's Privacy
+## 7. Children's Privacy
 
 Garage does not knowingly collect information from children or any other users. Because the application does not collect personal data, it does not knowingly collect personal data from children under 13 or the equivalent minimum age in other jurisdictions.
 
 ---
 
-## 7. Changes to This Policy
+## 8. Changes to This Policy
 
 This Privacy Policy may be updated from time to time. Any material updates will be published to this website and included with subsequent application releases.
 
 ---
 
-## 8. Contact
+## 9. Contact
 
 If you have questions about this Privacy Policy or our local-first security architecture, please reach out:
 
