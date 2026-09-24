@@ -52,8 +52,8 @@ swift_library(
         ":GaragePythonEmbed",
         ":PythonXPCService_protocol",
         "//ext:PythonKit",
+        "//ext:libpq",  # For static libpq.a (version picked by //ext:postgres_version)
         "//ext:openssl",  # For libssl.a and libcrypto.a
-        "//ext/postgres:libpq",  # For static libpq.a
     ],
 )
 

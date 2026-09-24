@@ -170,6 +170,22 @@ unless `LC_ALL=C` is set in its environment (`PostgresService.swift` does
 this). Locale initialization on this platform spins up threads before
 postgres's fork-safety check runs.
 
+## Building against Postgres 19 (beta)
+
+The Bazel build carries two Postgres externals: `//ext/postgres` (18, the
+default) and `//ext/postgres19` (19beta4, pinned by commit). Both share one
+build definition (`ext/postgres/postgres.bzl`); each has its own copy of the
+sandbox patch, since 19 replaced the semaphore/shmem sizing API the patch hooks
+into. Select 19 for the whole tree (pgvector, the bundled server, libpq) with:
+
+```bash
+aspect build //:macapp --config=pg19   # same as --//ext:postgres_version=19
+```
+
+Data directories are not compatible across major versions. Switching an existing
+install from 18 to 19 (or back) means dumping and restoring the data folder's
+`pgdata`, or running `pg_upgrade`.
+
 ## Auto-update (Developer ID only)
 
 Developer ID builds update themselves through [Sparkle](https://sparkle-project.org),

@@ -18,7 +18,7 @@ copy_to_directory(
     srcs = [
         ":postgresql.conf",
         "//ext:pgvector",
-        "//ext/postgres:postgres_rpath",
+        "//ext:postgres_rpath",
     ],
     out = "postgres_raw",
     exclude_srcs_patterns = [
@@ -27,6 +27,7 @@ copy_to_directory(
     replace_prefixes = {
         "ext/pgvector/pgvector": "",
         "ext/postgres/postgres_rpath": "",
+        "ext/postgres19/postgres_rpath": "",
         "macapp/externals": "",
     },
 )
@@ -54,7 +55,7 @@ codesign(
 # (hardened runtime / library validation rejects the Homebrew copy) and the runtime option.
 codesign(
     name = "libpq",
-    src = "//ext/postgres:libpq_dylib",
+    src = "//ext:libpq_dylib",
     out = "libpq.dylib",
     options = ["runtime"],
     signing_identity = select({
