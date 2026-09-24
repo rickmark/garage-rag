@@ -334,7 +334,7 @@ with the Status page's quick-add cards.
   provides manual ingestion and an optional persisted schedule that ingests all
   sources and then backfills every registered model. The Models view
   provides controls for Llama models and embedding models: it includes
-  the model catalog (`data/models/models.json`) and fills each selection's slug, dimensions,
+  the model catalog (`docs/.data/models.json`, refreshed at launch from `https://garagerag.app/.data/models.json`) and fills each selection's slug, dimensions,
   provider-side reference, and default provider. The provider can then be
   changed between Ollama and LM Studio; start the selected provider locally
   before backfilling embeddings. An LM Studio API token can be saved in the

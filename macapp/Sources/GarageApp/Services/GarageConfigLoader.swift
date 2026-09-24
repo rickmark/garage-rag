@@ -508,6 +508,13 @@ public enum GarageConfigLoader {
         return (nil, nil)
     }
 
+    /// Whether `data` is a models.json worth using: the grouped shape, with at least one
+    /// text embedding preset.
+    static func isUsableModelCatalog(_ data: Data) -> Bool {
+        guard let manifest = try? JSONDecoder().decode(ModelsManifest.self, from: data) else { return false }
+        return !(manifest.textEmbedding ?? []).isEmpty
+    }
+
     private static func decodeModelManifest(from url: URL) -> (textEmbedding: [ModelPresetEntry]?, factDistil: [ModelPresetEntry]?)? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()

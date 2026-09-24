@@ -116,12 +116,16 @@ public enum Launcher {
         }
     }
 
-    /// Points Python at the bundle's models.json (widths, distance metrics) unless the
-    /// caller chose another; outside the bundle garage_rag finds the repo's copy.
+    /// Points Python at the models.json the app uses (widths, distance metrics): the one it last
+    /// fetched from the website, else the bundle's. Unless the caller chose another; outside the
+    /// bundle garage_rag finds the repo's copy.
     private static func exportModelManifest(in appBundle: URL?) {
         guard ProcessInfo.processInfo.environment["GARAGE_MODEL_MANIFEST"] == nil, let appBundle else { return }
-        let manifest = appBundle.appendingPathComponent("Contents/Resources/models.json")
-        if FileManager.default.fileExists(atPath: manifest.path) {
+        let candidates = [
+            GarageAppGroup.fetchedModelCatalog,
+            appBundle.appendingPathComponent("Contents/Resources/models.json"),
+        ]
+        if let manifest = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             setenv("GARAGE_MODEL_MANIFEST", manifest.path, 1)
         }
     }

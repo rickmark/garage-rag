@@ -210,6 +210,11 @@ final class AppState: ObservableObject {
         // Before anything reads the data folder's contents or starts Postgres / an XPC service.
         GarageDataMigration.runAtLaunch()
         fetchPresetModels()
+        Task {
+            if await ModelCatalog.refresh() {
+                fetchPresetModels()
+            }
+        }
         volumeAccess.restoreAndVerifyAccess()
         osLogStreamService.loadAllPersistedLogs()
         xpcServices.startStreamingAllServices()

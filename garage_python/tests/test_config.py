@@ -452,9 +452,10 @@ class TestSchemaReference:
         """The URL's path inside the repo must be exactly where the file is generated."""
         from garage_rag.config import repo_root, repo_schema_path
 
-        prefix = "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/"
+        # The site is built from docs/, so docs/.data/x is served as {SITE_URL}/.data/x.
+        prefix = "https://garagerag.app/"
         assert SCHEMA_URL.startswith(prefix)
-        assert SCHEMA_URL.removeprefix(prefix) == repo_schema_path().relative_to(repo_root()).as_posix()
+        assert SCHEMA_URL.removeprefix(prefix) == repo_schema_path().relative_to(repo_root() / "docs").as_posix()
 
     def test_nest_uses_the_url_by_default(self) -> None:
         assert nest(Settings())["$schema"] == SCHEMA_URL

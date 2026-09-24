@@ -18,7 +18,7 @@ been for -- and because the reference is a URL rather than a path, a config in
 ``$HOME`` needs no local schema copy beside it.
 
 The schema is generated from this module (``garage config schema --publish``) and
-committed under ``data/schema/`` at the repository root so :data:`SCHEMA_URL`
+committed under ``docs/.data/``, which the website serves, so :data:`SCHEMA_URL`
 resolves. Regenerate it whenever a setting is added, renamed, or documented; a
 test fails if a field is left undescribed.
 
@@ -50,7 +50,10 @@ USER_CONFIG_FILENAME = ".garage.json"
 # Published schema. Written into every config's ``$schema`` key so editors can
 # resolve it without a local copy -- which matters because the config lives in
 # $HOME while the schema is a build artifact of this repository.
-SCHEMA_URL = "https://raw.githubusercontent.com/rickmark/garage-rag/refs/heads/main/data/schema/garage.schema.json"
+SITE_URL = "https://garagerag.app"
+# Files the site serves from docs/.data/ in the repository.
+SITE_DATA_DIR = ".data"
+SCHEMA_URL = f"{SITE_URL}/{SITE_DATA_DIR}/{SCHEMA_FILENAME}"
 
 # Directory names that are never worth indexing. Skipping these at the walker
 # level is what keeps ~/Developer at ~18k documents instead of ~192k.
@@ -539,11 +542,11 @@ def default_config_path() -> Path:
 def repo_schema_path() -> Path:
     """Where the schema is generated for publishing.
 
-    Committed in the repository's ``data/schema`` target so :data:`SCHEMA_URL`
+    Committed under ``docs/.data``, which the website serves, so :data:`SCHEMA_URL`
     resolves. This is a build artifact, not something written next to a user's
     config.
     """
-    return repo_root() / "data" / "schema" / SCHEMA_FILENAME
+    return repo_root() / "docs" / SITE_DATA_DIR / SCHEMA_FILENAME
 
 
 def candidate_paths() -> list[Path]:

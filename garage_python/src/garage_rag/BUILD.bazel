@@ -4,7 +4,7 @@ py_binary(
     name = "garage",
     srcs = ["cli.py"],
     data = [
-        "//data/schema:config_schema",
+        "//docs:config_schema",
         "//data/sql:sql_schema",
     ],
     imports = [".."],

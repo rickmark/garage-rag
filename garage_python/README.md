@@ -64,4 +64,4 @@ uv run pytest -q
 `../docs/` — [architecture](../docs/architecture.md), [schema](../docs/schema.md),
 [attribution](../docs/attribution.md), [privacy](../docs/privacy.md), plus support and
 troubleshooting guides. The generated config schema is committed at
-`../data/schema/garage.schema.json`.
+`../docs/.data/garage.schema.json` and served as `https://garagerag.app/.data/garage.schema.json`.
