@@ -17,11 +17,19 @@ GRAM_H = "src/include/parser/cypher_gram_def.h"
 SCANNER_C = "src/backend/parser/ag_scanner.c"
 GENERATED = [GRAM_C, GRAM_H, SCANNER_C]
 
+# The genrules write under this prefix, which copy_to_directory strips again. Written at their
+# bare paths they would leave a `src` directory beside age_source in the package's output
+# directory, and rules_foreign_cc links every sibling of lib_source into the build directory
+# when that directory is visible to the action (the unsandboxed dbg build of the Xcode
+# project): //ext/age's `cp -RL age_source/. .` then fails on the `src` link.
+_GEN = "_generated/"
+
 def age_source(name, repo, tags = []):
     """Declares :<name>, a directory holding repo's AGE checkout plus the generated parser.
 
     Call from a package of its own (//ext/age/pg18, //ext/age/pg19): the genrule outputs sit at
-    their source-tree paths relative to that package, which is what copy_to_directory strips.
+    _GEN plus their source-tree paths relative to that package, which is what copy_to_directory
+    strips.
 
     Args:
         name: name of the resulting directory target.
@@ -31,15 +39,15 @@ def age_source(name, repo, tags = []):
     native.genrule(
         name = name + "_gram",
         srcs = [repo + "//:src/backend/parser/cypher_gram.y"],
-        outs = [GRAM_C, GRAM_H],
+        outs = [_GEN + GRAM_C, _GEN + GRAM_H],
         # The flags AGE's Makefile adds, plus PGXS's own -Wno-deprecated (the grammar still
         # uses %name-prefix and %pure-parser).
         cmd = " ".join([
             "M4=$(M4) $(BISON)",
             "-Wno-deprecated",
             "-Werror -Wno-error=conflicts-sr -Wno-error=conflicts-rr",
-            "--defines=$(location %s)" % GRAM_H,
-            "--output=$(location %s)" % GRAM_C,
+            "--defines=$(location %s)" % (_GEN + GRAM_H),
+            "--output=$(location %s)" % (_GEN + GRAM_C),
             "$<",
         ]),
         tags = tags,
@@ -52,7 +60,7 @@ def age_source(name, repo, tags = []):
     native.genrule(
         name = name + "_scanner",
         srcs = [repo + "//:src/backend/parser/ag_scanner.l"],
-        outs = [SCANNER_C],
+        outs = [_GEN + SCANNER_C],
         # The scanner declares `%option backup`, so flex always writes `lex.backup` to its working
         # directory (upstream flex has no option to redirect it; PGXS only reads it to assert there
         # is no backing up). Run it from a scratch directory, which takes absolute paths for the
@@ -82,6 +90,7 @@ exit $$rc
         ],
         out = name,
         include_external_repositories = ["*" + repo.lstrip("@")],
+        replace_prefixes = {_GEN: ""},
         tags = tags,
         visibility = ["//ext/age:__pkg__"],
     )
