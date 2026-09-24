@@ -79,11 +79,6 @@ struct GarageApp: App {
         NotificationCenter.default.post(name: notification, object: nil)
     }
 
-    /// Brings the main window forward and re-runs the first-run setup assistant.
-    private func showFirstRun() {
-        showDialog(.garageShowFirstRun)
-    }
-
     /// Re-runs the setup assistant: opens the main window (recreating it when a
     /// `--background` launch closed it) and flips the coordinator, which
     /// `ContentView` renders from `appState` rather than from the notification.

@@ -3,7 +3,6 @@ import Sparkle
 
 /// Sparkle-backed updater, compiled into every configuration except the App
 /// Store one. See `AppStoreUpdaterBackend.swift` for the other half.
-@MainActor
 enum UpdaterBackend {
     static let unavailableReason: String? = nil
 

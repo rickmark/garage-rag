@@ -43,7 +43,7 @@ Garage contains **no advertising trackers, no analytics SDKs, and no background 
 All data indexed by Garage is processed and stored locally on your device in your private PostgreSQL database located in:  
 `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`
 
-Garage does not send your files, text, images, code, or communications off your device unless you explicitly enable optional third-party integrations. AI agents you connect to Garage are covered separately below.
+Garage never sends your communications off your device, and sends other content only to a model server you have configured yourself (see section 4). Content you retrieve through a connected MCP client is subject to that client.
 
 ---
 
@@ -54,10 +54,7 @@ Garage does not send your content to third-party services, and contains no clien
 - **Text recognition (OCR)** in images uses Tesseract on your device. There is no cloud fallback.
 - **Language models** for embeddings, fact extraction, and answers run in the application itself, or in a model server you run yourself (Ollama or LM Studio), on your device by default. If you configure an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server and to no other address, and never sends private communications (Messages, Mail) to a server that is not on your device.
 
-If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
-
-### AI Agents You Connect
-Garage's MCP server answers the AI agents you choose to connect to it (for example Claude Desktop, Claude Code, or Cursor). An agent receives the excerpts its searches return, not your entire index. Many agents send what they receive, together with your conversation, to their own cloud model provider. This can include excerpts from Messages and Mail if you have indexed them. Garage does not control what an agent does with the excerpts it receives; that is governed by the agent's own terms and privacy policy.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. Many clients send what they receive, together with your conversation, to their own cloud model provider, and that can include excerpts from Messages and Mail if you have indexed them. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
 ---
 

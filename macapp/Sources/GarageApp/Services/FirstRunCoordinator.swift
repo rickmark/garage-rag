@@ -270,8 +270,8 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
             extra(id: "icloud-drive", title: "iCloud Drive", subtitle: "Documents synced through iCloud", symbol: "icloud", root: "~/Library/Mobile Documents/com~apple~CloudDocs"),
             shared(.dropbox, subtitle: "Your Dropbox folder", symbol: "shippingbox"),
             extra(id: "developer", title: "Developer", subtitle: "Code repositories under ~/Developer", symbol: "chevron.left.forwardslash.chevron.right", root: "~/Developer", kind: "git", corpusClass: "code"),
-            shared(.messages, subtitle: "iMessage and SMS history (never leaves this Mac)", symbol: "message"),
-            shared(.mail, subtitle: "Local mailboxes (never leaves this Mac)", symbol: "envelope"),
+            shared(.messages, subtitle: "iMessage and SMS history (Garage never sends it off this Mac)", symbol: "message"),
+            shared(.mail, subtitle: "Local mailboxes (Garage never sends them off this Mac)", symbol: "envelope"),
         ]
     }
 
@@ -447,8 +447,6 @@ final class FirstRunCoordinator: ObservableObject {
         defaults.set(true, forKey: FirstRunPreferences.completedKey)
         isActive = false
         isWorking = false
-        // Sources and models added through the assistant already queue the
-        // debounced ingest/backfill run via `runOperation`, so only refresh here.
         let resetStillPending = isAfterDatabaseReset && !hasFinishedDatabaseReset
         isAfterDatabaseReset = false
         guard let appState else { return }
@@ -795,7 +793,7 @@ final class FirstRunCoordinator: ObservableObject {
     private func prepareAgentPage() {
         appState?.mcp.refreshDetectedClients()
         if selectedClientIDs.isEmpty {
-            selectedClientIDs = Set(detectedClients.filter { $0.existsOnDisk && !$0.isRegistered }.map(\.id))
+            selectedClientIDs = Set(detectedClients.filter { $0.existsOnDisk && !$0.isRegistered && !$0.isProjectScoped }.map(\.id))
         }
     }
 

@@ -8,10 +8,9 @@ description: One egress choke point, a destination allowlist, communications kep
 
 ## The guarantee
 
-Garage itself never sends content classified `corpus_class = 'communication'` to
-a cloud API. That guarantee covers what Garage does; what an agent you connect
-over MCP does with the excerpts it retrieves is covered
-[below](#what-connected-agents-receive).
+Garage sends content only to approved destinations: this machine, and the Ollama
+or LM Studio server you configure. Communications never leave this machine.
+There is no cloud AI client in the codebase.
 
 This is enforced structurally, in layers that are each tested on their own
 (`garage_python/tests/test_egress_block.py`). Removing any one of them fails the
@@ -103,11 +102,10 @@ provider, through the same loopback-only client.
 ### What these layers do not cover — MCP clients
 
 The MCP server hands search results and document excerpts, communications
-included, to whichever client is connected to it. When that client is Claude
-Desktop or Claude Code, it sends what it receives to its own model provider
-under its own terms. Garage does not, but connecting such a client is a decision
-about where retrieved content goes; `rag_search` results carry each hit's
-`corpus_class` so a client can tell communications apart.
+included, to whichever client is connected to it, and that client may send them
+to its own model provider; see [What connected agents receive](#what-connected-agents-receive).
+`rag_search` results carry each hit's `corpus_class` so a client can tell
+communications apart.
 
 ## macOS permissions (TCC)
 
@@ -194,9 +192,9 @@ out of the index.
 ## What is stored, and where
 
 Everything stays in your local Postgres `rag` database: extracted text in
-`documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. Garage sends
-no content off the machine except as described above; agents you connect
-receive the excerpts they retrieve.
+`documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. No content
+leaves the machine except to the model servers you configure (communications
+never do), or through an MCP client or `--allow-remote`, described above.
 
 The database is unencrypted at rest, as Postgres normally is. If you index
 private communications, the database file is as sensitive as the messages

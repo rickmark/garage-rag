@@ -596,8 +596,8 @@ struct FirstRunSelectModelsPage: View {
             }
 
             FirstRunSectionTitle(
-                title: "Distillation models",
-                subtitle: "Optional. A small instruction-tuned model that gleans atomic facts from your documents, so agents can answer from facts as well as passages."
+                title: "Distillation model",
+                subtitle: "Optional. A small instruction-tuned model that gleans atomic facts from your documents and answers rag_ask over MCP. One model is active at a time (facts.model in garage.json)."
             )
 
             if coordinator.distillationPresets.isEmpty {
@@ -882,6 +882,9 @@ struct FirstRunSetupAgentPage: View {
                             FirstRunBadge(text: "INSTALLED", tint: .blue)
                         } else {
                             FirstRunBadge(text: "NOT FOUND", tint: .secondary)
+                        }
+                        if client.isProjectScoped {
+                            FirstRunBadge(text: "PROJECT", tint: .orange)
                         }
                     }
                     Text(client.path.path.replacingOccurrences(of: home, with: "~"))

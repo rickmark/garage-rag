@@ -4,7 +4,7 @@ The Python half of [Garage](../README.md): a local-first personal RAG pipeline o
 PostgreSQL + pgvector. It walks personal documents, code repositories and communications,
 extracts and chunks their text, attributes authorship, embeds every chunk under each
 registered model, distills documents into span-grounded facts, and serves the corpus over
-MCP 2.0 and gRPC. Garage never sends communications to a cloud API (MCP clients still receive what they retrieve); see [`docs/privacy.md`](../docs/privacy.md).
+MCP 2.0 and gRPC. Garage never sends communications off the machine (MCP clients you connect still receive what they retrieve); see [`docs/privacy.md`](../docs/privacy.md).
 
 ## Entry points
 

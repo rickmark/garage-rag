@@ -105,6 +105,12 @@ final class DatabaseResetUITests: XCTestCase {
         let relaunched = XCUIApplication(bundleIdentifier: Self.bundleIdentifier)
         relaunched.activate()
         XCTAssertFalse(relaunched.buttons["splash.continue"].waitForExistence(timeout: 3), "the relaunched instance showed the splash")
+        // The relaunch opens the setup assistant, whose first page runs `finishDatabaseReset`; skipping it
+        // (disabled while that page is working) lands on the main window with the reset finished.
+        let skip = relaunched.buttons["firstRun.skipSetup"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 30), "the relaunched instance did not open the setup assistant")
+        XCTAssertTrue(waitUntil(timeout: 60) { skip.isEnabled }, "Skip setup stayed disabled")
+        skip.click()
         open(section: "database", in: relaunched)
         // No garage.json in the test folder, so no sources come back, and the message says so.
         let message = relaunched.staticTexts

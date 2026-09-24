@@ -172,7 +172,7 @@ final class AppState: ObservableObject {
             // The setup assistant's first page creates the new database and
             // registers garage.json's sources again; "Skip setup" finishes the
             // reset without it and leaves the unconfigured main window.
-            launchServices(startsPostgres: false, presentsFirstRun: false)
+            launchServices(startsPostgres: false)
             firstRun.begin(afterDatabaseReset: true)
         }
     }
@@ -195,9 +195,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// `presentsFirstRun` is false after a reset: that launch opens the assistant
-    /// in its reset mode itself, rather than the ordinary first-run check.
-    private func launchServices(startsPostgres: Bool, presentsFirstRun: Bool = true) {
+    private func launchServices(startsPostgres: Bool) {
         // Before anything reads the data folder's contents or starts Postgres / an XPC service.
         GarageDataMigration.runAtLaunch()
         fetchPresetModels()
@@ -210,12 +208,6 @@ final class AppState: ObservableObject {
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
-        if presentsFirstRun, firstRun.shouldPresentAtLaunch {
-            // The assistant's first page drives Postgres and service startup
-            // itself so it can show progress and retry on failure.
-            firstRun.begin()
-            return
-        }
         guard startsPostgres else { return }
         if firstRun.shouldPresentAtLaunch {
             // The assistant's first page drives Postgres and service startup

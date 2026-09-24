@@ -89,6 +89,10 @@ struct MenuBarView: View {
             }
 
             Button("Setup Assistant…") {
+                showInMainWindow(.garageShowFirstRun)
+            }
+
+            Button("Setup Assistant…") {
                 GarageApp.presentFirstRun(appState: appState, openWindow: openWindow)
             }
 
