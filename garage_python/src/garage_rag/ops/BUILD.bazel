@@ -20,6 +20,7 @@ py_library(
         "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/mcp_server",
+        "@pypi//pydantic",
         "@pypi//sqlalchemy",
     ],
 )
