@@ -153,6 +153,7 @@ alias(
 test_suite(
     name = "tests",
     tests = [
+        "//ext/age:age_build_test",
         "//ext/python:python_framework_codesign_test",
     ],
 )

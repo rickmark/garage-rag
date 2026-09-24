@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
 load(":age.bzl", "GENERATED")
 
@@ -55,4 +56,12 @@ make(
     deps = [
         "//ext:postgres",
     ],
+)
+
+# CI's macOS job runs `aspect test //...` with --build_tests_only, and nothing else under test
+# depends on the Postgres bundle, so this is what makes it compile AGE (parser generation,
+# the source overlay and the age.dylib link) on every change to its build inputs.
+build_test(
+    name = "age_build_test",
+    targets = [":age"],
 )
