@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Embedded in the App Store build's `garage` (__TEXT,__info_plist; see BUILD.bazel). A sandboxed
+  command-line tool needs a bundle identifier of its own: without one, sandbox initialization
+  traps at launch. It is also the tool's signing identifier and names its sandbox container.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>me.rickmark.garage-rag.garage</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>garage</string>
+</dict>
+</plist>
