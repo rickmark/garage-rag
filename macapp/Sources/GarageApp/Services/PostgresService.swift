@@ -422,6 +422,17 @@ final class PostgresService: ObservableObject {
             "-c", "shared_memory_type=mmap",
             "-c", "dynamic_shared_memory_type=mmap",
         ]
+        // Apache AGE hooks the parser, so it has to be loaded into every backend, and
+        // create_graph resolves its operator classes through search_path. ag_catalog goes
+        // last so Garage's own unqualified names still land in public. Passed here rather
+        // than in postgresql.conf so clusters initialized by an older build get it too;
+        // skipped when the library isn't bundled, since a missing preload stops the server.
+        if FileManager.default.fileExists(atPath: Paths.postgresLibDir.appendingPathComponent("age.dylib").path) {
+            postgresArguments.append(contentsOf: [
+                "-c", "shared_preload_libraries=age",
+                "-c", "search_path=\"$user\", public, ag_catalog",
+            ])
+        }
         let configFile = Paths.postgresConfigFile
         if FileManager.default.fileExists(atPath: configFile.path) {
             postgresArguments.append(contentsOf: ["--config-file=\(configFile.path)"])
