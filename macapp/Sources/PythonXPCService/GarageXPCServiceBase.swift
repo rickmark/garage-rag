@@ -410,44 +410,6 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         reply(serviceName, ProcessInfo.processInfo.processIdentifier, uptime, status)
     }
 
-    public func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("setAppBundleReference: \(bundleURL.path, privacy: .public)")
-        guard runtime.setAppBundle(url: bundleURL) else {
-            reply(false, "'\(bundleURL.path)' is not a directory")
-            return
-        }
-        reply(true, nil)
-        retryBootstrapIfNeeded()
-    }
-
-    public func setAppBundleFileHandle(_ bundleHandle: FileHandle, with reply: @escaping (Bool, String?) -> Void) {
-        do {
-            try runtime.setAppBundle(fileHandle: bundleHandle)
-            reply(true, runtime.appBundleURL?.path)
-            retryBootstrapIfNeeded()
-        } catch {
-            logger.error("setAppBundleFileHandle failed: \(error.localizedDescription, privacy: .public)")
-            reply(false, error.localizedDescription)
-        }
-    }
-
-    /// If Python could not be loaded earlier because the bundle was unknown, try again now.
-    private func retryBootstrapIfNeeded() {
-        guard usesPython, !runtime.isReady else { return }
-        if case .failed = runtime.state {
-            // A failed PyConfig init cannot be retried in-process (CPython allows a single initialization
-            // attempt per process); only environment-resolution failures are retryable.
-            if runtime.environment != nil { return }
-        }
-        host.perform { [self] in
-            if ensurePythonReady() {
-                performSelfTests()
-                registerServicesIfNeeded()
-                host.startAll { _ in self.recomputeLifecycle() }
-            }
-        }
-    }
-
     public func updateConfiguration(_ options: [String: String], with reply: @escaping (Bool, String?) -> Void) {
         mergeConfiguration(options)
         reply(true, "\(options.count) key(s) updated")

@@ -21,14 +21,6 @@ public protocol GarageCommonXPCServiceProtocol: NSObjectProtocol {
     /// Health check returning structured status (service name, PID, uptime/timestamp, extra status string).
     func getServiceInfo(with reply: @escaping (String, Int32, Double, String?) -> Void)
 
-    /// Sets the main application bundle file reference URL to resolve bundle resources and extend the sandbox.
-    func setAppBundleReference(_ bundleURL: URL, with reply: @escaping (Bool, String?) -> Void)
-
-    /// Passes an open file handle (directory descriptor) of the main application bundle. The service resolves the
-    /// bundle path from the descriptor (`F_GETPATH`) and uses it as the basis for Python path resolution.
-    /// Sending a descriptor (rather than a path) works across sandbox boundaries and survives app relocation.
-    func setAppBundleFileHandle(_ bundleHandle: FileHandle, with reply: @escaping (Bool, String?) -> Void)
-
     /// Updates runtime configuration used by the service and its self tests (for example `GARAGE_DATABASE_URL`,
     /// `GARAGE_GRPC_HOST`, `GARAGE_GRPC_PORT`). Keys are merged into the existing configuration.
     func updateConfiguration(_ options: [String: String], with reply: @escaping (Bool, String?) -> Void)
