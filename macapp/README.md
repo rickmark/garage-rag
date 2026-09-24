@@ -251,40 +251,66 @@ a feed it could not verify.
 
 ### Cutting a release
 
+Build from an up-to-date `main`. Sparkle decides what is newer by `CFBundleVersion`, which
+`bazel/workspace_status.sh` stamps with the commit count of `HEAD`, so a release built from a
+branch or a stale checkout can come out older than one already in the feed (the publish step
+refuses that). The marketing version is `short_version_string` in
+`macapp/Sources/GarageApp/BUILD.bazel`, and the release tag is `v` plus that version.
+
 1. `aspect build //macapp/package:GarageApp` stages and signs the app, producing
-   `bazel-bin/macapp/package/GarageApp.zip` — a zip of `Garage.app`, which is
-   exactly the shape Sparkle wants to download. This is also the step that
-   re-signs Sparkle's nested code (see below).
-2. `aspect run //macapp/package:notarize_all` submits that archive and the
-   installer `.pkg` to the notary service.
-3. Put the archive, named for its version, in an otherwise empty directory
-   together with a copy of the current `docs/appcast.xml`, so the existing
-   entries are carried over rather than dropped. Then:
+   `bazel-bin/macapp/package/GarageApp.zip`: a zip of `Garage.app`, which is exactly the
+   shape Sparkle wants to download. This is also the step that re-signs Sparkle's nested
+   code (see below).
+2. `aspect run //macapp/package:notarize_all` submits that archive and the installer `.pkg`
+   to the notary service.
+3. Add the release to the feed:
 
    ```bash
-   aspect run //ext/sparkle:generate_appcast -- \
-       --download-url-prefix https://github.com/rickmark/garage-rag/releases/download/<tag>/ \
-       "$PWD/release-dir"
+   aspect run //macapp/package:publish_appcast -- v1.5 --notes path/to/notes.md
    ```
 
-   It reads the archive's `CFBundleShortVersionString`/`CFBundleVersion`, signs
-   the entry with the private key from the Keychain, and rewrites `appcast.xml`.
+   `--notes` is optional; an `.md`, `.html` or `.txt` file is embedded in the entry and shown
+   in Sparkle's update window. Before signing anything the script checks that the archive's
+   version matches the tag, that it is notarized, arm64 only and newer than every entry
+   already in `docs/appcast.xml`, and that the EdDSA key in the login Keychain is the one
+   `SUPublicEDKey` names. It then runs `//ext/sparkle:generate_appcast` with the
+   `--download-url-prefix` of that tag's GitHub release, which reads the version and
+   architectures from the app, signs the entry with the Keychain key (macOS asks to allow
+   access), and adds `sparkle:hardwareRequirements` `arm64` so Intel Macs are never offered
+   it. The script verifies that entry against the archive and leaves `docs/appcast.xml`
+   updated and the signed archive at `dist/Garage-<version>.zip`.
+4. Publish in this order, so the feed never names a download that is not there yet:
 
-   `--download-url-prefix` is not optional here. The feed is served from GitHub
-   Pages but the archives live on GitHub Releases, so without it the enclosure
-   URLs come out relative to the feed and every download 404s. The prefix
-   applies to every archive in the directory, which is why each run publishes
-   one release: archives from an older tag would be given this tag's URL.
-4. Upload the archive to the GitHub release under `<tag>`, copy the generated
-   `appcast.xml` over `docs/appcast.xml`, and commit. GitHub Pages serves it at
-   `https://garagerag.app/appcast.xml`, which is the SUFeedURL.
-5. Before announcing it, fetch the feed and check that each `<enclosure url=…>`
-   is the GitHub Releases URL of an asset that actually exists.
+   ```bash
+   gh release upload v1.5 dist/Garage-1.5.zip
+   git add docs/appcast.xml && git commit -S -m "Add Garage 1.5 to the appcast" && git push
+   ```
 
-`//ext/sparkle:sign_update` signs a single archive if you need to patch an entry
-by hand. `//ext/sparkle:binary_delta` builds the delta patches `generate_appcast`
-attaches when it finds `BinaryDelta` alongside itself — without them every user
-downloads the whole app rather than a diff.
+   Upload `dist/Garage-<version>.zip` under exactly that name: the entry's signature and
+   length are of that file, and its URL is
+   `https://github.com/rickmark/garage-rag/releases/download/<tag>/Garage-<version>.zip`.
+   GitHub Pages serves the feed at `https://garagerag.app/appcast.xml`, the SUFeedURL.
+5. Once Pages has deployed, check what users will fetch:
+
+   ```bash
+   aspect run //macapp/package:publish_appcast -- --check-live
+   ```
+
+   It downloads the feed from the SUFeedURL and fails on any enclosure that does not resolve.
+
+`garage_python/tests/test_appcast.py` holds the committed feed to the same rules in CI, so a
+hand edit that drops a signature, the arm64 requirement or the release URL fails the build.
+Do not hand-edit entries: generate_appcast also signs the feed as a whole, and an edited
+entry needs re-running it. `//ext/sparkle:sign_update` signs a single archive if you need to
+patch an entry by hand.
+
+Each run publishes one release, because `--download-url-prefix` applies to every archive in
+the directory generate_appcast reads. That also means it builds no delta updates (they need
+the previous release's archive beside the new one), so every user downloads the whole app.
+`//ext/sparkle:binary_delta` is there for when that becomes worth doing.
+
+Sparkle first shipped in 1.5 (#34). v1.0 has no update check at all, so its users have to
+download 1.5 themselves; from 1.5 on, every release reaches them through the feed.
 
 ### Why the framework is re-signed
 

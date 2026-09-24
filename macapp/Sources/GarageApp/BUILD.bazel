@@ -3,6 +3,15 @@ load("@rules_swift//swift:swift.bzl", "swift_library")
 load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 load("//bazel:version.bzl", "macapp_version")
 
+# publish_appcast checks the release key against SUPublicEDKey; test_appcast checks the feed URL.
+exports_files(
+    ["Sparkle.plist"],
+    visibility = [
+        "//garage_python/tests:__pkg__",
+        "//macapp/package:__pkg__",
+    ],
+)
+
 swift_library(
     name = "GarageApp_lib",
     srcs = glob(["**/*.swift"]),

@@ -2,6 +2,20 @@ load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("//tools/pytest:defs.bzl", "py_test")
 
 py_test(
+    name = "test_appcast",
+    srcs = ["test_appcast.py"],
+    data = [
+        "//docs:appcast",
+        "//macapp/Sources/GarageApp:Sparkle.plist",
+    ],
+    deps = [
+        ":conftest",
+        "//garage_python/src/garage_rag/config",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_attribution",
     srcs = ["test_attribution.py"],
     deps = [
