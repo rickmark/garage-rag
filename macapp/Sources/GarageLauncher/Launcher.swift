@@ -185,9 +185,19 @@ public enum Launcher {
                     fputs("[GARAGE_CLI] Python sys.path at failure: \(sys.path)\n", stderr)
                     return 1
                 }
-                // The throwing call surfaces Python exceptions as errors instead of PythonKit's `try!` trap.
-                let result = try module[dynamicMember: entry.function].throwing.dynamicallyCall(withArguments: [])
-                return Int32(Int(result) ?? 0)
+                // The throwing call surfaces Python exceptions as errors instead of PythonKit's `try!` trap. They are
+                // handled here, with the GIL held: a PythonError that left this scope would be released without it,
+                // which is a fatal Python error.
+                do {
+                    let result = try module[dynamicMember: entry.function].throwing.dynamicallyCall(withArguments: [])
+                    return Int32(Int(result) ?? 0)
+                } catch PythonError.exception(let exception, _)
+                    where Bool(Python.isinstance(exception, Python.SystemExit)) == true {
+                    return exitStatus(of: exception)
+                } catch {
+                    fputs("Error running \(entry.module).\(entry.function): \(GaragePythonRuntime.describe(error))\n", stderr)
+                    return 1
+                }
             }
         } catch {
             // Traceback formatting and any other Python access must happen with the GIL held.
@@ -196,6 +206,20 @@ public enum Launcher {
             }
             return 1
         }
+    }
+
+    /// The status `SystemExit` asks for, as `python -m` would exit with it: argparse's `--help` and `exit(n)`.
+    /// None is 0, an integer is itself, anything else is printed to stderr and exits 1.
+    private static func exitStatus(of systemExit: PythonObject) -> Int32 {
+        let code = systemExit.code
+        if code == Python.None {
+            return 0
+        }
+        if let status = Int(code) {
+            return Int32(truncatingIfNeeded: status)
+        }
+        fputs("\(code)\n", stderr)
+        return 1
     }
 
     /// Hands Python usable stdin/stdout/stderr when the embedded interpreter has none.
