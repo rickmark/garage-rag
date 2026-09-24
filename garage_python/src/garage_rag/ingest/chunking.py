@@ -11,9 +11,9 @@ The strategies differ because the failure modes differ:
 * **Conversation** -- handled by :mod:`garage_rag.extract.messages`, which
   windows messages before they ever reach here.
 
-``MarkdownHeaderTextSplitter`` deliberately does not derive from ``TextSplitter``
-in langchain-text-splitters, so it cannot be swapped in as a size-based splitter;
-the two-stage pass below is the supported pattern.
+The splitters themselves live in :mod:`garage_rag.ingest.splitters`, a small
+dependency-free port of the langchain-text-splitters behaviour this module was
+first written against; ``tests/test_chunking_golden.py`` pins the output to it.
 """
 
 from __future__ import annotations
@@ -22,58 +22,52 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from langchain_text_splitters import (
-    Language,
-    MarkdownHeaderTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
-
 from garage_rag.config import get_settings
 from garage_rag.extract.base import ContentKind
+from garage_rag.ingest.splitters import MarkdownHeaderSplitter, RecursiveSplitter
 
 log = logging.getLogger(__name__)
 
 # Headers to split on, and the metadata key each maps to.
 _MD_HEADERS = [("#", "h1"), ("##", "h2"), ("###", "h3")]
 
-# Extension -> langchain Language for structure-aware code splitting. Only
-# languages langchain actually models are listed; everything else falls back to
-# recursive character splitting, which is still reasonable for code.
-_CODE_LANGUAGES: dict[str, Language] = {
-    ".py": Language.PYTHON,
-    ".pyi": Language.PYTHON,
-    ".js": Language.JS,
-    ".jsx": Language.JS,
-    ".mjs": Language.JS,
-    ".cjs": Language.JS,
-    ".ts": Language.TS,
-    ".tsx": Language.TS,
-    ".c": Language.C,
-    ".h": Language.C,
-    ".cc": Language.CPP,
-    ".cpp": Language.CPP,
-    ".cxx": Language.CPP,
-    ".hpp": Language.CPP,
-    ".hh": Language.CPP,
-    ".go": Language.GO,
-    ".rs": Language.RUST,
-    ".rb": Language.RUBY,
-    ".php": Language.PHP,
-    ".java": Language.JAVA,
-    ".kt": Language.KOTLIN,
-    ".scala": Language.SCALA,
-    ".swift": Language.SWIFT,
-    ".cs": Language.CSHARP,
-    ".lua": Language.LUA,
-    ".pl": Language.PERL,
-    ".hs": Language.HASKELL,
-    ".ex": Language.ELIXIR,
-    ".exs": Language.ELIXIR,
-    ".html": Language.HTML,
-    ".htm": Language.HTML,
-    ".tex": Language.LATEX,
-    ".sol": Language.SOL,
-    ".cob": Language.COBOL,
+# Extension -> separator table (splitters.LANGUAGE_SEPARATORS) for structure-aware
+# code splitting. Everything else falls back to recursive character splitting,
+# which is still reasonable for code. Perl has no table and is not listed.
+_CODE_LANGUAGES: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "js",
+    ".jsx": "js",
+    ".mjs": "js",
+    ".cjs": "js",
+    ".ts": "ts",
+    ".tsx": "ts",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".go": "go",
+    ".rs": "rust",
+    ".rb": "ruby",
+    ".php": "php",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".swift": "swift",
+    ".cs": "csharp",
+    ".lua": "lua",
+    ".hs": "haskell",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".html": "html",
+    ".htm": "html",
+    ".tex": "latex",
+    ".sol": "sol",
+    ".cob": "cobol",
 }
 
 
@@ -106,14 +100,12 @@ class TextChunk:
         return max(1, len(self.text) // 4)
 
 
-def _recursive_splitter(size: int, overlap: int) -> RecursiveCharacterTextSplitter:
-    return RecursiveCharacterTextSplitter(
+def _recursive_splitter(size: int, overlap: int) -> RecursiveSplitter:
+    return RecursiveSplitter(
         chunk_size=size,
         chunk_overlap=overlap,
         # Prefer paragraph, then line, then sentence, then word boundaries.
         separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""],
-        keep_separator=True,
-        length_function=len,
     )
 
 
@@ -124,10 +116,7 @@ def _heading_path(metadata: dict) -> str | None:
 
 def chunk_markdown(text: str, *, size: int, overlap: int) -> list[TextChunk]:
     """Header split, then size split, preserving heading breadcrumbs."""
-    header_splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=_MD_HEADERS,
-        strip_headers=False,
-    )
+    header_splitter = MarkdownHeaderSplitter(_MD_HEADERS)
     size_splitter = _recursive_splitter(size, overlap)
 
     try:
@@ -138,8 +127,8 @@ def chunk_markdown(text: str, *, size: int, overlap: int) -> list[TextChunk]:
 
     chunks: list[TextChunk] = []
     for section in sections:
-        heading = _heading_path(section.metadata or {})
-        body = section.page_content
+        heading = _heading_path(section.metadata)
+        body = section.content
         pieces = size_splitter.split_text(body) if len(body) > size else [body]
         for piece in pieces:
             if piece.strip():
@@ -167,18 +156,11 @@ def chunk_prose(text: str, *, size: int, overlap: int) -> list[TextChunk]:
 
 
 def chunk_code(text: str, *, extension: str, size: int, overlap: int) -> list[TextChunk]:
-    """Language-aware where langchain models the language, recursive otherwise."""
+    """Language-aware where a separator table exists, recursive otherwise."""
     language = _CODE_LANGUAGES.get(extension.lower())
     if language is not None:
-        try:
-            splitter = RecursiveCharacterTextSplitter.from_language(
-                language=language, chunk_size=size, chunk_overlap=overlap
-            )
-            label = f"code:{language.value}:{size}/{overlap}"
-        except Exception as exc:  # noqa: BLE001
-            log.debug("language splitter unavailable for %s: %s", extension, exc)
-            splitter = _recursive_splitter(size, overlap)
-            label = f"recursive:{size}/{overlap}"
+        splitter = RecursiveSplitter.for_language(language, chunk_size=size, chunk_overlap=overlap)
+        label = f"code:{language}:{size}/{overlap}"
     else:
         splitter = _recursive_splitter(size, overlap)
         label = f"recursive:{size}/{overlap}"
@@ -196,12 +178,7 @@ def chunk_tabular(text: str, *, size: int) -> list[TextChunk]:
     Zero overlap and a newline-first separator list: repeating rows across chunks
     adds noise, and a chunk boundary mid-row produces meaningless fragments.
     """
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=size,
-        chunk_overlap=0,
-        separators=["\n## ", "\n\n", "\n", " "],
-        keep_separator=True,
-    )
+    splitter = RecursiveSplitter(chunk_size=size, chunk_overlap=0, separators=["\n## ", "\n\n", "\n", " "])
     chunks: list[TextChunk] = []
     for piece in splitter.split_text(text):
         stripped = piece.strip()

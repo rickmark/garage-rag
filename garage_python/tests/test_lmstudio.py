@@ -1,42 +1,54 @@
 from __future__ import annotations
 
+import pytest
+
 from garage_rag.config import Settings, reset_settings, set_settings
 from garage_rag.embed.lmstudio import LMStudioEmbedder
+from garage_rag.inference import BackendKind
 
 
-def test_uses_configured_lmstudio_token(monkeypatch) -> None:
-    captured: dict[str, str] = {}
+@pytest.fixture(autouse=True)
+def _no_env_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GARAGE_LMSTUDIO_API_TOKEN", raising=False)
 
-    class Client:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
-            captured["base_url"] = base_url
-            captured["api_key"] = api_key
 
-    monkeypatch.setattr("garage_rag.embed.lmstudio.OpenAI", Client)
-    set_settings(Settings(lmstudio_host="http://lm-studio.example/v1"))
+def test_uses_configured_lmstudio_host_and_explicit_token() -> None:
+    set_settings(Settings(lmstudio_host="http://127.0.0.1:1300/v1"))
     try:
-        LMStudioEmbedder("text-embedding", api_token="lm-token")
+        embedder = LMStudioEmbedder("text-embedding", api_token="lm-token")
     finally:
         reset_settings()
 
-    assert captured == {
-        "base_url": "http://lm-studio.example/v1",
-        "api_key": "lm-token",
-    }
+    backend = embedder.client.backend
+    assert backend.kind is BackendKind.LMSTUDIO
+    # The server root: /v1 and /api/v1 routes are added per request.
+    assert backend.base_url == "http://127.0.0.1:1300"
+    assert backend.token == "lm-token"
 
 
-def test_uses_placeholder_without_lmstudio_token(monkeypatch) -> None:
-    captured: dict[str, str] = {}
-
-    class Client:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
-            captured["api_key"] = api_key
-
-    monkeypatch.setattr("garage_rag.embed.lmstudio.OpenAI", Client)
+def test_reads_the_token_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GARAGE_LMSTUDIO_API_TOKEN", "env-token")
     set_settings(Settings())
     try:
-        LMStudioEmbedder("text-embedding")
+        embedder = LMStudioEmbedder("text-embedding")
     finally:
         reset_settings()
+    assert embedder.client.backend.token == "env-token"
 
-    assert captured["api_key"] == "lm-studio"
+
+def test_no_token_without_one_configured() -> None:
+    set_settings(Settings())
+    try:
+        embedder = LMStudioEmbedder("text-embedding")
+    finally:
+        reset_settings()
+    assert embedder.client.backend.token is None
+    assert embedder.client.base_url == "http://localhost:1234"
+
+
+def test_keeps_the_two_retries_the_openai_sdk_made() -> None:
+    set_settings(Settings())
+    try:
+        assert LMStudioEmbedder("text-embedding").client.backend.max_retries == 2
+    finally:
+        reset_settings()

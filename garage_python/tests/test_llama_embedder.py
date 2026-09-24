@@ -113,17 +113,17 @@ def test_llama_embedder_unreachable_server_is_embedding_error() -> None:
 
 
 class _FailingClient:
-    def embed_texts(self, texts, **kwargs):
+    def embed(self, texts, model=None):
         raise RuntimeError("XPC service crashed")
 
 
 class _ShortClient:
-    def embed_texts(self, texts, **kwargs):
+    def embed(self, texts, model=None):
         return [[0.1, 0.2]]  # one vector regardless of batch size
 
 
 class _EmptyVectorClient:
-    def embed_texts(self, texts, **kwargs):
+    def embed(self, texts, model=None):
         return [[] for _ in texts]
 
 

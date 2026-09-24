@@ -13,7 +13,6 @@ import pytest
 from typer.testing import CliRunner
 
 from garage_rag.cli import app
-from garage_rag.enrich.egress import EgressBlocked
 from garage_rag.enrich.generation import ChatReply
 from garage_rag.mcp_server.server import (
     _HOME,
@@ -395,11 +394,11 @@ class TestMcpTools:
 # ---------------------------------------------------------------------------
 # rag_ask / rag_generate: local generation over the retrieval above
 # ---------------------------------------------------------------------------
-def _fake_chat_model(reply: ChatReply, *, is_local: bool = True) -> MagicMock:
+def _fake_chat_model(reply: ChatReply) -> MagicMock:
     model = MagicMock()
     model.provider = "llama_xpc"
     model.model_ref = "gemma2-2b"
-    model.is_local = is_local
+    model.host = "http://127.0.0.1:8790"
     model.complete.return_value = reply
     model.chat.return_value = reply.text
     return model
@@ -474,21 +473,6 @@ class TestAsk:
         assert citation.location == "~/docs/guide.md"
         assert citation.score == 0.876543
         assert len(citation.snippet) <= 240
-
-    def test_rag_ask_refuses_to_send_communications_off_box(self) -> None:
-        """Only reachable with ollama_host pointed at another machine."""
-        hit = MockSearchHit(corpus_class="communication")
-        chat_model = _fake_chat_model(ChatReply(text="never"), is_local=False)
-        with (
-            patch("garage_rag.mcp_server.server.session_scope") as mock_scope,
-            patch("garage_rag.mcp_server.server.run_search", return_value=[hit]),
-            patch("garage_rag.mcp_server.server.list_models", return_value=[]),
-            patch("garage_rag.mcp_server.server.LocalChatModel", return_value=chat_model),
-        ):
-            mock_scope.return_value.__enter__.return_value = MagicMock()
-            with pytest.raises(EgressBlocked):
-                rag_ask(question="q")
-        chat_model.complete.assert_not_called()
 
     def test_rag_generate_is_a_raw_prompt(self) -> None:
         chat_model = _fake_chat_model(ChatReply(text="pong"))

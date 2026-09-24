@@ -71,12 +71,12 @@ final class AppStateTests: XCTestCase {
         let state = AppState()
 
         let result = await state.runOperation { _ in
-            throw GarageGRPCError.rpcFailed("communication sources may never enable cloud enrichment")
+            throw GarageGRPCError.rpcFailed("/nowhere does not exist")
         }
 
         XCTAssertFalse(result)
         XCTAssertEqual(state.lastCommandSucceeded, false)
-        XCTAssertEqual(state.lastCommandOutput, "communication sources may never enable cloud enrichment")
+        XCTAssertEqual(state.lastCommandOutput, "/nowhere does not exist")
     }
 
     @MainActor

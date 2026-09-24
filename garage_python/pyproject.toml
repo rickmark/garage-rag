@@ -12,17 +12,12 @@ dependencies = [
     "sqlalchemy>=2.0",
     "psycopg[pool]>=3.2",
     "pgvector>=0.5,<0.6",
-    # chunking (langchain-community is sunset; only the splitters are used)
-    "langchain-text-splitters>=1.1.2,<2",
-    # embeddings
-    "ollama>=0.6.1",
-    "openai>=1.0",
     # document extraction (all permissive licenses; PyMuPDF avoided due to AGPL)
     "pypdf>=6.16",
     "pdfplumber>=0.11.10",
-    # Not imported directly: pulled in transitively by pdfminer-six (pdfplumber)
-    # and google-auth (langextract). Pinned without recorded reason since the
-    # initial import; keep the ceiling until someone verifies 44+ against both.
+    # Not imported directly: pulled in transitively by pdfminer-six (pdfplumber).
+    # Pinned without recorded reason since the initial import; keep the ceiling
+    # until someone verifies 44+ against it.
     "cryptography<44.0.0",
     "python-docx>=1.2",
     "python-pptx>=1.0.2",
@@ -30,8 +25,12 @@ dependencies = [
     # OCR
     "pytesseract>=0.3.13",
     "pillow>=11.0",
-    # fact extraction from documents (https://github.com/google/langextract)
-    "langextract>=1.7.0",
+    # fact extraction: the vendored LangExtract subset (garage_rag/enrich/langextract)
+    # needs regex for its tokenizer.
+    "regex>=2023.0.0",
+    # the egress guard's HTTP client (garage_rag/net/egress.py), which every
+    # outbound HTTP request goes through, garage_rag/inference's included
+    "httpx>=0.28",
     # MCP server (2.x renamed FastMCP -> MCPServer; 1.x is incompatible)
     "mcp[cli]==2.1.0",
     # HTTP transport for garage-mcp (mcp_server/server.py imports it directly)
@@ -45,7 +44,6 @@ dependencies = [
     # only exposes packages reachable from [project.dependencies], so the py_test
     # targets can't resolve @pypi//pytest from an optional/dev group.
     "pytest>=9.1.1",
-    "anthropic>=1.0.0",
     # gRPC & Protobuf
     "grpcio>=1.68.0",
     "protobuf>=5.29.0",
@@ -79,7 +77,8 @@ environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+# Vendored third-party code keeps its upstream style (see its __init__ docstring).
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi", "src/garage_rag/enrich/langextract"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -95,7 +94,7 @@ filterwarnings = ["error::DeprecationWarning"]
 # Generated protobuf stubs are excluded from type checking, as they are from Ruff
 # above. `exclude` lives under `src` for ty; a top-level `[tool.ty] exclude` is a
 # hard config error that makes ty exit non-zero before it checks anything.
-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi", "src/garage_rag/enrich/langextract"]
 
 [tool.ty.rules]
 unresolved-import = "ignore"

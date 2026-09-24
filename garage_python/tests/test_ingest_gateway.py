@@ -60,7 +60,6 @@ def test_grpc_database_facade_servicer_methods():
     mock_source.kind = "filesystem"
     mock_source.default_class = CorpusClass.DOCUMENT
     mock_source.default_trust = TrustTier.AUTHORED
-    mock_source.allow_cloud_enrichment = False
 
     with (
         patch("garage_rag.db.engine.session_scope") as mock_scope,
@@ -169,7 +168,6 @@ def test_grpc_ingest_storage_gateway():
             root="/tmp/src",
             default_class="document",
             default_trust="authored",
-            allow_cloud_enrichment=False,
             run_id=42,
             source_slugs=["grpc-src"],
         )
@@ -279,7 +277,6 @@ def test_ingest_source_with_grpc_gateway(tmp_path: Path):
             root=str(tmp_path),
             default_class="document",
             default_trust="authored",
-            allow_cloud_enrichment=False,
             run_id=10,
             source_slugs=["mock-slug"],
         )
@@ -317,7 +314,6 @@ def test_ingest_gateway_via_live_grpc_server(grpc_server, tmp_path: Path):
     mock_source.kind = "filesystem"
     mock_source.default_class = CorpusClass.DOCUMENT
     mock_source.default_trust = TrustTier.AUTHORED
-    mock_source.allow_cloud_enrichment = False
 
     with (
         patch("garage_rag.db.engine.session_scope") as mock_scope,
@@ -521,7 +517,6 @@ def _mock_source(tmp_path: Path, slug: str = "seen-src") -> MagicMock:
     mock_source.kind = "filesystem"
     mock_source.default_class = CorpusClass.DOCUMENT
     mock_source.default_trust = TrustTier.AUTHORED
-    mock_source.allow_cloud_enrichment = False
     return mock_source
 
 
@@ -757,7 +752,6 @@ def test_session_kind_crosses_the_grpc_facade():
         root=Path("/Users/me/Library/Messages"),
         default_class=CorpusClass.COMMUNICATION,
         default_trust=TrustTier.RECEIVED,
-        allow_cloud_enrichment=False,
         run_id=3,
         kind="sqlite",
         source_slugs=["apple-sms"],

@@ -63,16 +63,14 @@ class TestRoundTrip:
             chunk_size=512,
             self_identities=["git_email:a@b.c"],
             materialize_placeholders=True,
-            ocr_min_confidence=42.5,
-            api_key_file="~/.secret",
+            materialize_timeout_seconds=42.5,
             lmstudio_api_token_file="~/.lmstudio-token",
         )
         restored = Settings(**flatten(nest(original)))
         assert restored.chunk_size == 512
         assert restored.self_identities == ["git_email:a@b.c"]
         assert restored.materialize_placeholders is True
-        assert restored.ocr_min_confidence == 42.5
-        assert restored.api_key_file == "~/.secret"
+        assert restored.materialize_timeout_seconds == 42.5
         assert restored.lmstudio_api_token_file == "~/.lmstudio-token"
 
     def test_diff_view_omits_defaults(self) -> None:
@@ -224,7 +222,6 @@ class TestSources:
         assert spec.corpus_class == "document"
         assert spec.trust == "authored"
         assert spec.include_code is False
-        assert spec.allow_cloud_enrichment is False
         assert spec.enabled is True
 
     def test_unknown_source_key_is_rejected(self) -> None:
@@ -272,6 +269,43 @@ class TestSources:
             assert name not in Settings.model_fields
         assert "max_inflight" not in json_schema()["properties"]["embedding"]["properties"]
 
+    def test_cloud_ocr_settings_are_retired(self, tmp_path: Path, caplog) -> None:
+        """The Claude OCR fallback is gone; a config that still configures it loads with warnings."""
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(
+            json.dumps(
+                {
+                    "cloud": {"enable_ocr": True, "model": "some-model", "api_key_file": "~/.key", "max_images": 5},
+                    "extraction": {"ocr_min_confidence": 55.0, "ocr_min_chars": 20},
+                    "sources": [
+                        {"slug": "notes", "root": "~/Documents", "allow_cloud_enrichment": True},
+                        {"slug": "sms", "root": "~/sms", "class": "communication", "allow_cloud_enrichment": False},
+                    ],
+                }
+            )
+        )
+        with caplog.at_level("WARNING", logger="garage_rag.config"):
+            settings = load_config(cfg)
+        assert settings.ocr_min_chars == 20
+        assert [s.slug for s in settings.sources] == ["notes", "sms"]
+        for key in ("cloud.enable_ocr", "cloud.model", "cloud.api_key_file", "extraction.ocr_min_confidence"):
+            assert key in caplog.text, key
+        assert "sources[].allow_cloud_enrichment" in caplog.text
+        for name in ("enable_cloud_ocr", "cloud_ocr_model", "api_key_file", "ocr_min_confidence"):
+            assert name not in Settings.model_fields
+        assert "allow_cloud_enrichment" not in SourceSpec.model_fields
+        schema = json_schema()
+        assert "cloud" not in schema["properties"]
+        # A retired section is not written back.
+        assert "cloud" not in nest(settings)
+        assert all("allow_cloud_enrichment" not in source for source in nest(settings)["sources"])
+
+    def test_unknown_key_in_a_retired_section_is_still_an_error(self, tmp_path: Path) -> None:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"cloud": {"enable_ocr": True, "region": "us"}}))
+        with pytest.raises(ConfigError, match="unknown key 'region'"):
+            load_config(cfg)
+
     def test_retired_key_in_the_wrong_section_is_still_an_error(self, tmp_path: Path) -> None:
         cfg = tmp_path / CONFIG_FILENAME
         cfg.write_text(json.dumps({"database": {"workers": 3}}))
@@ -283,33 +317,6 @@ class TestSources:
         cfg.write_text(json.dumps({"sources": {"slug": "x"}}))
         with pytest.raises(ConfigError, match="must be a list"):
             load_config(cfg)
-
-
-class TestApiKeyFile:
-    def test_reads_key_from_file(self, tmp_path: Path) -> None:
-        key = tmp_path / "anthropic.key"
-        key.write_text("sk-ant-secret\n")
-        assert Settings(api_key_file=str(key)).read_api_key() == "sk-ant-secret"
-
-    def test_none_when_unconfigured(self) -> None:
-        assert Settings().read_api_key() is None
-
-    def test_none_when_file_missing(self, tmp_path: Path) -> None:
-        """Degrade to local-only rather than failing the whole run."""
-        assert Settings(api_key_file=str(tmp_path / "absent")).read_api_key() is None
-
-    def test_none_when_file_is_empty(self, tmp_path: Path) -> None:
-        blank = tmp_path / "blank"
-        blank.write_text("   \n")
-        assert Settings(api_key_file=str(blank)).read_api_key() is None
-
-    def test_config_itself_holds_no_secret(self, tmp_path: Path) -> None:
-        """The file names a key path; it never contains the key."""
-        key = tmp_path / "k"
-        key.write_text("sk-ant-secret")
-        path = tmp_path / CONFIG_FILENAME
-        save_config(Settings(api_key_file=str(key)), path)
-        assert "sk-ant-secret" not in path.read_text()
 
 
 class TestLMStudioApiToken:
@@ -488,7 +495,7 @@ class TestFactsSection:
     def test_schema_lists_the_provider_choices(self) -> None:
         entry = json_schema()["properties"]["facts"]["properties"]["provider"]
         assert entry["type"] == "string"
-        assert entry["enum"] == ["llama_xpc", "ollama"]
+        assert entry["enum"] == ["llama_xpc", "ollama", "lmstudio"]
         assert entry["default"] == "llama_xpc"
 
 
@@ -515,11 +522,11 @@ class TestSetGetHelpers:
             ("materialize_placeholders", "1", True),
             ("materialize_placeholders", "off", False),
             ("chunk_size", "512", 512),
-            ("ocr_min_confidence", "42.5", 42.5),
+            ("materialize_timeout_seconds", "42.5", 42.5),
             ("self_identities", "git_email:a@b.c, handle:@me", ["git_email:a@b.c", "handle:@me"]),
             ("self_identities", "", []),
-            ("api_key_file", "none", None),
-            ("api_key_file", "~/.key", "~/.key"),
+            ("lmstudio_api_token_file", "none", None),
+            ("lmstudio_api_token_file", "~/.key", "~/.key"),
             ("fact_model", "gemma2-2b", "gemma2-2b"),
         ],
     )

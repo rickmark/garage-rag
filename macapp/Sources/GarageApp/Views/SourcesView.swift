@@ -13,7 +13,6 @@ struct SourcesView: View {
     @State private var kind = "filesystem"
     @State private var corpusClass = "document"
     @State private var trust = "authored"
-    @State private var allowCloud = false
 
     @State private var busy = false
     @State private var ingestAutoDismissTask: Task<Void, Never>?
@@ -354,10 +353,6 @@ struct SourcesView: View {
 
                 if !source.enabled {
                     StatusBadge("DISABLED", tint: .secondary)
-                }
-
-                if source.allowCloudEnrichment {
-                    StatusBadge("CLOUD OCR", tint: .blue)
                 }
 
                 if source.includeCode {
@@ -777,8 +772,6 @@ struct SourcesView: View {
                 Picker("Trust", selection: $trust) {
                     ForEach(trusts, id: \.self) { Text($0).tag($0) }
                 }
-                Toggle("Allow cloud OCR fallback", isOn: $allowCloud)
-                    .disabled(corpusClass == "communication")
 
                 HStack {
                     Button("Add / Update Source") {
@@ -797,7 +790,6 @@ struct SourcesView: View {
                         kind = "filesystem"
                         corpusClass = "document"
                         trust = "authored"
-                        allowCloud = false
                     }
 
                     if busy { ProgressView().controlSize(.small) }
@@ -870,7 +862,6 @@ struct SourcesView: View {
         kind = preset.spec.kind
         corpusClass = preset.spec.corpusClass
         trust = preset.spec.trust
-        allowCloud = preset.spec.allowCloudEnrichment
     }
 
     private func populateForm(from source: RegisteredSource) {
@@ -879,7 +870,6 @@ struct SourcesView: View {
         kind = source.kind
         corpusClass = source.corpusClass
         trust = source.trust
-        allowCloud = source.allowCloudEnrichment
     }
 
     private func refreshSourcesAndTestDisk() {
@@ -933,8 +923,7 @@ struct SourcesView: View {
             root: trimmedRoot,
             kind: kind,
             corpusClass: corpusClass,
-            trust: trust,
-            allowCloudEnrichment: allowCloud
+            trust: trust
         )
         Task {
             await appState.addSource(spec)

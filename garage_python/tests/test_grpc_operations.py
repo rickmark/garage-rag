@@ -55,19 +55,10 @@ class TestSources:
             kind="filesystem",
             corpus_class="document",
             trust="authored",
-            allow_cloud_enrichment=False,
         )
         assert res.created is True
         assert res.root == str(tmp_path)
         assert res.message.startswith("added source docs")
-
-    def test_add_source_refuses_cloud_on_communications(self, client: GarageClient, tmp_path: Path) -> None:
-        """Egress guard level 3 holds over gRPC too; it fires before any database access."""
-        request = AddSourceRequest(
-            slug="sms", root=str(tmp_path), corpus_class="communication", allow_cloud_enrichment=True
-        )
-        with pytest.raises(RuntimeError, match="INVALID_ARGUMENT.*may never enable cloud enrichment"):
-            client.add_source(request)
 
     def test_remove_unknown_source_is_not_found(self, client: GarageClient) -> None:
         with (

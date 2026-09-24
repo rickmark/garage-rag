@@ -27,7 +27,7 @@ src/garage_rag/
   extract/    per-format extractors (text, PDF, Office, images) + quality gate
   attribute/  git / metadata / path-rule authorship signals
   embed/      embedding backends (Ollama, LM Studio, llama XPC) and backfill
-  enrich/     fact distillation (LangExtract) and the cloud egress guard
+  enrich/     fact distillation (vendored local LangExtract subset) and local generation
   search/     hybrid RRF search
   mcp_server/ MCP tools
   service/    gRPC GarageService (proto/garage.proto)

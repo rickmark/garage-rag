@@ -383,7 +383,6 @@ def test_ingest_source_executes_scan_phase(tmp_path: Path) -> None:
     mock_source.root = str(tmp_path)
     mock_source.default_class = CorpusClass.DOCUMENT
     mock_source.default_trust = TrustTier.AUTHORED
-    mock_source.allow_cloud_enrichment = False
 
     mock_session = MagicMock()
     mock_session.query.return_value.filter_by.return_value.one_or_none.return_value = mock_source

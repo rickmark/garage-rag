@@ -122,12 +122,9 @@ def ingest_one(
         return
 
     # --- step 2: extract ----------------------------------------------------
-    log.debug("Extracting %s (allows_cloud=%s)", candidate.uri, bool(source_ctx.allow_cloud_enrichment))
+    log.debug("Extracting %s", candidate.uri)
     try:
-        result = extract(
-            candidate.path,
-            source_allows_cloud=bool(source_ctx.allow_cloud_enrichment),
-        )
+        result = extract(candidate.path)
         log.debug(
             "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
         )

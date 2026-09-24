@@ -7,7 +7,6 @@ struct SourceSpec: Hashable, Sendable {
     var kind: String
     var corpusClass: String
     var trust: String
-    var allowCloudEnrichment = false
 }
 
 /// The common local sources both the Status page's quick add and the Sources

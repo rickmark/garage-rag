@@ -30,13 +30,15 @@ removed. Those are skipped with a warning so an older file still loads.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +161,27 @@ DIAGNOSTIC_FILE_PATTERNS: tuple[str, ...] = (
 )
 
 
+def is_loopback_url(url: str) -> bool:
+    """Whether ``url`` points at this machine. A bare ``host:port`` counts as a URL.
+
+    ``localhost`` or a literal loopback address (``127.0.0.0/8``, ``::1``). Any
+    other name is refused even if it resolves to loopback today: a DNS answer can
+    change, and a name like ``127.example.com`` is not an address.
+    """
+    if "://" not in url:
+        url = f"http://{url}"
+    try:
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class SourceSpec(BaseModel):
     """A source declared in the config file.
 
@@ -188,11 +211,17 @@ class SourceSpec(BaseModel):
         default=False,
         description="Index source files as well as documents.",
     )
-    allow_cloud_enrichment: bool = Field(
-        default=False,
-        description=("Permit the cloud OCR fallback for this source. Never honoured for communication sources."),
-    )
     enabled: bool = Field(default=True, description="Set false to skip this source.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            retired = RETIRED_KEYS["sources"] & data.keys()
+            for key in sorted(retired):
+                log.warning("config: sources[].%s is no longer a setting and was ignored; remove it", key)
+            data = {k: v for k, v in data.items() if k not in retired}
+        return data
 
     @property
     def expanded_root(self) -> Path:
@@ -254,16 +283,32 @@ class Settings(BaseModel):
     # ---- embeddings -----------------------------------------------------
     ollama_host: str = Field(
         default="http://localhost:11434",
-        description="Base URL of the Ollama server that produces embeddings.",
+        description=(
+            "Base URL of the Ollama server for embeddings, fact distillation and answers. May be another "
+            "machine; communications are only ever sent to a loopback host."
+        ),
     )
     lmstudio_host: str = Field(
         default="http://localhost:1234/v1",
-        description="Base URL of the LM Studio OpenAI-compatible API (include /v1).",
+        description=(
+            "Base URL of the LM Studio OpenAI-compatible API (include /v1); embeddings, fact "
+            "distillation, answers, and model management under /api/v1. May be another machine; "
+            "communications are only ever sent to a loopback host."
+        ),
     )
     llama_host: str = Field(
         default="http://127.0.0.1:8790",
         description=("Base URL of the llama.cpp HTTP API served by the app's LlamaXPCService (loopback only)."),
     )
+
+    @field_validator("llama_host")
+    @classmethod
+    def _validate_llama_host(cls, v: str) -> str:
+        # The app's own LlamaXPCService only ever listens on loopback.
+        if not is_loopback_url(v):
+            raise ValueError(f"embedding.llama_host must be a loopback URL (localhost, 127.0.0.1 or ::1); got {v!r}")
+        return v
+
     lmstudio_api_token_file: str | None = Field(
         default=None,
         description=(
@@ -343,31 +388,10 @@ class Settings(BaseModel):
         default=32,
         description="Below this, escalate a PDF page from pypdf to pdfplumber.",
     )
-    ocr_min_confidence: float = Field(
-        default=60.0,
-        description="Mean Tesseract word confidence below which cloud OCR is considered.",
-    )
     ocr_min_chars: int = Field(
         default=16,
         description=(
             "Below this many characters an image is treated as having no text. Most images in a source tree are icons."
-        ),
-    )
-
-    # ---- cloud ----------------------------------------------------------
-    enable_cloud_ocr: bool = Field(
-        default=False,
-        description="Allow the Claude vision fallback for unreadable images.",
-    )
-    cloud_ocr_model: str = Field(
-        default="claude-opus-4-8",
-        description="Model used for the vision OCR fallback.",
-    )
-    api_key_file: str | None = Field(
-        default=None,
-        description=(
-            "Path to a file containing the Anthropic API key. Kept out of this "
-            "file so the config itself holds no secrets."
         ),
     )
 
@@ -378,16 +402,18 @@ class Settings(BaseModel):
             "Slug or alias of the local model used for fact distillation "
             "('garage enrich-facts') and for the rag_ask / rag_generate MCP tools. "
             "For llama_xpc this is the alias the app loaded the model under (the "
-            "'fact_distil' preset slug); for ollama it is the Ollama model name."
+            "'fact_distil' preset slug); for ollama it is the Ollama model name; for "
+            "lmstudio it is the LM Studio model key (e.g. 'google/gemma-3-4b')."
         ),
     )
-    fact_provider: Literal["llama_xpc", "ollama"] = Field(
+    fact_provider: Literal["llama_xpc", "ollama", "lmstudio"] = Field(
         default="llama_xpc",
         description=(
-            "Which local inference server runs fact distillation and rag_ask. "
-            "Both stay on this machine: 'llama_xpc' is the app's LlamaXPCService "
-            "(llama.cpp on embedding.llama_host, loopback only); 'ollama' is a local "
-            "Ollama server on embedding.ollama_host."
+            "Which inference server runs fact distillation and rag_ask: 'llama_xpc' is the "
+            "app's LlamaXPCService (llama.cpp on embedding.llama_host, loopback only); "
+            "'ollama' is the Ollama server on embedding.ollama_host; 'lmstudio' is the "
+            "LM Studio server on embedding.lmstudio_host, which loads the model on first "
+            "use. Communications are only ever sent to a loopback host."
         ),
     )
 
@@ -412,21 +438,6 @@ class Settings(BaseModel):
             if value:
                 pairs.append((kind.strip(), value.strip()))
         return pairs
-
-    def read_api_key(self) -> str | None:
-        """Load the Anthropic key from ``api_key_file``, if configured.
-
-        Returns None rather than raising when unset, so the cloud path degrades
-        to local-only instead of failing the whole run.
-        """
-        if not self.api_key_file:
-            return None
-        path = Path(self.api_key_file).expanduser()
-        try:
-            key = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
-        return key or None
 
     def read_lmstudio_api_token(self) -> str | None:
         """Load the LM Studio API token without placing it in the configuration."""
@@ -486,7 +497,6 @@ SECTIONS: dict[str, dict[str, str]] = {
     "extraction": {
         "max_file_bytes": "max_file_bytes",
         "pdf_min_chars_per_page": "pdf_min_chars_per_page",
-        "ocr_min_confidence": "ocr_min_confidence",
         "ocr_min_chars": "ocr_min_chars",
     },
     "mcp": {
@@ -494,26 +504,26 @@ SECTIONS: dict[str, dict[str, str]] = {
         "port": "mcp_port",
         "path": "mcp_http_path",
     },
-    "cloud": {
-        "enable_ocr": "enable_cloud_ocr",
-        "model": "cloud_ocr_model",
-        "api_key_file": "api_key_file",
-    },
     "facts": {
         "model": "fact_model",
         "provider": "fact_provider",
     },
 }
 
-# Keys that older configs may still carry: settings that were documented but
-# never read by any code path, and so were removed. They are ignored with a
-# warning rather than rejected, since a file written by an earlier release must
-# keep loading. Section -> keys.
+# Keys that older configs may still carry: settings that were removed, either
+# because no code path read them or because the feature behind them is gone.
+# They are ignored with a warning rather than rejected, since a file written by
+# an earlier release must keep loading. Section -> keys; a section listed here
+# but absent from SECTIONS is retired whole, and "sources" covers the keys of
+# each entry in the sources list.
 RETIRED_KEYS: dict[str, frozenset[str]] = {
     "embedding": frozenset({"max_inflight"}),
     "chunking": frozenset({"comms_window_minutes", "comms_window_messages"}),
-    "extraction": frozenset({"workers"}),
-    "cloud": frozenset({"max_images"}),
+    # ocr_min_confidence decided when to escalate to the Claude OCR fallback,
+    # which was removed along with the rest of the cloud section.
+    "extraction": frozenset({"workers", "ocr_min_confidence"}),
+    "cloud": frozenset({"enable_ocr", "model", "api_key_file", "max_images"}),
+    "sources": frozenset({"allow_cloud_enrichment"}),
 }
 
 
@@ -561,12 +571,12 @@ def flatten(document: dict[str, Any]) -> dict[str, Any]:
                 raise ConfigError("'sources' must be a list")
             flat["sources"] = body
             continue
-        if section not in SECTIONS:
+        if section not in SECTIONS and section not in RETIRED_KEYS:
             known = ", ".join([*SECTIONS, "sources"])
             raise ConfigError(f"unknown section {section!r}; expected one of: {known}")
         if not isinstance(body, dict):
             raise ConfigError(f"section {section!r} must be an object")
-        mapping = SECTIONS[section]
+        mapping = SECTIONS.get(section, {})
         for key, value in body.items():
             field = mapping.get(key)
             if field is None and key in RETIRED_KEYS.get(section, frozenset()):

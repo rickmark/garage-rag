@@ -3,9 +3,10 @@
 Call :func:`get_embedder` with a provider name and model reference to get the
 right backend without the caller knowing which SDK is behind it.
 
-Backends are imported lazily: each one pulls in its own SDK (``ollama``,
-``openai``, the XPC bridge), and a process that only ever talks to one of them
-should not pay to import the others.
+Backends are imported lazily; all of them talk HTTP through
+:mod:`garage_rag.inference`, but ``embed.ollama`` also carries the backfill
+machinery (SQLAlchemy, pgvector) that a caller asking for another backend
+need not import.
 """
 
 from __future__ import annotations
@@ -24,14 +25,14 @@ def provider_is_local(provider: str) -> bool:
     ``lmstudio_host`` point at loopback; an unknown provider counts as remote.
     """
     from garage_rag.config import get_settings
-    from garage_rag.xpc.llama_xpc import is_loopback_url
+    from garage_rag.net.egress import allows_communications
 
     if provider == "llama_xpc":
         return True
     settings = get_settings()
     hosts = {"ollama": settings.ollama_host, "lmstudio": settings.lmstudio_host}
     host = hosts.get(provider)
-    return host is not None and is_loopback_url(host)
+    return host is not None and allows_communications(host)
 
 
 def get_embedder(provider: str, model_ref: str) -> Embedder:

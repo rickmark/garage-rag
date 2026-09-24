@@ -14,7 +14,7 @@ description: Privacy Policy and local-first data guarantees for Garage and Garag
 
 ## 1. Overview & Local-First Philosophy
 
-Garage is designed from the ground up as a **local-first** personal knowledge indexing and retrieval application. We respect your privacy and have designed the application so that it does not collect, track, sell, or transmit user data by default.
+Garage is designed from the ground up as a **local-first** personal knowledge indexing and retrieval application. We respect your privacy and have designed the application so that it does not collect, track, or sell user data, and does not transmit your content anywhere except to a model server you configure yourself (section 4).
 
 ---
 
@@ -43,21 +43,18 @@ Garage contains **no advertising trackers, no analytics SDKs, and no background 
 All data indexed by Garage is processed and stored locally on your device in your private PostgreSQL database located in:  
 `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata`
 
-Your files, text, images, code, and communications never leave your device unless you explicitly enable optional third-party integrations.
+Garage never sends your communications off your device, and sends other content only to a model server you have configured yourself (see section 4). Content you retrieve through a connected MCP client is subject to that client.
 
 ---
 
-## 4. Optional Third-Party Services
+## 4. No Third-Party Services
 
-Garage may offer optional features that allow you to submit selected content to third-party providers for processing:
+Garage does not send your content to third-party services, and contains no client for any cloud AI service:
 
-- **Cloud Optical Character Recognition (OCR)**: If enabled, image text extraction with low local confidence may optionally escalate to a third-party vision model (Anthropic's Claude API, the only cloud provider the application integrates).
-- **Third-Party Model Providers**: If configured, local embedding requests may connect to user-specified external API endpoints.
+- **Text recognition (OCR)** in images uses Tesseract on your device. There is no cloud fallback.
+- **Language models** for embeddings, fact extraction, and answers run in the application itself, or in a model server you run yourself (Ollama or LM Studio), on your device by default. If you configure an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server and to no other address, and never sends private communications (Messages, Mail) to a server that is not on your device.
 
-### User Control
-- Use of third-party features is strictly optional and disabled by default.
-- Garage enforces structural egress blocks ensuring private communications (Messages, Mail) are never transmitted to any cloud API under any circumstances.
-- When using third-party APIs, data is processed according to the respective provider's terms and privacy policies.
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
 ---
 

@@ -41,13 +41,14 @@ description: Frequently asked questions about Garage local RAG, privacy guarante
 <details>
   <summary>Does my data ever leave my Mac?</summary>
   <div class="faq-content">
-    <p>By default, <strong>never</strong>. Garage is engineered with four structural layers of egress prevention:</p>
+    <p><strong>Not unless you point it at another machine.</strong> Garage sends nothing to the cloud, and the guarantee is enforced by tests rather than by convention:</p>
     <ul>
-      <li><strong>Corpus Isolation:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is blocked at the type system level from reaching any network client.</li>
-      <li><strong>Single Egress Chokepoint:</strong> Validated by automated AST unit tests to guarantee no unauthorized network requests exist.</li>
-      <li><strong>Opt-In Cloud OCR:</strong> Cloud-based OCR escalation (if enabled) only sends image pixels when local Tesseract confidence is low, and only for sources explicitly opted in.</li>
-      <li><strong>Local Vector Processing:</strong> Embeddings are computed on your hardware using Ollama or LM Studio.</li>
+      <li><strong>No cloud AI client:</strong> An automated scan of every source file fails the build if any module imports a cloud AI SDK, and the dependency lockfile must contain none.</li>
+      <li><strong>One egress choke point, one allowlist:</strong> Every outbound connection is built by a single tested module, and goes only to this Mac or to the Ollama / LM Studio server you configure. Anything else is refused.</li>
+      <li><strong>Local OCR:</strong> Text in images is recognized with Tesseract on your Mac. There is no cloud fallback.</li>
+      <li><strong>Communications stay local:</strong> Content classified as <code>communication</code> (e.g., Messages, Mail) is never sent to a server that is not on this Mac, even one you configured.</li>
     </ul>
+    <p>If you connect an MCP client such as Claude Desktop, what Garage returns to it is handled by that client under its own terms.</p>
   </div>
 </details>
 

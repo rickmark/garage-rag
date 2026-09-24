@@ -23,6 +23,18 @@ py_test(
 )
 
 py_test(
+    name = "test_chunking_golden",
+    srcs = ["test_chunking_golden.py"],
+    # Recorded chunker output the splitters must reproduce.
+    data = ["golden/chunking.json"],
+    deps = [
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_config",
     srcs = ["test_config.py"],
     data = ["//data/schema:config_schema"],
@@ -35,15 +47,22 @@ py_test(
 py_test(
     name = "test_egress_block",
     srcs = ["test_egress_block.py"],
-    data = ["//data/sql:sql_schema"],
+    # The lockfile must list no cloud AI SDK.
+    data = ["//garage_python:uv.lock"],
     deps = [
-        "//garage_python/src/garage_rag",
+        # The subprocess check imports garage_rag.cli, which gazelle cannot see.
+        "//garage_python/src/garage_rag",  # keep
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/embed",
         "//garage_python/src/garage_rag/enrich",
-        "//garage_python/src/garage_rag/ops",
+        "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/mcp_server",
+        "//garage_python/src/garage_rag/net",
+        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
-        "@pypi//typer",
     ],
 )
 
@@ -67,7 +86,10 @@ py_test(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/enrich",
-        "@pypi//langextract",
+        "//garage_python/src/garage_rag/enrich/langextract",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/net",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
 )
@@ -78,6 +100,8 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/enrich",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/net",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
@@ -89,6 +113,8 @@ py_test(
     deps = [
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/inference",
+        "@pypi//pytest",
     ],
 )
 
@@ -222,6 +248,7 @@ py_test(
     srcs = ["test_llama_xpc.py"],
     deps = [
         "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/inference",
         "//garage_python/src/garage_rag/xpc",
         "@pypi//pytest",
     ],
@@ -322,11 +349,33 @@ py_test(
     ],
 )
 
+py_test(
+    name = "test_inference_client",
+    srcs = ["test_inference_client.py"],
+    deps = [
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/net",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "test_inference_live",
+    srcs = ["test_inference_live.py"],
+    deps = [
+        "//garage_python/src/garage_rag/inference",
+        "@pypi//pytest",
+    ],
+)
+
 test_suite(
     name = "suite",
     tests = [
         ":test_attribution",
         ":test_chunking",
+        ":test_chunking_golden",
         ":test_cli_serve",
         ":test_config",
         ":test_dedicated_rpcs",
@@ -339,6 +388,8 @@ test_suite(
         ":test_grpc_operations",
         ":test_grpc_serialization",
         ":test_grpc_server",
+        ":test_inference_client",
+        ":test_inference_live",
         ":test_ingest_gateway",
         ":test_ingest_xpc",
         ":test_llama_embedder",

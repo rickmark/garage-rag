@@ -4,7 +4,7 @@
 **Application:** Garage & GarageApp  
 **Developer:** Rick Mark
 
-Garage is designed as a local-first application. We respect your privacy and have designed the application so that it does not collect, track, sell, or transmit user data by default.
+Garage is designed as a local-first application. We respect your privacy and have designed the application so that it does not collect, track, or sell user data, and does not transmit your content anywhere except to a model server you configure yourself (section 2).
 
 ## 1. Data Collection
 
@@ -28,45 +28,29 @@ Garage does not include advertising trackers, analytics SDKs, or background tele
 
 ## 2. Local Processing
 
-By default, information processed by Garage remains on your device. Any files, text, images, documents, or other content you choose to use with the application are processed locally unless you explicitly choose to use an optional feature that requires sending data to a third-party service.
+Information processed by Garage stays on your device by default. Any files, text, images, documents, code, or communications you choose to use with the application are processed locally, except that text may be sent to an Ollama or LM Studio server on another computer if you configure one, as described below. Text recognition in images uses Tesseract on your device.
 
-## 3. Optional Third-Party Processing
+Garage contains no client for any cloud AI service. The language models it uses for embeddings, fact extraction, and answering questions run either in the application itself or in a model server you run yourself (Ollama or LM Studio). By default that server is on your own device. If you configure Garage to use an Ollama or LM Studio server on another computer, Garage sends the text it needs to process to that server, and to no other address; private communications (such as Messages and Mail) are never sent to a server that is not on your own device.
 
-Garage may offer optional features that allow you to submit selected content to third-party service providers for processing.
+## 3. Third-Party Processing
 
-For example, if you choose to perform OCR or text extraction on an image containing text, you may have the option to send that image to a third-party provider, Anthropic (the Claude API), for processing. This is the only third-party cloud service the application can contact, it is disabled by default, and it is never used for private communications (Messages, Mail).
+Garage does not send your content to third-party services.
 
-Use of these third-party features is optional. Garage does not send your data to third parties unless you take an action that enables or requests such processing.
-
-When you choose to use a third-party processing feature:
-
-- The selected content may be transmitted to the third-party provider.
-- The third-party provider may process the submitted content according to its own terms and privacy policy.
-- Garage does not control how the third-party provider handles data after submission.
-- You should review the third-party provider’s privacy policy before using the feature.
-
-Anthropic’s privacy policy is available at:  
-<https://www.anthropic.com/legal/privacy>
+If you connect an MCP client such as Claude Desktop or Claude Code to Garage, the search results and document excerpts Garage returns to that client are then handled by that client and its provider under their own terms and privacy policies. Garage itself sends nothing to that client's provider; the client decides what it does with what it receives. By default Garage's MCP server is reachable only from your own device; if you start it with `--allow-remote` to serve clients on other computers, it sends those results and excerpts to them over your network.
 
 ## 4. User Control
 
-You control whether any content is submitted to a third-party service.
-
-If you do not enable or use optional third-party processing features, Garage will not submit your content to third parties.
-
-You should avoid submitting sensitive, confidential, or personal information to third-party services unless you are comfortable with that provider’s data practices.
+You choose which folders and sources Garage indexes, and you can remove a source and its indexed content at any time. Garage sends your content off your device only if you configure an Ollama or LM Studio server on another computer (section 2) or serve MCP clients on other computers (section 3); communications are never sent to a model server that is not on your device.
 
 ## 5. Data Storage
 
 Garage does not operate a server that stores user data.
 
-Any data saved by the application is stored locally on your device or in storage locations you configure. Garage does not have access to locally stored data unless you choose to export, share, or submit it through an optional third-party feature.
+Any data saved by the application is stored locally on your device or in storage locations you configure. Garage does not have access to locally stored data unless you choose to export or share it.
 
 ## 6. Data Sharing
 
-Garage does not sell, rent, trade, or share user data.
-
-Data is shared with third parties only when you explicitly choose to use a feature that requires third-party processing, such as optional OCR or text recognition for images containing text.
+Garage does not sell, rent, trade, or share user data, and does not transmit your content to third parties.
 
 ## 7. Children’s Privacy
 
@@ -76,7 +60,7 @@ Garage does not knowingly collect information from children or from any other us
 
 Garage is designed to minimize privacy risk by avoiding collection of user data. Local files and locally stored application data remain under your control and are subject to the security of your device, operating system, and any storage services you choose to use.
 
-If you use optional third-party processing, transmission and handling of submitted content are governed by the relevant third-party provider’s security practices.
+Garage never sends your communications off your device, and sends other content only to a model server you have configured yourself, as described in section 2. Content you retrieve through a connected MCP client is subject to that client, as described in section 3.
 
 ## 9. Changes to This Policy
 

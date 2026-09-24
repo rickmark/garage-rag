@@ -83,7 +83,6 @@ def test_source_info_proto_document_count():
         kind="filesystem",
         corpus_class="document",
         trust_tier="authored",
-        allow_cloud_enrichment=False,
         enabled=True,
         root="/path/to/source",
         document_count=42,

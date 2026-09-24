@@ -1,105 +1,112 @@
 ---
 layout: default
 title: Privacy and macOS Permissions
-description: Multi-tier egress guards and macOS TCC security model.
+description: One egress choke point, a destination allowlist, communications kept local, and the macOS TCC security model.
 ---
 
 # Privacy and macOS permissions
 
 ## The guarantee
 
-Content classified `corpus_class = 'communication'` never reaches a cloud API.
+Garage sends content only to approved destinations: this machine, and the Ollama
+or LM Studio server you configure. Communications never leave this machine.
+There is no cloud AI client in the codebase.
 
-This is enforced structurally, at four independent levels. Removing any one of
-them fails the test suite.
+This is enforced structurally, in layers that are each tested on their own
+(`garage_python/tests/test_egress_block.py`). Removing any one of them fails the
+test suite.
 
-### Level 1 — single chokepoint
+### Layer 1 — one choke point
 
-`enrich/egress.py` is the only module that imports `anthropic` or constructs a
-client. `../garage_python/tests/test_egress_block.py` parses every source file's AST and asserts
-this, so a second client cannot appear unnoticed — including via a function-local
-import.
+`garage_rag/net/egress.py` is the only module that imports an outbound network
+client library (`httpx`, `urllib.request`, `requests`, raw `socket`, ...) or a
+library that opens its own connections (the `ollama` SDK). Every outbound client
+is built there, after its destination is checked:
 
-### Level 2 — the type refuses to represent a forbidden send
+- `egress.http_client(purpose=..., base_url=...)` — an `httpx` client. Every
+  model server (LM Studio, Ollama and the app's `LlamaXPCService`: embeddings,
+  fact extraction, answers, LM Studio model management) is reached through
+  Garage's own client, `garage_rag/inference`, whose transport is built here;
+- `egress.url_opener(purpose=..., base_url=...)` — a stdlib client (the
+  `mcp-test` probe).
 
-`EgressRequest` *requires* a `corpus_class`, and validates it on construction:
+The test parses every source file's AST, so a function-local or
+`importlib.import_module` import is caught too. Inbound and local infrastructure
+is exempt, and listed file by file rather than by pattern: the gRPC server and
+its generated stubs, the MCP server's uvicorn, and psycopg's connection to
+Postgres. The gRPC *client* of the app's facade is listed too, and checks its
+address with the guard (loopback only).
 
-```python
-def __post_init__(self) -> None:
-    if self.corpus_class is CorpusClass.COMMUNICATION:
-        raise EgressBlocked(...)
-    if not self.source_allows_cloud:
-        raise EgressBlocked(...)
-```
+### Layer 2 — no cloud AI SDK
 
-There is no way to build a request without declaring what kind of content it
-carries, and no way to declare it a conversation and still send it. The class
-check runs **first**, so a mistake elsewhere fails closed.
+No source file imports a cloud AI SDK (`anthropic`, `openai`, `google.genai`,
+`google.cloud`, `cohere`, `mistralai`, `boto3`, upstream `langextract` and the
+like), and `uv.lock` contains none. Neither the `openai` nor the `ollama`
+package is a dependency: LM Studio's and Ollama's HTTP APIs are a few JSON
+routes, made by `garage_rag/inference` with the guard's `httpx` client.
 
-### Level 3 — per-source opt-in
+There used to be an optional Claude vision fallback for OCR. It has been removed:
+OCR is Tesseract only, on this machine, and the `cloud` settings section and the
+per-source `allow_cloud_enrichment` flag are retired (an older config that still
+has them loads with a warning).
 
-`sources.allow_cloud_enrichment` defaults to `false` in the schema. The CLI
-refuses to set it on a communication source at all:
+### Layer 3 — the destination allowlist
 
-```
-$ garage add-source sms ~/Library/Messages --class communication --allow-cloud-enrichment
-Error: communication sources may never enable cloud enrichment
-```
+`egress.check_destination` runs before any client is built. It approves:
 
-### Level 4 — global switch
+- **loopback** — `localhost` or a literal loopback address (`127.0.0.0/8`,
+  `::1`): the app's own `LlamaXPCService` on `embedding.llama_host` (default
+  `http://127.0.0.1:8790`, and required to be loopback), and Ollama or LM Studio
+  running on this Mac;
+- **the configured model servers** — exactly the origins (scheme, host and port)
+  of `embedding.ollama_host` and `embedding.lmstudio_host`, which may be another
+  machine.
 
-`cloud.enable_ocr` in `~/.garage.json` gates the entire path. Default `false`, in which case OCR is
-Tesseract-only and fully offline. It additionally requires `cloud.api_key_file`
-to name a readable key file, so forgetting the key fails closed rather than
-erroring mid-run.
+Anything else raises `EgressBlocked`. There is no setting that adds other hosts.
+A host *name* other than `localhost` is never treated as loopback, even if it
+resolves to loopback today, because a DNS answer can change; it is approved only
+when it is the configured server.
 
-## What can leave, when enabled
+The clients the guard builds ignore the environment's proxy variables and never
+follow a redirect, and each one refuses a request addressed to any origin but the
+one it was built for, so neither `http_proxy` nor a server's `Location` header
+can send content elsewhere.
 
-To a **cloud API**: only image bytes, only for OCR, only from sources explicitly
-opted in, and only when Tesseract's confidence falls below
-`extraction.ocr_min_confidence`. Document text, code, and communications are
-never sent to a cloud API. The only cloud client in the codebase is Anthropic's,
-constructed in `enrich/egress.py`.
+### Layer 4 — communications stay on this machine
 
-## Local inference endpoints
+Content classified `corpus_class = 'communication'` never goes to a destination
+that is not loopback, even an approved one. The guard checks this before
+anything else when the caller says what it is sending:
 
-Two features post document text over HTTP to a **configured local server**,
-which is assumed to be this machine:
+- **Facts** (`garage enrich-facts`) pass each document's class, so a message is
+  never posted to an off-box Ollama or LM Studio; the refusal comes before the document's
+  stored facts are touched.
+- **Answers** (`rag_ask`) run every retrieved excerpt's class through the guard
+  before building a prompt for an off-box Ollama or LM Studio, so a communication in the
+  results aborts the call.
+- **Embeddings** — backfill, in-process or through the embed worker, asks
+  `egress.allows_communications` and leaves chunks of communication documents
+  out for a provider that is not on this machine. They stay unembedded for that
+  model, and the backfill summary counts them as withheld
+  (`test_embed_egress.py`).
 
-- **Embeddings** — chunk text goes to `ollama_host` (default
-  `http://localhost:11434`), `lmstudio_host` (default `http://localhost:1234/v1`)
-  or `llama_host` (default `http://127.0.0.1:8790`, the llama.cpp API served by
-  the app's own `LlamaXPCService`), depending on the registered model's provider.
-- **Facts** (`garage enrich-facts`, LangExtract) — document text goes to
-  `ollama_host`, or to `llama_host` with `--provider llama_xpc`. The LangExtract
-  provider is **pinned to Ollama** by an explicit
-  `ModelConfig(provider="OllamaLanguageModel")`; without that pin LangExtract
-  chooses its backend by regex on the model name, and a `gemini-*` or `gpt-*`
-  model id would have been sent to Google or OpenAI with an API key from the
-  environment. `test_egress_block.py` asserts the pin structurally.
+### Layer 5 — local fact extraction
 
-- **Answers** (`rag_ask` / `rag_generate` MCP tools, `garage ask`) — retrieved
-  excerpts and the question go to the model named by `facts.model` on
-  `facts.provider`: `llama_host` for `llama_xpc` (the default) or `ollama_host`
-  for `ollama`. Both are local inference servers; there is no cloud generation
-  path. Retrieved **communications can appear in that prompt**, exactly as they
-  are embedded locally, and never leave the machine: `llama_host` is loopback by
-  construction, and if `ollama_host` has been pointed off-box `rag_ask` runs
-  every retrieved chunk's class through `assert_egress_allowed` before building
-  the prompt, so a communication in the results aborts the call.
+Only the local part of LangExtract is shipped, vendored as `enrich/langextract`.
+Upstream chooses its backend by regex on the model name and would send a
+`gemini-*` or `gpt-*` model id to Google or OpenAI; that routing and those
+backends are not vendored, and `enrich/facts.py` refuses a cloud model id with a
+clear error. Every extraction runs on `LocalLanguageModel`, Garage's own
+provider, through the same loopback-only client.
 
-These hosts are not egress-guarded the way the cloud path is, because they are
-loopback by default and the guard would otherwise block local inference on your
-own messages. If you point `ollama_host` at another machine, fact extraction
-runs each document's class through `assert_egress_allowed` first, so
-communications are still never posted off-box. Embeddings are held to the same
-rule: when the model's provider is not on this machine (`ollama_host` or
-`lmstudio_host` pointed elsewhere), backfill, in-process or through the embed
-worker, leaves chunks of communication documents out. They stay unembedded for
-that model, and the backfill summary counts them as withheld. `llama_host` is different: it exists only for on-device
-inference, so `LlamaXPCClient` refuses to construct at all unless the host is
-loopback (`127.0.0.1`, `localhost` or `::1`) and never routes through an HTTP
-proxy, whatever `http_proxy` says.
+### What these layers do not cover — MCP clients
+
+The MCP server hands search results and document excerpts, communications
+included, to whichever client is connected to it. When that client is Claude
+Desktop or Claude Code, it sends what it receives to its own model provider
+under its own terms. Garage does not, but connecting such a client is a decision
+about where retrieved content goes; `rag_search` results carry each hit's
+`corpus_class` so a client can tell communications apart.
 
 ## macOS permissions (TCC)
 
@@ -171,7 +178,8 @@ network you do not control.
 
 Everything stays in your local Postgres `rag` database: extracted text in
 `documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. No content
-leaves the machine except as described above.
+leaves the machine except to the model servers you configure (communications
+never do), or through an MCP client or `--allow-remote`, described above.
 
 The database is unencrypted at rest, as Postgres normally is. If you index
 private communications, the database file is as sensitive as the messages

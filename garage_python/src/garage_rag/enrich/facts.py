@@ -1,25 +1,38 @@
 """Fact extraction: distills a document into a list of atomic facts.
 
-Uses LangExtract (https://github.com/google/langextract) against the local
-Ollama server -- the same server ``garage_rag.embed.ollama`` already talks
-to -- so, like the rest of local inference in this project, document content
-never leaves the machine.
+Uses LangExtract (https://github.com/google/langextract) against a local model
+-- the app's LlamaXPCService, a local Ollama or a local LM Studio, whichever
+``facts.provider`` names -- so, like the rest of local inference in this
+project, document content never leaves the machine.
 
-That only holds because the provider is pinned. When ``lx.extract`` is given a
-bare ``model_id`` it picks the backend by *regex on the model name*: anything
-matching ``gemini*`` goes to Google's API, ``gpt-*``/``o1*`` to OpenAI, each
-reading an API key from the environment. So ``--model gemini-2.5-flash`` would
-have posted document text -- communications included -- to a cloud API with
-no egress check in between. This module therefore never passes ``model_id``
-to ``lx.extract``; it builds an explicit ``ModelConfig`` naming
-``OllamaLanguageModel`` (see :func:`ollama_model_config`), so the model name
-is only ever interpreted by the local Ollama server. ``test_egress_block``
-asserts this structurally.
+Only the part of LangExtract that runs prompts through a caller-built model is
+used, vendored as :mod:`garage_rag.enrich.langextract`. Upstream's
+``lx.extract(model_id=...)`` chose a backend by regex on the model name, sending
+``gemini*`` to Google's API and ``gpt-*``/``o1*`` to OpenAI; that routing and
+those backends are not vendored, so there is no code path to a cloud model. The
+model here is always :class:`~garage_rag.enrich.local_provider.LocalLanguageModel`
+(built by :func:`facts_language_model`), which posts each prompt to the
+server's ``/v1/chat/completions`` through :class:`garage_rag.inference.InferenceClient`,
+and a model id that names a cloud model is refused outright
+(:func:`refuse_cloud_model_id`) rather than passed to a local server that could
+never serve it.
 
-The Ollama host itself is configurable (``ollama_host``). It is assumed to be
-loopback; when it is not, :func:`extract_and_store_facts` runs the document's
-class through ``enrich.egress.assert_egress_allowed`` so communications are
-never posted to a remote host even by configuration.
+Ollama used to go through LangExtract's own Ollama provider on
+``/api/generate``. On the M3 probe, the same model on Ollama's ``/v1`` through
+this provider produced the same grounded facts, and it keeps every backend on
+one client, so Ollama uses it too, with the JSON mode and temperature (0.1)
+that provider sent. (What ``/v1`` cannot carry: ``num_ctx`` -- Ollama's default
+context, larger than the old 2048, applies -- ``think: false`` and
+``keep_alive``, which defaults to the same five minutes.) GPT-OSS models get no
+JSON mode, which conflicts with their response format, and a JSON-only system
+instruction instead, as before.
+
+The Ollama and LM Studio hosts are configurable (``ollama_host``,
+``lmstudio_host``) and may be other machines. Every client is built through the
+egress guard (:mod:`garage_rag.net.egress`), and :func:`extract_and_store_facts`
+runs the document's class through
+:func:`~garage_rag.net.egress.check_destination` before it touches the stored
+facts, so a communication is never posted to a host that is not loopback.
 
 The prompt is deliberately generic: this module has no notion of what kind of
 document it is given (notes, mail, code comments, a paper, ...), so it asks
@@ -37,17 +50,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import textwrap
 
-import langextract as lx
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
-from garage_rag.db.models import Chunk, Document, Fact
-from garage_rag.enrich.egress import assert_egress_allowed
-from garage_rag.enrich.llama_xpc_provider import LlamaXPCLanguageModel
-from garage_rag.xpc.llama_xpc import is_loopback_url
+from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
+from garage_rag.enrich import langextract as lx
+from garage_rag.enrich.local_provider import LocalLanguageModel
+from garage_rag.inference import Backend, BackendKind, InferenceClient
+from garage_rag.net import egress
+from garage_rag.xpc.llama_xpc import LlamaXPCClient
 
 log = logging.getLogger(__name__)
 
@@ -59,11 +74,11 @@ log = logging.getLogger(__name__)
 # name, pulled with `ollama pull gemma2:2b`.
 DEFAULT_MODEL_ID = "gemma2:2b"
 
-# Fact-distillation backends. "ollama" talks to a local Ollama server;
-# "llama_xpc" routes through LlamaXPCLanguageModel, which posts to the
-# llama.cpp HTTP API the app's LlamaXPCService serves on loopback
-# (``llama_host``) -- see that module's docstring.
-FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc")
+# Fact-distillation backends, all local inference servers reached through
+# LocalLanguageModel: "llama_xpc" is the llama.cpp HTTP API the app's
+# LlamaXPCService serves on loopback (``llama_host``); "ollama" and
+# "lmstudio" are local servers on ``ollama_host`` / ``lmstudio_host``.
+FACT_DISTIL_PROVIDERS = ("ollama", "llama_xpc", "lmstudio")
 DEFAULT_PROVIDER = "ollama"
 
 
@@ -77,9 +92,33 @@ def configured_backend(model_id: str | None = None, provider: str | None = None)
     return model_id or settings.fact_model, provider or settings.fact_provider
 
 
-# LangExtract's registered class name for its Ollama backend. Passing it as an
-# explicit ``provider`` bypasses model-id pattern matching entirely.
-OLLAMA_PROVIDER = "OllamaLanguageModel"
+# Model ids upstream LangExtract routed to a cloud API (its Gemini and OpenAI
+# provider patterns), plus Anthropic's. ``gpt-oss`` is an open-weights model
+# served by Ollama and does not match.
+CLOUD_MODEL_PATTERNS = (
+    r"^gemini",
+    r"^gpt-3\.5",
+    r"^gpt-4",
+    r"^gpt4\.",
+    r"^gpt-5",
+    r"^gpt5\.",
+    r"^o[1-9]",
+    r"^claude",
+)
+
+
+def refuse_cloud_model_id(model_id: str) -> None:
+    """Raise ``ValueError`` if ``model_id`` names a cloud-hosted model.
+
+    Fact distillation only runs on local models, so such an id is a
+    configuration mistake; failing with a clear message beats a model-not-found
+    error from the local server.
+    """
+    if any(re.match(pattern, model_id, re.IGNORECASE) for pattern in CLOUD_MODEL_PATTERNS):
+        raise ValueError(
+            f"{model_id!r} names a cloud-hosted model; fact distillation runs only on local models "
+            f"(facts.provider {', '.join(FACT_DISTIL_PROVIDERS)})"
+        )
 
 
 PROMPT = textwrap.dedent("""\
@@ -116,23 +155,64 @@ EXAMPLES = [
 ]
 
 
-def resolve_model_url(model_url: str | None = None) -> str:
-    """The Ollama endpoint fact extraction will post to."""
-    return model_url or get_settings().ollama_host
+# What LangExtract's own Ollama provider sent (``format: "json"`` and its
+# default temperature), kept so moving Ollama onto ``/v1`` changes only the
+# route. Ollama's ``/v1`` accepts ``json_object``; LM Studio refuses it, and
+# LlamaXPCService never had it, so those two stay prompt-only as before.
+OLLAMA_RESPONSE_FORMAT = {"type": "json_object"}
+OLLAMA_TEMPERATURE = 0.1
+# GPT-OSS's response format conflicts with JSON mode; it gets this instead.
+GPT_OSS_SYSTEM_PROMPT = (
+    "Output a single JSON object matching the requested extraction format. "
+    "Do not include code fences, prose, or reasoning."
+)
 
 
-def ollama_model_config(model_id: str, model_url: str) -> lx.factory.ModelConfig:
-    """Build the LangExtract config that pins inference to the local Ollama server.
+def _is_gpt_oss_model(model_id: str) -> bool:
+    normalized = model_id.lower()
+    return normalized == "gpt-oss" or (normalized.startswith("gpt-oss:") and len(normalized) > len("gpt-oss:"))
 
-    ``provider`` is the load-bearing field: with it set, LangExtract resolves
-    the backend by name and never consults its model-id regexes, so a
-    cloud-looking ``model_id`` is just a string Ollama will fail to find.
+
+def fact_backend(provider: str, model_url: str | None = None) -> Backend:
+    """The server a fact-distillation run posts to; ``model_url`` overrides the configured host."""
+    if provider not in FACT_DISTIL_PROVIDERS:
+        raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
+    return Backend.from_settings(provider, base_url=model_url)
+
+
+def facts_language_model(
+    provider: str,
+    model_id: str,
+    model_url: str | None = None,
+    *,
+    corpus_class: CorpusClass | None = None,
+) -> LocalLanguageModel:
+    """The LangExtract model for ``provider``, always a :class:`LocalLanguageModel`.
+
+    This is the only thing ``lx.extract`` is ever given as its model. Its client
+    is built through the egress guard, which raises
+    :class:`~garage_rag.net.egress.EgressBlocked` for a server that is not
+    approved, or for a communication (``corpus_class``) going to one that is not
+    loopback.
     """
-    return lx.factory.ModelConfig(
-        model_id=model_id,
-        provider=OLLAMA_PROVIDER,
-        provider_kwargs={"model_url": model_url, "format_type": lx.data.FormatType.JSON},
-    )
+    backend = fact_backend(provider, model_url)
+    if backend.kind is BackendKind.LLAMA_XPC:
+        return LocalLanguageModel(model_id, LlamaXPCClient(backend.base_url))
+    if backend.kind is BackendKind.OLLAMA:
+        if _is_gpt_oss_model(model_id):
+            return LocalLanguageModel(
+                model_id,
+                InferenceClient(backend, corpus_class=corpus_class),
+                temperature=OLLAMA_TEMPERATURE,
+                system_prompt=GPT_OSS_SYSTEM_PROMPT,
+            )
+        return LocalLanguageModel(
+            model_id,
+            InferenceClient(backend, corpus_class=corpus_class),
+            temperature=OLLAMA_TEMPERATURE,
+            response_format=OLLAMA_RESPONSE_FORMAT,
+        )
+    return LocalLanguageModel(model_id, InferenceClient(backend, corpus_class=corpus_class))
 
 
 def extract_facts(
@@ -141,6 +221,7 @@ def extract_facts(
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
     provider: str = DEFAULT_PROVIDER,
+    corpus_class: CorpusClass | None = None,
 ) -> list[lx.data.Extraction]:
     """Run LangExtract over ``text``, returning only grounded extractions.
 
@@ -149,38 +230,22 @@ def extract_facts(
     out here rather than stored, since such a fact cannot be traced back to
     the source text.
 
-    ``provider`` selects the inference backend: "ollama" (default) talks to a
-    local Ollama server via LangExtract's built-in provider, pinned explicitly
-    (see the module docstring); "llama_xpc" runs the prompt through
-    ``LlamaXPCLanguageModel``, which posts to the app's LlamaXPCService on
-    loopback. Neither path ever hands ``lx.extract`` a bare ``model_id``.
-
-    ``use_schema_constraints`` is off because both backends already emit JSON
-    (that is all the example-derived constraint would set for them), and
-    leaving it on makes LangExtract warn on every call that the constraint is
-    ignored/redundant when ``model``/``config`` is given.
+    ``provider`` selects the local server ("ollama", "llama_xpc" or
+    "lmstudio"); the model object comes from :func:`facts_language_model`. A
+    cloud model id is refused (:func:`refuse_cloud_model_id`). ``corpus_class``
+    is the class of ``text`` when known; the egress guard refuses to send a
+    communication to a server that is not loopback.
     """
     if provider not in FACT_DISTIL_PROVIDERS:
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
+    refuse_cloud_model_id(model_id)
 
-    if provider == "llama_xpc":
-        result = lx.extract(
-            text_or_documents=text,
-            prompt_description=PROMPT,
-            examples=EXAMPLES,
-            model=LlamaXPCLanguageModel(model_id=model_id),
-            use_schema_constraints=False,
-            show_progress=False,
-        )
-    else:
-        result = lx.extract(
-            text_or_documents=text,
-            prompt_description=PROMPT,
-            examples=EXAMPLES,
-            config=ollama_model_config(model_id, resolve_model_url(model_url)),
-            use_schema_constraints=False,
-            show_progress=False,
-        )
+    result = lx.extract(
+        text_or_documents=text,
+        prompt_description=PROMPT,
+        examples=EXAMPLES,
+        model=facts_language_model(provider, model_id, model_url, corpus_class=corpus_class),
+    )
     return [e for e in result.extractions if e.char_interval is not None]
 
 
@@ -251,22 +316,30 @@ def extract_and_store_facts(
     gets a ``chunks`` row appended after the document's existing chunks, ready
     for ``embed.ollama.backfill_model`` to pick up.
 
-    If the Ollama endpoint is not on this machine, the document's corpus class
-    is checked through the egress chokepoint first: a communication is never
-    posted to a remote host, whatever the configuration says.
+    The document's class goes through the egress guard before anything is
+    deleted: a server that is not approved, or a communication for a server
+    that is not loopback, raises :class:`~garage_rag.net.egress.EgressBlocked`.
     """
-    if provider == "ollama":
-        url = resolve_model_url(model_url)
-        if not is_loopback_url(url):
-            log.warning("ollama_host %s is not loopback; applying egress policy to document %s", url, document.id)
-            assert_egress_allowed(document.corpus_class)
+    backend = fact_backend(provider, model_url)
+    egress.check_destination(
+        backend.base_url,
+        purpose=f"facts:{provider}",
+        corpus_class=document.corpus_class,
+        loopback_only=backend.kind is BackendKind.LLAMA_XPC,
+    )
 
     session.query(Fact).filter(Fact.document_id == document.id).delete()
     if not document.content:
         return []
 
     log.info("extracting facts for document %s via %s", document.id, provider)
-    extractions = extract_facts(document.content, model_id=model_id, model_url=model_url, provider=provider)
+    extractions = extract_facts(
+        document.content,
+        model_id=model_id,
+        model_url=model_url,
+        provider=provider,
+        corpus_class=document.corpus_class,
+    )
 
     facts = facts_from_extractions(document.id, extractions, model_id=model_id)
     session.add_all(facts)

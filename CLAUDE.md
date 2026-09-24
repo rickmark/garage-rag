@@ -204,7 +204,7 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   (`MaterializationBudget`). Idempotent ingest means hitting the budget cap is fine, not a failure.
 - **Extract** (`extract/`) — dispatch by extension with lazy imports (Markdown/`text.py`,
   PDF/`pdf.py` with `pypdf`→`pdfplumber` per-page escalation, Office/`office.py`,
-  images/`image.py` via Tesseract with optional Claude escalation, code verbatim via `text.py`).
+  images/`image.py` via Tesseract only, code verbatim via `text.py`).
 - **Quality gate** (`extract/quality.py`) — content-based backstop against non-prose text (repeated
   line shapes, timestamp prefixes, hex/base64 density) that path rules alone miss.
 - **Attribute** (`attribute/`) — precedence-ordered signals, each recording its `evidence`: git
@@ -213,10 +213,21 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   → path convention (`pathrules.py`, data-driven table) → source default. See `docs/attribution.md`.
 - **Store** — chunks are model-agnostic; see the schema section below.
 - **Distill facts** (`enrich/facts.py`, `garage enrich-facts`, `EnrichFacts` RPC) — optional
-  post-ingest pass: LangExtract against local Ollama distills each document into atomic,
-  span-grounded `facts` rows; every fact also gets its own `chunks` row (`chunks.fact_id`,
-  `chunker = 'facts:...'`), so the ordinary backfill embeds facts under every model with no
-  fact-specific path. Schema in `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
+  post-ingest pass: LangExtract (only its local part, vendored as `enrich/langextract`), driven
+  through Garage's own `LocalLanguageModel` (`enrich/local_provider.py`) against the local server
+  `facts.provider` names, distills each document into atomic, span-grounded `facts` rows; every
+  fact also gets its own `chunks` row (`chunks.fact_id`, `chunker = 'facts:...'`), so the ordinary
+  backfill embeds facts under every model with no fact-specific path. Schema in
+  `data/sql/006_facts.sql` / `007_chunk_fact_link.sql`.
+- **Local inference** (`inference/`) — the one HTTP client (httpx; no `ollama`/`openai` packages)
+  for LM Studio, Ollama and the app's `LlamaXPCService`: embeddings, chat and model listing on the
+  OpenAI-compatible `/v1` routes (Ollama embeddings stay on `/api/embed`), plus LM Studio model
+  management on its native `/api/v1` REST API. Every embedder, `LocalChatModel` and the facts
+  provider go through it; `xpc/llama_xpc.py`'s `LlamaXPCClient` is a subclass. A 2xx reply whose
+  body is `{"error": ...}` is an error (LM Studio answers unknown routes that way).
+  `inference/transport.py` takes its client from the egress guard (`egress.http_client`): loopback
+  or the configured host, `llama_xpc` loopback only, and a client given `corpus_class` refuses a
+  communication for a host that is not loopback.
 - **Search** (`search/hybrid.py`) — Reciprocal Rank Fusion over pgvector KNN and Postgres FTS
   (`k=60`, 200 candidates/engine). Keyword side ORs terms rather than ANDing, favoring recall since
   RRF (not the keyword match itself) decides final ordering.
@@ -248,7 +259,7 @@ linear history.
 Two independent axes on every document:
 
 - `corpus_class` — **what it is**: `document` | `code` | `communication` (communications never
-  leave the machine — this is what the egress guard keys on, not trust).
+  leave the machine — this is what the egress guard's content rule keys on, not trust).
 - `trust_tier` — **how much it's trusted**: `authored` | `reference` | `received`.
 
 Embeddings live one table per model (`emb_<slug>`, e.g. `emb_bge_m3`) rather than one shared table,
@@ -259,23 +270,38 @@ backfill, not a re-ingest. Storage type is selected by dimension against pgvecto
 (`vector` ≤2000 dims, `halfvec` ≤4000, binary-quantized beyond that for non-MRL models). Full
 reference: `docs/schema.md`.
 
-### Privacy / egress guarantee (`enrich/egress.py`)
+### Privacy guarantee: one egress choke point, an allowlist, and communications stay local
 
-Content with `corpus_class = 'communication'` structurally never reaches a cloud API, enforced at
-four independent levels (removing any one fails the test suite — see `test_egress_block.py`):
+Content goes only to approved destinations, and communications never leave the machine. Each layer
+is tested on its own in `tests/test_egress_block.py`, so removing one fails the suite:
 
-1. `enrich/egress.py` is the **only** module allowed to import `anthropic` or construct a client;
-   `tests/test_egress_block.py` parses every source file's AST to enforce this, including
-   function-local imports.
-2. `EgressRequest.__post_init__` refuses to construct if `corpus_class is COMMUNICATION`, checked
-   before anything else — no way to build a forbidden request even by mistake.
-3. `sources.allow_cloud_enrichment` defaults `false`; the CLI refuses to set it on a communication
-   source at all.
-4. `cloud.enable_ocr` in `~/.garage.json` gates the whole path globally (default `false`, Tesseract
-   only).
+1. **One choke point.** `net/egress.py` is the only module that imports an outbound network client
+   library (`httpx`, `urllib.request`, `requests`, `socket`, ...) or a library that opens its own
+   connections (such as the `ollama` SDK, no longer a dependency). Callers get clients from it:
+   `egress.http_client(purpose=, base_url=)`, `egress.url_opener(purpose=, base_url=)`. Every model
+   server (LM Studio, Ollama, `llama_xpc`) is reached through `garage_rag/inference`, whose
+   transport takes its client from `egress.http_client`. An AST scan
+   (function-local and `importlib` imports included) enforces this; inbound/local infrastructure
+   (gRPC server and stubs, the facade's gRPC client, uvicorn, psycopg) is listed file by file in
+   `INBOUND_OR_LOCAL`, not matched by pattern.
+2. **No cloud AI SDK** anywhere (`anthropic`, `openai`, `google.genai`, upstream `langextract`, ...),
+   and none in `uv.lock`. OCR is Tesseract only; the old Claude fallback and its settings (`cloud.*`,
+   `sources[].allow_cloud_enrichment`) are retired.
+3. **Destination allowlist.** `egress.check_destination` approves loopback and exactly the origins
+   configured as `embedding.ollama_host` / `embedding.lmstudio_host` (which may be off-box), and
+   raises `EgressBlocked` for anything else. There is no free-form extra-hosts setting.
+   `llama_host` must be loopback. Clients built by the guard ignore proxy variables, never follow
+   redirects, and refuse a request to any origin but their own.
+4. **Content rule.** `corpus_class = 'communication'` never goes to a destination that is not
+   loopback: `check_destination(..., corpus_class=...)` checks it before anything else, fact
+   extraction and `rag_ask` pass the class, and backfill asks `egress.allows_communications` and
+   withholds communication chunks from an off-box provider (`test_embed_egress.py`).
+5. **Local fact extraction.** Only the local part of LangExtract is vendored (no provider routing),
+   and `enrich/facts.py` refuses a cloud model id.
 
-When touching `enrich/`, `egress.py`, or anything that could construct an outbound request for
-document content, preserve this — it's the load-bearing privacy property of the project. Full
+When touching `net/`, `embed/`, `enrich/`, or anything that could construct an outbound request for
+document content, preserve all of this — it's the load-bearing privacy property of the project. A
+new caller builds its client through `net/egress.py` and is added to `CALLERS` in the test. Full
 detail: `docs/privacy.md`.
 
 ### Configuration (`config/__init__.py`)
@@ -287,7 +313,7 @@ drift. Unknown keys are a hard error, not a silent ignore (retired keys listed i
 are warned about and skipped). The JSON Schema is generated from this module (`garage config
 schema --publish`) and committed at `data/schema/garage.schema.json` — **regenerate it whenever a
 setting is added, renamed, or documented**; a test enforces every field is documented. The `facts`
-section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama`, both local) names the model behind
+section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) names the model behind
 `enrich-facts` and the `rag_ask`/`rag_generate` MCP tools; `garage config set SECTION.KEY VALUE` /
 `garage config get SECTION.KEY` edit and read single settings without touching the JSON by hand.
 

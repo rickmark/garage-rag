@@ -47,8 +47,8 @@ The pairing is what makes the corpus queryable:
 
 A single `trust_tier` with a `communication` value would have conflated these —
 "is this a private conversation" is a property of *what the content is*, not of
-how much you trust it. The egress block is keyed on `corpus_class` for that
-reason.
+how much you trust it. The embedding guard that keeps communications off any
+provider not on this machine is keyed on `corpus_class` for that reason.
 
 ## Tables
 
@@ -56,9 +56,6 @@ reason.
 
 Registered roots. `kind` ∈ `filesystem | git | sqlite | maildir | feed` — `feed`
 is the extension point for social media connectors.
-
-`allow_cloud_enrichment` defaults `false` and is the third level of the egress
-guard.
 
 `expected_elements` is the item count of the last scan, which the app's
 progress bars measure ingest against. The rest of that scan lives beside it

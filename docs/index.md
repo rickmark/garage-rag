@@ -67,7 +67,7 @@ description: Official support pages, troubleshooting guides, FAQ, and privacy do
   <div class="card">
     <span class="card-icon">🛡️</span>
     <h3>Privacy & Egress Guarantees</h3>
-    <p>Review our formal multi-level egress blocks ensuring your communications and private documents never leak to cloud APIs.</p>
+    <p>No cloud AI client, one egress choke point with a destination allowlist, and communications that never leave your Mac.</p>
     <a href="{{ '/privacy-policy.html' | relative_url }}" class="card-link">Read Privacy Policy →</a>
   </div>
 
