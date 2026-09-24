@@ -39,6 +39,8 @@ LOCKFILE = REPO / "garage_python" / "uv.lock"
 OUTPUT = REPO / "data" / "notices" / "THIRD_PARTY_NOTICES.txt"
 ROOT_PACKAGE = "garage-rag"
 RAW = "https://raw.githubusercontent.com"
+# Suffix for a source file whose license is only its header comment: keep just that comment.
+HEADER = "#license-header"
 
 
 @dataclass(frozen=True)
@@ -133,7 +135,7 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
     Component(
         "PythonKit",
         "0.5.1",
-        "MIT",
+        "Apache-2.0",
         "https://github.com/pvieito/PythonKit",
         (f"{RAW}/pvieito/PythonKit/v0.5.1/LICENSE.txt",),
     ),
@@ -155,13 +157,18 @@ NATIVE_COMPONENTS: tuple[Component, ...] = (
         ),
     ),
     Component(
-        "SwiftNIO",
+        "SwiftNIO (includes llhttp, uSHET cpp_magic.h and FreeBSD sha1)",
         "2.42.0",
-        "Apache-2.0",
+        "Apache-2.0 AND MIT AND BSD-3-Clause",
         "https://github.com/apple/swift-nio",
         (
             f"{RAW}/apple/swift-nio/2.42.0/LICENSE.txt",
             f"{RAW}/apple/swift-nio/2.42.0/NOTICE.txt",
+            # Code NOTICE.txt lists as vendored into the compiled modules.
+            f"{RAW}/apple/swift-nio/2.42.0/Sources/CNIOLLHTTP/LICENSE-MIT",
+            # CNIOAtomics/src/cpp_magic.h points at uSHET's license without carrying it.
+            f"{RAW}/18sg/uSHET/c09e0acafd86720efe42dc15c63e0cc228244c32/LICENSE",
+            f"{RAW}/apple/swift-nio/2.42.0/Sources/CNIOSHA1/c_nio_sha1.c{HEADER}",
         ),
     ),
     Component(
@@ -369,6 +376,24 @@ def _license_expression(pkg: dict) -> str:
     return lic if lic and "\n" not in lic and len(lic) < 60 else "see license text"
 
 
+def _fetch_license(url: str) -> tuple[str, str]:
+    """(file name, text) for a license URL; a HEADER URL keeps the source's license comment."""
+    fetch_url, _, fragment = url.partition("#")
+    name = fetch_url.rsplit("/", 1)[-1]
+    text = _get(fetch_url).decode("utf-8", "replace")
+    if f"#{fragment}" == HEADER:
+        return f"{name} (license header)", _license_comment(text)
+    return name, text
+
+
+def _license_comment(source: str) -> str:
+    """The C-style block comment that holds a source file's copyright and license terms."""
+    for match in re.finditer(r"/\*.*?\*/", source, re.DOTALL):
+        if "Copyright" in match.group(0):
+            return match.group(0)
+    raise SystemExit("no copyright comment found in license-header source")
+
+
 # ---------------------------------------------------------------------------- rendering
 
 
@@ -430,10 +455,7 @@ def generate() -> str:
         )
     for comp in NATIVE_COMPONENTS:
         print(f"native  {comp.name} {comp.version}", file=sys.stderr)
-        texts = [
-            (url.rsplit("/", 1)[-1], _get(url).decode("utf-8", "replace"))
-            for url in comp.license_urls
-        ]
+        texts = [_fetch_license(url) for url in comp.license_urls]
         for (_, text), url in zip(texts, comp.license_urls, strict=True):
             if len(text) < 200:  # e.g. a git symlink served as its target path
                 raise SystemExit(
