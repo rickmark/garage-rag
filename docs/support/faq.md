@@ -2,6 +2,8 @@
 layout: default
 title: Frequently Asked Questions (FAQ)
 description: Frequently asked questions about Garage local RAG, privacy guarantees, performance, and integrations.
+redirect_from:
+  - /faq.html
 ---
 
 # Frequently Asked Questions (FAQ)

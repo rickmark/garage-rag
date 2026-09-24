@@ -1,5 +1,5 @@
-title: Garage Support & Documentation
-description: Official support pages, troubleshooting guides, FAQ, and privacy documentation for Garage — the local-first personal RAG and knowledge indexing system.
+title: Garage
+description: Garage is a local-first personal RAG and knowledge indexing app for macOS. It indexes your documents, code and messages on your Mac and serves them to your AI assistant over MCP. Download, user guide, troubleshooting, FAQ and privacy documentation.
 url: "https://garagerag.app"
 baseurl: ""
 
@@ -12,15 +12,17 @@ kramdown:
 # Navigation
 header_pages:
   - index.md
-  - support.md
-  - troubleshooting.md
-  - faq.md
-  - privacy-policy.md
-  - contact.md
+  - support/index.md
+  - support/guide.md
+  - support/troubleshooting.md
+  - support/faq.md
+  - support/privacy-policy.md
+  - support/contact.md
 
 plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
+  - jekyll-redirect-from
 
 exclude:
   - Gemfile

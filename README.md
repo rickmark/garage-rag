@@ -39,9 +39,9 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
 ```
 
 For detailed architectural and design specifications, see:
-- [Support Center & User Guide](docs/support.md) — Comprehensive setup, CLI usage, and MCP integrations.
-- [Troubleshooting & Diagnostics](docs/troubleshooting.md) — Common issues, error codes, and permission troubleshooting.
-- [Frequently Asked Questions (FAQ)](docs/faq.md) — Privacy, storage, models, and MCP tools.
+- [Support Center & User Guide](docs/support/guide.md) — Comprehensive setup, CLI usage, and MCP integrations.
+- [Troubleshooting & Diagnostics](docs/support/troubleshooting.md) — Common issues, error codes, and permission troubleshooting.
+- [Frequently Asked Questions (FAQ)](docs/support/faq.md) — Privacy, storage, models, and MCP tools.
 - [Architecture Guide](docs/architecture.md) — Ingestion pipeline, extractors, quality filtering, and concurrency model.
 - [Attribution & Identity](docs/attribution.md) — Git-aware author detection, trust tiers, and evidence logging.
 - [Privacy & Egress Guarantees](docs/privacy.md) — The egress choke point, destination allowlist and communication rule, and macOS TCC considerations.

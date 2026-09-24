@@ -542,3 +542,108 @@ details .faq-content {
     align-items: flex-start;
   }
 }
+
+/* Support section sub-navigation */
+.site-branding-section {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.support-nav {
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.support-nav-container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.5rem 1.5rem;
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.support-nav .nav-link.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Landing page */
+.hero-landing {
+  padding-top: 3.5rem;
+  padding-bottom: 3rem;
+}
+
+.hero-logo {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 1.25rem;
+  border-radius: 22px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.hero-landing h1 {
+  font-size: 2.8rem;
+}
+
+.btn-large {
+  padding: 0.85rem 1.75rem;
+  font-size: 1.05rem;
+}
+
+.download-meta {
+  margin-top: 1.25rem !important;
+  margin-bottom: 0 !important;
+  font-size: 0.9rem !important;
+  color: var(--text-muted) !important;
+}
+
+.download-panel {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 1.5rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.75rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.download-panel h3 {
+  margin-top: 0;
+}
+
+.download-panel h4 {
+  margin-top: 0;
+}
+
+.download-panel-aside {
+  border-left: 1px solid var(--border);
+  padding-left: 1.5rem;
+  font-size: 0.95rem;
+}
+
+.download-panel-aside ol {
+  margin-bottom: 0.75rem;
+}
+
+.download-actions {
+  justify-content: flex-start;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 720px) {
+  .download-panel {
+    grid-template-columns: 1fr;
+  }
+  .download-panel-aside {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding-left: 0;
+    padding-top: 1.25rem;
+  }
+  .hero-landing h1 {
+    font-size: 2rem;
+  }
+}

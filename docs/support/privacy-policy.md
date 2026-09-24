@@ -2,6 +2,8 @@
 layout: default
 title: Privacy Policy
 description: Privacy Policy and local-first data guarantees for Garage and GarageApp.
+redirect_from:
+  - /privacy-policy.html
 ---
 
 # Privacy Policy
