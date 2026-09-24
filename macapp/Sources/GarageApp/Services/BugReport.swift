@@ -8,7 +8,7 @@ import Foundation
 enum BugReportLinks {
     static let newIssue = URL(string: "https://github.com/rickmark/garage-rag/issues/new")!
     static let issues = URL(string: "https://github.com/rickmark/garage-rag/issues")!
-    static let troubleshooting = URL(string: "https://rickmark.github.io/garage-rag/troubleshooting.html")!
+    static let troubleshooting = URL(string: "https://garagerag.app/troubleshooting.html")!
     /// Security problems are disclosed privately, never on the public tracker.
     static let securityEmail = URL(string: "mailto:security@rickmark.com?subject=Garage%20security%20report")!
 }

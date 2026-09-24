@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Sparkle update feed for Developer ID builds of Garage, served at
-  https://rickmark.github.io/garage-rag/appcast.xml (the SUFeedURL in
+  https://garagerag.app/appcast.xml (the SUFeedURL in
   macapp/Sources/GarageApp/Sparkle.plist).
 
   Do not hand-edit the item entries: regenerate this file by running
@@ -15,7 +15,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Garage</title>
-    <link>https://rickmark.github.io/garage-rag/appcast.xml</link>
+    <link>https://garagerag.app/appcast.xml</link>
     <description>Developer ID release feed for Garage.</description>
     <language>en</language>
   </channel>
