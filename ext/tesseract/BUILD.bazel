@@ -24,6 +24,10 @@ cmake(
         "Leptonica_DIR": "$$EXT_BUILD_DEPS/leptonica/lib/cmake/leptonica",
         "OPENMP_BUILD": "OFF",
     },
+    # Pin `cmake --build/--install --config` to CMAKE_BUILD_TYPE. Left unset, rules_foreign_cc
+    # passes `--config Debug` under compilation_mode=dbg (the rules_xcodeproj build), and the
+    # install then skips the Release-only `*Targets-release.cmake` export.
+    configuration = "Release",
     env = {
         "AR": "/usr/bin/ar",
         # //ext/leptonica has no codecs, so two things that would use one are switched off:
