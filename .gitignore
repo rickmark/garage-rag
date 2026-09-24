@@ -31,3 +31,6 @@ user.bazelrc
 .ruff_cache/
 .mypy_cache/
 garage_python/dist/
+
+# Release archives staged by //macapp/package:publish_appcast
+/dist/
