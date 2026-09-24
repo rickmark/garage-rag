@@ -275,3 +275,31 @@ class TestEgress:
         row = get_model(db, model.slug)
         assert count_pending(db, row, include_communications=True) == 2
         assert count_pending(db, row, include_communications=False) == 1
+
+
+class TestAge:
+    """Apache AGE, which 001 creates wherever the server has it (always in the app)."""
+
+    def test_a_cypher_graph_round_trips(self, db: Session) -> None:
+        if not db.execute(text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age')")).scalar_one():
+            pytest.skip("this server has no Apache AGE")
+        conn = db.connection()
+        # The app preloads AGE and puts ag_catalog last on search_path when it starts
+        # Postgres; a development server may do neither.
+        conn.exec_driver_sql("LOAD 'age'")
+        conn.exec_driver_sql("""SET LOCAL search_path = "$user", public, ag_catalog""")
+        conn.exec_driver_sql("SELECT create_graph('garage_test_graph')")
+        try:
+            conn.exec_driver_sql(
+                "SELECT * FROM cypher('garage_test_graph', $$ "
+                "CREATE (:Person {name: 'Ada'})-[:WROTE]->(:Document {title: 'Notes'}) "
+                "$$) AS (result agtype)"
+            )
+            rows = conn.exec_driver_sql(
+                "SELECT name::text, title::text FROM cypher('garage_test_graph', $$ "
+                "MATCH (p:Person)-[:WROTE]->(d:Document) RETURN p.name, d.title "
+                "$$) AS (name agtype, title agtype)"
+            ).all()
+            assert [tuple(row) for row in rows] == [("Ada", "Notes")]
+        finally:
+            conn.exec_driver_sql("SELECT drop_graph('garage_test_graph', true)")

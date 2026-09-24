@@ -5,9 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import ValidationError
 from sqlalchemy import func
 
-from garage_rag.config import CONFIG_FILENAME, Settings, get_settings, save_config
+from garage_rag.config import (
+    CONFIG_FILENAME,
+    ConfigError,
+    Settings,
+    flatten,
+    get_settings,
+    read_config_document,
+    save_config,
+)
 from garage_rag.db.engine import session_scope
 from garage_rag.db.models import CorpusClass, Document, Source, TrustTier
 from garage_rag.ingest.scanner import SourceScanResult, persist_scan_result, scan_source
@@ -231,11 +240,19 @@ class ImportSourcesResult:
 
 
 def import_sources_into_config(path: Path | None = None) -> ImportSourcesResult:
-    """Copy the database's sources into the config file, so it becomes the source of truth."""
+    """Copy the database's sources into the config file, so it becomes the source of truth.
+
+    The file is rebuilt from what it already says, not from the loaded settings:
+    those carry ``GARAGE_DATABASE_URL``, the app-managed credential, which must
+    never be written to disk.
+    """
     from garage_rag.config import SourceSpec
 
-    settings = get_settings()
-    target = (path or settings.config_path or (Path.cwd() / CONFIG_FILENAME)).expanduser()
+    target = (path or get_settings().config_path or (Path.cwd() / CONFIG_FILENAME)).expanduser()
+    try:
+        settings = Settings(**flatten(read_config_document(target)))
+    except ValidationError as exc:
+        raise ConfigError(f"{target}: {exc}") from exc
 
     with session_scope() as session:
         rows = session.query(Source).order_by(Source.slug).all()

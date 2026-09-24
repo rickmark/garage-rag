@@ -2,6 +2,8 @@
 layout: default
 title: Troubleshooting & Diagnostics
 description: Resolutions for common issues, error codes, PostgreSQL startup failures, and permission problems in Garage.
+redirect_from:
+  - /troubleshooting.html
 ---
 
 # Troubleshooting & Diagnostics
@@ -189,5 +191,5 @@ to the same folder, so `~/Library/Application Support/GarageApp/logs/` works too
 <div class="callout callout-info">
   <div class="callout-title">Need to Submit Logs for Support?</div>
   <p>The quickest route is <strong>Report a Bug</strong> in GarageApp's <strong>Logs</strong> view (also under <strong>Help &rarr; Report a Bug&hellip;</strong>). It attaches the recent log lines along with version and service state, redacts your home directory, user name, e-mail addresses and secrets, and shows you the finished report before anything leaves your Mac.</p>
-  <p>If you would rather paste log snippets by hand, read our <a href="{{ '/contact.html' | relative_url }}">Contact &amp; Log Sanitization Guide</a> first to ensure your personal notes or confidential documents are removed.</p>
+  <p>If you would rather paste log snippets by hand, read our <a href="{{ '/support/contact.html' | relative_url }}">Contact &amp; Log Sanitization Guide</a> first to ensure your personal notes or confidential documents are removed.</p>
 </div>

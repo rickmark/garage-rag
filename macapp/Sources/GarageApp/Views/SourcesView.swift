@@ -357,7 +357,7 @@ struct SourcesView: View {
                         }
                         .controlSize(.small)
                         .buttonStyle(.borderedProminent)
-                        .disabled(notReady || appState.isScanning)
+                        .disabled(notReady || jobRunning)
                         .accessibilityIdentifier("sources.row.\(source.slug).scanIngest")
                     }
 
@@ -365,22 +365,22 @@ struct SourcesView: View {
                         Button("Ingest (Include Code)") {
                             ingestSource(slug: source.slug, includeCode: true)
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || jobRunning)
 
                         Button("Ingest (Force Re-index)") {
                             ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || jobRunning)
 
                         Button("Scan Source") {
                             scanSource(slug: source.slug, includeCode: source.includeCode)
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || jobRunning)
 
                         Button("Reconcile (Dry Run)") {
                             run { try await $0.reconcile(source: source.slug, apply: false).message }
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || appState.isBusy(source: source.slug))
 
                         Button("Glean Facts") {
                             enrichFacts(source: source.slug)
@@ -390,7 +390,7 @@ struct SourcesView: View {
                         Button("Reconcile (Apply Deletions)", role: .destructive) {
                             run { try await $0.reconcile(source: source.slug, apply: true).message }
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || appState.isBusy(source: source.slug))
 
                         Divider()
 
@@ -419,7 +419,7 @@ struct SourcesView: View {
                         Button("Remove Source", role: .destructive) {
                             removeSource(slug: source.slug)
                         }
-                        .disabled(notReady)
+                        .disabled(notReady || appState.isBusy(source: source.slug))
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -783,13 +783,13 @@ struct SourcesView: View {
                     Button("Add / Update Source") {
                         addOrUpdateSource()
                     }
-                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
+                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBusy)
                     .accessibilityIdentifier("sources.form.submit")
 
                     Button("Remove Source", role: .destructive) {
                         removeSource(slug: slug)
                     }
-                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady)
+                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBusy)
                     .accessibilityIdentifier("sources.form.remove")
 
                     Button("Clear Form") {
@@ -851,8 +851,21 @@ struct SourcesView: View {
 
     // MARK: - Helpers
 
+    /// Postgres is down, or one of this page's quick operations (add, remove, sync, …) is in flight.
+    /// A scan or ingest does not count: it runs on its own runner, and only what would conflict with
+    /// it (`jobRunning`, `AppState.isBusy(source:)`) waits for it.
     private var notReady: Bool {
-        appState.postgres.status != .running || busy || appState.isIngesting || appState.isScanning
+        appState.postgres.status != .running || busy
+    }
+
+    /// Only one scan and one ingest run at a time, so starting another waits for them.
+    private var jobRunning: Bool {
+        appState.isIngesting || appState.isScanning
+    }
+
+    /// The form's source is being scanned or ingested, so it cannot be updated or removed yet.
+    private var formSourceIsBusy: Bool {
+        appState.isBusy(source: slug.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func chooseRoot() {
@@ -889,24 +902,22 @@ struct SourcesView: View {
     }
 
     private func scanSource(slug: String, includeCode: Bool = false) {
-        guard !appState.isIngesting else { return }
-        busy = true
+        guard !appState.isIngesting, !appState.isScanning else { return }
         Task {
             await appState.scanSources(source: slug, includeCode: includeCode)
-            busy = false
         }
     }
 
     /// Scans first so the expected-element counts are current, then ingests; a failed or
     /// cancelled scan stops there.
+    /// Leaves `busy` alone: the scan and the ingest show their own progress and disable only what
+    /// would conflict with them, so the rest of the page stays usable while they run.
     private func scanAndIngest(slug: String, includeCode: Bool = false) {
-        guard !appState.isIngesting else { return }
-        busy = true
+        guard !appState.isIngesting, !appState.isScanning else { return }
         Task {
             if await appState.scanSources(source: slug, includeCode: includeCode) {
                 _ = await appState.ingestSource(slug: slug, options: IngestOptions(includeCode: includeCode))
             }
-            busy = false
         }
     }
 
@@ -921,11 +932,10 @@ struct SourcesView: View {
     }
 
     private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
-        busy = true
+        guard !appState.isIngesting, !appState.isScanning else { return }
         Task {
             let options = IngestOptions(includeCode: includeCode, force: force)
             _ = await appState.ingestSource(slug: slug, options: options)
-            busy = false
         }
     }
 

@@ -2,6 +2,8 @@
 layout: default
 title: Support & User Guide
 description: Complete user and support guide for Garage macOS App, CLI, ingestion pipelines, and MCP integration.
+redirect_from:
+  - /support.html
 ---
 
 # Garage Support & User Guide
@@ -200,5 +202,5 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
 
 <div class="callout callout-success">
   <div class="callout-title">Need additional assistance?</div>
-  <p>If you encounter unexpected errors or need further diagnosis, check out the <a href="{{ '/troubleshooting.html' | relative_url }}">Troubleshooting Guide</a> or <a href="{{ '/contact.html' | relative_url }}">open an issue on GitHub</a>.</p>
+  <p>If you encounter unexpected errors or need further diagnosis, check out the <a href="{{ '/support/troubleshooting.html' | relative_url }}">Troubleshooting Guide</a> or <a href="{{ '/support/contact.html' | relative_url }}">open an issue on GitHub</a>.</p>
 </div>

@@ -119,4 +119,71 @@ final class SourcesUITests: GarageUITestCase {
         XCTAssertTrue(element(text: "Alpha note").waitForExistence(timeout: 30), "Documents does not list the first note")
         XCTAssertTrue(element(text: "Beta note").exists, "Documents does not list the second note")
     }
+
+    /// With automatic maintenance on, adding a source starts a scan and ingest of every source. The page
+    /// stays usable while they run: another source can be added (it used to be turned away with "A
+    /// garage command is already running" for as long as the scan walked the folder).
+    func testAddingASourceWorksWhileMaintenanceRuns() throws {
+        // A dozen long notes keep the maintenance run going while the second add happens. Few files
+        // rather than many: every ingested file adds log lines to the page, and a long log makes each
+        // accessibility snapshot (and so every UI test step) crawl. Varied prose, so the quality gate
+        // does not reject it as machine-generated, and under 1,500 chunks a document.
+        var notes: [String: String] = [:]
+        for index in 0..<12 {
+            notes["long-\(index).md"] = "# Long note \(index)\n\n" + Self.prose(seed: UInt64(index + 1), characters: 1_200_000)
+        }
+        let first = try makeNotesFolder(files: notes)
+        let second = dataDirectory.appendingPathComponent("more", isDirectory: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try Data("# More\n".utf8).write(to: second.appendingPathComponent("more.md"))
+
+        try launchApp(automaticMaintenance: true)
+        waitForBackend()
+        addSource(root: first)
+
+        let progress = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@ OR title IN %@ OR value IN %@",
+                        ["Scan in Progress", "Live Ingest Progress"], ["Scan in Progress", "Live Ingest Progress"],
+                        ["Scan in Progress", "Live Ingest Progress"])
+        ).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 30), "adding a source did not start maintenance")
+
+        replaceText(in: element(identifier: "sources.form.slug"), with: "uitest-more")
+        replaceText(in: element(identifier: "sources.form.root"), with: second.path)
+        let submit = element(identifier: "sources.form.submit")
+        XCTAssertTrue(waitForEnabled(submit, timeout: 10), "Add / Update Source is disabled while maintenance runs")
+        submit.click()
+
+        XCTAssertTrue(
+            element(identifier: "sources.row.uitest-more").waitForExistence(timeout: 15),
+            "the second source was not added while maintenance ran"
+        )
+        XCTAssertTrue(progress.exists, "maintenance finished before the second add, so this run proves nothing; add more notes")
+    }
+
+    /// Deterministic, varied English-looking paragraphs of about `characters` characters.
+    private static func prose(seed: UInt64, characters: Int) -> String {
+        let words = [
+            "garage", "keeps", "a", "local", "index", "of", "personal", "documents", "notes", "and", "code",
+            "search", "fuses", "keyword", "vector", "results", "with", "reciprocal", "rank", "fusion", "the",
+            "archive", "grows", "slowly", "every", "evening", "while", "letters", "from", "old", "friends",
+            "arrive", "in", "batches", "that", "nobody", "reads", "twice", "because", "memory", "is", "kind",
+        ]
+        var state = seed
+        func next() -> Int {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Int(truncatingIfNeeded: state >> 33)
+        }
+        var text = ""
+        text.reserveCapacity(characters + 200)
+        while text.count < characters {
+            var sentence = ""
+            for position in 0..<(8 + next() % 12) {
+                let word = words[next() % words.count]
+                sentence += position == 0 ? word.capitalized : " " + word
+            }
+            text += sentence + (next() % 5 == 0 ? ".\n\n" : ". ")
+        }
+        return text
+    }
 }

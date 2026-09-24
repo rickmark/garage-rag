@@ -66,7 +66,9 @@ What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
   (`//ext/postgres`, `//ext/pgvector`, `//ext/age`, vendored through
   `//macapp/externals:postgres_output`), with `libpq` in `Frameworks/`. AGE's Cypher
   parser is generated with the hermetic `rules_bison`/`rules_flex` toolchains, since the
-  Bison 2.3 in macOS is too old for its grammar.
+  Bison 2.3 in macOS is too old for its grammar. `PostgresService` starts the server with
+  `shared_preload_libraries=age` and `ag_catalog` last on `search_path`, so any session can
+  run Cypher and `create_graph` without `LOAD 'age'` or a `SET search_path` first.
 - `Resources/schema` — the SQL migrations, `Resources/postgresql.conf`, the model
   manifest and the config JSON schema.
 - `Frameworks/PythonXPCService.framework` — the shared runtime for the six

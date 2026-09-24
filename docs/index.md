@@ -1,96 +1,110 @@
 ---
 layout: default
-title: Support & Help Center
-description: Official support pages, troubleshooting guides, FAQ, and privacy documentation for Garage.
+title: Garage
+description: Garage indexes your documents, code and messages on your Mac and serves them to your AI assistant over MCP. Local-first, private by construction. Download for macOS.
 ---
 
-<div class="hero">
-  <img src="{{ '/assets/logo.png' | relative_url }}" alt="Garage Logo" style="width: 72px; height: 72px; margin-bottom: 1rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-  <h1>Garage Support Center</h1>
-  <p>Find help, setup instructions, troubleshooting guides, and answers to frequently asked questions for Garage — your local-first personal knowledge retrieval engine.</p>
+<div class="hero hero-landing">
+  <img src="{{ '/assets/logo.png' | relative_url }}" alt="Garage Logo" class="hero-logo">
+  <h1>Your files, your Mac, your AI.</h1>
+  <p>Garage indexes your documents, code repositories, notes and messages on your Mac and hands them to your AI assistant over the Model Context Protocol. Nothing is uploaded, nothing is sent anywhere you did not point it at.</p>
   <div class="hero-actions">
-    <a href="{{ '/support.html' | relative_url }}" class="btn btn-primary">📖 Support Guide</a>
-    <a href="{{ '/troubleshooting.html' | relative_url }}" class="btn btn-secondary">🛠️ Troubleshooting</a>
-    <a href="{{ '/faq.html' | relative_url }}" class="btn btn-secondary">❓ FAQ</a>
+    <a id="download-primary" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary btn-large">⬇︎ Download for Mac</a>
+    <a href="{{ '/support/' | relative_url }}" class="btn btn-secondary btn-large">Support Center</a>
   </div>
-  <div class="search-container">
-    <span class="search-icon">🔍</span>
-    <input type="text" id="support-search" class="search-input" placeholder="Search support topics, error messages, or questions...">
-  </div>
+  <p class="download-meta" id="download-meta">Apple Silicon · macOS 14 Sonoma or later · notarized installer</p>
 </div>
 
-## Explore Support Topics
+## What Garage does
 
 <div class="grid">
   <div class="card">
-    <span class="card-icon">🚀</span>
-    <h3>Getting Started & Setup</h3>
-    <p>Step-by-step setup for both the native macOS menu bar app and the Python CLI, including source registration and indexing.</p>
-    <a href="{{ '/support.html' | relative_url }}#getting-started" class="card-link">View Setup Guide →</a>
+    <span class="card-icon">🗂️</span>
+    <h3>Indexes what you already have</h3>
+    <p>Folders, git repositories, Markdown, PDF, Office documents, scanned images and Apple Messages and Mail, parsed into searchable chunks in a private PostgreSQL database.</p>
   </div>
 
   <div class="card">
-    <span class="card-icon">🔐</span>
-    <h3>macOS Permissions & TCC</h3>
-    <p>How to grant Full Disk Access for indexing Apple Messages (chat.db), Mail, and protected system directories without errors.</p>
-    <a href="{{ '/support.html' | relative_url }}#macos-permissions" class="card-link">Configure Permissions →</a>
+    <span class="card-icon">🔎</span>
+    <h3>Hybrid search</h3>
+    <p>Vector similarity and full-text search fused with Reciprocal Rank Fusion, so a question finds the meaning and a keyword finds the exact line.</p>
   </div>
 
   <div class="card">
-    <span class="card-icon">🧠</span>
-    <h3>Embedding Models & Providers</h3>
-    <p>Configure local embedding models with Ollama, LM Studio, or local Llama runners. Backfill vectors and switch models seamlessly.</p>
-    <a href="{{ '/support.html' | relative_url }}#models-and-embeddings" class="card-link">Manage Models →</a>
+    <span class="card-icon">✍️</span>
+    <h3>Knows who wrote it</h3>
+    <p>Git history, document metadata and path rules classify every document as authored by you, reference material or received from someone else, with the evidence recorded.</p>
   </div>
 
   <div class="card">
     <span class="card-icon">🔌</span>
-    <h3>Model Context Protocol (MCP)</h3>
-    <p>Connect your personal knowledge index to LLM clients including Claude Desktop, Claude Code, and Cursor via MCP 2.0.</p>
-    <a href="{{ '/support.html' | relative_url }}#mcp-integration" class="card-link">Setup MCP Integration →</a>
+    <h3>Works with your AI assistant</h3>
+    <p>An MCP 2.0 server lets Claude Desktop, Claude Code, Cursor and other MCP clients search your corpus, read documents and ask grounded questions.</p>
   </div>
 
   <div class="card">
-    <span class="card-icon">🛠️</span>
-    <h3>Troubleshooting & Diagnostics</h3>
-    <p>Resolutions for common issues: PostgreSQL startup errors, port conflicts, DNS rebinding blocks, and placeholder downloads.</p>
-    <a href="{{ '/troubleshooting.html' | relative_url }}" class="card-link">Troubleshoot Issues →</a>
-  </div>
-
-  <div class="card">
-    <span class="card-icon">❓</span>
-    <h3>Frequently Asked Questions</h3>
-    <p>Answers to common questions regarding local storage footprint, supported formats, search algorithms (RRF), and privacy guarantees.</p>
-    <a href="{{ '/faq.html' | relative_url }}" class="card-link">Read FAQ →</a>
+    <span class="card-icon">🧠</span>
+    <h3>Local models, your choice</h3>
+    <p>Embeddings and fact distillation run on the built-in llama.cpp engine, or on the Ollama or LM Studio server you already have. Switch models without re-ingesting.</p>
   </div>
 
   <div class="card">
     <span class="card-icon">🛡️</span>
-    <h3>Privacy & Egress Guarantees</h3>
-    <p>No cloud AI client, one egress choke point with a destination allowlist, and communications that never leave your Mac.</p>
-    <a href="{{ '/privacy-policy.html' | relative_url }}" class="card-link">Read Privacy Policy →</a>
-  </div>
-
-  <div class="card">
-    <span class="card-icon">📬</span>
-    <h3>Contact & Bug Reports</h3>
-    <p>How to safely submit diagnostic logs, report bugs, request features, or contact the maintainers on GitHub.</p>
-    <a href="{{ '/contact.html' | relative_url }}" class="card-link">Get Support →</a>
+    <h3>Private by construction</h3>
+    <p>No cloud AI client in the app. One tested egress choke point with a destination allowlist, and your messages never leave the machine. <a href="{{ '/support/privacy-policy.html' | relative_url }}">Read the privacy policy →</a></p>
   </div>
 </div>
 
----
+## How it works
 
-## Quick Diagnostic Checklist
+```
+sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ quality gate
+                                                          │
+                            attribution ◀─────────────────┤
+                                  │                       ▼
+                                  └──────▶ documents ── chunks
+                                                          │
+                                              ┌───────────┴───────────┐
+                                              ▼                       ▼
+                                         emb_<model_1>           emb_<model_2>
+                                              └───────────┬───────────┘
+                                                          ▼
+                                              hybrid search (RRF)
+                                                          │
+                                                    MCP server
+```
 
-If you are experiencing unexpected behavior, check these fundamental items first:
+Garage walks the sources you register, extracts text, decides who wrote each document and how much to trust it, and splits it into chunks. Each chunk is embedded under every model you register, one table per model, so adding a model is a backfill rather than a re-ingest. Search fuses the vector and keyword rankings and serves the result to your assistant over MCP. Everything lives in a PostgreSQL 18 + pgvector cluster the app bundles and runs for you.
 
-1. **Check Database Status**: Ensure PostgreSQL is running. In the macOS App, check the menu bar indicator. In CLI, verify with `garage stats`.
-2. **Verify Full Disk Access**: If indexing `~/Library/Messages` or `~/Library/Mail`, make sure **Full Disk Access** is granted to `GarageApp` or your Terminal application under **System Settings → Privacy & Security**.
-3. **Verify Embedding Provider**: Ensure Ollama or LM Studio is running locally on your machine before running `garage backfill` or `garage ingest`.
-4. **Inspect Application Logs**: In the macOS App, navigate to the **Logs** tab to view live streaming logs from PostgreSQL, Ingestion, and the MCP HTTP server.
+<h2 id="download">Download</h2>
+
+<div class="download-panel">
+  <div class="download-panel-main">
+    <h3 id="download-title">Garage for Mac</h3>
+    <p id="download-detail">Apple Silicon (M1 and later), macOS 14 Sonoma or later. A signed and notarized <code>.pkg</code> installer.</p>
+    <div class="hero-actions download-actions">
+      <a id="download-pkg" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary">⬇︎ Download installer</a>
+      <a id="download-release" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-secondary" target="_blank" rel="noopener">All downloads on GitHub ↗</a>
+    </div>
+  </div>
+  <div class="download-panel-aside">
+    <h4>After installing</h4>
+    <ol>
+      <li>Open <strong>Garage</strong> from Applications. It appears in the menu bar and starts its private database.</li>
+      <li>The first-run assistant picks your folders, an embedding model and the AI clients to connect.</li>
+      <li>Ask Claude, or any MCP client, a question about your own files.</li>
+    </ol>
+    <p><small>Garage checks for updates through Sparkle, only after asking you once. Garage runs on Apple Silicon only. The <code>.zip</code> archive is on the <a id="download-release-aside" href="https://github.com/rickmark/garage-rag/releases/latest" target="_blank" rel="noopener">GitHub release page</a>.</small></p>
+  </div>
+</div>
+
+## Also a command line and a Python package
+
+The app installs a `garage` command for terminal workflows and a `garage-mcp` stdio server for MCP clients. The same pipeline ships as the `garage_rag` Python package, so the indexer, extractors and search run anywhere PostgreSQL with pgvector does. Sources, build instructions and the developer documentation are on <a href="https://github.com/rickmark/garage-rag" target="_blank" rel="noopener">GitHub</a>: the <a href="{{ '/architecture.html' | relative_url }}">architecture guide</a>, <a href="{{ '/attribution.html' | relative_url }}">attribution engine</a>, <a href="{{ '/privacy.html' | relative_url }}">privacy internals</a> and <a href="{{ '/schema.html' | relative_url }}">database schema</a>.
 
 <div class="callout callout-info">
-  <div class="callout-title">💡 Need In-Depth Technical Architecture?</div>
-  <p>For internal pipeline details, schema definitions, and authorship heuristics, check the developer specifications: <a href="{{ '/architecture.html' | relative_url }}">Architecture Guide</a>, <a href="{{ '/attribution.html' | relative_url }}">Attribution Engine</a>, and <a href="{{ '/schema.html' | relative_url }}">Database Schema Reference</a>.</p>
+  <div class="callout-title">💬 Need help?</div>
+  <p>The <a href="{{ '/support/' | relative_url }}">Support Center</a> has the <a href="{{ '/support/guide.html' | relative_url }}">user guide</a>, <a href="{{ '/support/troubleshooting.html' | relative_url }}">troubleshooting</a>, the <a href="{{ '/support/faq.html' | relative_url }}">FAQ</a> and <a href="{{ '/support/contact.html' | relative_url }}">how to report a bug</a>.</p>
 </div>
+
+<script src="{{ '/assets/download.js' | relative_url }}" defer></script>

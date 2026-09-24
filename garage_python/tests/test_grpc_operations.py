@@ -11,12 +11,13 @@ import json
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import grpc
 import pytest
 
-from garage_rag.config import reset_settings
+from garage_rag.config import Settings, reset_settings
 from garage_rag.ops.backfill import BackfillEvent
 from garage_rag.ops.facts import EnrichEvent, EnrichSummary
 from garage_rag.ops.models import RegisteredModel
@@ -88,6 +89,36 @@ class TestSources:
         assert list(res.created) == ["a"]
         assert res.undeclared[0].slug == "old" and res.undeclared[0].document_count == 3
         assert "would create: a" in res.message
+
+    def test_import_sources_never_writes_the_database_url(
+        self, client: GarageClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The app exports its Postgres password as GARAGE_DATABASE_URL; saving the file must not persist it."""
+        config = tmp_path / "garage.json"
+        config.write_text(json.dumps({"identity": {"name": "Rick"}}), encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GARAGE_DATABASE_URL", "postgresql://garage:s3cret@127.0.0.1:14824/garage")
+        row = SimpleNamespace(
+            slug="notes",
+            root=str(tmp_path),
+            kind="filesystem",
+            default_class="document",
+            default_trust="authored",
+            config={},
+            enabled=True,
+        )
+        session = MagicMock()
+        session.query.return_value.order_by.return_value.all.return_value = [row]
+        with patch("garage_rag.ops.sources.session_scope") as scope:
+            scope.return_value.__enter__.return_value = session
+            res = client.import_sources_to_config(str(config))
+
+        assert list(res.added) == ["notes"]
+        saved = json.loads(config.read_text(encoding="utf-8"))
+        assert "s3cret" not in config.read_text(encoding="utf-8")
+        assert saved["database"]["url"] == Settings().database_url
+        assert saved["identity"]["name"] == "Rick"
+        assert [source["slug"] for source in saved["sources"]] == ["notes"]
 
 
 class TestModels:
