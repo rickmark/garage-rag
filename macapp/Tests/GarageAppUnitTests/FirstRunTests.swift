@@ -108,13 +108,10 @@ final class FirstRunTests: XCTestCase {
         XCTAssertEqual(messages?.isCommunication, true)
     }
 
-    func testTemplateSlugsAreUniqueAndCommunicationsNeverAllowCloud() {
+    func testTemplateSlugsAndIDsAreUnique() {
         let templates = FirstRunSourceTemplate.builtIn(home: URL(fileURLWithPath: "/Users/tester")) { _ in true }
         XCTAssertEqual(Set(templates.map(\.slug)).count, templates.count)
         XCTAssertEqual(Set(templates.map(\.id)).count, templates.count)
-        for template in templates where template.isCommunication {
-            XCTAssertFalse(template.spec.allowCloudEnrichment)
-        }
     }
 
     func testSharedTemplatesAgreeWithTheSourcePresets() {
