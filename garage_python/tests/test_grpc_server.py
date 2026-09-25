@@ -9,18 +9,25 @@ import grpc
 import pytest
 
 from garage_rag.proto.garage_pb2 import (
+    BackfillRequest,
+    EnsureLlamaModelRequest,
     GetEmbeddingBatchesRequest,
     PingRequest,
     StatusRequest,
     VersionRequest,
 )
 from garage_rag.proto.garage_pb2_grpc import GarageServiceStub
+from garage_rag.service.auth import METADATA_KEY, TOKEN_ENV
+from garage_rag.service.client import GarageClient
 from garage_rag.service.server import create_grpc_server
+
+TOKEN = "0123456789abcdef" * 4
 
 
 @pytest.fixture
-def grpc_server():
+def grpc_server(monkeypatch):
     """Start an in-memory / local gRPC server on an ephemeral port."""
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
     stop_event = threading.Event()
     # Port 0 lets OS assign an ephemeral available port
     server, servicer = create_grpc_server(host="127.0.0.1", port=0, stop_event=stop_event)
@@ -91,3 +98,78 @@ def test_grpc_get_embedding_batches_db_outage_is_an_error(grpc_server):
         with pytest.raises(grpc.RpcError) as excinfo:
             stub.GetEmbeddingBatches(GetEmbeddingBatchesRequest(model_slug="bge-m3"))
     assert excinfo.value.code() != grpc.StatusCode.OK
+
+
+# ---------------------------------------------------------------------------
+# Per-launch token (GARAGE_GRPC_TOKEN / x-garage-token)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def token_server(monkeypatch):
+    """A server started with ``GARAGE_GRPC_TOKEN`` set, as the app starts it."""
+    monkeypatch.setenv(TOKEN_ENV, TOKEN)
+    server, _ = create_grpc_server(host="127.0.0.1", port=0, stop_event=threading.Event())
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    yield port
+    server.stop(grace=None)
+
+
+def test_token_server_rejects_a_call_without_the_token(token_server):
+    with grpc.insecure_channel(f"127.0.0.1:{token_server}") as channel, pytest.raises(grpc.RpcError) as excinfo:
+        GarageServiceStub(channel).Ping(PingRequest(message="hi"))
+    assert excinfo.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_token_server_rejects_a_wrong_token(token_server):
+    with grpc.insecure_channel(f"127.0.0.1:{token_server}") as channel, pytest.raises(grpc.RpcError) as excinfo:
+        GarageServiceStub(channel).Ping(PingRequest(message="hi"), metadata=[(METADATA_KEY, "nope")])
+    assert excinfo.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_token_server_rejects_a_streaming_call_without_the_token(token_server):
+    with grpc.insecure_channel(f"127.0.0.1:{token_server}") as channel, pytest.raises(grpc.RpcError) as excinfo:
+        list(GarageServiceStub(channel).Backfill(BackfillRequest(model="m")))
+    assert excinfo.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_token_server_accepts_the_token(token_server):
+    with grpc.insecure_channel(f"127.0.0.1:{token_server}") as channel:
+        response = GarageServiceStub(channel).Ping(PingRequest(message="hi"), metadata=[(METADATA_KEY, TOKEN)])
+    assert response.message == "hi"
+
+
+def test_token_server_lets_ensure_llama_model_through_without_the_token(token_server):
+    """A stdio garage-mcp outside the app has no token but still asks the app to load its model."""
+    with grpc.insecure_channel(f"127.0.0.1:{token_server}") as channel, pytest.raises(grpc.RpcError) as excinfo:
+        GarageServiceStub(channel).EnsureLlamaModel(EnsureLlamaModelRequest(model="m"))
+    # No loader is installed in this process, so the servicer itself answers.
+    assert excinfo.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+
+
+def test_garage_client_sends_the_token_from_the_environment(token_server):
+    client = GarageClient(host="127.0.0.1", port=token_server, in_process=False)
+    try:
+        assert client.ping("hi").message == "hi"
+    finally:
+        client.close()
+
+
+def test_garage_client_without_the_token_is_rejected(token_server, monkeypatch):
+    monkeypatch.delenv(TOKEN_ENV)
+    client = GarageClient(host="127.0.0.1", port=token_server, in_process=False)
+    try:
+        with pytest.raises(grpc.RpcError) as excinfo:
+            client.ping("hi")
+    finally:
+        client.close()
+    assert excinfo.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_server_without_the_token_accepts_any_call(grpc_server):
+    port, _ = grpc_server
+    with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+        stub = GarageServiceStub(channel)
+        assert stub.Ping(PingRequest(message="a")).message == "a"
+        assert stub.Ping(PingRequest(message="b"), metadata=[(METADATA_KEY, "anything")]).message == "b"

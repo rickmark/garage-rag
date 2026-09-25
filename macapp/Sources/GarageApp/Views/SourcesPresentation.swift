@@ -145,7 +145,7 @@ struct SourceRowPresentation: Equatable {
             cancelTitle = "Cancelling…"
             cancelDisabled = true
         case .ingesting(let run):
-            status = run.isCancelling ? "Stopping…" : "Ingesting \(run.percent)"
+            status = run.isCancelling ? "Stopping…" : "Reading \(run.percent)"
             tone = .active
             progress = run.fraction
             indeterminate = run.fraction == nil
@@ -388,7 +388,7 @@ struct SourcesAttention: Equatable, Identifiable {
                     detail: access.tccHelpMessage ?? category.helpMessage,
                     primary: Command(title: "Grant Folder Access…", action: .grantFolder(slug: source.slug, path: source.root)),
                     secondary: [
-                        Command(title: "Ask macOS…", action: .tccPrompt(category, slug: source.slug, path: source.root)),
+                        Command(title: "Explain…", action: .tccPrompt(category, slug: source.slug, path: source.root)),
                         Command(title: "Open Privacy Settings…", action: .openPrivacySettings(category)),
                     ]
                 ))
@@ -462,7 +462,7 @@ struct SourcesActivityPresentation: Equatable {
         }
     }
 
-    /// Where a whole-pipeline run is, for the "Scan › Ingest › Embed › Distill" trail.
+    /// Where a whole-pipeline run is, for the "Scan › Read › Index › Glean" trail.
     var stage: MenuBarStatus.Stage? {
         switch kind {
         case .scanning: .scan
@@ -494,7 +494,7 @@ struct SourcesActivityPresentation: Equatable {
             kind: .embedding,
             symbol: "point.3.connected.trianglepath.dotted",
             tint: .blue,
-            title: "Embedding new chunks…",
+            title: "Indexing new chunks…",
             detail: "The Models page shows each model's progress.",
             currentItem: nil,
             error: nil,
@@ -527,7 +527,7 @@ struct SourcesActivityPresentation: Equatable {
             symbol: "clock",
             tint: .gray,
             title: "Waiting to scan \(names)\(more)",
-            detail: "Each source gets its own scan and ingest once the current run ends.",
+            detail: "Each source gets its own scan and read once the current run ends.",
             currentItem: nil,
             error: nil,
             progress: nil,
@@ -549,11 +549,11 @@ struct SourcesActivityPresentation: Equatable {
     ) -> SourcesActivityPresentation {
         var title: String
         if let subject {
-            title = "Ingesting \(subject)"
+            title = "Reading \(subject)"
         } else if let current, !current.isEmpty, current != "*" {
-            title = "Ingesting all sources · \(current)"
+            title = "Reading all sources · \(current)"
         } else {
-            title = "Ingesting all sources"
+            title = "Reading all sources"
         }
         if isCancelling { title = "Stopping…" }
         return SourcesActivityPresentation(

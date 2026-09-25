@@ -266,7 +266,10 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   `LookupError`/`ValueError`/`FileExistsError`/`PermissionError` onto gRPC status codes. Long jobs
   (`Backfill`, `EnrichFacts`) are server-streaming; cancelling the call stops the work at its next
   progress step. The server accepts requests up to 256 MiB (`MAX_REQUEST_BYTES`), since
-  `PersistDocument` carries a whole document's text and chunks.
+  `PersistDocument` carries a whole document's text and chunks. When `GARAGE_GRPC_TOKEN` is set (the
+  app sets a random one per launch, passed like `GARAGE_GRPC_PORT` and never logged or saved), every
+  call but `EnsureLlamaModel` must carry it as `x-garage-token` metadata or gets `UNAUTHENTICATED`
+  (`service/auth.py`; `GarageClient` and the app's `GarageGRPCAuth` send it).
 
 Two independent hashes drive idempotency: `source_sha256` (raw bytes — skip unopened) and
 `content_sha256` (extracted text — rebuild chunks when an extractor improves). One DB transaction

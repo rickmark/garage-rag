@@ -121,6 +121,7 @@ from garage_rag.proto.garage_pb2_grpc import (
     GarageServiceServicer,
     add_GarageServiceServicer_to_server,
 )
+from garage_rag.service.auth import METADATA_KEY, UNAUTHENTICATED_METHODS, token_from_env, token_matches
 
 if TYPE_CHECKING:
     from garage_rag.ingest.scanner import SourceScanResult
@@ -1392,6 +1393,44 @@ class GarageRpcServicer(GarageServiceServicer):
 MAX_REQUEST_BYTES = 256 * 1024 * 1024
 
 
+def _deny_unauthenticated(request: Any, context: grpc.ServicerContext) -> Any:
+    context.abort(grpc.StatusCode.UNAUTHENTICATED, f"missing or invalid {METADATA_KEY}")
+
+
+class TokenAuthInterceptor(grpc.ServerInterceptor):
+    """Rejects every call whose ``x-garage-token`` metadata is not the per-launch token.
+
+    Installed by :func:`create_grpc_server` when ``GARAGE_GRPC_TOKEN`` is set; see
+    :mod:`garage_rag.service.auth`.
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def _authorized(self, metadata: Any) -> bool:
+        for key, value in metadata or ():
+            if key == METADATA_KEY:
+                return token_matches(value, self._token)
+        return False
+
+    def intercept_service(self, continuation: Any, handler_call_details: grpc.HandlerCallDetails) -> Any:
+        method = (handler_call_details.method or "").rsplit("/", 1)[-1]
+        handler = continuation(handler_call_details)
+        if handler is None or method in UNAUTHENTICATED_METHODS:
+            return handler
+        if self._authorized(handler_call_details.invocation_metadata):
+            return handler
+        # Answer with the same cardinality as the real method, so the client sees
+        # UNAUTHENTICATED rather than a protocol error.
+        if handler.request_streaming and handler.response_streaming:
+            return grpc.stream_stream_rpc_method_handler(_deny_unauthenticated)
+        if handler.request_streaming:
+            return grpc.stream_unary_rpc_method_handler(_deny_unauthenticated)
+        if handler.response_streaming:
+            return grpc.unary_stream_rpc_method_handler(_deny_unauthenticated)
+        return grpc.unary_unary_rpc_method_handler(_deny_unauthenticated)
+
+
 def create_grpc_server(
     host: str = "127.0.0.1",
     port: int = 50051,
@@ -1403,9 +1442,14 @@ def create_grpc_server(
 
     When ``stop_event`` is given, setting it stops the server with ``stop_grace``
     seconds of grace; ``serve_grpc`` sets it from SIGINT/SIGTERM.
+
+    When ``GARAGE_GRPC_TOKEN`` is set, every call must carry it as ``x-garage-token``
+    metadata (the app sets a fresh one each launch); unset, the server takes any call.
     """
+    token = token_from_env()
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=max_workers),
+        interceptors=[TokenAuthInterceptor(token)] if token else None,
         # PersistDocument carries a document's whole text and every chunk; a
         # years-long Messages thread outgrows gRPC's 4 MiB default.
         options=[("grpc.max_receive_message_length", MAX_REQUEST_BYTES)],

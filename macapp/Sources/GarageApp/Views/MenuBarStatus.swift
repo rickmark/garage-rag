@@ -81,9 +81,9 @@ struct MenuBarStatus: Equatable {
         var title: String {
             switch self {
             case .scan: "Scan"
-            case .ingest: "Ingest"
-            case .embed: "Embed"
-            case .distill: "Distill"
+            case .ingest: "Read"
+            case .embed: "Index"
+            case .distill: "Glean"
             }
         }
     }
@@ -246,9 +246,9 @@ struct MenuBarStatus: Equatable {
     var allSystemsGoDetail: String {
         guard case .running(let clients) = mcp else { return "Database and MCP running" }
         switch clients {
-        case 0: return "Database and MCP running · no clients registered"
-        case 1: return "Database and MCP running · 1 client"
-        default: return "Database and MCP running · \(clients) clients"
+        case 0: return "Database and MCP running · no assistants connected"
+        case 1: return "Database and MCP running · 1 assistant connected"
+        default: return "Database and MCP running · \(clients) assistants connected"
         }
     }
 
@@ -267,7 +267,7 @@ struct MenuBarStatus: Equatable {
         case .failed(let message):
             return Summary(symbol: "exclamationmark", title: "Database failed to start", detail: Self.firstLine(message) ?? fix, tint: .red)
         case .needsMigration:
-            return Summary(symbol: "exclamationmark", title: "Database needs a migration", detail: "Open Status to apply it.", tint: .orange)
+            return Summary(symbol: "exclamationmark", title: "Database needs a schema update", detail: "Open Status to apply it.", tint: .orange)
         case .stopped:
             return Summary(symbol: "pause.fill", title: "Database stopped", detail: "Open Status to start it.", tint: .gray)
         case .starting:
@@ -345,16 +345,16 @@ struct MenuBarStatus: Equatable {
         case .stopped: return "Database stopped"
         case .starting: return "Starting…"
         case .stopping: return "Stopping…"
-        case .needsMigration: return "Migration needed"
+        case .needsMigration: return "Schema update needed"
         case .failed: return "Database failed"
         case .running: break
         }
         switch activity {
         case .idle: return "Ready"
         case .scanning: return "Scanning sources"
-        case .ingesting(let progress): return progress.source.isEmpty ? "Ingesting" : "Ingesting \(progress.source)"
-        case .embedding: return "Embedding chunks"
-        case .distilling: return "Distilling facts"
+        case .ingesting(let progress): return progress.source.isEmpty ? "Reading" : "Reading \(progress.source)"
+        case .embedding: return "Indexing chunks"
+        case .distilling: return "Gleaning facts"
         }
     }
 
@@ -399,7 +399,7 @@ struct MenuBarStatus: Equatable {
         case .starting: "Starting…"
         case .stopping: "Stopping…"
         case .running: "Running"
-        case .needsMigration: "Schema needs a migration"
+        case .needsMigration: "Schema update needed"
         case .failed(let message): message
         }
     }
@@ -421,9 +421,9 @@ struct MenuBarStatus: Equatable {
         case .starting:
             return "Starting…"
         case .running(let clients):
-            if clients == 0 { return "Serving · no clients registered" }
-            if clients == 1 { return "Serving · 1 client" }
-            return "Serving · \(clients) clients"
+            if clients == 0 { return "Serving · no assistants connected" }
+            if clients == 1 { return "Serving · 1 assistant connected" }
+            return "Serving · \(clients) assistants connected"
         case .stopping:
             return "Stopping…"
         case .failed(let message):

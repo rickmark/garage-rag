@@ -1,5 +1,6 @@
 load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 
 # Implementation library for GarageMCPServerService
 swift_library(
@@ -23,6 +24,7 @@ macos_xpc_service(
     ],
     bundle_id = "me.rickmark.garage-rag.mcp-server-xpc",
     bundle_name = "GarageMCPServerService",
+    codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
     entitlements = select({
         "//bazel:is_store": ":GarageMCPServerService.entitlements",
         "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",

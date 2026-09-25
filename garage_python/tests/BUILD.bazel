@@ -323,6 +323,7 @@ py_test(
         ":conftest",
         "//garage_python/src/garage_rag/attribute",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/enrich",
         "//garage_python/src/garage_rag/extract",
         "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/proto",

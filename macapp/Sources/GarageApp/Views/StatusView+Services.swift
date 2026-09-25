@@ -51,7 +51,7 @@ extension StatusView {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(appState.xpcServices.isTestingAll || isTestingGrpc)
-            .help("Run every helper's tests, and query the gRPC backend")
+            .help("Run every helper's tests, and query the Index Manager")
             .accessibilityIdentifier("status.services.testAll")
             Button("Restart All") {
                 Task { await appState.xpcServices.restartAll() }

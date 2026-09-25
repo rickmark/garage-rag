@@ -286,7 +286,7 @@ struct StatusHealth: Equatable {
 
         if let llamaError, !llamaError.isEmpty {
             list.append(Problem(
-                id: "llama", severity: .critical, title: "Llama can't be reached",
+                id: "llama", severity: .critical, title: "Built-in engine can't be reached",
                 detail: MenuBarStatus.firstLine(llamaError), detailIsError: true,
                 section: .models, fix: .refreshLlama
             ))
@@ -341,7 +341,7 @@ struct StatusHealth: Equatable {
 
 // MARK: - Indexing
 
-/// The Indexing box: what the pipeline is doing, or how much of the corpus is left to index,
+/// The Library box: what the pipeline is doing, or how much of the corpus is left to index,
 /// with one bar over ingest, embedding and distillation together.
 struct IndexingPresentation: Equatable {
     /// One ingest's progress, as the Sources page reports it.
@@ -528,29 +528,29 @@ struct IndexingPresentation: Equatable {
         return fractions.reduce(0, +) / Double(fractions.count)
     }
 
-    /// "24 documents to ingest · 880 embeddings to go · 300 documents to distill".
+    /// "24 documents to read · 880 chunks to index · 300 documents to glean".
     var remainingLine: String? {
         var parts: [String] = []
         if let n = remaining.documentsToIngest, n > 0 {
-            parts.append("\(n.formatted()) \(Self.plural("document", n)) to ingest")
+            parts.append("\(n.formatted()) \(Self.plural("document", n)) to read")
         }
         if let n = remaining.embeddingsToGo, n > 0 {
-            parts.append("\(n.formatted()) \(Self.plural("embedding", n)) to go")
+            parts.append("\(n.formatted()) \(Self.plural("chunk", n)) to index")
         }
         if let n = remaining.documentsToDistill, n > 0 {
-            parts.append("\(n.formatted()) \(Self.plural("document", n)) to distill")
+            parts.append("\(n.formatted()) \(Self.plural("document", n)) to glean")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// "1,234 documents in 3 sources · embedded under 2 models · facts distilled".
+    /// "1,234 documents in 3 sources · indexed with 2 models · facts gleaned".
     var corpusLine: String {
         var parts = ["\(stats.documentsCount.formatted()) \(Self.plural("document", stats.documentsCount)) in \(sourceCount.formatted()) \(Self.plural("source", sourceCount))"]
         if remaining.embeddingsToGo != nil {
-            parts.append("embedded under \(modelCount.formatted()) \(Self.plural("model", modelCount))")
+            parts.append("indexed with \(modelCount.formatted()) \(Self.plural("model", modelCount))")
         }
         if remaining.documentsToDistill != nil {
-            parts.append("facts distilled")
+            parts.append("facts gleaned")
         }
         return parts.joined(separator: " · ")
     }
@@ -589,9 +589,9 @@ struct IndexingPresentation: Equatable {
         case .ingesting(let ingest):
             let title: String
             if let subject = ingest.subject, !subject.isEmpty {
-                title = "Ingesting \(subject)"
+                title = "Reading \(subject)"
             } else {
-                title = "Ingesting all sources"
+                title = "Reading all sources"
             }
             let fraction: Double? = ingest.total > 0
                 ? min(1, max(0, Double(ingest.processed) / Double(ingest.total)))
@@ -612,7 +612,7 @@ struct IndexingPresentation: Equatable {
             let fraction: Double? = total > 0 ? min(1, Double(embedded) / Double(total)) : nil
             return Headline(
                 symbol: "point.3.connected.trianglepath.dotted", tint: .blue, isActive: true,
-                title: isStopping ? "Stopping…" : (model.map { "Embedding with \($0)" } ?? "Embedding new chunks"),
+                title: isStopping ? "Stopping…" : (model.map { "Indexing with \($0)" } ?? "Indexing new chunks"),
                 percent: fraction.map(MenuBarStatus.percent),
                 detail: total > 0 ? "\(embedded.formatted()) of \(total.formatted()) chunks" : "Vectors for every registered model.",
                 progress: fraction, isIndeterminate: fraction == nil, stage: .embed
@@ -633,7 +633,7 @@ struct IndexingPresentation: Equatable {
             return Headline(
                 symbol: "clock", tint: .gray, isActive: true,
                 title: "Waiting to scan \(names)\(more)",
-                detail: "Each source gets its own scan and ingest once the current run ends.",
+                detail: "Each source gets its own scan and read once the current run ends.",
                 isIndeterminate: true
             )
         case .idle:
@@ -643,7 +643,7 @@ struct IndexingPresentation: Equatable {
         guard databaseIsRunning else {
             return Headline(
                 symbol: "pause.fill", tint: .secondary, isActive: false,
-                title: "Database stopped", detail: "Indexing resumes once the database runs."
+                title: "Database stopped", detail: "Your library updates once the database runs."
             )
         }
         if sourceCount == 0 {
@@ -657,7 +657,7 @@ struct IndexingPresentation: Equatable {
             return Headline(
                 symbol: "tray", tint: .orange, isActive: false,
                 title: "Not indexed yet",
-                detail: error ?? "\(sourceCount.formatted()) \(Self.plural("source", sourceCount)) · Update Everything scans, ingests, embeds and distills them.",
+                detail: error ?? "\(sourceCount.formatted()) \(Self.plural("source", sourceCount)) · Update Everything scans, reads, indexes and gleans them.",
                 detailIsError: error != nil
             )
         }
@@ -710,11 +710,11 @@ struct IndexingPresentation: Equatable {
         if modelCount > 0 {
             let value = stats.totalChunks > 0 ? MenuBarStatus.percent(stats.embeddingProgressFraction) : "–"
             figures.append(Figure(
-                label: "Embedded", value: value,
+                label: "Indexed", value: value,
                 note: "\(modelCount.formatted()) \(Self.plural("model", modelCount))"
             ))
         } else {
-            figures.append(Figure(label: "Embedded", value: "–", note: "no model", noteIsWarning: true))
+            figures.append(Figure(label: "Indexed", value: "–", note: "no model", noteIsWarning: true))
         }
         if distillsFacts || stats.factsCount > 0 {
             let distilled = stats.documentsDistilledCount
@@ -796,7 +796,7 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         switch id {
         case "ingest-xpc": "Ingest"
         case "embed-xpc": "Embeddings"
-        case "llama-xpc": "Inference"
+        case "llama-xpc": "Built-in Engine"
         case "model-download-xpc": "Model Downloads"
         case "mcp-server-xpc": "MCP Server"
         case "garage-xpc": "Garage Backend"
@@ -808,7 +808,7 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         let state: State
         var detail: String
         var isError = false
-        let role = "runs every scan, ingest, embedding and distillation for the app"
+        let role = "runs every scan, read, index and glean for the app"
         switch status {
         case .running:
             state = .running

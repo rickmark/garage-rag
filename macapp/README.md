@@ -390,12 +390,19 @@ refuses that). The marketing version is `short_version_string` in
    access), and adds `sparkle:hardwareRequirements` `arm64` so Intel Macs are never offered
    it. The script verifies that entry against the archive and leaves `docs/appcast.xml`
    updated and the signed archive at `dist/Garage-<version>.zip`.
-4. Publish in this order, so the feed never names a download that is not there yet:
+4. Publish in this order, so the feed never names a download that is not there yet. The
+   site's download buttons (`docs/assets/download.js`) look for an asset named exactly
+   `GarageInstaller_arm64.pkg`, so copy the notarized installer to that name first:
 
    ```bash
-   gh release upload v1.5 dist/Garage-1.5.zip
+   cp bazel-bin/macapp/package/GarageInstaller.pkg dist/GarageInstaller_arm64.pkg
+   gh release create v1.5 --verify-tag --title "Garage 1.5" --notes-file path/to/notes.md \
+     dist/Garage-1.5.zip dist/GarageInstaller_arm64.pkg
    git add docs/appcast.xml && git commit -S -m "Add Garage 1.5 to the appcast" && git push
    ```
+
+   `--verify-tag` makes `gh` refuse to create the release unless the signed `v1.5` tag is
+   already pushed.
 
    Upload `dist/Garage-<version>.zip` under exactly that name: the entry's signature and
    length are of that file, and its URL is
@@ -451,7 +458,7 @@ four-page assistant instead of the sidebar UI:
    second section is not missed below a long embedding list. "Next" sends `RegisterModel` for each
    embedding model, sets `facts.model`/`facts.provider` for the distillation pick, and, if enabled,
    queues GGUF downloads through the model download XPC service.
-4. **Set up your agent** — MCP server status/port and the detected client configs (Claude Desktop,
+4. **Set up your assistant** — MCP server status/port and the detected client configs (Claude Desktop,
    Claude Code, Cursor, …); "Connect selected agents" registers Garage in each selected config.
 
 The flow lives in `Services/FirstRunCoordinator.swift` (state + the commands each page runs) and
@@ -490,17 +497,17 @@ with the Status page listing the missing sources and model under Health.
   a row of its own, then **Configuration** (Sources, Models, MCP Server), **Data** (Documents, Facts,
   Search) and **Advanced** (Database, Logs).
   - **Status** — Health (one "All systems go" row, or one row per problem with the button that
-    fixes it and the page it belongs to), Indexing (one bar over ingest, embedding and
-    distillation, Update Everything or Stop, the running stage's own progress and the
-    Scan › Ingest › Embed › Distill trail, then the corpus figures), Index Manager (the gRPC
+    fixes it and the page it belongs to), Library (one bar over reading, indexing and
+    gleaning, Update Everything or Stop, the running stage's own progress and the
+    Scan › Read › Index › Glean trail, then the corpus figures), Index Manager (the gRPC
     backend's state and job), Helper Services (one row per XPC helper with Test, Restart and a
     chevron to its status report, self tests, errors and crash report) and the helpers' log folded
     at the bottom as Service Output. The wording lives in `Views/StatusPagePresentation.swift` as
     plain values, tested in `StatusPagePresentationTests`.
   - **Sources** — an Attention module while something cannot be read (with the button that fixes it),
     an Activity module while the pipeline runs (with one Stop), then one row per source with Scan &
-    Ingest (Cancel while queued or running) and a ⋯ menu. **Update Everything** runs scan, ingest,
-    embed and glean facts as one run; **Scan & Ingest All** only scans and ingests, leaving embedding to the next
+    Ingest (Cancel while queued or running) and a ⋯ menu. **Update Everything** runs scan, read,
+    index and glean facts as one run; **Scan & Ingest All** only scans and ingests, leaving embedding to the next
     automatic update. Sources are added from
     location cards (the setup assistant's eight locations), **Add Folder…**, or **Custom Source…**,
     whose Name fills itself in from the folder. Automatic Updates is an optional persisted schedule

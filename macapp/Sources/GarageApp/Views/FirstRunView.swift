@@ -81,7 +81,7 @@ struct FirstRunView: View {
 
             Spacer()
 
-            Text("Garage keeps its index on this Mac and never sends it to the cloud. Agents you connect receive only the excerpts their searches return, and may send those to their own cloud model.")
+            Text("Garage keeps its index on this Mac and never sends it to the cloud. Assistants you connect receive only the excerpts their searches return, and may send those to their own cloud model.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -451,7 +451,7 @@ struct FirstRunSelectDataPage: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "lock.shield")
                         .foregroundStyle(.blue)
-                    Text("Messages and Mail are stored as communications: they are never sent to a cloud API, and macOS will ask for Full Disk Access before Garage can read them.")
+                    Text("Messages and Mail are stored as communications: they are never sent to a cloud API, and Garage can read them only after you turn on Full Disk Access for it in System Settings → Privacy & Security.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -473,7 +473,7 @@ struct FirstRunSelectDataPage: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Select Root Hard Drive…") {
+                    Button("Select Startup Disk…") {
                         appState.promptAndSelectRootVolume()
                         _ = appState.testVolumeAccess()
                     }
@@ -529,6 +529,7 @@ struct FirstRunSelectDataPage: View {
                     .font(.system(size: 16))
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                     .padding(.top, 1)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -581,6 +582,7 @@ struct FirstRunSelectDataPage: View {
         }
         .buttonStyle(.plain)
         .disabled(!template.isAvailable || coordinator.isWorking)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("firstRun.source.\(template.id)")
     }
 
@@ -666,7 +668,7 @@ struct FirstRunSelectModelsPage: View {
             .toggleStyle(.checkbox)
             .accessibilityIdentifier("firstRun.downloadModels")
 
-            Text("Downloads run in the background through the model download service and are verified against their published SHA-256. Watch progress on the Models page; embedding starts automatically once a model is on disk.")
+            Text("Downloads run in the background through the model download service and are verified against their published SHA-256. Watch progress on the Models page. Garage embeds after each ingest; if a download finishes later, use Embed All on the Models page.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -682,6 +684,7 @@ struct FirstRunSelectModelsPage: View {
                     .font(.system(size: 16))
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                     .padding(.top, 1)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -729,6 +732,7 @@ struct FirstRunSelectModelsPage: View {
         }
         .buttonStyle(.plain)
         .disabled(coordinator.isWorking)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("firstRun.model.\(preset.slug)")
     }
 }
@@ -750,8 +754,8 @@ struct FirstRunSetupAgentPage: View {
             serverCard
 
             FirstRunSectionTitle(
-                title: "Installed agents",
-                subtitle: "Garage looked for the configuration files of common MCP clients. Select the ones to connect; each gets a \"garage-rag\" server entry pointing at the endpoint above."
+                title: "Installed assistants",
+                subtitle: "Garage looked for the configuration files of common assistants. Select the ones to connect; each gets a \"garage-rag\" server entry pointing at the endpoint above."
             )
 
             VStack(spacing: 8) {
@@ -764,7 +768,7 @@ struct FirstRunSetupAgentPage: View {
                 Button {
                     Task { await coordinator.registerSelectedClients() }
                 } label: {
-                    Label("Connect selected agents", systemImage: "link")
+                    Label("Connect selected assistants", systemImage: "link")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(coordinator.isWorking || coordinator.selectedClientIDs.isEmpty)
@@ -791,7 +795,7 @@ struct FirstRunSetupAgentPage: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
-            Text("A connected agent receives the excerpts its searches return — only those, not your whole index — and may send them to its own cloud model, including excerpts from Messages and Mail if you index them. What happens to them then is up to that agent's privacy terms, not Garage's.")
+            Text("A connected assistant receives the excerpts its searches return — only those, not your whole index — and may send them to its own cloud model, including excerpts from Messages and Mail if you index them. What happens to them then is up to that assistant's privacy terms, not Garage's.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -889,6 +893,7 @@ struct FirstRunSetupAgentPage: View {
                     .font(.system(size: 16))
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                     .padding(.top, 1)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -926,6 +931,7 @@ struct FirstRunSetupAgentPage: View {
         }
         .buttonStyle(.plain)
         .disabled(coordinator.isWorking)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("firstRun.client.\(client.id)")
     }
 

@@ -141,7 +141,7 @@ final class SourcesPresentationTests: XCTestCase {
             message: "", isCancelling: false
         )
         let row = SourceRowPresentation.make(source: source(), access: nil, activity: .ingesting(snapshot), lastRun: nil)
-        XCTAssertEqual(row.status, "Ingesting 42%")
+        XCTAssertEqual(row.status, "Reading 42%")
         XCTAssertEqual(row.statusTone, .active)
         XCTAssertEqual(row.progress, 0.42)
         XCTAssertFalse(row.isIndeterminate)
@@ -316,7 +316,7 @@ final class SourcesPresentationTests: XCTestCase {
             subject: "notes", current: "notes", fraction: 0.42, hasTotal: true, percent: "42%",
             counts: "1,204 of 2,860 documents · 1,180 indexed", currentItem: "~/Notes/a.md", isCancelling: false
         )
-        XCTAssertEqual(one.title, "Ingesting notes")
+        XCTAssertEqual(one.title, "Reading notes")
         XCTAssertEqual(one.percent, "42%")
         XCTAssertEqual(one.progress, 0.42)
         XCTAssertEqual(one.currentItem, "~/Notes/a.md")
@@ -325,7 +325,7 @@ final class SourcesPresentationTests: XCTestCase {
             subject: nil, current: "mail", fraction: 0.1, hasTotal: false, percent: "10%",
             counts: "12 messages · 12 indexed", currentItem: "", isCancelling: false
         )
-        XCTAssertEqual(all.title, "Ingesting all sources · mail")
+        XCTAssertEqual(all.title, "Reading all sources · mail")
         XCTAssertNil(all.percent, "no percentage without a total")
         XCTAssertTrue(all.isIndeterminate)
         XCTAssertNil(all.currentItem)

@@ -90,7 +90,7 @@ final class MenuBarStatusTests: XCTestCase {
     func testIngestHeadlineNamesTheSourceAndThePercentageComesFromTheCounts() {
         let progress = MenuBarStatus.IngestProgress(source: "notes", processed: 424, total: 1000, itemType: "documents", reportedFraction: 0.1)
         let status = MenuBarStatus(database: .running, activity: .ingesting(progress))
-        XCTAssertEqual(status.headline, "Ingesting notes")
+        XCTAssertEqual(status.headline, "Reading notes")
         XCTAssertEqual(status.ingestFraction, 0.424)
         XCTAssertEqual(status.activityDetail, "424 of 1,000 documents")
         XCTAssertEqual(status.stage, .ingest)
@@ -99,7 +99,7 @@ final class MenuBarStatusTests: XCTestCase {
     func testIngestFallsBackToTheReportedFractionUntilTheScanHasSizedTheRun() {
         let progress = MenuBarStatus.IngestProgress(source: "", processed: 12, total: 0, reportedFraction: 0.3)
         let status = MenuBarStatus(database: .running, activity: .ingesting(progress))
-        XCTAssertEqual(status.headline, "Ingesting")
+        XCTAssertEqual(status.headline, "Reading")
         XCTAssertEqual(status.ingestFraction, 0.3)
         XCTAssertEqual(status.activityDetail, "12 documents")
     }
@@ -153,9 +153,9 @@ final class MenuBarStatusTests: XCTestCase {
     }
 
     func testMCPDetailCountsRegisteredClients() {
-        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 0)).mcpDetail, "Serving · no clients registered")
-        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 1)).mcpDetail, "Serving · 1 client")
-        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 2)).mcpDetail, "Serving · 2 clients")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 0)).mcpDetail, "Serving · no assistants connected")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 1)).mcpDetail, "Serving · 1 assistant connected")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 2)).mcpDetail, "Serving · 2 assistants connected")
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .stopped).mcpDetail, "Not running")
         XCTAssertEqual(MenuBarStatus(database: .stopped, mcp: .stopped).mcpDetail, "Waits for the database")
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .failed("boom")).mcpDetail, "boom")
@@ -163,7 +163,7 @@ final class MenuBarStatusTests: XCTestCase {
 
     func testDatabaseDetailCarriesTheFailureMessage() {
         XCTAssertEqual(MenuBarStatus(database: .failed("port in use")).databaseDetail, "port in use")
-        XCTAssertEqual(MenuBarStatus(database: .needsMigration).databaseDetail, "Schema needs a migration")
+        XCTAssertEqual(MenuBarStatus(database: .needsMigration).databaseDetail, "Schema update needed")
     }
 
     // MARK: - Formatting
@@ -210,9 +210,9 @@ final class MenuBarStatusTests: XCTestCase {
     func testDatabaseAndServingMCPFoldIntoAllSystemsGo() {
         let status = MenuBarStatus(database: .running, mcp: .running(clients: 2))
         XCTAssertTrue(status.allSystemsGo)
-        XCTAssertEqual(status.allSystemsGoDetail, "Database and MCP running · 2 clients")
-        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 1)).allSystemsGoDetail, "Database and MCP running · 1 client")
-        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 0)).allSystemsGoDetail, "Database and MCP running · no clients registered")
+        XCTAssertEqual(status.allSystemsGoDetail, "Database and MCP running · 2 assistants connected")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 1)).allSystemsGoDetail, "Database and MCP running · 1 assistant connected")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 0)).allSystemsGoDetail, "Database and MCP running · no assistants connected")
     }
 
     func testAnyServiceNotFineSpellsTheRowsOutAgain() {
@@ -234,7 +234,7 @@ final class MenuBarStatusTests: XCTestCase {
     func testSummaryIsAllSystemsGoWhenEverythingRuns() {
         let summary = MenuBarStatus(database: .running, mcp: .running(clients: 2)).summary
         XCTAssertEqual(summary.title, "All systems go")
-        XCTAssertEqual(summary.detail, "Database and MCP running · 2 clients")
+        XCTAssertEqual(summary.detail, "Database and MCP running · 2 assistants connected")
         XCTAssertEqual(summary.tint, .green)
     }
 
@@ -245,7 +245,7 @@ final class MenuBarStatusTests: XCTestCase {
         XCTAssertEqual(failed.detail, "port 14824 already in use")
         XCTAssertEqual(failed.tint, .red)
 
-        XCTAssertEqual(MenuBarStatus(database: .needsMigration).summary.title, "Database needs a migration")
+        XCTAssertEqual(MenuBarStatus(database: .needsMigration).summary.title, "Database needs a schema update")
         XCTAssertEqual(MenuBarStatus(database: .stopped).summary.title, "Database stopped")
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .failed("")).summary.detail, "Open Status to fix it.")
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .stopped).summary.title, "MCP server not running")

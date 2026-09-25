@@ -602,8 +602,13 @@ final class AppState: ObservableObject {
     /// The setup assistant runs it from its first page after a reset, or in the background
     /// when the user skips the assistant before that page gets this far.
     func finishDatabaseReset() async {
+        // "Skip setup" can land here while the assistant's first start is still initializing the
+        // cluster or applying the schema: wait for that to finish rather than calling the reset failed.
+        await waitForPostgresToSettle()
         do {
             if postgres.status == .needsMigration {
+                isApplyingMigrations = true
+                defer { isApplyingMigrations = false }
                 try await postgres.applyMigrations()
             }
             guard postgres.status == .running else {
@@ -627,6 +632,15 @@ final class AppState: ObservableObject {
         databaseResetOutcome = (lastCommandSucceeded == true, lastCommandOutput)
     }
 
+    /// Polls, as the setup assistant's readiness loop does, until Postgres is no longer starting and
+    /// no migration run is in flight, for at most `timeout` seconds.
+    private func waitForPostgresToSettle(timeout: TimeInterval = 150) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !Task.isCancelled, postgres.status == .starting || isApplyingMigrations, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
     nonisolated static func databaseResetMessage(registeredSourceCount: Int) -> String {
         let sources = switch registeredSourceCount {
         case 0: "garage.json declares no sources, so none are registered; add them on the Sources page."
@@ -638,6 +652,8 @@ final class AppState: ObservableObject {
     }
 
     func applyMigrations() async {
+        // One run at a time: startPostgres, the setup assistant and the Database page can each ask.
+        guard !isApplyingMigrations else { return }
         guard postgres.status == .running || postgres.status == .needsMigration else { return }
         isApplyingMigrations = true
         defer { isApplyingMigrations = false }
@@ -1108,17 +1124,17 @@ final class AppState: ObservableObject {
         case "Embedding", "Backfill", "Embed":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
-        case "Enrich Facts", "garage enrich-facts":
+        case "Glean Facts", "Enrich Facts", "garage enrich-facts":
             enrichFacts.clearLogs()
         case "Scan", "garage scan":
             scanner.clearLogs()
         case "MCP Server":
             mcp.clearLogs()
             osLogStreamService.clearLogs(for: .mcp)
-        case "gRPC Server":
+        case "Index Manager", "gRPC Server":
             grpc.clearLogs()
             osLogStreamService.clearLogs(for: .grpc)
-        case "Llama Service", "Llama XPC", "LLaMa":
+        case "Built-in Engine", "Llama Service", "Llama XPC", "LLaMa":
             llama.clearLogs()
             osLogStreamService.clearLogs(for: .llama)
         case "Model Downloader", "Model Download XPC", "Downloader":

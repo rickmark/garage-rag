@@ -1,5 +1,6 @@
 load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 
 # Implementation library for GarageEmbedXPCService
 swift_library(
@@ -24,6 +25,7 @@ macos_xpc_service(
     ],
     bundle_id = "me.rickmark.garage-rag.embed-xpc",
     bundle_name = "GarageEmbedXPCService",
+    codesignopts = HARDENED_RUNTIME_CODESIGNOPTS,
     entitlements = select({
         "//bazel:is_store": ":GarageEmbedXPCService.entitlements",
         "//bazel:is_developer_id": "//macapp/externals:GarageAppGroup.entitlements",

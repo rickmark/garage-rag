@@ -17,8 +17,8 @@ extension GarageGRPCService {
         if status != .running {
             try await start()
         }
-        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
-        var options = CallOptions()
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
+        var options = GarageGRPCAuth.callOptions()
         if let timeout {
             options.timeLimit = .timeout(timeout)
         }

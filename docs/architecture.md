@@ -316,6 +316,18 @@ The server accepts requests up to 256 MiB, since `PersistDocument` carries a
 document's whole text and chunks and a long Messages thread outgrows gRPC's
 4 MiB default.
 
+When `GARAGE_GRPC_TOKEN` is set, the server rejects with `UNAUTHENTICATED` any
+call whose `x-garage-token` metadata is not that token (`service/auth.py`,
+compared in constant time). The app makes a random 32-byte token each launch,
+hands it to `GarageXPCService` and the ingest worker through their XPC
+configuration (never `garage.json`, never a log), and sends it on every call;
+`GarageClient` sends it whenever the variable is set. `EnsureLlamaModel` is the
+one exception, since a stdio `garage-mcp` an MCP client spawned has no token.
+Without the variable (`garage serve` by hand, the tests) the server takes any
+call. This keeps other local processes from driving `SetSetting`, `McpInstall`
+and the rest until the app reaches the server over XPC, with code-signing
+checks and no socket.
+
 ## Local inference client
 
 `garage_rag/inference/` is the one HTTP client for the three local inference

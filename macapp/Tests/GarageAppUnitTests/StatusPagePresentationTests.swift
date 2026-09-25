@@ -11,7 +11,7 @@ final class StatusPagePresentationTests: XCTestCase {
         let health = StatusHealth(database: .running, mcp: .running(clients: 2), sourceCount: 1, embeddingModelCount: 1)
         XCTAssertTrue(health.isHealthy)
         XCTAssertEqual(health.summary.title, "All systems go")
-        XCTAssertEqual(health.summary.detail, "Database and MCP running · 2 clients")
+        XCTAssertEqual(health.summary.detail, "Database and MCP running · 2 assistants connected")
     }
 
     func testStartingServicesAreNotAProblem() {
@@ -134,7 +134,7 @@ final class StatusPagePresentationTests: XCTestCase {
     func testSourcesNeverScannedAreNotIndexedYet() {
         let indexing = IndexingPresentation(stats: CorpusStats(sourcesCount: 2), sourceCount: 2, modelCount: 1, distillsFacts: false)
         XCTAssertEqual(indexing.headline.title, "Not indexed yet")
-        XCTAssertEqual(indexing.headline.detail, "2 sources · Update Everything scans, ingests, embeds and distills them.")
+        XCTAssertEqual(indexing.headline.detail, "2 sources · Update Everything scans, reads, indexes and gleans them.")
         XCTAssertEqual(indexing.action, .updateEverything(enabled: true))
     }
 
@@ -144,7 +144,7 @@ final class StatusPagePresentationTests: XCTestCase {
             sourceCount: 3, modelCount: 2, distillsFacts: true
         )
         XCTAssertEqual(indexing.headline.title, "Up to date")
-        XCTAssertEqual(indexing.headline.detail, "1,234 documents in 3 sources · embedded under 2 models · facts distilled")
+        XCTAssertEqual(indexing.headline.detail, "1,234 documents in 3 sources · indexed with 2 models · facts gleaned")
         XCTAssertEqual(indexing.headline.tint, .green)
         XCTAssertNil(indexing.headline.progress)
         XCTAssertEqual(indexing.fraction, 1)
@@ -165,7 +165,7 @@ final class StatusPagePresentationTests: XCTestCase {
         )
         XCTAssertEqual(indexing.remaining, IndexingPresentation.Remaining(documentsToIngest: 24, embeddingsToGo: 880, documentsToDistill: 300))
         XCTAssertEqual(indexing.headline.title, "1,204 items to index")
-        XCTAssertEqual(indexing.headline.detail, "24 documents to ingest · 880 embeddings to go · 300 documents to distill")
+        XCTAssertEqual(indexing.headline.detail, "24 documents to read · 880 chunks to index · 300 documents to glean")
         XCTAssertEqual(indexing.headline.tint, .orange)
         let expected = (1180.0 / 1204.0 + 9_120.0 / 10_000.0 + 880.0 / 1180.0) / 3
         XCTAssertEqual(try XCTUnwrap(indexing.headline.progress), expected, accuracy: 0.0001)
@@ -176,7 +176,7 @@ final class StatusPagePresentationTests: XCTestCase {
     func testOneEmbeddingToGoIsSingular() {
         let indexing = IndexingPresentation(stats: stats(documents: 1, expected: 1, chunks: 1, embedded: [0]), sourceCount: 1, modelCount: 1, distillsFacts: false)
         XCTAssertEqual(indexing.headline.title, "1 item to index")
-        XCTAssertEqual(indexing.headline.detail, "1 embedding to go")
+        XCTAssertEqual(indexing.headline.detail, "1 chunk to index")
     }
 
     func testTheLastRunsErrorReplacesTheLine() {
@@ -210,20 +210,20 @@ final class StatusPagePresentationTests: XCTestCase {
             stats: base, sourceCount: 1, modelCount: 1, distillsFacts: true,
             activity: .ingesting(.init(subject: "notes", processed: 1204, total: 2860, indexed: 1180, skipped: 24, currentItem: "/Users/rick/Notes/retro.md"))
         )
-        XCTAssertEqual(ingesting.headline.title, "Ingesting notes")
+        XCTAssertEqual(ingesting.headline.title, "Reading notes")
         XCTAssertEqual(ingesting.headline.percent, "42%")
         XCTAssertEqual(ingesting.headline.detail, "1,204 of 2,860 documents · 1,180 indexed · 24 skipped")
         XCTAssertEqual(ingesting.headline.stage, .ingest)
         XCTAssertEqual(try XCTUnwrap(ingesting.headline.progress), 1204.0 / 2860.0, accuracy: 0.0001)
 
         let embedding = IndexingPresentation(stats: base, sourceCount: 1, modelCount: 1, distillsFacts: true, activity: .embedding(model: "bge-m3", embedded: 9120, total: 10_000))
-        XCTAssertEqual(embedding.headline.title, "Embedding with bge-m3")
+        XCTAssertEqual(embedding.headline.title, "Indexing with bge-m3")
         XCTAssertEqual(embedding.headline.percent, "91%")
         XCTAssertEqual(embedding.headline.detail, "9,120 of 10,000 chunks")
         XCTAssertEqual(embedding.headline.stage, .embed)
 
         let unsized = IndexingPresentation(stats: base, sourceCount: 1, modelCount: 1, distillsFacts: true, activity: .embedding(model: nil, embedded: 0, total: 0))
-        XCTAssertEqual(unsized.headline.title, "Embedding new chunks")
+        XCTAssertEqual(unsized.headline.title, "Indexing new chunks")
         XCTAssertTrue(unsized.headline.isIndeterminate)
 
         let distilling = IndexingPresentation(stats: base, sourceCount: 1, modelCount: 1, distillsFacts: true, activity: .distilling(index: 30, total: 1000, document: "file:///Users/rick/Notes/a.md"))
@@ -244,7 +244,7 @@ final class StatusPagePresentationTests: XCTestCase {
             sourceCount: 3, modelCount: 2, distillsFacts: true
         )
         let figures = indexing.figures
-        XCTAssertEqual(figures.map(\.label), ["Sources", "Documents", "Chunks", "Embedded", "Facts"])
+        XCTAssertEqual(figures.map(\.label), ["Sources", "Documents", "Chunks", "Indexed", "Facts"])
         XCTAssertEqual(figures[0].value, "3")
         XCTAssertEqual(figures[1].value, "1,234")
         XCTAssertEqual(figures[1].note, "12 failed")
@@ -256,7 +256,7 @@ final class StatusPagePresentationTests: XCTestCase {
         XCTAssertEqual(figures[4].note, "from 1,200 documents")
 
         let noModel = IndexingPresentation(stats: stats(documents: 2, expected: 2), sourceCount: 1, modelCount: 0, distillsFacts: false)
-        XCTAssertEqual(noModel.figures.map(\.label), ["Sources", "Documents", "Chunks", "Embedded"])
+        XCTAssertEqual(noModel.figures.map(\.label), ["Sources", "Documents", "Chunks", "Indexed"])
         XCTAssertEqual(noModel.figures[3].value, "–")
         XCTAssertEqual(noModel.figures[3].note, "no model")
     }
@@ -320,7 +320,7 @@ final class StatusPagePresentationTests: XCTestCase {
 
         let unreachable = XPCServiceInfo(id: "llama-xpc", name: "", bundleId: "", serviceDescription: "", state: .unreachable(error: "Couldn't communicate with a helper application.\ndetails"))
         let down = ServiceRowPresentation.xpc(unreachable, report: nil, test: nil)
-        XCTAssertEqual(down.name, "Inference")
+        XCTAssertEqual(down.name, "Built-in Engine")
         XCTAssertEqual(down.state, .unreachable)
         XCTAssertEqual(down.detail, "Can't be reached: Couldn't communicate with a helper application.")
         XCTAssertEqual(down.tint, .red)
@@ -453,7 +453,7 @@ final class StatusPagePresentationTests: XCTestCase {
             stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false,
             activity: .ingesting(.init(subject: nil, processed: 40, total: 0, reportedFraction: 0.25))
         )
-        XCTAssertEqual(sized.headline.title, "Ingesting all sources")
+        XCTAssertEqual(sized.headline.title, "Reading all sources")
         XCTAssertEqual(try XCTUnwrap(sized.headline.progress), 0.25, accuracy: 0.0001)
         XCTAssertEqual(sized.headline.percent, "25%")
         XCTAssertFalse(sized.headline.isIndeterminate)
@@ -462,7 +462,7 @@ final class StatusPagePresentationTests: XCTestCase {
             stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false,
             activity: .ingesting(.init(subject: "", processed: 40, total: 0))
         )
-        XCTAssertEqual(unsized.headline.title, "Ingesting all sources", "an empty subject is not a source name")
+        XCTAssertEqual(unsized.headline.title, "Reading all sources", "an empty subject is not a source name")
         XCTAssertNil(unsized.headline.progress)
         XCTAssertNil(unsized.headline.percent)
         XCTAssertTrue(unsized.headline.isIndeterminate)
@@ -508,7 +508,7 @@ final class StatusPagePresentationTests: XCTestCase {
             stats: stats(documents: 1, expected: 1, chunks: 3, embedded: [3], distilled: 1, facts: 2),
             sourceCount: 1, modelCount: 1, distillsFacts: true
         )
-        XCTAssertEqual(indexing.corpusLine, "1 document in 1 source · embedded under 1 model · facts distilled")
+        XCTAssertEqual(indexing.corpusLine, "1 document in 1 source · indexed with 1 model · facts gleaned")
     }
 
     func testAStoppedDatabaseWithoutSourcesOffersNothingToRun() {
@@ -523,7 +523,7 @@ final class StatusPagePresentationTests: XCTestCase {
             sourceCount: 1, modelCount: 1, distillsFacts: false
         )
         let figures = indexing.figures
-        XCTAssertEqual(figures.map(\.label), ["Sources", "Documents", "Chunks", "Embedded", "Facts"])
+        XCTAssertEqual(figures.map(\.label), ["Sources", "Documents", "Chunks", "Indexed", "Facts"])
         XCTAssertEqual(figures[3].value, "–", "a model with no chunks yet has no percentage")
         XCTAssertEqual(figures[3].note, "1 model")
         XCTAssertEqual(figures[4].value, "9")
@@ -542,7 +542,7 @@ final class StatusPagePresentationTests: XCTestCase {
     func testEachServiceIdHasItsShortName() {
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "ingest-xpc"), "Ingest")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "embed-xpc"), "Embeddings")
-        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "llama-xpc"), "Inference")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "llama-xpc"), "Built-in Engine")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "model-download-xpc"), "Model Downloads")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "mcp-server-xpc"), "MCP Server")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "garage-xpc"), "Garage Backend")

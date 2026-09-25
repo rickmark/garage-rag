@@ -93,8 +93,8 @@ sqlite3: unable to open database ~/Library/Messages/chat.db: authorization denie
 
 **Solution**:
 1. Open **System Settings → Privacy & Security → Full Disk Access**.
-2. Click the lock/add icon and ensure both **GarageApp** and your terminal emulator (e.g. **Terminal**, **iTerm2**, or **Ghostty**) are added with toggle enabled.
-3. If permissions were changed while the app was running, quit and re-launch `GarageApp`.
+2. Click the lock/add icon and ensure both **Garage** and your terminal emulator (e.g. **Terminal**, **iTerm2**, or **Ghostty**) are added with toggle enabled.
+3. If permissions were changed while the app was running, quit and re-launch Garage.
 
 ---
 
@@ -178,14 +178,14 @@ Setting `"materialize": false` means online-only placeholders are never download
 
 <h2 id="inspecting-logs">6. Inspecting Diagnostic Logs</h2>
 
-When diagnosing issues, the **Logs** page shows every log live: Postgres, App, Ingest, Embed, MCP Server, gRPC Server, LLaMa (the built-in engine) and Downloader. Postgres's output is also at the bottom of the **Database** page.
+When diagnosing issues, the **Logs** page shows every log live: Unified Log, Postgres, App, Ingest, Embed, MCP Server, Index Manager, Built-in Engine and Downloader. Postgres's output is also at the bottom of the **Database** page.
 
 The helper services also write log files, in `~/Library/Logs/Garage/` for the direct-download (Developer ID) build:
 
 - **Ingestion**: `ingest-xpc.log`
 - **Embedding**: `embed-xpc.log`
 - **MCP Server**: `mcp-server-xpc.log`
-- **gRPC Server** (search, backfill, facts): `garage-xpc.log`
+- **Index Manager** (search, embedding, facts): `garage-xpc.log`
 - **Built-in model engine**: `llama-xpc.log`
 - **Model downloads**: `model-download-xpc.log`
 

@@ -50,6 +50,8 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 <h3 id="native-macos-application">Native macOS Application (<code>GarageApp</code>)</h3>
 
+Download the signed and notarized installer from the [download page]({{ '/#download' | relative_url }}). It updates itself through **Check for Updates…** after asking you once.
+
 `GarageApp` provides a menu bar utility and management window that bundles an embedded, relocatable instance of PostgreSQL 18 with `pgvector`:
 
 1. **Launch GarageApp**: The app initializes its private database in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
@@ -62,16 +64,16 @@ The sidebar starts with **Status**, followed by three groups:
 
 - **Status** — the page to check first.
   - **Health** reads "All systems go", or lists each problem (the database stopped or needing a schema update, the MCP server down, missing disk access, a source that can't be read, no sources or embedding model yet) with the button that fixes it and a link to its page.
-  - **Indexing** shows how much of your library is indexed, embedded and distilled, with **Update Everything** or **Stop**; while the pipeline runs it shows the current stage and the Scan › Ingest › Embed › Distill trail. Below it are the source, document, chunk, embedded and fact figures.
-  - **Index Manager** shows the background service that runs search and indexing jobs, and what it is doing. **Helper Services** lists every helper process (Inference is the built-in model engine) with **Test**, **Restart** and a chevron for its status report, self tests and crash report. **Service Output**, folded at the bottom, holds their log.
+  - **Library** shows how much of your library is read, indexed and gleaned for facts, with **Update Everything** or **Stop**; while it updates it shows the current stage and the Scan › Read › Index › Glean trail. Below it are the source, document, chunk, indexed and fact figures.
+  - **Index Manager** shows the background service that runs search and indexing jobs, and what it is doing. **Helper Services** lists every helper process (Built-in Engine runs the models Garage hosts itself) with **Test**, **Restart** and a chevron for its status report, self tests and crash report. **Service Output**, folded at the bottom, holds their log.
 - **Configuration**
   - **Sources** — one row per source with its state ("24 items to go", "Up to date", "Needs permission to read this folder") and **Scan & Ingest**, which turns into **Cancel** while the source is queued or running. Anything that cannot be read is listed at the top with the button that fixes it. New sources come from location cards, **Add Folder…** or **Custom Source…**.
-  - **Models** — three tabs. **Overall** says whether search is ready and which distillation model is set. **Embedding** lists your embedding models and the presets you can add. **Distillation** picks the fact model and edits the fact prompts. The Providers box lists the models the built-in engine has loaded, each with **Unload**.
+  - **Models** — three tabs. **Overall** says whether search is ready and which distillation model is set. **Embedding** lists your embedding models and the presets you can add. **Distillation** picks the fact model and edits the fact prompts. The Providers box's **Built-in engine** row lists the models the built-in engine has loaded, each with **Unload**.
   - **MCP Server** — whether the local server is up, the assistants connected to it (**Connect**, **Update**, **Disconnect**), and **Try It** to call the tools the way an assistant does.
 - **Data** — **Documents**, **Facts** and **Search** browse and query what has been indexed.
 - **Advanced**
   - **Database** — Postgres status (Start, Restart, Stop), the connection URL, schema updates, corpus counts and size on disk, backups and reset.
-  - **Logs** — live logs from Postgres, ingest, embedding, the MCP and gRPC servers, the built-in engine and the downloader, with **Report a Bug**.
+  - **Logs** — live logs, one tab each: Unified Log, Postgres, App, Ingest, Embed, MCP Server, Index Manager, Built-in Engine and Downloader, with **Report a Bug**.
 
 <h3 id="command-line-interface">Command Line Interface (<code>garage</code>)</h3>
 
@@ -212,7 +214,7 @@ garage mcp-install --target claude-code-user
 
 <div class="callout callout-info">
   <div class="callout-title">🔒 Security Notice</div>
-  <p>The HTTP MCP server strictly binds to <code>127.0.0.1</code> with built-in DNS-rebinding protection and host validation. It will refuse remote bindings to protect your personal data.</p>
+  <p>By default the HTTP MCP server binds only to <code>127.0.0.1</code> and refuses remote clients, with DNS-rebinding protection and Host validation. Serving other computers takes an explicit opt-in for power users, <code>--allow-remote</code>; then add <code>--allow-host</code> for each name clients use, since with no <code>--allow-host</code> the Host check is off.</p>
 </div>
 
 ---
@@ -225,9 +227,9 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
 
 1. Open **System Settings** on your Mac.
 2. Navigate to **Privacy & Security → Full Disk Access**.
-3. Click the **+** button and add **GarageApp** (or your **Terminal** app if running via CLI).
+3. Click the **+** button and add **Garage** (or your **Terminal** app if running via CLI).
 4. Toggle the switch to **On**.
-5. Restart `GarageApp` or run `garage ingest` again.
+5. Restart Garage or run `garage ingest` again.
 
 The Sources page lists a source it cannot read at the top, with a button to grant access.
 
