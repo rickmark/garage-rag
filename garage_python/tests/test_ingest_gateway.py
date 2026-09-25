@@ -1266,3 +1266,72 @@ def test_persist_document_larger_than_grpcs_default_limit_is_accepted(grpc_serve
         response = GarageServiceStub(channel).PersistDocument(request)
     assert response.success
     assert server_side.replace_document.call_args.kwargs["content"] == content
+
+
+def _replace_over(existing: list) -> dict[type, MagicMock]:
+    """Re-ingest one document whose stored chunks are ``existing``; return each queried model's mock."""
+    source = MagicMock(spec=Source)
+    source.id = 1
+    source.default_class = CorpusClass.DOCUMENT
+    source.default_trust = TrustTier.AUTHORED
+    doc = MagicMock()
+    doc.id = 9
+    by_entity = {Source: source, Document: doc}
+    queries: dict[type, MagicMock] = {}
+
+    def query(entity, *rest):
+        q = queries.setdefault(entity, MagicMock())
+        q.filter_by.return_value.one_or_none.return_value = by_entity.get(entity)
+        q.filter.return_value.all.return_value = existing
+        return q
+
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.query.side_effect = query
+    SqlAlchemyIngestStorageGateway(session_factory=lambda: session).replace_document(
+        run_id=0,
+        source_slug="notes",
+        uri="note.md",
+        title="Note",
+        lang="en",
+        byte_size=100,
+        mtime=1700000000.0,
+        source_sha256="aa",
+        content_sha256="bb",
+        extractor="text",
+        extractor_version="1",
+        chunker="markdown",
+        content="One.",
+        meta={},
+        corpus_class="document",
+        trust_tier="authored",
+        authors=[],
+        chunks=[ChunkPayload(ord=0, text="One.", chunk_sha256="aa")],
+    )
+    return queries
+
+
+def test_force_reingest_that_drops_fact_chunks_clears_the_document_fact_runs():
+    """Re-index Everything keeps the text but drops the fact chunks; the document's fact_runs go with
+    them, so a stale-only Glean Facts extracts it again instead of counting it as current."""
+    from garage_rag.db.models import FactRun
+    from garage_rag.enrich.facts import default_prompt, is_stale
+
+    queries = _replace_over(
+        [_chunk_row(301, 0, "One.", b"\xaa"), _chunk_row(302, 1, "A fact.", b"\x04", chunker="facts:x", fact_id=5)]
+    )
+
+    fact_runs = queries[FactRun]
+    fact_runs.filter.return_value.delete.assert_called_once_with(synchronize_session=False)
+    (criterion,) = fact_runs.filter.call_args.args
+    assert str(criterion.compile(compile_kwargs={"literal_binds": True})) == "fact_runs.document_id = 9"
+    # With its run gone, the document reads as stale whatever its content hash.
+    assert is_stale(None, MagicMock(spec=Document, content_sha256=b"\xbb"), default_prompt(), "m")
+
+
+def test_reingest_without_fact_chunks_keeps_the_fact_runs():
+    from garage_rag.db.models import FactRun
+
+    queries = _replace_over([_chunk_row(311, 0, "Old one.", b"\x01")])
+
+    assert FactRun not in queries
