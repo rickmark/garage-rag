@@ -277,7 +277,6 @@ private struct FirstRunBadge: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
             // A badge is one token: never wrap it ("ADD ED") when its row runs short.
             .lineLimit(1)
-            .fixedSize()
     }
 }
 
@@ -554,6 +553,7 @@ struct FirstRunSelectDataPage: View {
                                 FirstRunBadge(text: "ADDED", tint: .green)
                             }
                         }
+                        .fixedSize()
                     }
                     Text(template.subtitle)
                         .font(.caption)
