@@ -680,9 +680,9 @@ struct IndexingPresentation: Equatable {
         )
     }
 
-    /// The stages the trail under the bar shows: Distill only while the run includes it.
+    /// The stages the trail under the bar shows: all four, as the menu bar does.
     var stageTrail: [MenuBarStatus.Stage] {
-        headline.stage == .distill ? MenuBarStatus.Stage.allCases : [.scan, .ingest, .embed]
+        MenuBarStatus.Stage.allCases
     }
 
     var action: Action {
@@ -733,7 +733,7 @@ struct IndexingPresentation: Equatable {
 
 // MARK: - Helper services
 
-/// One row of the Helper Services box: the gRPC backend or an XPC helper.
+/// One row of the Index Manager or Helper Services box: the gRPC backend or an XPC helper.
 struct ServiceRowPresentation: Equatable, Identifiable {
     enum State: Equatable {
         case running
@@ -775,6 +775,18 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         state == .running || state == .unreachable
     }
 
+    /// The state in a word, for a row whose box already names the service.
+    var stateTitle: String {
+        switch state {
+        case .running: "Running"
+        case .checking: "Checking…"
+        case .restarting: "Restarting…"
+        case .stopped: "Stopped"
+        case .unreachable: "Can't be reached"
+        case .unknown: "Not checked yet"
+        }
+    }
+
     var isBusy: Bool {
         state == .checking || state == .restarting
     }
@@ -784,7 +796,7 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         switch id {
         case "ingest-xpc": "Ingest"
         case "embed-xpc": "Embeddings"
-        case "llama-xpc": "Llama"
+        case "llama-xpc": "Inference"
         case "model-download-xpc": "Model Downloads"
         case "mcp-server-xpc": "MCP Server"
         case "garage-xpc": "Garage Backend"
@@ -796,19 +808,20 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         let state: State
         var detail: String
         var isError = false
+        let role = "runs every scan, ingest, embedding and distillation for the app"
         switch status {
         case .running:
             state = .running
-            detail = "Running · \(host):\(port)"
+            detail = "On \(host):\(port) · \(role)"
         case .starting:
             state = .checking
-            detail = "Starting…"
+            detail = "Starting with the database…"
         case .stopping:
             state = .checking
             detail = "Stopping…"
         case .stopped:
             state = .stopped
-            detail = "Stopped · starts with the database"
+            detail = "Starts with the database. It \(role)."
         case .failed(let message):
             state = .unreachable
             detail = MenuBarStatus.firstLine(message) ?? "Failed"
@@ -816,13 +829,13 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         }
         if let lastTest, state == .running {
             if lastTest.isSuccess {
-                detail += " · test passed"
+                detail = "On \(host):\(port) · test passed"
             } else {
                 detail = MenuBarStatus.firstLine(lastTest.summary) ?? "The test failed"
                 isError = true
             }
         }
-        return ServiceRowPresentation(id: "grpc", name: "gRPC Backend", state: state, detail: detail, detailIsError: isError)
+        return ServiceRowPresentation(id: "grpc", name: "Index Manager", state: state, detail: detail, detailIsError: isError)
     }
 
     static func xpc(_ service: XPCServiceInfo, report: GarageXPCStatusReport?, test: ServiceDiagnosticTestResult?) -> ServiceRowPresentation {

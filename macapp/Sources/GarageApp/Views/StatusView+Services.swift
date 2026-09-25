@@ -2,16 +2,26 @@ import SwiftUI
 import AppKit
 import PythonXPCService
 
-/// The Helper Services box: one row for the gRPC backend and one per XPC helper, each with Test,
-/// Restart and a chevron to its status report, self tests and the last test's output.
+/// The Index Manager box (the gRPC backend) and the Helper Services box (one row per XPC helper),
+/// each row with Test, Restart and a chevron to its status report, self tests and the last test's
+/// output. Rows carry a small dot rather than a filled circle: seven green circles in a column read
+/// as noise, and the dot is the Models page's idiom for a list of like things.
 extension StatusView {
+    var indexManagerSection: some View {
+        GroupBox("Index Manager") {
+            grpcRow
+                .padding(10)
+        }
+    }
+
     var servicesSection: some View {
         GroupBox {
             VStack(spacing: 0) {
-                grpcRow
-                ForEach(appState.xpcServices.services) { service in
-                    Divider()
-                        .padding(.vertical, 8)
+                ForEach(Array(appState.xpcServices.services.enumerated()), id: \.element.id) { index, service in
+                    if index > 0 {
+                        Divider()
+                            .padding(.vertical, 8)
+                    }
                     xpcRow(for: service)
                 }
             }
@@ -73,23 +83,31 @@ extension StatusView {
 
     // MARK: - Rows
 
-    /// The row's first line: circle, name, state, then the actions and the chevron.
+    /// The row's first line: dot, title, state, then the actions and the chevron. `title` is the
+    /// service's name in a list of them, or its state in a box that already names it.
     private func serviceRow<Actions: View>(
         _ row: ServiceRowPresentation,
+        title: String? = nil,
         isExpanded: Bool,
         toggle: @escaping () -> Void,
         @ViewBuilder actions: () -> Actions
     ) -> some View {
         HStack(alignment: .center, spacing: 10) {
-            if row.isBusy {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 26, height: 26)
-            } else {
-                MenuBarSymbolCircle(symbol: row.symbol, tint: row.tint, isActive: row.isActive)
+            Group {
+                if row.isBusy {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Circle()
+                        .fill(row.isActive ? row.tint : Color.clear)
+                        .overlay(Circle().strokeBorder(row.tint, lineWidth: row.isActive ? 0 : 1.5))
+                        .frame(width: 8, height: 8)
+                }
             }
+            .frame(width: 16, height: 16)
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.name)
+                Text(title ?? row.name)
                     .font(.system(size: 13, weight: .semibold))
                 Text(row.detail)
                     .font(.caption)
@@ -117,7 +135,7 @@ extension StatusView {
         )
         let isExpanded = expandedServiceIds.contains(row.id)
         return VStack(alignment: .leading, spacing: 8) {
-            serviceRow(row, isExpanded: isExpanded, toggle: { toggleExpanded(row.id) }) {
+            serviceRow(row, title: row.stateTitle, isExpanded: isExpanded, toggle: { toggleExpanded(row.id) }) {
                 Button {
                     Task {
                         isTestingGrpc = true
@@ -142,7 +160,7 @@ extension StatusView {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     detailLine("Address", "\(appState.grpc.host):\(appState.grpc.port)", monospaced: true)
-                    detailLine("Serves", "Search, documents, sources, models, stats, and every operation the app runs.")
+                    detailLine("Process", "The Python GarageService over gRPC: search, documents, sources, models, stats, and every operation the app runs.")
                     if let result = grpcTestResult {
                         testOutput(id: "grpc", isSuccess: result.isSuccess, summary: result.summary, durationMs: result.durationMs, details: result.details)
                     } else {
@@ -151,7 +169,7 @@ extension StatusView {
                             .foregroundStyle(.tertiary)
                     }
                 }
-                .padding(.leading, 36)
+                .padding(.leading, 26)
             }
         }
     }
@@ -196,7 +214,7 @@ extension StatusView {
 
             if isExpanded {
                 xpcDetails(for: service, report: report, test: test, isBusy: isTesting || isRestarting || service.isChecking)
-                    .padding(.leading, 36)
+                    .padding(.leading, 26)
             }
         }
     }

@@ -200,10 +200,10 @@ struct MenuBarStatus: Equatable {
         }
     }
 
-    /// The stages the trail under the progress bar shows. Distillation is an optional fourth step,
-    /// so it appears only while it runs.
+    /// The stages the trail under the progress bar shows: all four, so a run that stops at Embed
+    /// still reads as "three of four".
     var stageTrail: [Stage] {
-        stage == .distill ? Stage.allCases : [.scan, .ingest, .embed]
+        Stage.allCases
     }
 
     /// What needs the user, worst first. An MCP failure while the database is down is a consequence,

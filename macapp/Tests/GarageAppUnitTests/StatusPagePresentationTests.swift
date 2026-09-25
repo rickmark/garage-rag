@@ -203,7 +203,7 @@ final class StatusPagePresentationTests: XCTestCase {
         XCTAssertTrue(scanning.headline.isIndeterminate)
         XCTAssertEqual(scanning.headline.stage, .scan)
         XCTAssertEqual(scanning.action, .stop(isStopping: false))
-        XCTAssertEqual(scanning.stageTrail, [.scan, .ingest, .embed])
+        XCTAssertEqual(scanning.stageTrail, MenuBarStatus.Stage.allCases)
 
         let ingesting = IndexingPresentation(
             stats: base, sourceCount: 1, modelCount: 1, distillsFacts: true,
@@ -264,13 +264,14 @@ final class StatusPagePresentationTests: XCTestCase {
 
     func testGRPCRowReadsItsState() {
         let running = ServiceRowPresentation.grpc(status: .running, host: "127.0.0.1", port: 50051, lastTest: nil)
-        XCTAssertEqual(running.name, "gRPC Backend")
+        XCTAssertEqual(running.name, "Index Manager")
         XCTAssertEqual(running.state, .running)
-        XCTAssertEqual(running.detail, "Running · 127.0.0.1:50051")
+        XCTAssertEqual(running.stateTitle, "Running")
+        XCTAssertTrue(running.detail.hasPrefix("On 127.0.0.1:50051 · "), running.detail)
         XCTAssertEqual(running.tint, .green)
 
         let tested = ServiceRowPresentation.grpc(status: .running, host: "127.0.0.1", port: 50051, lastTest: (isSuccess: true, summary: "5 queries"))
-        XCTAssertEqual(tested.detail, "Running · 127.0.0.1:50051 · test passed")
+        XCTAssertEqual(tested.detail, "On 127.0.0.1:50051 · test passed")
 
         let failedTest = ServiceRowPresentation.grpc(status: .running, host: "127.0.0.1", port: 50051, lastTest: (isSuccess: false, summary: "GetStats: unavailable"))
         XCTAssertEqual(failedTest.detail, "GetStats: unavailable")
@@ -283,6 +284,7 @@ final class StatusPagePresentationTests: XCTestCase {
 
         let stopped = ServiceRowPresentation.grpc(status: .stopped, host: "127.0.0.1", port: 50051, lastTest: nil)
         XCTAssertEqual(stopped.state, .stopped)
+        XCTAssertEqual(stopped.stateTitle, "Stopped")
     }
 
     func testXPCRowReadsPingReportAndTest() {
@@ -317,7 +319,7 @@ final class StatusPagePresentationTests: XCTestCase {
 
         let unreachable = XPCServiceInfo(id: "llama-xpc", name: "", bundleId: "", serviceDescription: "", state: .unreachable(error: "Couldn't communicate with a helper application.\ndetails"))
         let down = ServiceRowPresentation.xpc(unreachable, report: nil, test: nil)
-        XCTAssertEqual(down.name, "Llama")
+        XCTAssertEqual(down.name, "Inference")
         XCTAssertEqual(down.state, .unreachable)
         XCTAssertEqual(down.detail, "Can't be reached: Couldn't communicate with a helper application.")
         XCTAssertEqual(down.tint, .red)
