@@ -61,11 +61,28 @@ final class PagesUITests: GarageUITestCase {
         waitForBackend()
         open(section: "mcp")
 
-        for heading in ["MCP Server Status", "Server Configuration & Endpoints", "Client Integrations & Configuration"] {
+        for heading in ["Server", "Connected Assistants", "Try It"] {
             XCTAssertTrue(element(text: heading).waitForExistence(timeout: 15), "MCP Server does not show \"\(heading)\"")
         }
-        for control in ["Start", "Stop", "Restart"] {
-            XCTAssertTrue(button(label: control).exists, "MCP Server has no \(control) button")
+        XCTAssertTrue(element(identifier: "mcp.copyEndpoint").exists, "MCP Server does not offer to copy its address")
+
+        // The server row offers Start while stopped, and Test, Restart and Stop while it runs; the app
+        // starts the server once the database is up.
+        let stop = element(identifier: "mcp.stop")
+        XCTAssertTrue(
+            waitUntil(timeout: 60) { stop.exists || element(identifier: "mcp.start").exists },
+            "the server row offers neither Start nor Stop"
+        )
+        if stop.exists {
+            XCTAssertTrue(element(identifier: "mcp.restart").exists, "a running server has no Restart")
+            XCTAssertTrue(element(identifier: "mcp.test").exists, "a running server has no Test")
+            XCTAssertFalse(element(identifier: "mcp.start").exists, "a running server still offers Start")
+        }
+
+        XCTAssertTrue(element(identifier: "mcp.connectAll").exists, "no Connect All")
+        XCTAssertTrue(element(identifier: "mcp.try.run").exists, "Try It has no Run")
+        for retired in ["Execute Tool", "Register All Found Configs", "Test MCP Server", "Check MCP Status"] {
+            XCTAssertFalse(button(label: retired).exists, "the retired \"\(retired)\" button is back")
         }
     }
 

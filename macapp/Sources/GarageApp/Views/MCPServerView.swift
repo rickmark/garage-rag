@@ -30,45 +30,47 @@ struct PlaygroundAnswer: Decodable {
     var hasText: Bool { answer != nil || text != nil }
 }
 
+/// The MCP Server page: is the server up and answering, which assistants reach Garage through it,
+/// and a place to try it the way an assistant would.
+///
+/// The server is one row with its state in words and the one action that applies; the port, path
+/// and tool list sit behind Details. Each assistant is one row saying whether it is connected, with
+/// Connect or Update when it is not. Trying the server is one panel with three modes (ask the
+/// corpus, prompt the model, call a tool) in place of the old tester and playground boxes.
 @MainActor
 struct MCPServerView: View {
-    enum PlaygroundMode: String, CaseIterable, Identifiable {
-        case rag = "Ask the corpus (RAG)"
-        case raw = "Raw prompt"
-
-        var id: String { rawValue }
-        var defaultMaxTokens: Int { self == .rag ? 512 : 256 }
-        var defaultTemperature: Double { self == .rag ? 0.2 : 0.7 }
-    }
-
     @EnvironmentObject var appState: AppState
-    @State private var busy = false
-    @State private var selectedToolName = "rag_stats"
-    @State private var testSearchQuery = "secure boot"
-    @State private var testDocumentId = "1"
-    @State private var toolExecutionOutput: String?
-    @State private var isExecutingCustomTool = false
-    @State private var customToolError: String?
 
-    // Prompt Playground state
-    @State private var playgroundPrompt = ""
-    @State private var playgroundMode: PlaygroundMode = .rag
-    @State private var playgroundMaxTokens: Int = PlaygroundMode.rag.defaultMaxTokens
-    @State private var playgroundTemperature: Double = PlaygroundMode.rag.defaultTemperature
-    @State private var isRunningPlayground = false
-    @State private var playgroundError: String?
-    @State private var playgroundAnswer: PlaygroundAnswer?
-    @State private var playgroundRawOutput: String?
+    /// A start, stop, restart or registration from this page is in flight.
+    @State var busy = false
+    @State var showServerDetails = false
+    @State var showMissingClients = false
+    /// What the last Connect, Update, Disconnect or check said, shown under the assistant list.
+    @State var registrationMessage: String?
+    @State var registrationSucceeded = true
+    @AppStorage("garage.mcp.showServerOutput") var showServerOutput = false
+
+    // Try It
+    @State var tryMode: TryItMode = .ask
+    @State var tryPrompt = ""
+    @State var tryMaxTokens: Int = TryItMode.ask.defaultMaxTokens
+    @State var tryTemperature: Double = TryItMode.ask.defaultTemperature
+    @State var selectedToolName = "rag_search"
+    @State var toolQuery = "secure boot"
+    @State var toolDocumentId = "1"
+    @State var toolArgumentsJSON = "{}"
+    @State var isRunningTry = false
+    @State var tryError: String?
+    @State var tryAnswer: PlaygroundAnswer?
+    @State var tryRawOutput: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                serverStatusSection
-                testingAndDiagnosticsSection
-                promptPlaygroundSection
-                clientIntegrationsSection
-                serverDetailsSection
-                LastCommandOutputBox(text: appState.lastCommandOutput)
+                serverSection
+                assistantsSection
+                tryItSection
+                serverOutputSection
             }
             .padding(20)
         }
@@ -76,577 +78,471 @@ struct MCPServerView: View {
         .onAppear {
             appState.mcp.refreshDetectedClients()
             appState.fetchFactsSettings()
+            if appState.mcp.status == .running && appState.mcp.lastTestResult == nil {
+                checkServer()
+            }
+        }
+        .onChange(of: appState.mcp.status) { _, status in
+            // A fresh start answers "does it answer" without a click.
+            if status == .running {
+                checkServer()
+            }
         }
     }
 
-    // MARK: - Prompt Playground Section
+    // MARK: - Server
 
-    private var isPlaygroundPromptEmpty: Bool {
-        playgroundPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var isRunning: Bool { appState.mcp.status == .running }
+
+    /// A detected assistant with what its row says.
+    struct ClientItem: Identifiable {
+        let client: MCPClientConfig
+        let row: MCPClientRowPresentation
+        var id: String { client.id }
     }
 
-    private var promptPlaygroundSection: some View {
-        GroupBox("Prompt Playground") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Send a prompt to the distillation model through the running MCP server: rag_ask retrieves from the corpus and answers with citations; rag_generate runs the raw prompt.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var clientRows: [ClientItem] {
+        appState.mcp.detectedClients.map { ClientItem(client: $0, row: MCPClientRowPresentation(client: $0, endpoint: appState.mcp.endpoint)) }
+    }
 
-                Picker("Mode", selection: $playgroundMode) {
-                    ForEach(PlaygroundMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+    private var headline: MCPServerHeadline {
+        MCPServerHeadline(
+            status: appState.mcp.status,
+            test: appState.mcp.lastTestResult,
+            isTesting: appState.mcp.isTesting,
+            isDatabaseRunning: appState.postgres.status == .running,
+            connectedCount: appState.mcp.detectedClients.filter(\.isRegistered).count
+        )
+    }
+
+    private var serverSection: some View {
+        let headline = self.headline
+        return GroupBox("Server") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    MenuBarSymbolCircle(symbol: headline.symbol, tint: headline.tint, isActive: headline.isActive)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(headline.title)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(headline.detail)
+                            .font(.caption)
+                            .foregroundStyle(headline.detailIsError ? AnyShapeStyle(Color.red) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
                     }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: playgroundMode) { _, mode in
-                    playgroundMaxTokens = mode.defaultMaxTokens
-                    playgroundTemperature = mode.defaultTemperature
-                }
+                    Spacer(minLength: 8)
 
-                TextEditor(text: $playgroundPrompt)
-                    .font(.system(.body, design: .default))
-                    .frame(minHeight: 80, maxHeight: 160)
-                    .border(Color.secondary.opacity(0.3), width: 1)
-
-                HStack(spacing: 16) {
-                    Stepper("Max tokens: \(playgroundMaxTokens)", value: $playgroundMaxTokens, in: 16...4096, step: 16)
-                        .frame(width: 200)
-
-                    HStack(spacing: 8) {
-                        Text(String(format: "Temperature: %.2f", playgroundTemperature))
-                        Slider(value: $playgroundTemperature, in: 0...1.5, step: 0.05)
-                            .frame(width: 160)
+                    if appState.mcp.status.isTransitioning || busy || appState.mcp.isTesting {
+                        ProgressView().controlSize(.small)
                     }
+                    serverActions
+                }
+
+                HStack(spacing: 6) {
+                    Text(appState.mcp.endpoint.absoluteString)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button {
+                        NSPasteboard.general.copy(appState.mcp.endpoint.absoluteString)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Copy the server's address")
+                    .accessibilityLabel("Copy Address")
+                    .accessibilityIdentifier("mcp.copyEndpoint")
 
                     Spacer()
 
                     Button {
-                        runPlayground()
+                        withAnimation(.easeInOut(duration: 0.2)) { showServerDetails.toggle() }
                     } label: {
-                        Label("Run", systemImage: "play.fill")
+                        HStack(spacing: 4) {
+                            Text("Details")
+                                .font(.caption)
+                            DisclosureChevron(isExpanded: showServerDetails)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(appState.mcp.status != .running || isRunningPlayground || isPlaygroundPromptEmpty)
-
-                    if isRunningPlayground {
-                        ProgressView().controlSize(.small)
-                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("mcp.details.toggle")
                 }
+                .padding(.leading, 36)
 
-                if let err = playgroundError {
-                    Text("Error: \(err)")
+                if showServerDetails {
+                    serverDetails
+                        .padding(.leading, 36)
+                }
+            }
+            .padding(10)
+        }
+    }
+
+    /// Start while stopped; Test, Restart and Stop while it runs. Never all four at once.
+    @ViewBuilder
+    private var serverActions: some View {
+        switch appState.mcp.status {
+        case .running:
+            Button("Test", action: checkServer)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(appState.mcp.isTesting || busy)
+                .help("Check that the server answers and list its tools")
+                .accessibilityIdentifier("mcp.test")
+            Button("Restart", action: restartServer)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(busy)
+                .accessibilityIdentifier("mcp.restart")
+            Button("Stop", action: stopServer)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(busy)
+                .accessibilityIdentifier("mcp.stop")
+        case .starting, .stopping:
+            EmptyView()
+        case .stopped, .failed:
+            Button(appState.mcp.status == .stopped ? "Start" : "Try Again", action: startServer)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(busy)
+                .accessibilityIdentifier("mcp.start")
+        }
+    }
+
+    private var serverDetails: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 8) {
+            GridRow {
+                detailLabel("Port")
+                HStack(spacing: 8) {
+                    TextField(
+                        "Port",
+                        value: Binding(
+                            get: { appState.mcp.port },
+                            set: { newPort in
+                                if (1...65535).contains(newPort) {
+                                    appState.mcp.port = newPort
+                                }
+                            }
+                        ),
+                        format: .number.grouping(.never)
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    .disabled(portLocked)
+                    .accessibilityIdentifier("mcp.port")
+
+                    Button("Random") {
+                        appState.mcp.selectRandomPort()
+                    }
+                    .controlSize(.small)
+                    .disabled(portLocked)
+
+                    Text(portLocked ? "Stop the server to change it." : "Connected assistants need Update after a change.")
                         .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-
-                if let answer = playgroundAnswer {
-                    playgroundAnswerView(answer)
-                } else if let raw = playgroundRawOutput, !raw.isEmpty {
-                    playgroundOutputBox(title: "Output", text: raw)
-                }
-
-                Text("Runs on the local facts model (\(appState.factsModel) via \(appState.factsProvider)); load it on the Models page.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(10)
-        }
-    }
-
-    private func playgroundAnswerView(_ answer: PlaygroundAnswer) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(playgroundMode == .rag ? "Answer" : "Completion")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                if let model = answer.model, !model.isEmpty {
-                    StatusBadge(model, tint: .purple)
-                }
-                if let provider = answer.provider, !provider.isEmpty {
-                    StatusBadge(provider, tint: .blue)
-                }
-                Spacer()
-                Button("Copy") {
-                    NSPasteboard.general.copy(answer.displayText)
-                }
-                .controlSize(.small)
-            }
-
-            ScrollView {
-                Text(answer.displayText)
-                    .font(.body)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 220)
-            .padding(8)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            if let citations = answer.citations, !citations.isEmpty {
-                Text("Citations (\(citations.count))")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(citations) { citation in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text("[\(citation.n)]")
-                                    .font(.system(.caption, design: .monospaced).bold())
-                                Text(citation.title ?? "Untitled")
-                                    .font(.caption.bold())
-                                if let location = citation.location, !location.isEmpty {
-                                    Text(location)
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                                Spacer()
-                                if let score = citation.score {
-                                    Text(String(format: "%.3f", score))
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            if let snippet = citation.snippet, !snippet.isEmpty {
-                                Text(snippet)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(4)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .padding(6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
+                        .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    private func playgroundOutputBox(title: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Copy") {
-                    NSPasteboard.general.copy(text)
-                }
-                .controlSize(.small)
+            GridRow {
+                detailLabel("Path")
+                detailValue(appState.mcp.path)
             }
-            ScrollView {
-                Text(text)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+            GridRow {
+                detailLabel("Transport")
+                detailValue("HTTP on \(appState.mcp.host), reachable from this Mac only")
             }
-            .frame(maxHeight: 220)
-            .padding(8)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-    }
-
-    /// Sends the prompt as an MCP `tools/call` to the running garage-mcp server — the same
-    /// path `executeSelectedTool` uses — so the playground exercises the distillation model
-    /// exactly as an MCP client would.
-    private func runPlayground() {
-        let prompt = playgroundPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else { return }
-        isRunningPlayground = true
-        playgroundError = nil
-        playgroundAnswer = nil
-        playgroundRawOutput = nil
-        Task {
-            defer { isRunningPlayground = false }
-            do {
-                var args: [String: Any] = [
-                    "max_tokens": playgroundMaxTokens,
-                    "temperature": playgroundTemperature
-                ]
-                let toolName: String
-                if playgroundMode == .rag {
-                    toolName = "rag_ask"
-                    args["question"] = prompt
-                    args["limit"] = 6
-                } else {
-                    toolName = "rag_generate"
-                    args["prompt"] = prompt
-                }
-                let output = try await appState.mcp.executeToolCall(toolName: toolName, arguments: args)
-                if let data = output.data(using: .utf8),
-                   let parsed = try? JSONDecoder().decode(PlaygroundAnswer.self, from: data),
-                   parsed.hasText {
-                    playgroundAnswer = parsed
-                } else {
-                    playgroundRawOutput = output
-                }
-            } catch {
-                playgroundError = error.localizedDescription
+            GridRow {
+                detailLabel("Database")
+                detailValue(appState.postgres.status == .running ? "Running on port \(appState.postgres.port)" : "Stopped")
             }
-        }
-    }
-
-    // MARK: - Server Status Section
-
-    private var serverStatusSection: some View {
-        GroupBox("MCP Server Status") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 12) {
-                    Circle()
-                        .fill(appState.mcp.status.color)
-                        .frame(width: 12, height: 12)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(appState.mcp.status.title)
-                            .font(.headline)
-                        Text(appState.mcp.status.detail(endpoint: appState.mcp.endpoint))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    if appState.mcp.status.isTransitioning || busy {
-                        ProgressView().controlSize(.small)
-                    }
-
-                    Button("Start") {
-                        startServer()
-                    }
-                    .disabled(
-                        appState.mcp.status == .running ||
-                        appState.mcp.status == .starting ||
-                        busy
-                    )
-
-                    Button("Stop") {
-                        stopServer()
-                    }
-                    .disabled(
-                        (appState.mcp.status != .running && appState.mcp.status != .starting) ||
-                        busy
-                    )
-
-                    Button("Restart") {
-                        restartServer()
-                    }
-                    .disabled(
-                        appState.mcp.status != .running ||
-                        busy
-                    )
+            if let test = appState.mcp.lastTestResult, test.isSuccess {
+                GridRow {
+                    detailLabel("Last check")
+                    detailValue("Answered in \(String(format: "%.0f", test.latencyMs)) ms, \(test.timestamp.formatted(date: .omitted, time: .shortened))")
                 }
-
-                if appState.postgres.status != .running {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text("PostgreSQL is stopped. Starting the MCP server will also start PostgreSQL.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 4)
-                }
-            }
-            .padding(10)
-        }
-    }
-
-    // MARK: - Testing & Diagnostics Section
-
-    private var testingAndDiagnosticsSection: some View {
-        GroupBox("Testing & Diagnostics") {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Test the running MCP server over loopback HTTP JSON-RPC, verify tool availability, and inspect tool call responses.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 12) {
-                    Button(action: runServerDiagnostics) {
-                        Label("Test MCP Server", systemImage: "play.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(appState.mcp.status != .running || appState.mcp.isTesting || busy)
-
-                    if appState.mcp.isTesting {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Testing endpoint & querying tools…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let res = appState.mcp.lastTestResult {
-                        if res.isSuccess {
-                            StatusBadge("PASS (200 OK)", tint: .green)
-                            StatusBadge(String(format: "%.1f ms", res.latencyMs), tint: .blue)
-                            StatusBadge("\(res.tools.count) TOOLS", tint: .purple)
-                        } else {
-                            StatusBadge("FAILED", tint: .red)
-                        }
-                    }
-
-                    Spacer()
-                }
-
-                if let res = appState.mcp.lastTestResult, !res.isSuccess, let err = res.errorMessage {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "xmark.octagon.fill")
-                            .foregroundStyle(.red)
-                        Text("Diagnostics failed: \(err)")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-
-                Divider()
-
-                // Interactive Tool Execution
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Interactive Tool Testing")
-                        .font(.subheadline.bold())
-
-                    HStack(spacing: 10) {
-                        Picker("Tool", selection: $selectedToolName) {
-                            Text("rag_stats (Corpus Statistics)").tag("rag_stats")
-                            Text("rag_search (Hybrid RAG Search)").tag("rag_search")
-                            Text("rag_list_sources (List Sources)").tag("rag_list_sources")
-                            Text("rag_list_authors (List Authors)").tag("rag_list_authors")
-                            Text("rag_get_document (Document Details)").tag("rag_get_document")
-                        }
-                        .frame(width: 260)
-                        .disabled(appState.mcp.status != .running)
-
-                        if selectedToolName == "rag_search" {
-                            TextField("Search Query", text: $testSearchQuery)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: 240)
-                        } else if selectedToolName == "rag_get_document" {
-                            TextField("Document ID", text: $testDocumentId)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 100)
-                        }
-
-                        Button("Execute Tool") {
-                            executeSelectedTool()
-                        }
-                        .disabled(appState.mcp.status != .running || isExecutingCustomTool || !isCustomToolInputValid)
-
-                        if isExecutingCustomTool {
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-
-                    if let err = customToolError {
-                        Text("Execution error: \(err)")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-
-                    let outputToShow = toolExecutionOutput ?? appState.mcp.lastTestResult?.toolOutput
-                    if let output = outputToShow, !output.isEmpty {
+                if !test.tools.isEmpty {
+                    GridRow(alignment: .top) {
+                        detailLabel("Tools")
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Response Output")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Copy") {
-                                    NSPasteboard.general.copy(output)
-                                }
-                                .controlSize(.small)
-                            }
-
-                            ScrollView {
-                                Text(output)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .frame(maxHeight: 180)
-                            .padding(8)
-                            .background(Color.primary.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                    }
-                }
-
-                // Discovered Tools Catalog
-                if let res = appState.mcp.lastTestResult, !res.tools.isEmpty {
-                    DisclosureGroup("Registered Server Tools (\(res.tools.count))") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(res.tools) { tool in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack {
-                                        Text(tool.name)
-                                            .font(.system(.caption, design: .monospaced).bold())
-                                        Spacer()
+                            ForEach(test.tools) { tool in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(tool.name)
+                                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                    if !tool.description.isEmpty {
+                                        Text(tool.description)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                            .help(tool.description)
                                     }
-                                    Text(tool.description)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
                                 }
-                                .padding(6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.primary.opacity(0.03))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
                         }
-                        .padding(.top, 4)
                     }
                 }
             }
-            .padding(10)
         }
     }
 
-    // MARK: - Client Integrations Section
+    private var portLocked: Bool {
+        appState.mcp.status == .running || appState.mcp.status == .starting || busy
+    }
 
-    private var clientIntegrationsSection: some View {
-        GroupBox("Client Integrations & Configuration") {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Register Garage's MCP tools with any detected local AI assistants and editors. You can batch-register all found configuration files or target specific clients.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private func detailLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .gridColumnAlignment(.trailing)
+    }
 
-                HStack(spacing: 10) {
-                    Button(action: registerAllFound) {
-                        Label("Register All Found Configs", systemImage: "square.stack.3d.up.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(busy || appState.mcp.isRegistering)
+    private func detailValue(_ text: String) -> some View {
+        Text(text)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+    }
 
-                    Button("Add Custom Config File…") {
-                        chooseCustomConfigFile()
-                    }
-                    .disabled(busy || appState.mcp.isRegistering)
+    // MARK: - Assistants
 
-                    Button("Refresh List") {
-                        appState.mcp.refreshDetectedClients()
-                    }
-                    .disabled(busy || appState.mcp.isRegistering)
+    private var assistantsSection: some View {
+        let rows = clientRows
+        let installed = rows.filter { $0.row.state != .notInstalled }
+        let missing = rows.filter { $0.row.state == .notInstalled }
+        let canConnectAll = MCPPagePresentation.canConnectAll(rows.map(\.row))
 
-                    Button("Check MCP Status") {
-                        checkMCPStatus()
-                    }
-                    .disabled(busy || appState.mcp.isRegistering)
-
+        return GroupBox("Connected Assistants") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text(MCPPagePresentation.clientSummary(rows.map(\.row)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     if appState.mcp.isRegistering {
                         ProgressView().controlSize(.small)
                     }
+                    connectAllButton(prominent: canConnectAll)
+                        .disabled(busy || appState.mcp.isRegistering || !canConnectAll)
+                    Button {
+                        appState.mcp.refreshDetectedClients()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Look for assistants again")
+                    .accessibilityLabel("Look for Assistants Again")
+                    .accessibilityIdentifier("mcp.rescan")
+                    .disabled(busy || appState.mcp.isRegistering)
+                    Menu {
+                        Button("Connect a Config File…", action: chooseCustomConfigFile)
+                        Button("Check Registrations", action: checkRegistrations)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(busy || appState.mcp.isRegistering)
+                    .accessibilityLabel("More")
+                    .accessibilityIdentifier("mcp.assistants.more")
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Detected Client Configurations:")
-                        .font(.caption.bold())
+                if installed.isEmpty {
+                    Text("None of the assistants Garage knows about has a configuration file on this Mac. Connect one below to create it, or connect a config file of your own from the ⋯ menu.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    ForEach(appState.mcp.detectedClients) { client in
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(client.label)
-                                        .font(.subheadline.bold())
-
-                                    if client.existsOnDisk {
-                                        StatusBadge("Config Found", tint: .green)
-                                    } else {
-                                        StatusBadge("No config file", tint: .secondary)
-                                    }
-
-                                    if client.isRegistered {
-                                        StatusBadge("Registered", tint: .blue)
-                                    }
-                                }
-
-                                Text(client.path.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-
-                                if !client.note.isEmpty {
-                                    Text(client.note)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    MenuBarModule {
+                        ForEach(installed) { item in
+                            if item.id != installed.first?.id {
+                                Divider().padding(.leading, 46)
                             }
-
-                            Spacer()
-
-                            Button(client.isRegistered ? "Re-register" : "Register") {
-                                registerClient(client.id)
-                            }
-                            .controlSize(.small)
-                            .disabled(busy || appState.mcp.isRegistering)
+                            clientRow(item.client, item.row)
                         }
-                        .padding(8)
-                        .background(Color.primary.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
+
+                if !missing.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { showMissingClients.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            DisclosureChevron(isExpanded: showMissingClients)
+                            Text("Not found on this Mac")
+                            Text("\(missing.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("mcp.missingClients.toggle")
+
+                    if showMissingClients {
+                        MenuBarModule {
+                            ForEach(missing) { item in
+                                if item.id != missing.first?.id {
+                                    Divider().padding(.leading, 46)
+                                }
+                                clientRow(item.client, item.row)
+                            }
+                        }
+                    }
+                }
+
+                if let message = registrationMessage, !message.isEmpty {
+                    registrationResult(message)
+                }
+
+                Text("A connected assistant receives the excerpts its searches return, not your whole index, and may send them to its own cloud model, including excerpts from Messages and Mail if you index them. What happens to them then is up to that assistant's privacy terms, not Garage's.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("mcp.agentPrivacy")
             }
             .padding(10)
         }
     }
 
-    // MARK: - Server Details Section
+    @ViewBuilder
+    private func connectAllButton(prominent: Bool) -> some View {
+        if prominent {
+            Button("Connect All", action: connectAll)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Add Garage to every assistant found on this Mac, and update the ones pointing at an old address")
+                .accessibilityIdentifier("mcp.connectAll")
+        } else {
+            Button("Connect All", action: connectAll)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Every assistant found on this Mac is already connected")
+                .accessibilityIdentifier("mcp.connectAll")
+        }
+    }
 
-    private var serverDetailsSection: some View {
-        GroupBox("Server Configuration & Endpoints") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Endpoint URL", value: appState.mcp.endpoint.absoluteString)
-                LabeledContent("Host", value: appState.mcp.host)
-                LabeledContent("Port") {
-                    HStack(spacing: 8) {
-                        TextField(
-                            "Port",
-                            value: Binding(
-                                get: { appState.mcp.port },
-                                set: { newPort in
-                                    if (1...65535).contains(newPort) {
-                                        appState.mcp.port = newPort
-                                    }
-                                }
-                            ),
-                            format: .number.grouping(.never)
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                        .disabled(appState.mcp.status == .running || appState.mcp.status == .starting || busy)
+    private func clientRow(_ client: MCPClientConfig, _ row: MCPClientRowPresentation) -> some View {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
 
-                        Button("Random") {
-                            appState.mcp.selectRandomPort()
-                        }
-                        .disabled(appState.mcp.status == .running || appState.mcp.status == .starting || busy)
+        return HStack(alignment: .center, spacing: 10) {
+            MenuBarSymbolCircle(symbol: row.symbol, tint: row.tint, isActive: row.isActive)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(client.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    if client.isProjectScoped {
+                        StatusBadge("PROJECT", tint: .orange)
+                            .help("Kept in the project folder and shared with anyone who has it")
                     }
                 }
-                LabeledContent("Path", value: appState.mcp.path)
-                LabeledContent("Transport", value: "HTTP (Loopback) & Stdio (CLI)")
-                LabeledContent("Database Dependency", value: appState.postgres.status == .running ? "PostgreSQL Connected (Port \(appState.postgres.port))" : "PostgreSQL Disconnected")
-
-                Text("The app runs `garage-mcp` as a loopback-only HTTP service on \(appState.mcp.host):\(String(appState.mcp.port)). Client registrations continue to use their own stdio process when invoked by external tools.")
+                Text(row.status)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                    .foregroundStyle(row.isOutdated ? AnyShapeStyle(Color.orange) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                    .lineLimit(2)
+                Text(client.path.path.replacingOccurrences(of: home, with: "~"))
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(client.note.isEmpty ? client.path.path : "\(client.path.path)\n\(client.note)")
             }
-            .padding(10)
+            Spacer(minLength: 8)
+
+            if let action = row.actionTitle {
+                Button(action) {
+                    registerClient(client.id)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(busy || appState.mcp.isRegistering)
+                .accessibilityIdentifier("mcp.client.\(client.id).connect")
+            }
+
+            Menu {
+                if client.isRegistered {
+                    Button("Connect Again") { registerClient(client.id) }
+                }
+                if client.existsOnDisk {
+                    Button("Open Config File") { NSWorkspace.shared.open(client.path) }
+                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([client.path]) }
+                }
+                Button("Copy Path") { NSPasteboard.general.copy(client.path.path) }
+                if client.isRegistered {
+                    Divider()
+                    Button("Disconnect", role: .destructive) { unregisterClient(client.id) }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(busy || appState.mcp.isRegistering)
+            .accessibilityLabel("More for \(client.label)")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mcp.client.\(client.id)")
+    }
+
+    private func registrationResult(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: registrationSucceeded ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                .foregroundStyle(registrationSucceeded ? .green : .red)
+            Text(message)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button {
+                registrationMessage = nil
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((registrationSucceeded ? Color.primary : Color.red).opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - Server output
+
+    @ViewBuilder
+    private var serverOutputSection: some View {
+        if !appState.mcp.logs.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showServerOutput.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        DisclosureChevron(isExpanded: showServerOutput)
+                        Text("Server Output")
+                        Text("\(appState.mcp.logs.count.formatted()) \(MCPPagePresentation.plural("line", appState.mcp.logs.count))")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("mcp.serverOutput.toggle")
+
+                if showServerOutput {
+                    LogTableView(lines: appState.mcp.logs, sourceName: "garage-mcp") {
+                        appState.mcp.clearLogs()
+                    }
+                    .frame(height: 280)
+                }
+            }
         }
     }
 
-    // MARK: - Helpers & Actions
-
+    // MARK: - Actions
 
     private func startServer() {
         busy = true
@@ -681,60 +577,24 @@ struct MCPServerView: View {
         }
     }
 
-    private func runServerDiagnostics() {
+    /// Initializes a session and lists the tools, without calling one: the headline then says
+    /// whether the server answers and how many tools it offers.
+    func checkServer() {
+        guard !appState.mcp.isTesting else { return }
         Task {
-            let res = await appState.mcp.testServerConnection(
-                sampleTool: selectedToolName,
-                query: testSearchQuery
-            )
-            if res.isSuccess {
-                appState.lastCommandSucceeded = true
-                appState.lastCommandOutput = "MCP Server test passed (\(String(format: "%.1f", res.latencyMs))ms). \(res.tools.count) tools discovered."
-            } else {
-                appState.lastCommandSucceeded = false
-                appState.lastCommandOutput = res.errorMessage ?? "MCP Server test failed."
-            }
+            await appState.mcp.testServerConnection(sampleTool: "")
         }
     }
 
-    private var parsedTestDocumentId: Int? {
-        Int(testDocumentId.trimmingCharacters(in: .whitespaces))
+    private func report(_ result: (success: Bool, message: String)) {
+        registrationSucceeded = result.success
+        registrationMessage = result.message
     }
 
-    private var isCustomToolInputValid: Bool {
-        selectedToolName != "rag_get_document" || parsedTestDocumentId != nil
-    }
-
-    private func executeSelectedTool() {
-        isExecutingCustomTool = true
-        customToolError = nil
-        Task {
-            defer { isExecutingCustomTool = false }
-            do {
-                var args: [String: Any] = [:]
-                if selectedToolName == "rag_search" {
-                    args["query"] = testSearchQuery
-                } else if selectedToolName == "rag_get_document" {
-                    guard let docId = parsedTestDocumentId else {
-                        customToolError = "Document ID must be an integer."
-                        return
-                    }
-                    args["document_id"] = docId
-                }
-                let output = try await appState.mcp.executeToolCall(toolName: selectedToolName, arguments: args)
-                toolExecutionOutput = output
-            } catch {
-                customToolError = error.localizedDescription
-            }
-        }
-    }
-
-    private func registerAllFound() {
+    private func connectAll() {
         busy = true
         Task {
-            let (success, message) = await appState.mcp.registerInAllFoundConfigs(force: true)
-            appState.lastCommandSucceeded = success
-            appState.lastCommandOutput = message
+            report(await appState.mcp.registerInAllFoundConfigs(force: true))
             busy = false
         }
     }
@@ -742,9 +602,15 @@ struct MCPServerView: View {
     private func registerClient(_ clientId: String) {
         busy = true
         Task {
-            let (success, message) = await appState.mcp.registerTarget(clientId, force: true)
-            appState.lastCommandSucceeded = success
-            appState.lastCommandOutput = message
+            report(await appState.mcp.registerTarget(clientId, force: true))
+            busy = false
+        }
+    }
+
+    private func unregisterClient(_ clientId: String) {
+        busy = true
+        Task {
+            report(await appState.mcp.unregisterTarget(clientId))
             busy = false
         }
     }
@@ -759,18 +625,17 @@ struct MCPServerView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         busy = true
         Task {
-            let (success, message) = await appState.mcp.registerCustomConfigFile(at: url, force: true)
-            appState.lastCommandSucceeded = success
-            appState.lastCommandOutput = message
+            report(await appState.mcp.registerCustomConfigFile(at: url, force: true))
             busy = false
         }
     }
 
-    private func checkMCPStatus() {
+    private func checkRegistrations() {
         busy = true
         Task {
-            await appState.runOperation { try await $0.mcpStatus().summary }
+            let succeeded = await appState.runOperation { try await $0.mcpStatus().summary }
             appState.mcp.refreshDetectedClients()
+            report((succeeded, appState.lastCommandOutput))
             busy = false
         }
     }

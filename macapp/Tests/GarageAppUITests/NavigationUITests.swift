@@ -11,7 +11,7 @@ final class NavigationUITests: GarageUITestCase {
         ("documents", "Filter by title or URI…"),
         ("facts", "Search facts…"),
         ("models", "Embed All"),
-        ("mcp", "MCP Server Status"),
+        ("mcp", "Connected Assistants"),
         ("search", "Search corpus (e.g., 'system architecture', 'API design')…"),
         ("logs", "Log Source"),
     ]

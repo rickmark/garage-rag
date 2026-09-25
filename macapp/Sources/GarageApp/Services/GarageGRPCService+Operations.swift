@@ -221,6 +221,12 @@ extension GarageGRPCService {
         return try await call { try await $0.mcpInstall(request, callOptions: $1) }
     }
 
+    func mcpUninstall(target: String) async throws -> Garage_McpUninstallResponse {
+        var request = Garage_McpUninstallRequest()
+        request.target = target
+        return try await call { try await $0.mcpUninstall(request, callOptions: $1) }
+    }
+
     func mcpStatus() async throws -> Garage_McpStatusResponse {
         try await call { try await $0.mcpStatus(Garage_McpStatusRequest(), callOptions: $1) }
     }
