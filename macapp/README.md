@@ -458,7 +458,7 @@ four-page assistant instead of the sidebar UI:
    second section is not missed below a long embedding list. "Next" sends `RegisterModel` for each
    embedding model, sets `facts.model`/`facts.provider` for the distillation pick, and, if enabled,
    queues GGUF downloads through the model download XPC service.
-4. **Set up your agent** — MCP server status/port and the detected client configs (Claude Desktop,
+4. **Set up your assistant** — MCP server status/port and the detected client configs (Claude Desktop,
    Claude Code, Cursor, …); "Connect selected agents" registers Garage in each selected config.
 
 The flow lives in `Services/FirstRunCoordinator.swift` (state + the commands each page runs) and
@@ -493,7 +493,7 @@ with the Status page listing the missing sources and model under Health.
   - **Status** — Health (one "All systems go" row, or one row per problem with the button that
     fixes it and the page it belongs to), Indexing (one bar over ingest, embedding and
     distillation, Update Everything or Stop, the running stage's own progress and the
-    Scan › Ingest › Embed › Distill trail, then the corpus figures), Index Manager (the gRPC
+    Scan › Ingest › Embed › Glean trail, then the corpus figures), Index Manager (the gRPC
     backend's state and job), Helper Services (one row per XPC helper with Test, Restart and a
     chevron to its status report, self tests, errors and crash report) and the helpers' log folded
     at the bottom as Service Output. The wording lives in `Views/StatusPagePresentation.swift` as
