@@ -3,130 +3,133 @@ import AppKit
 import LlamaClient
 
 extension ModelsView {
-    // MARK: - Section 4: Non-Truncated Embedding Testing & Inspection
+    // MARK: - Test an embedding
 
-    var embeddingInspectionSection: some View {
-        GroupBox("Embeddings Inspection & Testing (Full Vector)") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Test and inspect the complete embedding vector of any model without truncation.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Model") {
-                    Picker("Model", selection: $selectedTestModelSlug) {
-                        Text("Active / Default Model").tag("")
-                        ForEach(unifiedModels) { m in
-                            Text("\(m.name) (\(m.slug))").tag(m.slug)
-                        }
-                    }
-                    .labelsHidden()
-                    .onChange(of: selectedTestModelSlug) { _, newSlug in
-                        if !newSlug.isEmpty, let matched = unifiedModels.first(where: { $0.slug == newSlug }) {
-                            if let dimsVal = matched.dims {
-                                testEmbeddingDimensions = "\(dimsVal)"
-                            }
-                        }
-                    }
-                }
-
-                LabeledContent("Input Text to Embed") {
-                    TextEditor(text: $testPrompt)
-                        .font(.system(.body, design: .default))
-                        .frame(height: 60)
-                        .border(Color.secondary.opacity(0.3), width: 1)
-                }
-
-                HStack {
-                    LabeledContent("Target Dimensions (optional)") {
-                        TextField("default", text: $testEmbeddingDimensions)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 100)
-                    }
-
-                    Spacer()
-
-                    Button("Generate Embedding Vector") {
-                        let parsedDims = Int(testEmbeddingDimensions.trimmingCharacters(in: .whitespacesAndNewlines))
-                        let targetModel = selectedTestModelSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Task {
-                            await llama.testEmbedding(
-                                text: testPrompt,
-                                model: targetModel.isEmpty ? nil : targetModel,
-                                dimensions: parsedDims
-                            )
-                        }
-                    }
-                    .disabled(llama.isBusy || (llama.health?.status == "no_model_loaded" && selectedTestModelSlug.isEmpty) || testPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .buttonStyle(.borderedProminent)
-
-                    if llama.isBusy {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-
-                if let vector = llama.lastEmbeddingVector, let stats = EmbeddingVectorStats(vector: vector) {
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Embedding Vector Details")
-                                .font(.headline)
-                            if !selectedTestModelSlug.isEmpty {
-                                StatusBadge(selectedTestModelSlug.uppercased(), tint: .purple)
-                            }
-                            StatusBadge("\(stats.count) DIMENSIONS", tint: .green)
-                            StatusBadge("NO TRUNCATION", tint: .blue)
-                            Spacer()
-
-                            Button("Copy Full Vector (JSON)") {
-                                copyVectorToClipboard(vector: vector)
-                            }
-                            .controlSize(.small)
-
-                            Button("Copy Values (CSV)") {
-                                copyCSVToClipboard(vector: vector)
-                            }
-                            .controlSize(.small)
-                        }
-
-                        // Statistical summary grid
-                        HStack(spacing: 12) {
-                            statBox(title: "Dimensions", value: "\(stats.count)")
-                            statBox(title: "Min Value", value: String(format: "%.6f", stats.min))
-                            statBox(title: "Max Value", value: String(format: "%.6f", stats.max))
-                            statBox(title: "Mean", value: String(format: "%.6f", stats.mean))
-                            statBox(title: "L2 Norm", value: String(format: "%.6f", stats.l2Norm))
-                        }
-
-                        Text("Complete Vector Elements [0 .. \(stats.count - 1)] (Full, Non-Truncated):")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-
-                        // Full non-truncated scrollable vector view
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 2) {
-                                ForEach(0..<vector.count, id: \.self) { idx in
-                                    HStack(spacing: 8) {
-                                        Text("[\(idx)]")
-                                            .font(.caption2.monospaced())
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 48, alignment: .trailing)
-                                        Text(String(format: "%.8f", vector[idx]))
-                                            .font(.system(.caption, design: .monospaced))
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .padding(8)
-                        }
-                        .frame(height: 180)
-                        .background(Color.primary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
+    /// Embed a sentence with a registered model and look at the whole vector, folded away until
+    /// asked for: a check that a model answers, and the numbers when something looks off.
+    var embeddingTestSection: some View {
+        GroupBox {
+            DisclosureGroup(isExpanded: $showEmbeddingTest) {
+                embeddingTestContent
+                    .padding(.top, 8)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Test an Embedding")
+                        .font(.headline)
+                    Text("Embed a sentence and inspect the full vector")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(8)
+        }
+    }
+
+    var embeddingTestContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Picker("Model", selection: $selectedTestModelSlug) {
+                    Text("Loaded model").tag("")
+                    ForEach(unifiedModels) { m in
+                        Text(m.name).tag(m.slug)
+                    }
+                }
+                .frame(maxWidth: 320)
+                .onChange(of: selectedTestModelSlug) { _, newSlug in
+                    if !newSlug.isEmpty, let matched = unifiedModels.first(where: { $0.slug == newSlug }) {
+                        if let dimsVal = matched.dims {
+                            testEmbeddingDimensions = "\(dimsVal)"
+                        }
+                    }
+                }
+
+                LabeledContent("Dimensions") {
+                    TextField("model's", text: $testEmbeddingDimensions)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                }
+                .help("Truncate the vector to this many dimensions (Matryoshka models); empty keeps the model's own")
+
+                Spacer()
+            }
+
+            TextEditor(text: $testPrompt)
+                .font(.body)
+                .frame(height: 56)
+                .padding(4)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.08)))
+
+            HStack(spacing: 8) {
+                Button("Embed") {
+                    let parsedDims = Int(testEmbeddingDimensions.trimmingCharacters(in: .whitespacesAndNewlines))
+                    let targetModel = selectedTestModelSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task {
+                        await llama.testEmbedding(
+                            text: testPrompt,
+                            model: targetModel.isEmpty ? nil : targetModel,
+                            dimensions: parsedDims
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(llama.isBusy || (llama.health?.status == "no_model_loaded" && selectedTestModelSlug.isEmpty) || testPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if llama.isBusy {
+                    ProgressView().controlSize(.small)
+                }
+
+                if let vector = llama.lastEmbeddingVector, !vector.isEmpty {
+                    Spacer()
+                    Button("Copy JSON") {
+                        copyVectorToClipboard(vector: vector)
+                    }
+                    .controlSize(.small)
+                    Button("Copy CSV") {
+                        copyCSVToClipboard(vector: vector)
+                    }
+                    .controlSize(.small)
+                }
+            }
+
+            if let err = llama.lastError, llama.lastEmbeddingVector == nil {
+                Text(err)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            if let vector = llama.lastEmbeddingVector, let stats = EmbeddingVectorStats(vector: vector) {
+                HStack(spacing: 8) {
+                    statBox(title: "Dimensions", value: "\(stats.count)")
+                    statBox(title: "Min", value: String(format: "%.6f", stats.min))
+                    statBox(title: "Max", value: String(format: "%.6f", stats.max))
+                    statBox(title: "Mean", value: String(format: "%.6f", stats.mean))
+                    statBox(title: "L2 norm", value: String(format: "%.6f", stats.l2Norm))
+                }
+
+                // The whole vector, never truncated: the point of the test when a model misbehaves.
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(0..<vector.count, id: \.self) { idx in
+                            HStack(spacing: 8) {
+                                Text("[\(idx)]")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 48, alignment: .trailing)
+                                Text(String(format: "%.8f", vector[idx]))
+                                    .font(.system(.caption, design: .monospaced))
+                                Spacer()
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(height: 160)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
         }
     }
 
