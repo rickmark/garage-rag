@@ -74,6 +74,19 @@ final class StatusPagePresentationTests: XCTestCase {
         XCTAssertNil(health.problems[3].fix)
     }
 
+    func testMailAndMessagesPointAtFullDiskAccess() {
+        let health = StatusHealth(
+            database: .running,
+            mcp: .running(clients: 1),
+            sourceAccess: [.init(slug: "apple-mail", name: "Mail", path: "/Users/rick/Library/Mail", needsPermission: true, needsFullDiskAccess: true)],
+            sourceCount: 1,
+            embeddingModelCount: 1
+        )
+        let problem = health.problems.first { $0.id == "source.apple-mail" }
+        XCTAssertEqual(problem?.title, "Mail needs Full Disk Access")
+        XCTAssertEqual(problem?.fix, .openPrivacySettings)
+    }
+
     func testEmptyCorpusProblemsNeedARunningDatabase() {
         let stopped = StatusHealth(database: .stopped)
         XCTAssertEqual(stopped.problems.map(\.id), ["database"])

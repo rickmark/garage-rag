@@ -1,5 +1,6 @@
 import SwiftUI
 import IngestClient
+import PythonXPCService
 
 // The Sources page's model, independent of the view: what each source row shows, what the page
 // asks the person to fix at the top, and what the activity module says while the pipeline runs.
@@ -330,7 +331,8 @@ struct SourcesAttention: Equatable, Identifiable {
     static func attentions(
         volumeStatus: VolumeAccessStatus,
         testResult: VolumeAccessTestResult?,
-        sources: [RegisteredSource]
+        sources: [RegisteredSource],
+        sandboxed: Bool = GarageAppGroup.isSandboxed
     ) -> [SourcesAttention] {
         var items: [SourcesAttention] = []
 
@@ -379,7 +381,24 @@ struct SourcesAttention: Equatable, Identifiable {
             guard seen.insert(access.id).inserted else { continue }
             let category = access.tccCategory ?? TCCPermissionCategory.detect(slug: source.slug, path: source.root)
             let name = Self.displayName(of: source)
-            if access.requiresTCCPermission || access.tccCategory != nil, let category {
+            if let category, category.needsFullDiskAccess {
+                // Mail and Messages: nothing reads them until Full Disk Access is on, so settings come
+                // first; the folder grant follows only where the sandbox needs it too.
+                var secondary: [Command] = []
+                if sandboxed {
+                    secondary.append(Command(title: "Grant Folder Access…", action: .grantFolder(slug: source.slug, path: source.root)))
+                }
+                secondary.append(Command(title: "Re-check", action: .recheck))
+                items.append(SourcesAttention(
+                    id: "source:\(source.slug)",
+                    symbol: "lock",
+                    tint: .orange,
+                    title: "\(name) needs Full Disk Access",
+                    detail: category.fullDiskAccessSteps(sandboxed: sandboxed),
+                    primary: Command(title: "Open Privacy Settings…", action: .openPrivacySettings(category)),
+                    secondary: secondary
+                ))
+            } else if access.requiresTCCPermission || access.tccCategory != nil, let category {
                 items.append(SourcesAttention(
                     id: "source:\(source.slug)",
                     symbol: "lock",

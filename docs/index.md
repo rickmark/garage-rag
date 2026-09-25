@@ -85,7 +85,9 @@ Garage walks the sources you register, extracts text, decides who wrote each doc
     <div class="hero-actions download-actions">
       <a id="download-pkg" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="btn-label">Download installer</span></a>
       <a id="download-release" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-secondary" target="_blank" rel="noopener">All downloads on GitHub ↗</a>
+      <a id="download-app-store" href="https://apps.apple.com/app/id6811306880" class="btn btn-secondary" target="_blank" rel="noopener">Mac App Store ↗</a>
     </div>
+    <p><small>Garage is also on the <a href="https://apps.apple.com/app/id6811306880" target="_blank" rel="noopener">Mac App Store</a>. Both versions share one library on your Mac, so you can switch between them without re-indexing. The App Store version gets its updates from the App Store instead of the in-app updater.</small></p>
   </div>
   <div class="download-panel-aside">
     <h4>After installing</h4>
@@ -94,7 +96,7 @@ Garage walks the sources you register, extracts text, decides who wrote each doc
       <li>The first-run assistant picks your folders, an embedding model and the AI clients to connect.</li>
       <li>Ask Claude, or any MCP client, a question about your own files.</li>
     </ol>
-    <p><small>Garage checks for updates through Sparkle, only after asking you once. Garage runs on Apple Silicon only. The <code>.zip</code> archive is on the <a id="download-release-aside" href="https://github.com/rickmark/garage-rag/releases/latest" target="_blank" rel="noopener">GitHub release page</a>.</small></p>
+    <p><small>The installer version checks for updates through Sparkle, only after asking you once; the App Store version updates through the App Store. Garage runs on Apple Silicon only. The <code>.zip</code> archive is on the <a id="download-release-aside" href="https://github.com/rickmark/garage-rag/releases/latest" target="_blank" rel="noopener">GitHub release page</a>.</small></p>
   </div>
 </div>
 

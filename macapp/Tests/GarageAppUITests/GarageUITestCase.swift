@@ -71,6 +71,9 @@ class GarageUITestCase: XCTestCase {
 
     // MARK: - Launching
 
+    /// Arguments a subclass adds to every launch (the screenshot tests' `--appearance`).
+    var additionalLaunchArguments: [String] { [] }
+
     /// Launches Garage on this test's data folder and waits for its main window (or, with
     /// `firstRunCompleted: false`, the setup assistant).
     @discardableResult
@@ -86,7 +89,7 @@ class GarageUITestCase: XCTestCase {
             "-scheduledMaintenanceRunsAtLaunch", "NO",
             // Start from a clean window each time rather than the last run's restored state.
             "-ApplePersistenceIgnoreState", "YES",
-        ]
+        ] + additionalLaunchArguments
         app.launch()
         self.app = app
 
