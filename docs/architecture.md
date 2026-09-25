@@ -67,7 +67,7 @@ pay for `pdfplumber` and `openpyxl` in every worker.
 | Markdown | `text.py` | YAML frontmatter split off; malformed frontmatter never costs the body |
 | PDF | `pdf.py` | `pypdf` first, escalating to `pdfplumber` **per page** when a page yields little text or holds tables |
 | Office | `office.py` | `python-docx` / `python-pptx` / `openpyxl`; headings preserved as Markdown |
-| Images | `image.py` | Tesseract, on this machine; no cloud fallback |
+| Images | `image.py` | Tesseract, on this machine; no cloud fallback. HEIC/HEIF is decoded by macOS ImageIO (`imageio.py`), not a bundled codec |
 | Code | `text.py` | Verbatim — indentation is meaningful |
 
 ### 4. Quality gate (`extract/quality.py`)
