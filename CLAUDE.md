@@ -237,7 +237,7 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   fact also gets its own `chunks` row (`chunks.fact_id`, `chunker = 'facts:...'`), so the ordinary
   backfill embeds facts under every model with no fact-specific path. The prompts are
   configurable (`facts.prompts`, more than one). Schema in `data/sql/006_facts.sql` /
-  `007_chunk_fact_link.sql` / `011_fact_prompts.sql`.
+  `007_chunk_fact_link.sql` / `013_fact_prompts.sql`.
 - **Local inference** (`inference/`) — the one HTTP client (httpx; no `ollama`/`openai` packages)
   for LM Studio, Ollama and the app's `LlamaXPCService`: embeddings, chat and model listing on the
   OpenAI-compatible `/v1` routes (Ollama embeddings stay on `/api/embed`), plus LM Studio model
@@ -339,7 +339,7 @@ section (`facts.model`, `facts.provider`: `llama_xpc` | `ollama` | `lmstudio`) n
 `garage config get SECTION.KEY` edit and read single settings without touching the JSON by hand.
 `facts.prompts` (`config/fact_prompts.py`) lists named LangExtract prompts, merged by name with the
 built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), each fact records its
-`prompt_name`/`prompt_sha256`, and `fact_runs` (`data/sql/011_fact_prompts.sql`) backs `--stale-only`.
+`prompt_name`/`prompt_sha256`, and `fact_runs` (`data/sql/013_fact_prompts.sql`) backs `--stale-only`.
 
 ### macOS app (`macapp/`)
 

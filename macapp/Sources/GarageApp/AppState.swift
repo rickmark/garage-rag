@@ -76,6 +76,11 @@ final class AppState: ObservableObject {
     /// The `facts` section of garage.json: which model answers `enrich-facts` and `rag_ask`.
     @Published private(set) var factsModel: String = GarageConfigLoader.defaultFactsModel
     @Published private(set) var factsProvider: String = GarageConfigLoader.defaultFactsProvider
+    /// The effective fact-extraction prompts (`ListFactPrompts`): the built-in default and `facts.prompts`.
+    @Published private(set) var factPrompts: [FactPromptItem] = []
+    /// `facts.prompts` as configured, a JSON array; edits are applied to it and written back whole.
+    @Published private(set) var factPromptsConfiguredJSON: String = "[]"
+    @Published private(set) var factPromptsError: String?
     @Published private(set) var registeredModels: [RegisteredModel] = []
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
@@ -307,6 +312,30 @@ final class AppState: ObservableObject {
             return [model.summary, chosen.summary].joined(separator: "\n")
         }
         fetchFactsSettings()
+        return succeeded
+    }
+
+    /// Re-reads the effective fact prompts from the service.
+    func fetchFactPrompts() async {
+        guard postgres.status == .running else { return }
+        do {
+            let response = try await grpc.listFactPrompts()
+            factPrompts = response.prompts.map(FactPromptItem.init)
+            factPromptsConfiguredJSON = response.configuredJson.isEmpty ? "[]" : response.configuredJson
+            factPromptsError = nil
+        } catch {
+            factPromptsError = error.localizedDescription
+        }
+    }
+
+    /// Writes `facts.prompts` (a JSON array) through `SetSetting`, which validates it first.
+    @discardableResult
+    func saveFactPrompts(configuredJSON: String) async -> Bool {
+        let succeeded = await runOperation { grpc in
+            let response = try await grpc.setSetting("facts.prompts", to: configuredJSON)
+            return "facts.prompts updated (wrote \(response.path))"
+        }
+        await fetchFactPrompts()
         return succeeded
     }
 
@@ -945,10 +974,10 @@ final class AppState: ObservableObject {
     /// Distills documents into facts ("glean facts") on the enrich-facts runner: every
     /// document of `source`, or just `documentID` when given.
     @discardableResult
-    func runEnrichFacts(source: String = "*", documentID: Int64? = nil) async -> Bool {
+    func runEnrichFacts(source: String = "*", documentID: Int64? = nil, prompts: [String] = []) async -> Bool {
         let grpc = self.grpc
         let result = await enrichFacts.run { runner in
-            let finished = try await grpc.enrichFacts(source: source, documentID: documentID) { status in
+            let finished = try await grpc.enrichFacts(source: source, documentID: documentID, prompts: prompts) { status in
                 // The summary is logged once, as the operation's result.
                 if status.phase != "finished", !status.message.isEmpty {
                     runner.appendLog(status.message, stream: status.error.isEmpty ? .stdout : .stderr)

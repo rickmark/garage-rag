@@ -111,6 +111,9 @@ struct ModelsView: View {
                 // Section 5: Fact Distillation Model
                 distillationModelSection
 
+                // Section 5b: The prompts it runs
+                FactPromptsSection()
+
                 // Section 6: LM Studio API Token
                 if provider == .lmStudio || appState.lmStudioTokenConfigured {
                     lmStudioTokenSection

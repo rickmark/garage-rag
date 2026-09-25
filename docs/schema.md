@@ -130,7 +130,7 @@ Deleting a fact cascades into its chunk and, through `chunk_id`, into every
 ### `facts`
 
 Atomic, self-contained claims distilled out of a document's text by
-`enrich/facts.py` (`006_facts.sql`, `011_fact_prompts.sql`). Same shape as
+`enrich/facts.py` (`006_facts.sql`, `013_fact_prompts.sql`). Same shape as
 chunks: ordered rows scoped to a `document_id` (`ON DELETE CASCADE`), and within
 it to the prompt that produced them (unique on `(document_id, prompt_name, ord)`).
 Running one prompt over a document again replaces that prompt's facts and
@@ -143,13 +143,13 @@ leaves every other prompt's alone.
 | `attributes` | `jsonb` extractor attributes, default `'{}'` |
 | `char_start` / `char_end` | span of `documents.content` the fact was grounded to; an ungrounded fact is dropped by the extractor rather than stored |
 | `extractor` / `extractor_model` | provenance, default `'langextract'` and the model id |
-| `prompt_name` | the `facts.prompts` entry that produced the fact; `'default'` (the built-in prompt) for facts from before 011 |
-| `prompt_sha256` | SHA-256 of that prompt's description and examples when it ran; NULL before 011 |
+| `prompt_name` | the `facts.prompts` entry that produced the fact; `'default'` (the built-in prompt) for facts from before 012 |
+| `prompt_sha256` | SHA-256 of that prompt's description and examples when it ran; NULL before 012 |
 | `tsv` | generated `to_tsvector('english', fact)`, GIN-indexed — the keyword half of hybrid search over facts |
 
 ### `fact_runs`
 
-The last extraction of each prompt over each document (`011_fact_prompts.sql`),
+The last extraction of each prompt over each document (`013_fact_prompts.sql`),
 keyed on `(document_id, prompt_name)` with `document_id` `ON DELETE CASCADE`:
 the prompt's hash (`prompt_sha256`), the document's `content_sha256` and the
 `extractor_model` it ran with, how many `facts` it found, and `extracted_at`. A
