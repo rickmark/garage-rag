@@ -296,8 +296,10 @@ struct SourcesView: View {
                 .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from what has not been distilled yet.")
                 .accessibilityIdentifier("sources.updateEverything")
 
-                Button("Scan & Ingest All") {
+                Button {
                     scanAndIngest(slug: "*")
+                } label: {
+                    Label("Scan & Ingest All", systemImage: "arrow.clockwise")
                 }
                 .controlSize(.small)
                 .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
@@ -511,11 +513,14 @@ struct SourcesView: View {
                             .help("Take this source out of the run; the others go on.")
                             .accessibilityIdentifier("sources.row.\(source.slug).cancel")
                         } else {
-                            Button("Scan & Ingest") {
+                            Button {
                                 scanAndIngest(slug: source.slug, includeCode: source.includeCode)
+                            } label: {
+                                Label("Scan & Ingest", systemImage: "arrow.clockwise")
                             }
                             .controlSize(.small)
                             .disabled(notReady || jobRunning)
+                            .help("Count what the source holds, then index what is new or changed.")
                             .accessibilityIdentifier("sources.row.\(source.slug).scanIngest")
                         }
 
@@ -584,56 +589,78 @@ struct SourcesView: View {
     /// editing, and removing.
     private func sourceMenu(for source: RegisteredSource, access: SourcePathAccessResult?, isRemoving: Bool) -> some View {
         Menu {
-            Button("Ingest Including Code") {
-                ingestSource(slug: source.slug, includeCode: true)
-            }
-            .disabled(notReady || jobRunning)
-
-            Button("Re-index Everything") {
-                ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
-            }
-            .disabled(notReady || jobRunning)
-
-            Button("Scan Only") {
+            // Scan is the magnifying glass, ingest the document coming down, and the two together
+            // the update arrow, here and on the buttons.
+            Button {
                 scanSource(slug: source.slug, includeCode: source.includeCode)
+            } label: {
+                Label("Scan Only", systemImage: "magnifyingglass")
             }
             .disabled(notReady || jobRunning)
 
-            Button("Glean Facts") {
+            Button {
+                ingestSource(slug: source.slug, includeCode: true)
+            } label: {
+                Label("Ingest Including Code", systemImage: "arrow.down.doc")
+            }
+            .disabled(notReady || jobRunning)
+
+            Button {
+                ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
+            } label: {
+                Label("Re-index Everything", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(notReady || jobRunning)
+
+            Button {
                 enrichFacts(source: source.slug)
+            } label: {
+                Label("Glean Facts", systemImage: "sparkles")
             }
             .disabled(notReady || appState.enrichFacts.isRunning)
 
             Divider()
 
-            Button("Check for Deleted Files") {
+            Button {
                 run { try await $0.reconcile(source: source.slug, apply: false).message }
+            } label: {
+                Label("Check for Deleted Files", systemImage: "doc.questionmark")
             }
             .disabled(notReady || appState.isBusy(source: source.slug))
 
-            Button("Forget Deleted Files", role: .destructive) {
+            Button(role: .destructive) {
                 run { try await $0.reconcile(source: source.slug, apply: true).message }
+            } label: {
+                Label("Forget Deleted Files", systemImage: "trash")
             }
             .disabled(notReady || appState.isBusy(source: source.slug))
 
             Divider()
 
-            Button("Reveal in Finder") {
+            Button {
                 NSWorkspace.shared.activateFileViewerSelecting([source.expandedRootURL])
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder")
             }
 
-            Button("Edit…") {
+            Button {
                 populateForm(from: source)
+            } label: {
+                Label("Edit…", systemImage: "pencil")
             }
 
             if let access, !access.isAccessible {
                 Divider()
-                Button("Grant Folder Access…") {
+                Button {
                     _ = appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                } label: {
+                    Label("Grant Folder Access…", systemImage: "lock.open")
                 }
                 if let category = access.tccCategory {
-                    Button("Open Privacy Settings…") {
+                    Button {
                         appState.openPrivacySettings(for: category)
+                    } label: {
+                        Label("Open Privacy Settings…", systemImage: "gear")
                     }
                 }
             }
@@ -641,8 +668,10 @@ struct SourcesView: View {
             Divider()
 
             // Allowed while the source is queued, scanned or ingested: removing cancels that first.
-            Button("Remove Source", role: .destructive) {
+            Button(role: .destructive) {
                 removeSource(slug: source.slug)
+            } label: {
+                Label("Remove Source", systemImage: "minus.circle")
             }
             .disabled(notReady || isRemoving)
         } label: {
