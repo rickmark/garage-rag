@@ -183,6 +183,25 @@ final class LogTableViewTests: XCTestCase {
         XCTAssertTrue(streamer.logs(for: .unifiedLog).isEmpty)
     }
 
+    /// A batch keeps its order in every source and each line lands only in the sources it names; a
+    /// repeated line is dropped once.
+    @MainActor
+    func testARoutedBatchKeepsItsOrderPerSource() {
+        let streamer = OSLogStreamService(startStreaming: false)
+        let lines = (0..<4).map { LogLine(stream: .stdout, text: "line \($0)", source: "test", level: .info) }
+        streamer.appendRouted([
+            RoutedLogLine(line: lines[0], targets: [.unifiedLog, .ingest]),
+            RoutedLogLine(line: lines[1], targets: [.unifiedLog]),
+            RoutedLogLine(line: lines[2], targets: [.unifiedLog, .ingest]),
+            RoutedLogLine(line: lines[0], targets: [.unifiedLog, .ingest]),
+            RoutedLogLine(line: lines[3], targets: [.llama]),
+        ])
+
+        XCTAssertEqual(streamer.logs(for: .unifiedLog).map(\.text), ["line 0", "line 1", "line 2"])
+        XCTAssertEqual(streamer.logs(for: .ingest).map(\.text), ["line 0", "line 2"])
+        XCTAssertEqual(streamer.logs(for: .llama).map(\.text), ["line 3"])
+    }
+
     /// The store sees only this process, which logs under the app's bundle identifier;
     /// the one predicate must cover it (per-source routing is by category).
     func testAppPredicateCoversTheAppSubsystem() {

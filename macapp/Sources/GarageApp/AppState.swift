@@ -960,6 +960,20 @@ final class AppState: ObservableObject {
         return result.succeeded
     }
 
+    /// Scan & Ingest of one source. The source waits in `ingestQueue` from the start of its scan until its
+    /// ingest ends, so there is no moment between the scan and the ingest with nothing running: the page
+    /// keeps its Stop button, and Stop (or the row's Cancel) in that hand-over takes the source out of the
+    /// queue, so the ingest never starts.
+    @discardableResult
+    func scanAndIngestSource(slug: String, options: IngestOptions = .default) async -> Bool {
+        guard !ingestQueue.contains(slug) else { return false }
+        ingestQueue.append(slug)
+        defer { ingestQueue.removeAll { $0 == slug } }
+        guard await scanSources(source: slug, includeCode: options.includeCode) else { return false }
+        guard ingestQueue.contains(slug), !isCancellingAll else { return false }
+        return await ingestSource(slug: slug, options: options)
+    }
+
     /// Runs ingestion through the configured execution mode (XPC helper or CLI) streaming real-time progress.
     @discardableResult
     func ingestSource(slug: String, options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
@@ -1314,7 +1328,7 @@ final class AppState: ObservableObject {
     /// A scan, ingest, queued source scan or maintenance run is under way: what `cancelAll()` stops.
     var hasCancellableWork: Bool {
         isScanning || scanningSource != nil || isIngesting || isIngestingAll || isMaintenanceRunning
-            || !sourcesAwaitingScan.isEmpty || queuedSourceScanTask != nil
+            || !sourcesAwaitingScan.isEmpty || !ingestQueue.isEmpty || queuedSourceScanTask != nil
     }
 
     /// Stops everything: empties the queues (the sources an ingest of every source has yet to reach, and

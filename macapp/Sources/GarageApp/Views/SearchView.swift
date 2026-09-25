@@ -586,10 +586,15 @@ public struct SearchView: View {
                     self.lastSearchedQuery = trimmed
                     self.lastSearchLatencyMs = elapsedMs
                     self.isSearching = false
+                    self.selectedResultID = nil
+                    // Open the first hit once the table has taken the new rows. Selected in this same
+                    // update, the table dropped it as a row it did not have yet, so only the first
+                    // search of a visit opened its hit in the inspector.
                     if let first = hits.first {
-                        self.selectedResultID = first.id
-                    } else {
-                        self.selectedResultID = nil
+                        DispatchQueue.main.async {
+                            guard self.selectedResultID == nil, self.results.first?.id == first.id else { return }
+                            self.selectedResultID = first.id
+                        }
                     }
                 }
             } catch {

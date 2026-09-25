@@ -317,6 +317,10 @@ public final class XPCServiceManager: ObservableObject {
     public weak var osLogStreamService: OSLogStreamService?
     private var streamingConnections: [String: NSXPCConnection] = [:]
     private var streamingAdapters: [String: XPCLogReceiverAdapter] = [:]
+    /// How long to wait before subscribing a relaunched helper to the log stream again, per service.
+    /// Doubles on each interruption up to a minute, so a helper that keeps crashing is not relaunched
+    /// in a tight loop, and goes back to a second once a subscription succeeds.
+    private var streamingResubscribeDelays: [String: TimeInterval] = [:]
 
     private let maxLogLines = 4000
 
@@ -827,8 +831,19 @@ public final class XPCServiceManager: ObservableObject {
         connection.exportedInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         connection.exportedObject = adapter
 
-        connection.interruptionHandler = {
+        // An interruption means the helper exited (a crash, a restart, the system reclaiming it). The
+        // connection stays usable, but the next instance knows nothing of this subscription, so its
+        // lines would never reach the Logs page: subscribe again, which also relaunches it.
+        connection.interruptionHandler = { [weak self, weak connection] in
             logger.warning("Live log streaming connection for '\(bundleId, privacy: .public)' was interrupted")
+            Task { @MainActor [weak self] in
+                guard let self, let connection, self.streamingConnections[key] === connection else { return }
+                let delay = self.streamingResubscribeDelays[key] ?? 1
+                self.streamingResubscribeDelays[key] = min(delay * 2, 60)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard self.streamingConnections[key] === connection else { return }
+                self.subscribeToLogStream(on: connection, key: key, bundleId: bundleId)
+            }
         }
         // Only drop the registry entry if it still belongs to this connection: a restart replaces the entry with a
         // new connection, and the old connection's invalidation must not remove the new one.
@@ -842,17 +857,20 @@ public final class XPCServiceManager: ObservableObject {
 
         connection.resume()
         streamingConnections[key] = connection
+        subscribeToLogStream(on: connection, key: key, bundleId: bundleId)
+    }
 
-        // Opt this connection in to live log streaming on the service side.
-        if let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+    /// Opts `connection` in to live log streaming on the service side.
+    private func subscribeToLogStream(on connection: NSXPCConnection, key: String, bundleId: String) {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             logger.debug("Failed to initialize log streaming proxy for '\(bundleId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-        }) as? GarageCommonXPCServiceProtocol {
-            proxy.subscribeToLogStream { subscribed in
-                if subscribed {
-                    logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
-                } else {
-                    logger.warning("Service '\(bundleId, privacy: .public)' declined the log streaming subscription")
-                }
+        }) as? GarageCommonXPCServiceProtocol else { return }
+        proxy.subscribeToLogStream { [weak self] subscribed in
+            if subscribed {
+                logger.debug("Live log streaming successfully registered for '\(bundleId, privacy: .public)'")
+                Task { @MainActor [weak self] in self?.streamingResubscribeDelays[key] = nil }
+            } else {
+                logger.warning("Service '\(bundleId, privacy: .public)' declined the log streaming subscription")
             }
         }
     }
@@ -869,6 +887,7 @@ public final class XPCServiceManager: ObservableObject {
     /// Stops live log streaming for a given service.
     public func stopStreamingLogs(for serviceId: String) {
         let key = services.first(where: { $0.id == serviceId || $0.bundleId == serviceId })?.id ?? serviceId
+        streamingResubscribeDelays.removeValue(forKey: key)
         if let connection = streamingConnections.removeValue(forKey: key) {
             connection.invalidate()
         }
@@ -882,6 +901,7 @@ public final class XPCServiceManager: ObservableObject {
         }
         streamingConnections.removeAll()
         streamingAdapters.removeAll()
+        streamingResubscribeDelays.removeAll()
     }
 
     // MARK: - Static XPC Ping Implementation
