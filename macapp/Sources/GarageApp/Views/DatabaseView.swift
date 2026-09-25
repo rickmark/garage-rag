@@ -473,6 +473,23 @@ struct DatabaseView: View {
                                 || appState.postgres.status == .stopping
                         )
                 }
+
+                // After a reset, the relaunched instance says what it rebuilt, or what went wrong.
+                if let outcome = appState.databaseResetOutcome {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: outcome.succeeded ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .foregroundStyle(outcome.succeeded ? Color.green : Color.red)
+                            .accessibilityHidden(true)
+                        Text(outcome.message)
+                            .font(.caption)
+                            .foregroundStyle(outcome.succeeded ? AnyShapeStyle(HierarchicalShapeStyle.secondary) : AnyShapeStyle(Color.red))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("database.resetOutcome")
+                    }
+                    .font(.caption)
+                    .padding(.leading, 36)
+                }
             }
             .padding(10)
         }
