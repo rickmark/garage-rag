@@ -509,7 +509,7 @@ def socket_server() -> Iterator[tuple[str, FakeState]]:
             return "unix"
 
     Handler.state = state
-    directory = tempfile.mkdtemp(prefix="garage-", dir="/tmp")  # sun_path is short
+    directory = tempfile.mkdtemp(prefix="garage-", dir=_short_temp_root())  # sun_path is short
     path = f"{directory}/llama"
     server = _UnixHTTPServer(path, Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -552,3 +552,11 @@ def test_unreachable_socket_names_the_socket(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(LlamaXPCError, match="unix:/tmp/garage-no-such-dir/llama") as info:
         client.health()
     assert info.value.status_code == 503
+
+
+def _short_temp_root() -> str:
+    """The temporary folder, or /tmp when its path leaves too little room in sun_path (104 bytes on macOS)."""
+    import tempfile
+
+    root = tempfile.gettempdir()
+    return root if len(root) <= 60 else "/tmp"

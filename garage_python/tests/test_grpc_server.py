@@ -99,7 +99,7 @@ def socket_dir():
     import shutil
     import tempfile
 
-    directory = tempfile.mkdtemp(prefix="garage-", dir="/tmp")
+    directory = tempfile.mkdtemp(prefix="garage-", dir=_short_temp_root())
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
 
@@ -149,3 +149,11 @@ def test_grpc_socket_replaces_a_stale_socket_but_nothing_else(socket_dir):
 def test_grpc_socket_path_must_be_absolute():
     with pytest.raises(ValueError, match="absolute"):
         create_grpc_server(socket_path="relative/grpc")
+
+
+def _short_temp_root() -> str:
+    """The temporary folder, or /tmp when its path leaves too little room in sun_path (104 bytes on macOS)."""
+    import tempfile
+
+    root = tempfile.gettempdir()
+    return root if len(root) <= 60 else "/tmp"
