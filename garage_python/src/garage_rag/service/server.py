@@ -45,6 +45,8 @@ from garage_rag.proto.garage_pb2 import (
     EmbeddingChunkItem,
     EnrichFactsRequest,
     EnrichFactsStatus,
+    EnsureLlamaModelRequest,
+    EnsureLlamaModelResponse,
     FactClassCount,
     FactSummary,
     FinalizeIngestSessionRequest,
@@ -887,6 +889,26 @@ class GarageRpcServicer(GarageServiceServicer):
                 batches=event.batches,
                 message=event.message,
             )
+
+    @_grpc_errors
+    def EnsureLlamaModel(
+        self, request: EnsureLlamaModelRequest, context: grpc.ServicerContext
+    ) -> EnsureLlamaModelResponse:
+        """Have LlamaXPCService load a model unless it is resident, through this process's host.
+
+        Only the loader the host installed is used (never this RPC again), so a server
+        outside the app answers FAILED_PRECONDITION rather than calling itself.
+        """
+        from garage_rag.xpc.host import ModelLoadError, ensure_model
+
+        if not request.model.strip():
+            raise ValueError("model is required")
+        try:
+            message = ensure_model(request.model, allow_remote=False)
+        except ModelLoadError as exc:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            raise  # abort raises; this keeps type checkers from seeing a fall-through
+        return EnsureLlamaModelResponse(message=message)
 
     # -----------------------------------------------------------------------
     # Fact distillation

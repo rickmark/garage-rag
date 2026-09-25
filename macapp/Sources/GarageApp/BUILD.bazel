@@ -36,6 +36,7 @@ swift_library(
         "//macapp/Sources/GarageUpdater",
         "//macapp/Sources/IngestClient",
         "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/LlamaModelLoader",
         "//macapp/Sources/MCPServerClient",
         "//macapp/Sources/ModelDownloadClient",
         "//macapp/Sources/PythonXPCService",

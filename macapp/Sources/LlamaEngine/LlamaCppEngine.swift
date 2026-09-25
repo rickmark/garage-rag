@@ -194,7 +194,27 @@ public final class LlamaCppEngine: LlamaInferenceEngine, @unchecked Sendable {
     public func loadModel(path: String, alias: String?, configJson: String?) -> (success: Bool, message: String) {
         lock.lock()
         defer { lock.unlock() }
+        return loadLocked(path: path, alias: alias, configJson: configJson)
+    }
 
+    /// Loads a model only when its alias is not resident yet; a resident alias is left as it is,
+    /// whatever file it came from. The check and the load happen under the one engine lock, so
+    /// callers racing for the same alias (the gRPC service, the MCP server, the app) load it once:
+    /// the first loads it, the rest wait for the lock and find it resident.
+    public func ensureModel(path: String, alias: String, configJson: String?) -> (success: Bool, message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        stateLock.lock()
+        let resident = models[alias] != nil
+        stateLock.unlock()
+        if resident {
+            return (true, "\(alias) is already loaded")
+        }
+        return loadLocked(path: path, alias: alias, configJson: configJson)
+    }
+
+    /// The body of `loadModel`. Caller holds `lock`.
+    private func loadLocked(path: String, alias: String?, configJson: String?) -> (success: Bool, message: String) {
         guard FileManager.default.fileExists(atPath: path) else {
             return fail("model file not found: \(path)")
         }

@@ -26,6 +26,8 @@ from garage_rag.proto.garage_pb2 import (
     DropModelResponse,
     EnrichFactsRequest,
     EnrichFactsStatus,
+    EnsureLlamaModelRequest,
+    EnsureLlamaModelResponse,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
     GetDocumentRequest,
@@ -157,7 +159,7 @@ class GarageClient:
         out.ParseFromString(serialized)
         return out
 
-    def _invoke_unary(self, rpc_name: str, request: Any, response_cls: Any) -> Any:
+    def _invoke_unary(self, rpc_name: str, request: Any, response_cls: Any, *, timeout: float | None = None) -> Any:
         if self.in_process:
             req_copy = self._roundtrip_proto(request, type(request))
             ctx = _InProcessServicerContext()
@@ -165,6 +167,8 @@ class GarageClient:
             res = method(req_copy, ctx)
             return self._roundtrip_proto(res, response_cls)
         stub_method = getattr(self._get_stub(), rpc_name)
+        if timeout is not None:
+            return stub_method(request, timeout=timeout)
         return stub_method(request)
 
     def _invoke_stream(self, rpc_name: str, request: Any, response_cls: Any) -> Iterator[Any]:
@@ -246,6 +250,12 @@ class GarageClient:
 
     def backfill(self, request: BackfillRequest) -> Iterator[BackfillStatus]:
         return self._invoke_stream("Backfill", request, BackfillStatus)
+
+    def ensure_llama_model(self, model: str, *, timeout: float | None = None) -> EnsureLlamaModelResponse:
+        """Have the app load ``model`` in LlamaXPCService unless it is resident (see ``garage_rag.xpc.host``)."""
+        return self._invoke_unary(
+            "EnsureLlamaModel", EnsureLlamaModelRequest(model=model), EnsureLlamaModelResponse, timeout=timeout
+        )
 
     def enrich_facts(self, request: EnrichFactsRequest) -> Iterator[EnrichFactsStatus]:
         return self._invoke_stream("EnrichFacts", request, EnrichFactsStatus)

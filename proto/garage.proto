@@ -43,6 +43,9 @@ service GarageService {
     rpc SetDefaultModel (SetDefaultModelRequest) returns (SetDefaultModelResponse);
     rpc DropModel (DropModelRequest) returns (DropModelResponse);
     rpc Backfill (BackfillRequest) returns (stream BackfillStatus);
+    // Has LlamaXPCService load a llama_xpc model (over NSXPC) unless it is already resident. For
+    // processes outside the app's XPC services (the stdio launchers), which cannot reach it themselves.
+    rpc EnsureLlamaModel (EnsureLlamaModelRequest) returns (EnsureLlamaModelResponse);
 
     // --- Facts ---
     rpc EnrichFacts (EnrichFactsRequest) returns (stream EnrichFactsStatus);
@@ -508,6 +511,14 @@ message BackfillStatus {
     int64 remaining = 6;
     int64 batches = 7;
     string message = 8;
+}
+
+message EnsureLlamaModelRequest {
+    string model = 1;  // the model's slug: the alias LlamaXPCService keeps it under
+}
+
+message EnsureLlamaModelResponse {
+    string message = 1;
 }
 
 // ---------------------------------------------------------------------------

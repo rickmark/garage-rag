@@ -1,6 +1,7 @@
 import Foundation
 import OSLog
 import IngestClient
+import LlamaModelLoader
 import PythonXPCService
 import PythonKit
 
@@ -26,6 +27,11 @@ final class GarageEmbedXPCServiceDelegate: GarageXPCServiceBase, GarageEmbedXPCS
         [
             GarageXPCStandardSelfTests.serviceModule("garage_rag.embed", attributes: ["get_embedder", "embed_via_grpc"]),
         ]
+    }
+
+    /// Embeddings made here (`embedTexts`, `embed_via_grpc`) load their llama_xpc model on demand.
+    override func pythonDidBecomeReady(_ environment: GaragePythonEnvironment) {
+        LlamaModelLoaderBridge.install()
     }
 
     // MARK: - GarageEmbedXPCServiceProtocol

@@ -18,6 +18,7 @@ py_library(
         "//garage_python/src/garage_rag/ops",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/search",
+        "//garage_python/src/garage_rag/xpc",
         "@pypi//grpcio",
         "@pypi//sqlalchemy",
     ],

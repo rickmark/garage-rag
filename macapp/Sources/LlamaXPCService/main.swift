@@ -214,6 +214,20 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
         }
     }
 
+    func ensureModel(modelPath: String, alias: String, configJson: String?, with reply: @escaping (Bool, String?, Error?) -> Void) {
+        logger.info("Ensuring model \(alias, privacy: .public) (\(modelPath, privacy: .public))")
+        DispatchQueue.global(qos: .userInitiated).async { [engine] in
+            let alreadyLoaded = engine.loadedAliases.contains(alias)
+            let result = engine.ensureModel(path: modelPath, alias: alias, configJson: configJson)
+            if !result.success {
+                logger.error("Failed to load model on demand: \(result.message, privacy: .public)")
+            } else if !alreadyLoaded {
+                GarageXPCOutputCapture.shared.log(message: "llama-engine loaded \(alias) on demand from \(modelPath)")
+            }
+            reply(result.success, result.message, nil)
+        }
+    }
+
     func unloadModel(with reply: @escaping (Bool, Error?) -> Void) {
         logger.info("Unloading all models")
         DispatchQueue.global(qos: .userInitiated).async { [engine] in

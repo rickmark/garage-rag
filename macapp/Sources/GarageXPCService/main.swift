@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import OSLog
+import LlamaModelLoader
 import PythonXPCService
 import PythonKit
 
@@ -140,7 +141,15 @@ final class GarageXPCServiceDelegate: GarageXPCServiceBase, GarageXPCServiceProt
         [
             GarageXPCStandardSelfTests.serviceModule("garage_rag.service"),
             GarageXPCStandardSelfTests.serviceModule("garage_rag.service.server", attributes: ["create_grpc_server"]),
+            LlamaModelLoaderBridge.selfTest(),
         ]
+    }
+
+    /// Search, Backfill and EnrichFacts run here; their llama_xpc models load on demand through
+    /// this process's NSXPC connection to LlamaXPCService. `EnsureLlamaModel` (the stdio
+    /// launchers' way in) uses the same loader.
+    override func pythonDidBecomeReady(_ environment: GaragePythonEnvironment) {
+        LlamaModelLoaderBridge.install()
     }
 
     override func registerManagedServices(in host: GarageXPCServiceHost) {

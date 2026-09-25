@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import OSLog
+import LlamaModelLoader
 import PythonXPCService
 import PythonKit
 
@@ -128,7 +129,14 @@ final class GarageMCPServerServiceDelegate: GarageXPCServiceBase, GarageMCPServe
             GarageXPCStandardSelfTests.serviceModule("garage_rag.mcp_server"),
             GarageXPCStandardSelfTests.serviceModule("garage_rag.mcp_server.server", attributes: ["start_background_server", "stop_background_server", "is_background_server_running", "background_server_error"]),
             GarageXPCStandardSelfTests.sitePackages(modules: ["uvicorn", "starlette", "mcp.server.streamable_http_manager"]),
+            LlamaModelLoaderBridge.selfTest(),
         ]
+    }
+
+    /// rag_search / rag_ask load their llama_xpc models on demand through this process's NSXPC
+    /// connection to LlamaXPCService.
+    override func pythonDidBecomeReady(_ environment: GaragePythonEnvironment) {
+        LlamaModelLoaderBridge.install()
     }
 
     override func registerManagedServices(in host: GarageXPCServiceHost) {

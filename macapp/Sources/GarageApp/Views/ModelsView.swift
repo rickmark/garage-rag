@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import LlamaClient
+import LlamaModelLoader
 import ModelDownloadClient
 
 struct ModelsView: View {
@@ -28,8 +29,6 @@ struct ModelsView: View {
     @State var lmStudioToken: String = ""
 
     // Llama model loading configuration state
-    @State var gpuLayers: Int = 33
-    @State var cpuThreads: Int = 4
     @State var showUnloadConfirmation: Bool = false
     /// Alias the pending "Unload" confirmation applies to; `nil` unloads every model.
     @State var pendingUnloadAlias: String? = nil
@@ -1244,16 +1243,17 @@ struct ModelsView: View {
 
     func loadDownloadedModel(item: UnifiedModelItem, dlInfo: DownloadedModelInfo?) {
         guard let dl = dlInfo ?? getDownloadedInfo(item: item) else { return }
+        // The same settings an on-demand load (LlamaModelLoader) uses, so the model behaves alike
+        // whichever loaded it.
+        let plan = LlamaModelLoadPlan(
+            alias: item.slug,
+            displayName: item.name,
+            path: dl.path,
+            contextSize: item.contextSize ?? LlamaModelLoadDefaults.contextSize,
+            gpuLayers: item.catalogItem?.defaultGpuLayers ?? LlamaModelLoadDefaults.gpuLayers
+        )
         Task {
-            await llama.loadModel(
-                path: dl.path,
-                alias: item.slug,
-                config: [
-                    "n_ctx": item.contextSize ?? 8192,
-                    "n_gpu_layers": gpuLayers,
-                    "threads": cpuThreads
-                ]
-            )
+            await llama.loadModel(path: plan.path, alias: plan.alias, config: plan.config)
         }
     }
 
