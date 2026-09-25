@@ -473,6 +473,13 @@ class TestEveryCallerGoesThroughTheGuard:
         with pytest.raises(EgressBlocked):
             GarageClient(host="10.0.0.5", port=50051, in_process=False)._get_stub()
 
+    def test_grpc_client_socket_must_be_an_absolute_path(self) -> None:
+        """A socket path is local by construction; a relative one could name anything, so it is refused."""
+        from garage_rag.service.client import GarageClient
+
+        with pytest.raises(EgressBlocked, match="absolute"):
+            GarageClient(socket_path="s/grpc")._get_stub()
+
     def test_embedding_backfill_asks_the_guard(self, off_box_settings) -> None:
         from garage_rag.embed.factory import provider_is_local
 

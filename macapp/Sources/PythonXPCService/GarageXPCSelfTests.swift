@@ -317,13 +317,12 @@ public enum GarageXPCStandardSelfTests {
     }
 
     /// Verifies a gRPC channel to the backend becomes ready within a timeout.
-    public static func grpcConnection(hostProvider: @escaping @Sendable () -> (host: String, port: Int)?, timeoutSeconds: Double = 5) -> GarageXPCSelfTest {
-        GarageXPCSelfTest(name: "gRPC Connection", description: "Opens an insecure grpc channel to the Garage backend and waits for it to become ready.") {
-            guard let target = hostProvider() else {
-                throw GarageXPCSelfTestSkipped("GARAGE_GRPC_HOST / GARAGE_GRPC_PORT are not configured")
+    public static func grpcConnection(addressProvider: @escaping @Sendable () -> String?, timeoutSeconds: Double = 5) -> GarageXPCSelfTest {
+        GarageXPCSelfTest(name: "gRPC Connection", description: "Opens an insecure grpc channel to the Garage backend (its socket, or host and port) and waits for it to become ready.") {
+            guard let address = addressProvider() else {
+                throw GarageXPCSelfTestSkipped("GARAGE_GRPC_SOCKET / GARAGE_GRPC_PORT are not configured")
             }
             let grpc = try Python.attemptImport("grpc")
-            let address = "\(target.host):\(target.port)"
             let channel = try grpc.insecure_channel.throwing.dynamicallyCall(withArguments: [address])
             defer { _ = try? channel.close.throwing.dynamicallyCall(withArguments: []) }
             let future = grpc.channel_ready_future(channel)

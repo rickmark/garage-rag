@@ -91,3 +91,61 @@ def test_grpc_get_embedding_batches_db_outage_is_an_error(grpc_server):
         with pytest.raises(grpc.RpcError) as excinfo:
             stub.GetEmbeddingBatches(GetEmbeddingBatchesRequest(model_slug="bge-m3"))
     assert excinfo.value.code() != grpc.StatusCode.OK
+
+
+@pytest.fixture
+def socket_dir():
+    """A short folder for sockets: ``sun_path`` holds only 104 bytes on macOS (108 on Linux)."""
+    import shutil
+    import tempfile
+
+    directory = tempfile.mkdtemp(prefix="garage-", dir="/tmp")
+    yield directory
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_grpc_over_a_unix_socket(socket_dir):
+    """The app serves the facade on a socket in its App Group container, not on a TCP port."""
+    import os
+    import stat
+
+    from garage_rag.service.client import GarageClient
+
+    path = os.path.join(socket_dir, "s", "grpc")
+    server, _ = create_grpc_server(socket_path=path)
+    server.start()
+    try:
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode) == 0o700
+        with GarageClient(socket_path=path) as client:
+            assert not client.in_process
+            assert client.address == f"unix:{path}"
+            assert client.ping("over the socket").message == "over the socket"
+    finally:
+        server.stop(grace=None)
+
+
+def test_grpc_socket_replaces_a_stale_socket_but_nothing_else(socket_dir):
+    import os
+    import socket
+
+    path = os.path.join(socket_dir, "grpc")
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(path)
+    stale.close()  # the file stays behind, as after a crash
+    server, _ = create_grpc_server(socket_path=path)
+    server.start()
+    server.stop(grace=None)
+
+    regular = os.path.join(socket_dir, "not-a-socket")
+    with open(regular, "w") as handle:
+        handle.write("keep me")
+    with pytest.raises(RuntimeError, match="bind"):
+        create_grpc_server(socket_path=regular)
+    with open(regular) as handle:
+        assert handle.read() == "keep me"
+
+
+def test_grpc_socket_path_must_be_absolute():
+    with pytest.raises(ValueError, match="absolute"):
+        create_grpc_server(socket_path="relative/grpc")

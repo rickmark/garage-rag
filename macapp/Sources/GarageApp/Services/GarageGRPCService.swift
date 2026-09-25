@@ -49,6 +49,19 @@ final class GarageGRPCService: ObservableObject {
     @Published private(set) var status: GarageGRPCStatus = .stopped
     @Published var host: String = "127.0.0.1"
     @Published var port: Int = 50051
+    /// The Unix-domain socket the server listens on (`GarageSockets`), so that only this account's Garage
+    /// processes reach the corpus; nil only when its path is too long to bind, and `host:port` is used.
+    let socketPath: String? = GarageSockets.path(for: GarageSockets.grpcName)
+
+    /// Where the server listens, for display: `unix:<path>` or `host:port`.
+    var address: String {
+        socketPath.map { "unix:\($0)" } ?? "\(host):\(port)"
+    }
+
+    /// Where the server listens, in the few words a status line has room for.
+    var shortAddress: String {
+        socketPath == nil ? "\(host):\(port)" : "a private socket"
+    }
 
     private let postgres: PostgresService
     private let client: GarageXPCClient
@@ -161,7 +174,11 @@ final class GarageGRPCService: ObservableObject {
                 // Reads the token off the main actor the first time, so a Keychain prompt never
                 // blocks the window; environment() then gets it from the store's cache.
                 try await LMStudioTokenStore.loadOffMainActor()
-                let options = try environment()
+                var options = try environment()
+                if let socketPath {
+                    try GarageSockets.ensureDirectory(URL(fileURLWithPath: socketPath).deletingLastPathComponent())
+                    options[GarageXPCConfigurationKey.grpcSocket] = socketPath
+                }
                 let result = try await client.startServer(host: host, port: currentPort, options: options)
                 if !result.success {
                     let launchError = GarageGRPCError.launchFailed(result.message ?? "XPC service failed to start gRPC server")
@@ -187,7 +204,14 @@ final class GarageGRPCService: ObservableObject {
             attemptsLeft -= 1
             _ = try? await client.stopServer()
 
-            if attemptsLeft > 0 {
+            if attemptsLeft > 0, let socketPath {
+                // A socket cannot be taken by another program the way a port can; just try again.
+                appendLog(LogLine(
+                    stream: .stderr,
+                    text: "Failed to connect to gRPC server on \(socketPath); retrying…",
+                    source: "garage-grpc"
+                ))
+            } else if attemptsLeft > 0 {
                 let newPort = Self.randomPort(excluding: triedPorts)
                 appendLog(LogLine(
                     stream: .stderr,
@@ -251,15 +275,19 @@ final class GarageGRPCService: ObservableObject {
         }
         let group = PlatformSupport.makeEventLoopGroup(loopCount: 1)
         self.group = group
-        let connection = ClientConnection.insecure(group: group)
-            .connect(host: host, port: port)
+        let connection: ClientConnection
+        if let socketPath {
+            connection = ClientConnection(configuration: .default(target: .unixDomainSocket(socketPath), eventLoopGroup: group))
+        } else {
+            connection = ClientConnection.insecure(group: group).connect(host: host, port: port)
+        }
         self.channel = connection
         return connection
     }
 
     /// Readiness is decided by the helper over XPC (`isServerRunning`, the authoritative view of the managed
-    /// Python gRPC server); a TCP ping over the gRPC channel then confirms the port answers. When XPC says the
-    /// daemon is up but the TCP probe keeps failing within the timeout, the XPC verdict wins so the status is
+    /// Python gRPC server); a ping over the gRPC channel then confirms the socket or port answers. When XPC says
+    /// the daemon is up but the probe keeps failing within the timeout, the XPC verdict wins so the status is
     /// not stuck on "starting" because of a slow first channel connect.
     func waitUntilReady(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -268,7 +296,7 @@ final class GarageGRPCService: ObservableObject {
             if !xpcReportedRunning {
                 xpcReportedRunning = (try? await client.isServerRunning()) ?? false
             }
-            if xpcReportedRunning, await pingOverTCP() {
+            if xpcReportedRunning, await pingOverChannel() {
                 return true
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -276,7 +304,7 @@ final class GarageGRPCService: ObservableObject {
         return xpcReportedRunning
     }
 
-    private func pingOverTCP() async -> Bool {
+    private func pingOverChannel() async -> Bool {
         do {
             let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
             var pingReq = Garage_PingRequest()
@@ -474,7 +502,7 @@ final class GarageGRPCService: ObservableObject {
         }
 
         var lines: [String] = []
-        lines.append("gRPC Server: \(host):\(port) (daemon status: \(status))")
+        lines.append("gRPC Server: \(address) (daemon status: \(status))")
         lines.append("Latency: \(String(format: "%.2f", elapsed)) ms")
         if !queries.isEmpty {
             lines.append("\nSuccessful RPC Queries:")
