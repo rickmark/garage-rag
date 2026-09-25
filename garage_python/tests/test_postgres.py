@@ -31,6 +31,7 @@ from garage_rag.db.engine import reset_engine, session_scope
 from garage_rag.db.migrate import _connect, apply_migrations, pending_migrations, sql_dir, to_psycopg_conninfo
 from garage_rag.db.registry import ModelSpec
 from garage_rag.embed.ollama import count_pending
+from garage_rag.ops.facts import EXCERPT_CONTEXT, list_facts
 from garage_rag.search import SearchMode
 from garage_rag.search.hybrid import search
 
@@ -275,6 +276,102 @@ class TestEgress:
         row = get_model(db, model.slug)
         assert count_pending(db, row, include_communications=True) == 2
         assert count_pending(db, row, include_communications=False) == 1
+
+
+class TestFacts:
+    """The listing behind the app's Facts page."""
+
+    def _document(
+        self, db: Session, source_id: int, title: str, content: str, *, corpus_class: str = "document"
+    ) -> int:
+        return db.execute(
+            text(
+                "INSERT INTO documents (source_id, uri, corpus_class, trust_tier, title, content, content_sha256, "
+                "extractor) VALUES (:source, :uri, CAST(:cc AS corpus_class), 'authored', :title, :content, :sha, "
+                "'test') RETURNING id"
+            ),
+            {
+                "source": source_id,
+                "uri": f"test://{title}",
+                "cc": corpus_class,
+                "title": title,
+                "content": content,
+                "sha": hashlib.sha256(content.encode()).digest(),
+            },
+        ).scalar_one()
+
+    def _fact(self, db: Session, document_id: int, ord: int, fact: str, *, fact_class: str = "fact", span=None) -> None:
+        start, end = span or (None, None)
+        db.execute(
+            text(
+                "INSERT INTO facts (document_id, ord, fact, fact_class, char_start, char_end) "
+                "VALUES (:doc, :ord, :fact, :cls, :start, :end)"
+            ),
+            {"doc": document_id, "ord": ord, "fact": fact, "cls": fact_class, "start": start, "end": end},
+        )
+
+    def _corpus(self, db: Session) -> tuple[int, int, str]:
+        notes = _source(db, "notes")
+        mail = _source(db, "mail")
+        body = "x" * 300 + "The heat pump was installed in March 2024." + "y" * 300
+        start = body.index("The heat pump")
+        house = self._document(db, notes, "house", body)
+        self._fact(
+            db, house, 0, "The heat pump was installed in March 2024.", fact_class="event", span=(start, start + 42)
+        )
+        self._fact(db, house, 1, "The house has a heat pump.")
+        email = self._document(db, mail, "email", "Dinner is at eight.", corpus_class="communication")
+        self._fact(db, email, 0, "Dinner is at eight o'clock.")
+        db.flush()
+        return house, email, body
+
+    def test_lists_every_fact_with_its_document(self, db: Session) -> None:
+        self._corpus(db)
+        page = list_facts(db)
+        assert page.total == 3
+        assert {(f.document_title, f.source_slug, f.corpus_class) for f in page.facts} == {
+            ("house", "notes", "document"),
+            ("email", "mail", "communication"),
+        }
+        assert dict(page.classes) == {"fact": 2, "event": 1}
+
+    def test_query_matches_stemmed_words_and_substrings(self, db: Session) -> None:
+        self._corpus(db)
+        assert [f.fact for f in list_facts(db, query="installing heat pumps").facts] == [
+            "The heat pump was installed in March 2024."
+        ]
+        assert [f.fact for f in list_facts(db, query="o'cl").facts] == ["Dinner is at eight o'clock."]
+        assert list_facts(db, query="100%").total == 0
+
+    def test_filters_narrow_the_facts_and_the_class_counts_ignore_the_class_filter(self, db: Session) -> None:
+        house, _, _ = self._corpus(db)
+        assert list_facts(db, source="mail").total == 1
+        assert list_facts(db, corpus_class="communication").total == 1
+        assert list_facts(db, document_id=house).total == 2
+        page = list_facts(db, fact_class="event")
+        assert [f.fact_class for f in page.facts] == ["event"]
+        assert dict(page.classes) == {"fact": 2, "event": 1}
+
+    def test_a_grounded_fact_carries_its_span_in_context(self, db: Session) -> None:
+        _, _, body = self._corpus(db)
+        grounded = next(f for f in list_facts(db).facts if f.fact_class == "event")
+        assert grounded.char_start is not None and grounded.char_end is not None
+        assert grounded.excerpt_start == grounded.char_start - EXCERPT_CONTEXT
+        assert grounded.excerpt == body[grounded.excerpt_start : grounded.char_end + EXCERPT_CONTEXT]
+        span = grounded.excerpt[
+            grounded.char_start - grounded.excerpt_start : grounded.char_end - grounded.excerpt_start
+        ]
+        assert span == "The heat pump was installed in March 2024."
+        ungrounded = next(f for f in list_facts(db).facts if f.fact == "The house has a heat pump.")
+        assert ungrounded.excerpt is None
+
+    def test_limit_and_offset_page_through_the_facts(self, db: Session) -> None:
+        self._corpus(db)
+        first = list_facts(db, limit=2)
+        rest = list_facts(db, limit=2, offset=2)
+        assert first.total == rest.total == 3
+        assert len(first.facts) == 2 and len(rest.facts) == 1
+        assert {f.id for f in first.facts}.isdisjoint(f.id for f in rest.facts)
 
 
 class TestAge:

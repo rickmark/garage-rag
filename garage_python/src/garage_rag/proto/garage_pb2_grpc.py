@@ -73,6 +73,11 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.GetDocumentRequest.SerializeToString,
                 response_deserializer=garage__pb2.GetDocumentResponse.FromString,
                 _registered_method=True)
+        self.ListFacts = channel.unary_unary(
+                '/garage.GarageService/ListFacts',
+                request_serializer=garage__pb2.ListFactsRequest.SerializeToString,
+                response_deserializer=garage__pb2.ListFactsResponse.FromString,
+                _registered_method=True)
         self.ListSources = channel.unary_unary(
                 '/garage.GarageService/ListSources',
                 request_serializer=garage__pb2.ListSourcesRequest.SerializeToString,
@@ -256,6 +261,13 @@ class GarageServiceServicer:
 
     def GetDocument(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListFacts(self, request, context):
+        """--- Facts ---
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -460,6 +472,11 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.GetDocument,
                     request_deserializer=garage__pb2.GetDocumentRequest.FromString,
                     response_serializer=garage__pb2.GetDocumentResponse.SerializeToString,
+            ),
+            'ListFacts': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListFacts,
+                    request_deserializer=garage__pb2.ListFactsRequest.FromString,
+                    response_serializer=garage__pb2.ListFactsResponse.SerializeToString,
             ),
             'ListSources': grpc.unary_unary_rpc_method_handler(
                     servicer.ListSources,
@@ -765,6 +782,33 @@ class GarageService:
             '/garage.GarageService/GetDocument',
             garage__pb2.GetDocumentRequest.SerializeToString,
             garage__pb2.GetDocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListFacts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/ListFacts',
+            garage__pb2.ListFactsRequest.SerializeToString,
+            garage__pb2.ListFactsResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -45,6 +45,8 @@ from garage_rag.proto.garage_pb2 import (
     EmbeddingChunkItem,
     EnrichFactsRequest,
     EnrichFactsStatus,
+    FactClassCount,
+    FactSummary,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
     GetDocumentRequest,
@@ -59,6 +61,8 @@ from garage_rag.proto.garage_pb2 import (
     InitDbResponse,
     ListDocumentsRequest,
     ListDocumentsResponse,
+    ListFactsRequest,
+    ListFactsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
@@ -509,6 +513,57 @@ class GarageRpcServicer(GarageServiceServicer):
             chunks=proto_chunks,
             formatted_output=f"{detail.title or detail.uri}: {len(proto_chunks)} chunks, {len(proto_facts)} facts",
             facts=proto_facts,
+        )
+
+    # -----------------------------------------------------------------------
+    # Facts
+    # -----------------------------------------------------------------------
+
+    @_grpc_errors
+    def ListFacts(self, request: ListFactsRequest, context: grpc.ServicerContext) -> ListFactsResponse:
+        """List facts with their documents, optionally filtered and searched."""
+        from garage_rag.db.engine import session_scope
+        from garage_rag.ops.facts import list_facts
+
+        with session_scope() as session:
+            page = list_facts(
+                session,
+                query=request.query,
+                source=request.source,
+                fact_class=request.fact_class,
+                corpus_class=request.corpus_class,
+                document_id=request.document_id or None,
+                limit=request.limit or 200,
+                offset=request.offset,
+            )
+
+        summaries = [
+            FactSummary(
+                id=f.id,
+                document_id=f.document_id,
+                ord=f.ord,
+                fact=f.fact,
+                fact_class=f.fact_class or "",
+                attributes_json=json.dumps(f.attributes) if f.attributes else "",
+                char_start=f.char_start,
+                char_end=f.char_end,
+                extractor=f.extractor,
+                extractor_model=f.extractor_model or "",
+                created_at=f.created_at.isoformat() if f.created_at else "",
+                document_title=f.document_title or "",
+                document_uri=f.document_uri or "",
+                source_slug=f.source_slug or "",
+                corpus_class=f.corpus_class or "",
+                excerpt=f.excerpt or "",
+                excerpt_start=f.excerpt_start if f.excerpt else 0,
+            )
+            for f in page.facts
+        ]
+        return ListFactsResponse(
+            facts=summaries,
+            total_count=page.total,
+            classes=[FactClassCount(fact_class=name, count=count) for name, count in page.classes],
+            formatted_output=f"{len(summaries)} of {page.total} facts",
         )
 
     # -----------------------------------------------------------------------

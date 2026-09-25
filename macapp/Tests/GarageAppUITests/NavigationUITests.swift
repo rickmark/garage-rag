@@ -9,6 +9,7 @@ final class NavigationUITests: GarageUITestCase {
         ("database", "Schema & Migrations"),
         ("sources", "Configured Ingest Sources"),
         ("documents", "Filter by title or URI…"),
+        ("facts", "Search facts…"),
         ("models", "Embed All"),
         ("mcp", "MCP Server Status"),
         ("search", "Search corpus (e.g., 'system architecture', 'API design')…"),

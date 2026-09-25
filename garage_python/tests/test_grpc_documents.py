@@ -162,3 +162,95 @@ def test_grpc_get_document_not_found():
 
     mock_context.abort.assert_called_once()
     assert mock_context.abort.call_args.args[0] == grpc.StatusCode.NOT_FOUND
+
+
+def test_grpc_list_facts_maps_the_page():
+    from garage_rag.ops.facts import FactPage, FactRow
+    from garage_rag.proto.garage_pb2 import ListFactsRequest
+
+    servicer = GarageRpcServicer()
+    row = FactRow(
+        id=7,
+        document_id=1,
+        ord=0,
+        fact="The heat pump was installed in March 2024.",
+        fact_class="event",
+        attributes={"when": "2024-03"},
+        char_start=10,
+        char_end=52,
+        extractor="langextract",
+        extractor_model="qwen3",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        document_title="House",
+        document_uri="/tmp/house.md",
+        source_slug="notes",
+        corpus_class="document",
+        excerpt="Notes: The heat pump was installed in March 2024. More.",
+        excerpt_start=3,
+    )
+    ungrounded = FactRow(
+        id=8,
+        document_id=1,
+        ord=1,
+        fact="The house has a heat pump.",
+        fact_class="fact",
+        attributes={},
+        char_start=None,
+        char_end=None,
+        extractor="langextract",
+        extractor_model=None,
+        created_at=None,
+        document_title=None,
+        document_uri="/tmp/house.md",
+        source_slug="notes",
+        corpus_class="document",
+    )
+    page = FactPage(facts=[row, ungrounded], total=12, classes=[("fact", 9), ("event", 3)])
+
+    with (
+        patch("garage_rag.db.engine.session_scope"),
+        patch("garage_rag.ops.facts.list_facts", return_value=page) as list_facts,
+    ):
+        response = servicer.ListFacts(
+            ListFactsRequest(query="heat", source="notes", fact_class="event", limit=50, offset=100), MagicMock()
+        )
+
+    kwargs = list_facts.call_args.kwargs
+    assert kwargs == {
+        "query": "heat",
+        "source": "notes",
+        "fact_class": "event",
+        "corpus_class": "",
+        "document_id": None,
+        "limit": 50,
+        "offset": 100,
+    }
+    assert response.total_count == 12
+    assert [(c.fact_class, c.count) for c in response.classes] == [("fact", 9), ("event", 3)]
+    first, second = response.facts
+    assert first.id == 7
+    assert first.document_title == "House"
+    assert first.attributes_json == '{"when": "2024-03"}'
+    assert first.HasField("char_start") and first.char_start == 10
+    assert first.excerpt_start == 3
+    assert first.extractor_model == "qwen3"
+    assert first.created_at == "2024-01-01T00:00:00+00:00"
+    assert not second.HasField("char_start")
+    assert second.excerpt == ""
+    assert second.attributes_json == ""
+
+
+def test_grpc_list_facts_defaults_the_page_size():
+    from garage_rag.ops.facts import FactPage
+    from garage_rag.proto.garage_pb2 import ListFactsRequest
+
+    servicer = GarageRpcServicer()
+    with (
+        patch("garage_rag.db.engine.session_scope"),
+        patch("garage_rag.ops.facts.list_facts", return_value=FactPage(facts=[], total=0)) as list_facts,
+    ):
+        response = servicer.ListFacts(ListFactsRequest(document_id=4), MagicMock())
+
+    assert list_facts.call_args.kwargs["limit"] == 200
+    assert list_facts.call_args.kwargs["document_id"] == 4
+    assert response.total_count == 0
