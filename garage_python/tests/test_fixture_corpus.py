@@ -9,14 +9,22 @@ file becomes one document with the title, class and token listed there.
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from garage_rag.config import repo_root
 from garage_rag.db.models import CorpusClass, TrustTier
+from garage_rag.enrich import langextract as lx
+from garage_rag.enrich.facts import default_prompt, langextract_examples
+from garage_rag.enrich.local_provider import LocalLanguageModel
+from garage_rag.inference import ChatResult
 from garage_rag.ingest.gateway import ExistingDocStat, IngestStorageGateway, SourceContext
 from garage_rag.ingest.pipeline import ingest_source
 from garage_rag.ingest.scanner import ScanResult
@@ -168,3 +176,92 @@ def test_a_source_without_code_skips_the_code_file(tmp_path: Path) -> None:
     """The app's Sources form adds a source with code off, so the UI tests see five documents."""
     gateway = _ingest(tmp_path, include_code=False)
     assert sorted(gateway.documents) == sorted(set(EXPECTED) - CODE_FILES)
+
+
+# ---- the model UI tests' deterministic engine ------------------------------------------------
+#
+# macapp/Tests/GarageAppModelUITests distil this corpus through MockLlamaXPCService, whose
+# DeterministicLlamaEngine (macapp/Tests/LlamaTestSupport) answers a LangExtract prompt with one
+# extraction per sentence of the prompt's last question. The functions below mirror that answer,
+# so the prompt shape it relies on and the counts FixtureCorpus.swift promises the UI tests are
+# checked against the vendored LangExtract here, on Linux.
+
+# FixtureCorpus.swift: distilledFacts (their sum), distilledEvents, distilledFromMail, zorvexineFact.
+DISTILLED = {"fact": 9, "event": 11}
+DISTILLED_FROM_MAIL = 3
+QUILLON_BRIDGE_FACTS = 5
+ZORVEXINE_FACT = "Townspeople call the middle arch the zorvexine arch, after the swallows that nest under it."
+
+
+def _deterministic_question(prompt: str) -> str | None:
+    """DeterministicLlamaEngine.langExtractQuestion: the text after the last ``Q: `` line."""
+    body = prompt.rstrip()
+    if not body.endswith("\nA:"):
+        return None
+    body = body[: -len("\nA:")]
+    at = body.rfind("\nQ: ")
+    if at >= 0:
+        return body[at + len("\nQ: ") :]
+    return body[len("Q: ") :] if body.startswith("Q: ") else None
+
+
+def _deterministic_answer(prompt: str) -> str:
+    """DeterministicLlamaEngine.extractionAnswer: sentences of five words or more, ``event`` with a
+    ``year`` when one holds a four-digit number, ``fact`` otherwise, in a fenced JSON object."""
+    text = _deterministic_question(prompt)
+    assert text is not None, f"not a LangExtract prompt: {prompt[-200:]!r}"
+    extractions = []
+    for line in text.split("\n"):
+        for match in re.finditer(r"[^.!?]*[.!?]", line):
+            sentence = match.group(0).strip()
+            if len(sentence.split(" ")) < 5:
+                continue
+            year = next((run for run in re.split(r"[^0-9]+", sentence) if len(run) == 4), None)
+            extractions.append({"event": sentence, "event_attributes": {"year": year}} if year else {"fact": sentence})
+    return "```json\n" + json.dumps({"extractions": extractions}, indent=2) + "\n```"
+
+
+def _distil(content: str) -> list[lx.data.Extraction]:
+    client = MagicMock()
+    client.chat.side_effect = lambda messages, *args, **kwargs: ChatResult(
+        text=_deterministic_answer(messages[-1]["content"])
+    )
+    prompt = default_prompt()
+    result = lx.extract(
+        text_or_documents=content,
+        prompt_description=prompt.description,
+        examples=langextract_examples(prompt),
+        model=LocalLanguageModel("uitest-deterministic", client),
+    )
+    return result.extractions
+
+
+@pytest.fixture(scope="module")
+def distilled(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[lx.data.Extraction]]:
+    gateway = _ingest(tmp_path_factory.mktemp("distilled"), include_code=False)
+    return {name: _distil(document["content"]) for name, document in gateway.documents.items()}
+
+
+def test_the_deterministic_engine_grounds_every_fact(distilled: dict[str, list[lx.data.Extraction]]) -> None:
+    """Every extraction is found in its document, so the Facts page shows each one's excerpt."""
+    for name, extractions in distilled.items():
+        assert extractions, f"{name} distilled no facts"
+        for extraction in extractions:
+            assert extraction.char_interval is not None, (name, extraction.extraction_text)
+
+
+def test_the_deterministic_engine_distils_the_counts_the_ui_tests_expect(
+    distilled: dict[str, list[lx.data.Extraction]],
+) -> None:
+    kinds = Counter(e.extraction_class for extractions in distilled.values() for e in extractions)
+    assert dict(kinds) == DISTILLED
+    assert len(distilled["lantern-festival.eml"]) == DISTILLED_FROM_MAIL
+    assert len(distilled["quillon-bridge.md"]) == QUILLON_BRIDGE_FACTS
+    carrying_token = [
+        e.extraction_text for extractions in distilled.values() for e in extractions if "zorvexine" in e.extraction_text
+    ]
+    assert carrying_token == [ZORVEXINE_FACT]
+    for extractions in distilled.values():
+        for extraction in extractions:
+            if extraction.extraction_class == "event":
+                assert extraction.attributes and extraction.attributes["year"] in extraction.extraction_text

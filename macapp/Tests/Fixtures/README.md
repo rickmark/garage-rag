@@ -1,6 +1,7 @@
 # UI test corpus
 
-`corpus/` is a small, made-up corpus for the UI tests (`macapp/Tests/GarageAppUITests`). Nothing
+`corpus/` is a small, made-up corpus for the UI tests (`macapp/Tests/GarageAppUITests` and
+`macapp/Tests/GarageAppModelUITests`). Nothing
 in it is true: the places, people, dates and words were invented so that a test can ask for them
 and know the answer. Each file carries one invented word, its **token**, that appears in no other
 file, so a search hit can be traced to its file.
@@ -36,6 +37,11 @@ What the tests can count on:
   Pask, so it is `received`. The rest are `authored`, the source's default.
 - **Tokens.** Each token appears in its own file only, so a search or fact that carries it came
   from that file.
+- **Facts.** The model UI tests distil the corpus with `DeterministicLlamaEngine`
+  (`macapp/Tests/LlamaTestSupport`), which makes one fact of every sentence of five words or more:
+  kind `event` (with a `year` attribute) when it holds a four-digit year, `fact` otherwise. From the
+  five documents that is 20 facts, 11 of them events and 3 from the mail; the one carrying a
+  token is the Markdown note's "Townspeople call the middle arch the zorvexine arch, ...".
 
 `garage_python/tests/test_fixture_corpus.py` ingests the folder through the real pipeline (with a
 recording gateway in place of the database) and checks every row of the table above, so a change

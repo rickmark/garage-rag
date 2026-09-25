@@ -218,6 +218,7 @@ public struct SearchView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
+                    .accessibilityIdentifier("search.error")
                 Button("Retry") { runSearch() }
                     .controlSize(.small)
                 Spacer()
@@ -309,6 +310,7 @@ public struct SearchView: View {
                     Text(item.displayTitle)
                         .font(.system(.body, weight: .medium))
                         .lineLimit(1)
+                        .accessibilityIdentifier("search.result.\(item.rank).title")
                     if !item.headingPath.isEmpty {
                         Text(item.headingPath)
                             .font(.system(.caption2))
@@ -384,6 +386,7 @@ public struct SearchView: View {
                         Text(item.displayTitle)
                             .font(.headline)
                             .textSelection(.enabled)
+                            .accessibilityIdentifier("search.detail.title")
                         HStack(spacing: 6) {
                             Text("Rank #\(item.rank)")
                                 .font(.caption.bold())
@@ -499,6 +502,7 @@ public struct SearchView: View {
                         Text(item.text.isEmpty ? item.snippet : item.text)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
+                            .accessibilityIdentifier("search.detail.text")
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.primary.opacity(0.04))
@@ -524,6 +528,7 @@ public struct SearchView: View {
                 Text("\(results.count) results for '\(lastSearchedQuery)'")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("search.status")
                 if let latency = lastSearchLatencyMs {
                     Text("•")
                         .foregroundStyle(.secondary)

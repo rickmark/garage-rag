@@ -13,7 +13,7 @@ every module, the client libraries included, depends on `PythonXPCService`,
 which in turn needs PythonKit, the CPython embedding shim and the vendored
 Python / Postgres / llama.cpp that only the Bazel build provides. For an IDE
 loop, generate the Xcode project (`aspect run //:xcodeproj`), which carries
-the app, every XPC service and all three test bundles.
+the app, every XPC service and every test bundle.
 
 ```bash
 # Ad-hoc signed app bundle (alias of //macapp/Sources/GarageApp:GarageApp)
@@ -38,6 +38,11 @@ aspect test //macapp/Tests/LlamaModelLoaderTests:LlamaModelLoaderTests
 aspect run //:xcodeproj
 xcodebuild test -project macapp/Garage.xcodeproj -scheme GarageAppUITests -destination 'platform=macOS'
 
+# XCUITests of the paths that need a model (search results, Embed All, Glean Facts and the Facts
+# page, MCP Try It), run the same way. Their host, GarageApp_uitest, is the app with the testonly
+# MockLlamaXPCService in place of llama.cpp, so no model is downloaded.
+xcodebuild test -project macapp/Garage.xcodeproj -scheme GarageAppModelUITests -destination 'platform=macOS'
+
 # Distribution: thinned + notarized apps and .pkg installers (Developer ID),
 # or an App Store xcarchive
 aspect build //:package                  # //macapp/package:package
@@ -50,8 +55,8 @@ aspect run //macapp:xcarchive_open       # copies the archive into Xcode's Archi
 aspect run //macapp/Sources/PythonXPCService:python_embed_smoke -- /path/to/Garage.app
 ```
 
-What ends up in the bundle is declared in `Sources/GarageApp/BUILD.bazel`
-(`macos_application(name = "GarageApp")`):
+What ends up in the bundle is declared in `bazel/garage_app.bzl` (`garage_macos_application`,
+instantiated as `GarageApp` in `Sources/GarageApp/BUILD.bazel`):
 
 - `Helpers/garage.app` and `Helpers/garage-mcp.app` — the Swift launchers
   (`//macapp/Sources/GarageCLI:garage_app`, `//macapp/Sources/GarageMCPCLI:garage_mcp_app`,
@@ -467,7 +472,7 @@ with the Status page listing the missing sources and model under Health.
 - `GarageMCPService` — owns the loopback HTTP `garage-mcp` server at `http://127.0.0.1:8787/mcp`, hosted inside the `GarageMCPServerService` XPC helper; started after Postgres and stopped before it.
 - `GarageGRPCService` — owns the `GarageService` gRPC backend (port 50051) hosted inside the `GarageXPCService` helper; the Search and Documents views talk to it over gRPC-Swift.
 - `LlamaService` / `ModelDownloadService` — drive the `LlamaXPCService` and `ModelDownloadXPCService` helpers through the `LlamaClient` / `ModelDownloadClient` modules.
-- `LlamaXPCService` runs llama.cpp in-process (`Sources/LlamaEngine`, linked from `//ext/llama_cpp` with Metal and Accelerate). Besides its XPC interface it listens on `http://127.0.0.1:8790` with the llama-server routes (`/health`, `/props`, `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/completion`, `/tokenize`, `/detokenize`, `/v1/rerank`); that port is how the Python `llama_xpc` provider embeds and distills facts. `GARAGE_LLAMA_HTTP_PORT` in the helper's environment overrides the port; the Python side reads `embedding.llama_host` from `garage.json`.
+- `LlamaXPCService` runs llama.cpp in-process (`Sources/LlamaEngine`, linked from `//ext/llama_cpp` with Metal and Accelerate). Besides its XPC interface it listens on `http://127.0.0.1:8790` with the llama-server routes (`/health`, `/props`, `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/completion`, `/tokenize`, `/detokenize`, `/v1/rerank`); that port is how the Python `llama_xpc` provider embeds and distills facts. `GARAGE_LLAMA_HTTP_PORT` in the helper's environment overrides the port; the Python side reads `embedding.llama_host` from `garage.json`. Both front ends (the NSXPC delegate and the HTTP listener) are `Sources/LlamaServiceHost`, which takes any `LlamaInferenceEngine`: the model UI tests' host app (`GarageApp_uitest`) embeds `Tests/MockLlamaXPCService` instead, the same front end on the testonly `DeterministicLlamaEngine`, under the same bundle identifier.
 - `XPCServiceManager` — pings all six helpers, streams their logs into the app, runs their in-service self tests and can restart or terminate them.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres and every helper to stop on every quit path (Cmd+Q, Dock quit, menu item).
 - `AppState+LlamaModels` — decides which models `LlamaXPCService` holds: the default `llama_xpc`

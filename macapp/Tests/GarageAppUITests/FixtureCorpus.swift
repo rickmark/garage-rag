@@ -22,6 +22,16 @@ enum FixtureCorpus {
     /// Chunks of `indexedWithoutCode`: the Markdown note splits at its second heading.
     static let chunksWithoutCode = 6
     static let quillonBridgeChunks = 2
+
+    /// What the model UI tests' deterministic engine (`DeterministicLlamaEngine` in LlamaTestSupport)
+    /// distills from `indexedWithoutCode`: one fact per sentence of five words or more, of kind
+    /// `event` when it holds a four-digit year and `fact` otherwise. `test_fixture_corpus.py` checks
+    /// these counts against the vendored LangExtract.
+    static let distilledFacts = 20
+    static let distilledEvents = 11
+    static let distilledFromMail = 3
+    /// The one sentence that carries the Markdown note's token, and so the one fact that does.
+    static let zorvexineFact = "Townspeople call the middle arch the zorvexine arch, after the swallows that nest under it."
 }
 
 extension GarageUITestCase {
