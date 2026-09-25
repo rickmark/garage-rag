@@ -234,6 +234,29 @@ struct MenuBarStatus: Equatable {
         }
     }
 
+    /// The database runs and the MCP server serves: the popover folds both service rows into one
+    /// green "All systems go" row, and spells them out again only when one of them is not fine.
+    var allSystemsGo: Bool {
+        guard database == .running, case .running = mcp else { return false }
+        return true
+    }
+
+    /// The line under "All systems go": what is up, and how many clients reach it.
+    var allSystemsGoDetail: String {
+        guard case .running(let clients) = mcp else { return "Database and MCP running" }
+        switch clients {
+        case 0: return "Database and MCP running · no clients registered"
+        case 1: return "Database and MCP running · 1 client"
+        default: return "Database and MCP running · \(clients) clients"
+        }
+    }
+
+    /// Whether the activity module's title carries a status dot. Idle on a running database is the
+    /// "All systems go" row's news already, so the module then leads with the corpus instead.
+    var showsActivityDot: Bool {
+        !(activity == .idle && database == .running)
+    }
+
     /// "Ingest Now" is offered when it could actually do something.
     var canIngest: Bool {
         database == .running && !isBusy && sourceCount > 0

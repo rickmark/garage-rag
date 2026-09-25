@@ -40,7 +40,27 @@ struct MenuBarView: View {
 
     // MARK: - Services
 
+    @ViewBuilder
     private func servicesModule(_ status: MenuBarStatus) -> some View {
+        if status.allSystemsGo {
+            MenuBarModule {
+                MenuBarRow(
+                    symbol: "checkmark",
+                    tint: .green,
+                    title: "All systems go",
+                    detail: status.allSystemsGoDetail,
+                    action: { show(.status) }
+                )
+                .accessibilityIdentifier("menubar.allSystemsGo")
+            }
+            .accessibilityIdentifier("menubar.services")
+        } else {
+            serviceRows(status)
+        }
+    }
+
+    /// The database and the MCP server, each on its own row, when either needs a look.
+    private func serviceRows(_ status: MenuBarStatus) -> some View {
         MenuBarModule {
             MenuBarRow(
                 symbol: "cylinder.split.1x2",
@@ -126,11 +146,13 @@ struct MenuBarView: View {
                         show(.status)
                     } label: {
                         HStack(spacing: 6) {
-                            Circle()
-                                .fill(status.tint)
-                                .frame(width: 7, height: 7)
-                                .accessibilityHidden(true)
-                            Text(status.headline)
+                            if status.showsActivityDot {
+                                Circle()
+                                    .fill(status.tint)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityHidden(true)
+                            }
+                            Text(status.showsActivityDot ? status.headline : status.corpusLine)
                                 .font(.system(size: 13, weight: .semibold))
                                 .lineLimit(1)
                             if let fraction = status.ingestFraction {
@@ -178,10 +200,8 @@ struct MenuBarView: View {
                     MenuBarStageTrail(stages: status.stageTrail, current: status.stage)
                         .padding(.top, 2)
                 } else if status.database == .running {
-                    Text(status.corpusLine)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    // The title line is the corpus already.
+                    EmptyView()
                 } else {
                     Text(idleDetail(status))
                         .font(.system(size: 11))
