@@ -64,7 +64,7 @@ redirect_from:
 <details>
   <summary>How are database passwords stored?</summary>
   <div class="faq-content">
-    <p><code>GarageApp</code> automatically generates a cryptographically random SCRAM superuser password on initial launch and stores it in the secure <strong>macOS Keychain</strong> under the service name <code>garage_postgres_super</code>.</p>
+    <p><code>GarageApp</code> automatically generates a cryptographically random SCRAM superuser password on initial launch and stores it in the secure <strong>macOS Keychain</strong> under the service name <code>com.rickmark.garage.postgres</code>. Signed builds keep it in the App Group keychain, which only Garage and its bundled <code>garage</code> / <code>garage-mcp</code> commands can read, without a Keychain prompt. The Database page's copy button puts the full connection URL, password included, on the clipboard when you need it.</p>
   </div>
 </details>
 
@@ -77,12 +77,12 @@ redirect_from:
   <div class="faq-content">
     <p>Garage includes streaming, memory-efficient extractors for:</p>
     <ul>
-      <li><strong>Markdown & Plain Text:</strong> <code>.md</code>, <code>.txt</code>, <code>.rst</code> (with YAML frontmatter stripping).</li>
+      <li><strong>Markdown & Plain Text:</strong> <code>.md</code>, <code>.txt</code>, <code>.rst</code>, <code>.org</code>, <code>.adoc</code> (with YAML frontmatter stripping).</li>
       <li><strong>PDF Documents:</strong> Fast extraction via <code>pypdf</code>, with automatic page-level escalation to <code>pdfplumber</code> for embedded data tables.</li>
       <li><strong>Office Documents:</strong> Word (<code>.docx</code>), PowerPoint (<code>.pptx</code>), and Excel (<code>.xlsx</code>).</li>
       <li><strong>Source Code & Config:</strong> <code>.py</code>, <code>.swift</code>, <code>.ts</code>, <code>.rs</code>, <code>.go</code>, <code>.json</code>, <code>.yaml</code>, <code>.toml</code>, etc.</li>
-      <li><strong>Images & Scans:</strong> Local OCR via Tesseract.</li>
-      <li><strong>Communications:</strong> Apple Messages (<code>chat.db</code>) and Mailbox files.</li>
+      <li><strong>Images & Scans:</strong> Local OCR via Tesseract (PNG, JPEG, TIFF, HEIC and more). An image with no text in it is skipped and remembered, not indexed.</li>
+      <li><strong>Communications:</strong> Apple Messages (<code>chat.db</code>, one document per conversation) and Apple Mail (<code>.emlx</code>) or <code>.eml</code> messages.</li>
     </ul>
   </div>
 </details>
@@ -128,9 +128,9 @@ redirect_from:
     <ul>
       <li><code>rag_search</code>: Hybrid semantic and keyword search across your documents and code.</li>
       <li><code>rag_get_document</code>: Retrieve the full extracted text and metadata of a specific indexed file.</li>
-      <li><code>rag_stats</code>: Overview of indexed document counts, chunk counts, and active models.</li>
+      <li><code>rag_stats</code>: Overview of indexed document counts, chunk counts, and registered embedding models.</li>
       <li><code>rag_list_sources</code>: List all configured knowledge sources and their sync status.</li>
-      <li><code>rag_list_models</code>: Inspect registered embedding models and vector dimensions.</li>
+      <li><code>rag_list_authors</code>: List the people the corpus attributes documents to.</li>
       <li><code>rag_ask</code>: Answer a question from retrieved excerpts with a local model (<code>facts.provider</code> / <code>facts.model</code>), citing them as <code>[n]</code>. Garage sends nothing off the machine; the answer goes back to the agent that asked.</li>
       <li><code>rag_generate</code>: Send a raw prompt to the same local model, with no retrieval.</li>
     </ul>

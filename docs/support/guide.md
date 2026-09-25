@@ -8,7 +8,7 @@ redirect_from:
 
 # Garage Support & User Guide
 
-Welcome to the comprehensive support guide for **Garage**. This guide covers system requirements, installation, source management, model configuration, MCP server integrations, and database operations.
+Welcome to the comprehensive support guide for **Garage**. This guide covers system requirements, installation, source management, model configuration, MCP server integrations, and database operations. It describes Garage 1.5.
 
 ---
 
@@ -16,13 +16,17 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 1. [System Requirements](#system-requirements)
 2. [Getting Started](#getting-started)
    - [Native macOS Application (GarageApp)](#native-macos-application)
+   - [The App's Pages](#app-pages)
    - [Command Line Interface (CLI)](#command-line-interface)
 3. [Managing Sources & Ingestion](#managing-sources--ingestion)
    - [Corpus Classes & Trust Tiers](#corpus-classes--trust-tiers)
    - [Adding Folders, Repositories, and Mail/Messages](#adding-sources)
+   - [Keeping the Index Up to Date](#keeping-up-to-date)
 4. [Embedding Models & Providers](#models-and-embeddings)
+   - [The Built-in Engine](#built-in-engine)
    - [Ollama Configuration](#ollama-configuration)
    - [LM Studio Configuration & Keychain Tokens](#lm-studio-configuration)
+   - [Fact Distillation](#fact-distillation)
 5. [Model Context Protocol (MCP) Integration](#mcp-integration)
    - [Claude Desktop Integration](#claude-desktop-integration)
    - [Claude Code Integration](#claude-code-integration)
@@ -34,38 +38,56 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 <h2 id="system-requirements">1. System Requirements</h2>
 
-- **Operating System**: macOS 14.0 (Sonoma) or macOS 15.0+ (Sequoia)
-- **Architecture**: Apple Silicon (M1/M2/M3/M4) only; Intel Macs are not supported
+- **Operating System**: macOS 14.0 (Sonoma) or later
+- **Architecture**: Apple Silicon (M1 and later) only
 - **Memory**: 8 GB RAM minimum (16 GB+ recommended when running local embedding models)
-- **Disk Space**: ~500 MB for Garage application and embedded PostgreSQL; database size depends on ingested document corpus
-- **Embedding Backend**: [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) running locally
+- **Disk Space**: ~500 MB for Garage application and embedded PostgreSQL, plus the models you download; database size depends on ingested document corpus
+- **Embedding Backend**: none to install. Garage runs embedding and distillation models itself with its built-in llama.cpp engine; [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) can be used instead
 
 ---
 
 <h2 id="getting-started">2. Getting Started</h2>
 
-### Native macOS Application (`GarageApp`)
+<h3 id="native-macos-application">Native macOS Application (<code>GarageApp</code>)</h3>
 
 `GarageApp` provides a menu bar utility and management window that bundles an embedded, relocatable instance of PostgreSQL 18 with `pgvector`:
 
 1. **Launch GarageApp**: The app initializes its private database in `~/Library/Group Containers/DWVXMLB45Y.group.me.rickmark.garage-rag/Library/Application Support/GarageApp/pgdata` on port `14824`. A strong SCRAM superuser password is automatically generated and securely stored in your **macOS Keychain**.
-2. **Menu Bar Status**: Look for the Garage icon in your macOS menu bar. A green status indicator confirms that PostgreSQL and the local MCP HTTP service are active.
-3. **Open Management Window**: Click the menu bar icon and select **Open Garage** to view Sources, Models, Logs, and Search.
+2. **Setup Assistant**: On first launch the window opens on a four-page assistant: it waits for the database and services, lets you pick sources (Documents, Desktop, Downloads, iCloud Drive, Dropbox, `~/Developer`, Messages, Mail, or any folder), an embedding model and an optional fact-distillation model, and connects the AI assistants it finds (Claude Desktop, Claude Code, Cursor, …). Every page can be skipped, and **Garage → Setup Assistant…** runs it again.
+3. **Menu Bar**: The Garage icon in the menu bar opens a popover with a search field, one row for the services ("All systems go" when everything is up), and what the pipeline is doing, with **Ingest Now** or **Stop**. Its header opens the main window (⌘O) or quits Garage (⌘Q).
 
-### Command Line Interface (`garage`)
+<h3 id="app-pages">The App's Pages</h3>
 
-For automated pipelines or terminal workflows, the `garage` CLI communicates with the database:
+The sidebar starts with **Status**, followed by three groups:
+
+- **Configuration**
+  - **Sources** — one row per source with its state ("24 items to go", "Up to date", "Needs permission to read this folder") and **Scan & Ingest**, which turns into **Cancel** while the source is queued or running. Anything that cannot be read is listed at the top with the button that fixes it. New sources come from location cards, **Add Folder…** or **Custom Source…**.
+  - **Models** — three tabs. **Overall** says whether search is ready and which distillation model is set. **Embedding** lists your embedding models and the presets you can add. **Distillation** picks the fact model and edits the fact prompts. The Providers box lists the models the built-in engine has loaded, each with **Unload**.
+  - **MCP Server** — whether the local server is up, the assistants connected to it (**Connect**, **Update**, **Disconnect**), and **Try It** to call the tools the way an assistant does.
+- **Data** — **Documents**, **Facts** and **Search** browse and query what has been indexed.
+- **Advanced**
+  - **Database** — Postgres status (Start, Restart, Stop), the connection URL, schema updates, corpus counts and size on disk, backups and reset.
+  - **Logs** — live logs from Postgres, ingest, embedding, the MCP and gRPC servers, the built-in engine and the downloader, with **Report a Bug**.
+
+<h3 id="command-line-interface">Command Line Interface (<code>garage</code>)</h3>
+
+For automated pipelines or terminal workflows, the `garage` CLI communicates with the database. The app includes it at `/Applications/Garage.app/Contents/MacOS/garage` (with `garage-mcp` beside it); when a command needs the database and Garage is not running, it opens the app in the background and uses its database, with no password to configure. The same commands ship in the `garage_rag` Python package for use against any PostgreSQL with pgvector.
 
 ```bash
-# Initialize local configuration in ~/.garage.json
+# Put the app's launcher on your PATH (optional)
+alias garage=/Applications/Garage.app/Contents/MacOS/garage
+
+# Write a configuration file with every setting at its default (./garage.json; --user for ~/.garage.json)
 garage config init
 
-# Initialize the schema and pgvector extension
+# Apply the schema and pgvector extension (the app does this itself)
 garage init-db
 
 # Check status and document count
 garage stats
 ```
+
+`garage` reads `./garage.json`, then `~/.garage.json`, or the file named with `--config`. The app keeps its own settings in `garage.json` in its data folder, next to `pgdata`.
 
 ---
 
@@ -80,33 +102,48 @@ Every source is categorized to protect privacy and enable precise retrieval filt
 - **Corpus Classes**:
   - `document`: Prose documents, research papers, reports, notes (`.md`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, OCR images).
   - `code`: Source code repositories and structured configuration files (`.json`, `.yaml`, `.toml`, `.py`, `.swift`, `.ts`, etc.).
-  - `communication`: Personal conversations (Apple Messages, Mail). **Enforced strictly with zero cloud egress**.
+  - `communication`: Personal conversations (Apple Messages, Apple Mail and `.eml` files). **Enforced strictly with zero cloud egress**.
 - **Trust Tiers**:
   - `authored`: Content written by you (verified via Git commit authorship or your identity profiles).
   - `reference`: External material you collected (papers, vendored packages, documentation).
   - `received`: Inbound communications sent by other parties.
 
-### Adding Sources
+<h3 id="adding-sources">Adding Sources</h3>
+
+In the app, open **Sources** and click a location card, **Add Folder…**, or **Custom Source…** for another kind of source or its own class and trust. From the terminal:
 
 ```bash
 # Add a personal notes directory as authored content
 garage add-source notes ~/Documents/Notes --class document --trust authored
 
 # Add a Git repository (authorship is detected per-commit automatically)
-garage add-source my-repo ~/Projects/my-repo --class code
+garage add-source my-repo ~/Projects/my-repo --kind git --class code
 
-# Add Apple Messages database (requires Full Disk Access)
-garage add-source imessage ~/Library/Messages --class communication
+# Add Apple Messages and Apple Mail (require Full Disk Access)
+garage add-source apple-sms ~/Library/Messages --kind sqlite --class communication --trust received
+garage add-source apple-mail ~/Library/Mail --kind maildir --class communication --trust received
 
 # Run ingestion to parse files into text chunks
 garage ingest
 ```
+
+Ingest is safe to re-run. Unchanged files are skipped without being read, a file with no text (empty, or an image with no words in it) is remembered and not read again until it changes, and when a document does change only its changed chunks are embedded again.
+
+<h3 id="keeping-up-to-date">Keeping the Index Up to Date</h3>
+
+- **Update Everything** on the Sources page scans and ingests every source, embeds the new chunks with every model, then gleans facts from documents that have not been distilled yet. **Stop** ends it at the current step.
+- **Automatic Updates** on the same page scans, ingests and embeds on a schedule, and optionally once when Garage starts.
+- From the terminal: `garage scan`, `garage ingest`, `garage backfill`, then `garage enrich-facts --stale-only`.
 
 ---
 
 <h2 id="models-and-embeddings">4. Embedding Models & Providers</h2>
 
 Garage supports multiple embedding models simultaneously without re-parsing raw files.
+
+<h3 id="built-in-engine">The Built-in Engine</h3>
+
+Garage runs GGUF models itself with llama.cpp (provider `llama_xpc`, Metal-accelerated, on `127.0.0.1` only). Pick a preset in the setup assistant or on **Models → Embedding** and Garage downloads it from Hugging Face. The default embedding model is loaded when Garage starts, so searches are answered at once; the distillation model is loaded only while facts are being gleaned. The built-in engine is available while Garage is running.
 
 ### Ollama Configuration
 
@@ -127,18 +164,24 @@ Garage supports multiple embedding models simultaneously without re-parsing raw 
 ### LM Studio Configuration
 
 1. In LM Studio, load an embedding model (e.g., `nomic-ai/nomic-embed-text-v1.5-GGUF`) and start the local server on `http://127.0.0.1:1234`.
-2. In `GarageApp` under the **Models** tab, select LM Studio as the provider and optionally store your LM Studio API token in the macOS Keychain.
+2. In `GarageApp`, the **Models** page's Providers box can store your LM Studio API token in the macOS Keychain.
 3. Via CLI:
    ```bash
    garage register-model nomic-embed-text --provider lmstudio --dims 768
    garage backfill
    ```
 
+<h3 id="fact-distillation">Fact Distillation</h3>
+
+Garage can distill each document into short, self-contained facts, each tied to the passage it came from and searchable like any other text. Pick a model on **Models → Distillation** and click **Glean Facts**, or run `garage enrich-facts`. What the model is asked for comes from the fact prompts (`facts.prompts` in `garage.json`, editable on the same tab); the built-in `default` prompt asks for every standalone claim. Distillation runs on a local model only, and messages are never sent to a model server on another machine.
+
 ---
 
 <h2 id="mcp-integration">5. Model Context Protocol (MCP) Integration</h2>
 
-Garage implements the **Model Context Protocol (MCP) 2.0**, allowing AI assistants to query your local knowledge base.
+Garage implements the **Model Context Protocol (MCP) 2.0**, allowing AI assistants to query your local knowledge base with `rag_search`, `rag_get_document`, `rag_list_sources`, `rag_list_authors`, `rag_stats`, `rag_ask` and `rag_generate`.
+
+The easiest way to connect an assistant is the **MCP Server** page: each assistant Garage finds has a **Connect** button.
 
 ### Claude Desktop Integration
 
@@ -148,7 +191,7 @@ Install the Garage MCP tool directly into your Claude Desktop configuration:
 garage mcp-install --target claude-desktop
 ```
 
-This updates `~/Library/Application Support/Claude/claude_desktop_config.json` with the required command and database connection environment. Restart Claude Desktop to start searching your notes and code directly from Claude!
+This adds a `garage-rag` entry to `~/Library/Application Support/Claude/claude_desktop_config.json` pointing at Garage's HTTP server (`http://127.0.0.1:8787/mcp`), keeping every other entry. With `--stdio` it registers the bundled `garage-mcp` command instead, which Claude Desktop starts itself; either way the config carries no database password. Restart Claude Desktop to start searching your notes and code directly from Claude!
 
 ### Claude Code Integration
 
@@ -182,21 +225,21 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
 4. Toggle the switch to **On**.
 5. Restart `GarageApp` or run `garage ingest` again.
 
+The Sources page lists a source it cannot read at the top, with a button to grant access.
+
 ---
 
 <h2 id="database-management">7. Database Backup, Restore & Reset</h2>
 
 ### Backup & Restore
-- **In GarageApp**: Open the **Status** view and click **Backup Database** to export a PostgreSQL custom-format snapshot (`.dump`). To restore from a previous backup, click **Restore Database**.
-- **Via CLI**:
+- **In GarageApp**: Open the **Database** page and click **Back Up…** to save a PostgreSQL custom-format snapshot (`.dump`). **Restore…** replaces the database with a backup, after asking.
+- **Via CLI**: copy the connection URL from the **Database** page (the copy button includes the password) and use the `pg_dump` bundled with the app:
   ```bash
-  # Backup
-  pg_dump -Fc -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -f ~/Desktop/garage_backup.dump
-
-  # Reset: there is no reset flag. Drop the schema, then re-apply it.
-  psql -d "postgresql://garage:$(security find-generic-password -s garage_postgres_super -w)@127.0.0.1:14824/garage-rag" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
-  garage init-db
+  /Applications/Garage.app/Contents/Resources/postgres/bin/pg_dump -Fc -d "<connection URL>" -f ~/Desktop/garage_backup.dump
   ```
+
+### Reset
+**Database → Reset Database…** deletes the database and relaunches Garage into the setup assistant, which creates a new, empty one. Your original files, downloaded models, logs and `garage.json` are kept. See [Starting over with an empty database]({{ '/support/troubleshooting.html' | relative_url }}#starting-over) for details.
 
 ---
 
