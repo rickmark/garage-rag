@@ -250,4 +250,20 @@ final class MenuBarStatusTests: XCTestCase {
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .failed("")).summary.detail, "Open Status to fix it.")
         XCTAssertEqual(MenuBarStatus(database: .running, mcp: .stopped).summary.title, "MCP server not running")
     }
+
+    // MARK: - Review fixes
+
+    func testQuickSearchOpensPlainPathsAndFileURLsOnly() {
+        XCTAssertEqual(MenuBarQuickSearch.fileURL(forURI: "/Users/me/notes.md")?.path, "/Users/me/notes.md")
+        XCTAssertEqual(MenuBarQuickSearch.fileURL(forURI: "file:///Users/me/notes.md")?.path, "/Users/me/notes.md")
+        XCTAssertNil(MenuBarQuickSearch.fileURL(forURI: "imessage://chat/123"))
+        XCTAssertNil(MenuBarQuickSearch.fileURL(forURI: "notes.md"))
+    }
+
+    func testIngestAllKeepsAnEarlierSourcesFailure() {
+        XCTAssertNil(AppState.ingestAllFailureSummary([]))
+        XCTAssertEqual(AppState.ingestAllFailureSummary([("notes", "permission denied\n")]), "notes: permission denied")
+        XCTAssertEqual(AppState.ingestAllFailureSummary([("notes", "")]), "notes failed")
+        XCTAssertEqual(AppState.ingestAllFailureSummary([("notes", "a"), ("mail", "b")]), "2 sources failed: notes, mail")
+    }
 }

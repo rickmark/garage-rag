@@ -157,11 +157,23 @@ struct MenuBarQuickSearch: View {
     /// A file hit opens in its own app; anything else (a message, a document without a path) goes
     /// to the Search page, where the full text is.
     private func open(_ hit: SearchResultItem) {
-        if let url = URL(string: hit.uri), url.isFileURL, FileManager.default.fileExists(atPath: url.path) {
+        if let url = Self.fileURL(forURI: hit.uri), FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.open(url)
             return
         }
         showAll()
+    }
+
+    /// Ingested files store a plain absolute path as their URI; a few carry a `file://` URL. Anything
+    /// else (a message id, another scheme) is not a file to open.
+    nonisolated static func fileURL(forURI uri: String) -> URL? {
+        if uri.hasPrefix("/") {
+            return URL(fileURLWithPath: uri)
+        }
+        if let url = URL(string: uri), url.isFileURL {
+            return url
+        }
+        return nil
     }
 
     private func showAll() {

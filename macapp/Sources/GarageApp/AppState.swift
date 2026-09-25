@@ -86,6 +86,10 @@ final class AppState: ObservableObject {
     @Published var registeredSources: [RegisteredSource] = []
     @Published private(set) var isFetchingSources = false
     @Published var corpusStats = CorpusStats()
+    /// Why the last "ingest every source" run failed, kept for the whole batch: each source's ingest
+    /// clears `IngestService.lastError` as it starts, so a later success would otherwise hide an
+    /// earlier failure. Cleared when the next batch starts.
+    @Published private(set) var lastIngestAllFailure: String?
     /// What the running scan has found so far; nil when no scan is running.
     @Published var scanProgress: ScanProgress?
     @Published private(set) var isFetchingStats = false
@@ -925,6 +929,11 @@ final class AppState: ObservableObject {
             ingestService.clearPendingSources()
         }
         var allSucceeded = true
+        var failures: [(slug: String, message: String)] = []
+        lastIngestAllFailure = nil
+        defer {
+            lastIngestAllFailure = Self.ingestAllFailureSummary(failures)
+        }
         // The queue, not `sources`, decides what runs next: `cancel(source:)` takes a source out of it,
         // and `cancelAll()` empties it. `IngestService.isCancelling` cannot stop the run, since it
         // resets as each source's ingest ends.
@@ -948,9 +957,20 @@ final class AppState: ObservableObject {
             await fetchCorpusStats()
             if !result.succeeded {
                 allSucceeded = false
+                failures.append((source.slug, result.message))
             }
         }
         return allSucceeded
+    }
+
+    /// "notes: permission denied" for one failed source, "2 sources failed: notes, mail" for more.
+    nonisolated static func ingestAllFailureSummary(_ failures: [(slug: String, message: String)]) -> String? {
+        guard let first = failures.first else { return nil }
+        if failures.count == 1 {
+            let message = first.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return message.isEmpty ? "\(first.slug) failed" : "\(first.slug): \(message)"
+        }
+        return "\(failures.count) sources failed: \(failures.map(\.slug).joined(separator: ", "))"
     }
 
     /// Embeds pending chunks for `model` (nil = every registered model) on the backfill

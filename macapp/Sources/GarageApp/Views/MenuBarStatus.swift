@@ -169,7 +169,7 @@ struct MenuBarStatus: Equatable {
             database: database,
             mcp: mcp,
             activity: activity,
-            lastIngestError: ingest.lastError,
+            lastIngestError: appState.lastIngestAllFailure ?? ingest.lastError,
             sourceCount: appState.registeredSources.count,
             documentCount: appState.corpusStats.documentsCount,
             isCancellingIngest: ingest.isCancelling
