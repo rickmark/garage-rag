@@ -40,7 +40,7 @@ from pathlib import Path
 
 from garage_rag.attribute.resolver import SelfIdentity, resolve
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ExtractionError, ExtractResult, NoTextFound, file_sha256, sha256_text
+from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, NoTextFound, file_sha256, sha256_text
 from garage_rag.extract.dispatch import extract
 from garage_rag.extract.placeholder import PlaceholderFile
 from garage_rag.extract.quality import assess
@@ -137,6 +137,20 @@ def _reject_empty(
     gateway.record_rejected(source_ctx.run_id, source_ctx.slug, candidate.uri)
 
 
+# Extensions whose extractor changed the content kind, with the chunker prefix a
+# current row carries. A row without it was indexed by the old extractor, so an
+# unchanged file is still re-extracted: ``.eml`` was plain text (a document), and
+# is now mail (a communication, which must not leave the machine).
+_CURRENT_CHUNKER_PREFIX = {".eml": f"{ContentKind.CONVERSATION}:"}
+
+
+def _indexed_by_a_retired_extractor(path: Path, existing: ExistingDocStat) -> bool:
+    """Whether indexed content came from an older extractor. A remembered outcome carries
+    no chunker, and the gateway already drops one whose extractor has changed."""
+    prefix = _CURRENT_CHUNKER_PREFIX.get(path.suffix.lower())
+    return prefix is not None and _has_indexed_content(existing) and not existing.chunker.startswith(prefix)
+
+
 def ingest_one(
     gateway: IngestStorageGateway,
     source_ctx: SourceContext,
@@ -154,7 +168,12 @@ def ingest_one(
 
     # --- step 1: skip on unchanged stat, without opening the file -----------
     # For a placeholder this is what avoids a download: opening it is what fetches it.
-    if not force and _is_settled(existing_stat) and _stat_matches(existing_stat, candidate):
+    if (
+        not force
+        and _is_settled(existing_stat)
+        and _stat_matches(existing_stat, candidate)
+        and not _indexed_by_a_retired_extractor(candidate.path, existing_stat)
+    ):
         log.debug(
             "Skipped %s: stat matches the %s recorded in DB%s",
             candidate.uri,
@@ -300,6 +319,7 @@ def ingest_one(
         source_default_trust=source_ctx.default_trust,
         author_hints=result.author_hints,
         self_identity=self_identity,
+        communication=result.kind is ContentKind.CONVERSATION,
     )
 
     # --- step 4: content unchanged -> keep chunks, refresh metadata ---------

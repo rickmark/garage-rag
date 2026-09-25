@@ -15,7 +15,7 @@ import logging
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
-from email.utils import getaddresses, parsedate_to_datetime
+from email.utils import formataddr, getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -23,7 +23,6 @@ from garage_rag.extract.base import (
     ContentKind,
     ExtractionError,
     ExtractResult,
-    clean_author_hints,
     normalize_text,
 )
 
@@ -112,13 +111,19 @@ def _header(message: EmailMessage, name: str) -> str:
 
 
 def _author_hints(message: EmailMessage) -> list[str]:
+    """The senders, as ``Name <address>`` (or the bare address), for the resolver's sender rule.
+
+    Not filtered through ``clean_author_hints``: its tool-name tokens ("user",
+    "admin", "owner") are common in real mailbox names.
+    """
     hints: list[str] = []
     for name, address in getaddresses([_header(message, "From")]):
-        if name:
-            hints.append(name)
-        elif address:
-            hints.append(address)
-    return clean_author_hints(hints)
+        if not address or "@" not in address:
+            continue
+        hint = formataddr((name, address)) if name else address
+        if hint not in hints:
+            hints.append(hint)
+    return hints
 
 
 def extract_email(path: Path) -> ExtractResult:
