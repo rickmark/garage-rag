@@ -207,9 +207,19 @@ public struct GarageConfigFile: Codable {
         public let provider: String?
     }
 
+    /// The `embedding` section, reduced to the one key the app reads.
+    public struct EmbeddingEntry: Codable {
+        public let defaultModel: String?
+
+        enum CodingKeys: String, CodingKey {
+            case defaultModel = "default_model"
+        }
+    }
+
     public let sources: [SourceEntry]?
     public let models: [ModelPresetEntry]?
     public let facts: FactsEntry?
+    public let embedding: EmbeddingEntry?
 }
 
 /// The on-disk shape of `models.json`: presets grouped by what they're used for,
@@ -563,6 +573,27 @@ public enum GarageConfigLoader {
         }
 
         return (defaultFactsModel, defaultFactsProvider)
+    }
+
+    /// Default the Python side applies when garage.json names no `embedding.default_model`.
+    public static let defaultEmbeddingModel = "bge-m3"
+
+    /// Reads `embedding.default_model` from garage.json: the model search uses when no registered
+    /// model is flagged default. The first candidate file that parses wins, as for `facts`.
+    public static func loadDefaultEmbeddingModel(fileURL: URL? = nil) -> String {
+        let targets = fileURL.map { [$0] } ?? candidateConfigFiles
+
+        for url in targets {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            guard let data = try? Data(contentsOf: url),
+                  let config = try? JSONDecoder().decode(GarageConfigFile.self, from: data) else {
+                continue
+            }
+            let model = config.embedding?.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (model?.isEmpty == false) ? model! : defaultEmbeddingModel
+        }
+
+        return defaultEmbeddingModel
     }
 
     /// Parses sources declared in configuration files.

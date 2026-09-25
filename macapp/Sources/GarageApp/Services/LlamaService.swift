@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import LlamaClient
+import LlamaModelLoader
 
 /// Service managing the state and operations of the local Llama XPC service.
 @MainActor
@@ -19,10 +20,12 @@ final class LlamaService: ObservableObject {
     @Published private(set) var lastEmbeddingVector: [Float]?
 
     let client: LlamaClient
+    private let modelLoader: LlamaModelLoader
     private let maxLogLines = 2000
 
-    init(client: LlamaClient = LlamaClient()) {
+    init(client: LlamaClient = LlamaClient(), modelLoader: LlamaModelLoader = .standard()) {
         self.client = client
+        self.modelLoader = modelLoader
     }
 
     var statusColor: Color {
@@ -154,6 +157,23 @@ final class LlamaService: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             appendLog("Failed to load model: \(error.localizedDescription)", stream: .stderr)
+            return false
+        }
+    }
+
+    /// Makes `alias` resident unless it already is, resolving its GGUF and load settings the way
+    /// an on-demand load does (`LlamaModelLoader`). Returns whether it is loaded afterwards.
+    @discardableResult
+    func ensureLoaded(alias: String) async -> Bool {
+        do {
+            if case .loaded(let message) = try await modelLoader.ensureLoaded(alias: alias) {
+                appendLog("Loaded \(alias): \(message)")
+                await refreshStatus()
+            }
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            appendLog("Could not load \(alias): \(error.localizedDescription)", stream: .stderr)
             return false
         }
     }
