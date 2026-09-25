@@ -170,6 +170,54 @@ final class SourcesUITests: GarageUITestCase {
         XCTAssertTrue(progress.exists, "maintenance finished before the second add, so this run proves nothing; add more notes")
     }
 
+    /// The custom form names a source after its folder until the person types a name of their own.
+    func testNameFillsInFromTheFolder() throws {
+        let folder = try makeFolder(named: "Field Notes")
+        try launchApp()
+        waitForBackend()
+        open(section: "sources")
+
+        let slugField = revealCustomSourceForm()
+        replaceText(in: element(identifier: "sources.form.root"), with: folder.path)
+        XCTAssertTrue(
+            waitUntil(timeout: 10) { (slugField.value as? String) == "field-notes" },
+            "the name was not filled in from the folder (\(slugField.value ?? "nil"))"
+        )
+        XCTAssertTrue(element(text: "from the folder").exists, "the form does not say where the name came from")
+
+        replaceText(in: slugField, with: "my-notes")
+        XCTAssertTrue(waitUntil(timeout: 10) { !self.element(text: "from the folder").exists }, "a typed name still says it came from the folder")
+        // Changing the folder now leaves the typed name alone.
+        replaceText(in: element(identifier: "sources.form.root"), with: dataDirectory.appendingPathComponent("elsewhere").path)
+        XCTAssertTrue(holds(for: 2) { (slugField.value as? String) == "my-notes" }, "changing the folder replaced a typed name")
+    }
+
+    /// A location card knows its source by name: once a source named "documents" exists (here one
+    /// on a test folder, never the real ~/Documents), the Documents card says it is added and can no
+    /// longer be clicked, and the toolbar's Update Everything and Scan & Ingest All turn on.
+    func testAddingASourceEnablesTheToolbarAndMarksItsCard() throws {
+        let folder = try makeFolder(named: "docs", files: ["one.md": "# One\n"])
+        try launchApp()
+        waitForBackend()
+        open(section: "sources")
+
+        let card = element(identifier: "sources.template.documents")
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "no Documents card")
+        XCTAssertEqual(card.label, "Add Documents")
+        for id in ["desktop", "downloads"] {
+            XCTAssertTrue(element(identifier: "sources.template.\(id)").exists, "no \(id) card")
+        }
+
+        addCustomSource(slug: "documents", root: folder)
+
+        XCTAssertTrue(waitUntil(timeout: 15) { card.label == "Documents, added" }, "the Documents card does not say it is added (\(card.label))")
+        XCTAssertFalse(card.isEnabled, "the Documents card can still be clicked once added")
+        XCTAssertTrue(waitForEnabled(element(identifier: "sources.updateEverything")), "Update Everything stayed disabled with a source")
+        XCTAssertTrue(waitForEnabled(element(identifier: "sources.scanIngestAll")), "Scan & Ingest All stayed disabled with a source")
+        XCTAssertTrue(element(identifier: "sources.row.documents.scanIngest").exists, "the source's row has no Scan & Ingest")
+        XCTAssertFalse(element(text: "No sources configured yet.").exists, "the empty state stayed after adding a source")
+    }
+
     /// Deterministic, varied English-looking paragraphs of about `characters` characters.
     private static func prose(seed: UInt64, characters: Int) -> String {
         let words = [
