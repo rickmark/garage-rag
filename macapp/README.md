@@ -415,8 +415,9 @@ the directory generate_appcast reads. That also means it builds no delta updates
 the previous release's archive beside the new one), so every user downloads the whole app.
 `//ext/sparkle:binary_delta` is there for when that becomes worth doing.
 
-Sparkle first shipped in 1.5 (#34). v1.0 has no update check at all, so its users have to
-download 1.5 themselves; from 1.5 on, every release reaches them through the feed.
+Sparkle arrives with 1.5 (#34); the feed stays empty until the first Developer ID release is
+published. v1.0 has no update check at all, so its users will have to download 1.5 themselves;
+from 1.5 on, every release reaches them through the feed.
 
 ### Why the framework is re-signed
 
@@ -450,7 +451,7 @@ four-page assistant instead of the sidebar UI:
 
 The flow lives in `Services/FirstRunCoordinator.swift` (state + the commands each page runs) and
 `Views/FirstRunView.swift` (the pages). It can be re-run any time from **Garage ▸ Setup Assistant…**
-or the menu bar item, and skipped from any page.
+and skipped from any page.
 
 **Reset Database…** relaunches into the assistant too, whether or not it was completed before. There
 page 1 also creates the new, empty database and registers the sources in `~/.garage.json` again
@@ -469,16 +470,35 @@ with the Status page listing the missing sources and model under Health.
 - `LlamaXPCService` runs llama.cpp in-process (`Sources/LlamaEngine`, linked from `//ext/llama_cpp` with Metal and Accelerate). Besides its XPC interface it listens on `http://127.0.0.1:8790` with the llama-server routes (`/health`, `/props`, `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/completion`, `/tokenize`, `/detokenize`, `/v1/rerank`); that port is how the Python `llama_xpc` provider embeds and distills facts. `GARAGE_LLAMA_HTTP_PORT` in the helper's environment overrides the port; the Python side reads `embedding.llama_host` from `garage.json`.
 - `XPCServiceManager` — pings all six helpers, streams their logs into the app, runs their in-service self tests and can restart or terminate them.
 - `AppDelegate` — keeps the app running in the menu bar after the window closes, and signals Postgres and every helper to stop on every quit path (Cmd+Q, Dock quit, menu item).
-- Views: Status, Sources, Models, Search, Documents, Logs, MCP Server. Sources
-  provides manual ingestion and an optional persisted schedule that ingests all
-  sources and then backfills every registered model. The Models view
-  provides controls for Llama models and embedding models: it includes
-  the model catalog (`docs/.data/models.json`, refreshed at launch from `https://garagerag.app/.data/models.json`) and fills each selection's slug, dimensions,
-  provider-side reference, and default provider. The provider can then be
-  changed between Ollama and LM Studio; start the selected provider locally
-  before backfilling embeddings. An LM Studio API token can be saved in the
-  macOS Keychain from this view and is passed as `GARAGE_LMSTUDIO_API_TOKEN`
-  to the gRPC server.
+- `AppState+LlamaModels` — decides which models `LlamaXPCService` holds: the default `llama_xpc`
+  embedding model from the moment Postgres is up (and again when the default changes), so a search
+  embeds its query at once, and the facts model only while a distillation run lasts (unloaded
+  afterwards unless it is also the search model). Anything else loads on demand and stays until the
+  Models page unloads it.
+- Views, in sidebar order (`AppSection` / `SidebarGroup` in `Views/ContentView.swift`): **Status** on
+  a row of its own, then **Configuration** (Sources, Models, MCP Server), **Data** (Documents, Facts,
+  Search) and **Advanced** (Database, Logs).
+  - **Sources** — an Attention module while something cannot be read (with the button that fixes it),
+    an Activity module while the pipeline runs (with one Stop), then one row per source with Scan &
+    Ingest (Cancel while queued or running) and a ⋯ menu. **Update Everything** runs scan, ingest,
+    embed and glean facts as one run; **Scan & Ingest All** only scans and ingests, leaving embedding to the next
+    automatic update. Sources are added from
+    location cards (the setup assistant's eight locations), **Add Folder…**, or **Custom Source…**,
+    whose Name fills itself in from the folder. Automatic Updates is an optional persisted schedule
+    that scans, ingests every source and backfills every registered model, optionally also at launch.
+  - **Models** — three tabs. **Overall** has one card each for search (embedding) and distillation,
+    with a headline, its one action (Embed All, Glean Facts) and Manage…. **Embedding** lists one row
+    per model (state, actions, details with SHA-256 Verify), unregistered presets from the model
+    catalog (`docs/.data/models.json`, refreshed at launch from
+    `https://garagerag.app/.data/models.json`) with Add, a Custom model… form, and Test an Embedding.
+    **Distillation** holds the facts-model presets and the fact prompts editor. The Providers box lists
+    each model Llama XPC holds, with Unload, and keeps the LM Studio API token in the login Keychain,
+    passed as `GARAGE_LMSTUDIO_API_TOKEN` to the gRPC server.
+  - **MCP Server** — the server's state and tool count, Connected Assistants (Connect, Update,
+    Disconnect per client config) and Try It (tool tester and prompt playground).
+  - **Database** — Postgres status (Start, Restart, Stop), the connection URL, schema updates,
+    Contents (corpus counts, size on disk), Backups (**Back Up…**, **Restore…**), **Reset
+    Database…** under Start Over, and Postgres's own output folded at the bottom.
 
 The app-managed HTTP MCP server has its own lifecycle and logs. Claude
 Desktop/Code can instead spawn the bundled `garage-mcp` over stdio when
@@ -486,9 +506,11 @@ registered with `garage mcp-install --stdio`; this allows both connection modes.
 The app hands the authenticated database URL to its XPC helpers as
 `GARAGE_DATABASE_URL`. A stdio registration names the bundled `garage-mcp`,
 which starts the app if needed and reads the password from the Keychain, so the
-client's config carries no database URL or password. The first connection from
-a launcher may show a Keychain prompt; choose Always Allow.
+client's config carries no database URL or password. Signed builds read it from
+the App Group keychain without a prompt; a locally signed or ad-hoc build may
+show a login-keychain prompt on the first connection from a launcher (choose
+Always Allow).
 
-The Status view also provides database reset, backup, and restore controls.
-Backups are PostgreSQL custom-format dumps; restore replaces the private Garage
-database, while reset recreates it empty.
+The Database page provides the backup, restore and reset controls. Backups are
+PostgreSQL custom-format dumps; restore replaces the private Garage database,
+while reset recreates it empty.
