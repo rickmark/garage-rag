@@ -8,8 +8,8 @@ The strategies differ because the failure modes differ:
 * **Code** -- language-aware splitting keeps functions and classes intact.
 * **Prose / PDF** -- plain recursive splitting on paragraph boundaries.
 * **Tabular** -- split on sheet headings, never mid-row.
-* **Conversation** -- handled by :mod:`garage_rag.extract.messages`, which
-  windows messages before they ever reach here.
+* **Conversation** -- a Messages thread never reaches here:
+  :mod:`garage_rag.ingest.conversations` makes one chunk per message itself.
 
 The splitters themselves live in :mod:`garage_rag.ingest.splitters`, a small
 dependency-free port of the langchain-text-splitters behaviour this module was

@@ -348,6 +348,27 @@ def ingest_source(
 
     _call_progress(phase="scan")
 
+    if source_ctx.kind == "sqlite":
+        # A Messages database is read conversation by conversation, not walked.
+        from garage_rag.ingest.conversations import ingest_messages_source
+
+        try:
+            completed = ingest_messages_source(
+                gw,
+                source_ctx,
+                counters,
+                self_identity=self_identity,
+                force=force,
+                limit=limit,
+                is_cancelled=is_cancelled,
+                on_item=lambda title: _call_progress(phase="ingest", current_item=title),
+            )
+        finally:
+            _finalize(gw, run_id, source_slug, counters, budget, completed=completed)
+        if is_cancelled is not None and is_cancelled():
+            _call_progress(phase="cancelled")
+        return counters, walk_stats, budget
+
     log.info("Starting file walk for %r (root=%s)", source_slug, root)
     try:
         for candidate in walk(
@@ -390,31 +411,44 @@ def ingest_source(
             # ``limit`` or cancellation breaks out before the else clause.
             completed = True
     finally:
-        gw.finalize_session(
-            run_id=run_id,
-            completed=completed,
-            seen=counters.seen,
-            indexed=counters.indexed,
-            skipped=counters.skipped,
-            failed=counters.failed,
-            placeholders=counters.placeholders,
-            materialized=budget.files_done,
-            materialized_bytes=budget.bytes_done,
-            errors=counters.errors,
-        )
-
-        log.info(
-            "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, "
-            "placeholders=%d, chunks=%d, errors=%d",
-            source_slug,
-            counters.total_items,
-            counters.seen,
-            counters.indexed,
-            counters.skipped,
-            counters.failed,
-            counters.placeholders,
-            counters.chunks_written,
-            len(counters.errors),
-        )
+        _finalize(gw, run_id, source_slug, counters, budget, completed=completed)
 
     return counters, walk_stats, budget
+
+
+def _finalize(
+    gw: IngestStorageGateway,
+    run_id: int,
+    source_slug: str,
+    counters: IngestCounters,
+    budget: MaterializationBudget,
+    *,
+    completed: bool,
+) -> None:
+    """Close the run, recording whether it covered the whole source."""
+    gw.finalize_session(
+        run_id=run_id,
+        completed=completed,
+        seen=counters.seen,
+        indexed=counters.indexed,
+        skipped=counters.skipped,
+        failed=counters.failed,
+        placeholders=counters.placeholders,
+        materialized=budget.files_done,
+        materialized_bytes=budget.bytes_done,
+        errors=counters.errors,
+    )
+
+    log.info(
+        "Finished ingest for %r: total_items=%d, seen=%d, indexed=%d, skipped=%d, failed=%d, "
+        "placeholders=%d, chunks=%d, errors=%d",
+        source_slug,
+        counters.total_items,
+        counters.seen,
+        counters.indexed,
+        counters.skipped,
+        counters.failed,
+        counters.placeholders,
+        counters.chunks_written,
+        len(counters.errors),
+    )
