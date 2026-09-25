@@ -90,7 +90,7 @@ final class MenuBarStatusTests: XCTestCase {
     func testIngestHeadlineNamesTheSourceAndThePercentageComesFromTheCounts() {
         let progress = MenuBarStatus.IngestProgress(source: "notes", processed: 424, total: 1000, itemType: "documents", reportedFraction: 0.1)
         let status = MenuBarStatus(database: .running, activity: .ingesting(progress))
-        XCTAssertEqual(status.headline, "Ingesting notes")
+        XCTAssertEqual(status.headline, "Reading notes")
         XCTAssertEqual(status.ingestFraction, 0.424)
         XCTAssertEqual(status.activityDetail, "424 of 1,000 documents")
         XCTAssertEqual(status.stage, .ingest)
@@ -99,7 +99,7 @@ final class MenuBarStatusTests: XCTestCase {
     func testIngestFallsBackToTheReportedFractionUntilTheScanHasSizedTheRun() {
         let progress = MenuBarStatus.IngestProgress(source: "", processed: 12, total: 0, reportedFraction: 0.3)
         let status = MenuBarStatus(database: .running, activity: .ingesting(progress))
-        XCTAssertEqual(status.headline, "Ingesting")
+        XCTAssertEqual(status.headline, "Reading")
         XCTAssertEqual(status.ingestFraction, 0.3)
         XCTAssertEqual(status.activityDetail, "12 documents")
     }
