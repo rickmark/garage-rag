@@ -137,24 +137,26 @@ struct ModelsView: View {
             Divider()
 
             ScrollView {
+                // Each section is type-erased: together their concrete types make one view value large enough that an
+                // unoptimized (Debug) build overflows the main thread's stack copying it.
                 VStack(alignment: .leading, spacing: 20) {
                     switch selectedTab {
                     case .overall:
-                        overallEmbeddingSection
-                        overallDistillationSection
-                        providersSection
-                        activitySection
+                        AnyView(overallEmbeddingSection)
+                        AnyView(overallDistillationSection)
+                        AnyView(providersSection)
+                        AnyView(activitySection)
                     case .embedding:
-                        embeddingModelsSection
-                        embeddingTestSection
+                        AnyView(embeddingModelsSection)
+                        AnyView(embeddingTestSection)
                         if !appState.backfill.logs.isEmpty {
-                            backfillOutputBox
+                            AnyView(backfillOutputBox)
                         }
                     case .distillation:
-                        distillationSection
+                        AnyView(distillationSection)
                         FactPromptsSection()
                         if !appState.enrichFacts.logs.isEmpty {
-                            enrichFactsOutputBox
+                            AnyView(enrichFactsOutputBox)
                         }
                     }
                 }
