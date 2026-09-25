@@ -61,6 +61,9 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     public var id: String { slug }
     public let name: String
     public let modelId: String?
+    /// The model's page, where its license and model card can be read. The catalog names it;
+    /// without that, a Hugging Face repository id in `modelId` points at its page there.
+    public let modelCardURLString: String?
     public let slug: String
     public let modelRef: String?
     public let provider: String?
@@ -80,6 +83,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     enum CodingKeys: String, CodingKey {
         case name
         case modelId = "model_id"
+        case modelCardURLString = "model_card_url"
         case slug
         case modelRef = "model_ref"
         case provider
@@ -97,6 +101,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     public init(
         name: String,
         modelId: String? = nil,
+        modelCardURLString: String? = nil,
         slug: String,
         modelRef: String? = nil,
         provider: String? = "llama_xpc",
@@ -112,6 +117,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
     ) {
         self.name = name
         self.modelId = modelId
+        self.modelCardURLString = modelCardURLString
         self.slug = slug
         self.modelRef = modelRef ?? slug
         self.provider = provider
@@ -130,6 +136,7 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         modelId = try container.decodeIfPresent(String.self, forKey: .modelId)
+        modelCardURLString = try container.decodeIfPresent(String.self, forKey: .modelCardURLString)
         slug = try container.decode(String.self, forKey: .slug)
         let decodedModelRef = try container.decodeIfPresent(String.self, forKey: .modelRef)
         modelRef = decodedModelRef ?? slug
@@ -143,6 +150,15 @@ public struct ModelPresetEntry: Identifiable, Hashable, Sendable, Codable {
         description = try container.decodeIfPresent(String.self, forKey: .description)
         useCases = try container.decodeIfPresent([String].self, forKey: .useCases)
         featured = try container.decodeIfPresent(Bool.self, forKey: .featured) ?? false
+    }
+
+    /// Where to read the model's license and model card, or nil when nothing names a page.
+    public var modelCardURL: URL? {
+        if let string = modelCardURLString, let url = URL(string: string), url.scheme == "https" {
+            return url
+        }
+        guard let modelId, modelId.split(separator: "/").count == 2, !modelId.contains(" ") else { return nil }
+        return URL(string: "https://huggingface.co/\(modelId)")
     }
 
     public var effectiveDims: Int {

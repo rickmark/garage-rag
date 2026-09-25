@@ -131,6 +131,21 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(preset.downloadURLString, "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf")
     }
 
+    func testModelCardLinkComesFromTheCatalogOrTheRepositoryId() throws {
+        let json = Data("""
+        {"name": "Gemma", "slug": "embeddinggemma", "model_id": "google/embeddinggemma-2b",
+         "model_card_url": "https://huggingface.co/google/embeddinggemma-300m"}
+        """.utf8)
+        let named = try JSONDecoder().decode(ModelPresetEntry.self, from: json)
+        XCTAssertEqual(named.modelCardURL?.absoluteString, "https://huggingface.co/google/embeddinggemma-300m")
+
+        let derived = ModelPresetEntry(name: "BGE-M3", modelId: "BAAI/bge-m3", slug: "bge-m3")
+        XCTAssertEqual(derived.modelCardURL?.absoluteString, "https://huggingface.co/BAAI/bge-m3")
+
+        XCTAssertNil(ModelPresetEntry(name: "Local", modelId: "nomic-embed-text", slug: "local").modelCardURL)
+        XCTAssertNil(ModelPresetEntry(name: "Plain", modelCardURLString: "http://example.com", slug: "plain").modelCardURL)
+    }
+
     func testLoadModelPresetsFromJSONWithSha256() throws {
         let json = """
         [

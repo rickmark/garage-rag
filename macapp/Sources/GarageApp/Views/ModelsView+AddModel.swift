@@ -75,6 +75,13 @@ extension ModelsView {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+
+                if let modelCard = preset.modelCardURL {
+                    Link("Model card and license", destination: modelCard)
+                        .font(.caption2)
+                        .help(modelCard.absoluteString)
+                        .accessibilityIdentifier("models.license.\(preset.slug)")
+                }
             }
 
             Spacer()
