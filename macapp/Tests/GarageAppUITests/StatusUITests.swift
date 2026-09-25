@@ -1,18 +1,18 @@
 import XCTest
 
 /// The Status page's sections on a new, empty corpus: Health lists what is missing and each row
-/// opens its page, Indexing counts the empty corpus and offers the next step, and the Index
+/// opens its page, Library counts the empty corpus and offers the next step, and the Index
 /// Manager row tests the gRPC backend. Nothing here needs a model server or the network.
 final class StatusUITests: GarageUITestCase {
 
-    func testIndexingCountsAnEmptyCorpus() throws {
+    func testLibraryCountsAnEmptyCorpus() throws {
         try launchApp()
         waitForBackend()
         open(section: "status")
 
         // The figures show once the database runs and the first stats have been read. An empty
         // garage.json still names a facts model (the default, gemma2-2b), so Facts is on the row too.
-        let expected = ["sources": "0", "documents": "0", "chunks": "0", "embedded": "–", "facts": "0"]
+        let expected = ["sources": "0", "documents": "0", "chunks": "0", "indexed": "–", "facts": "0"]
         for (figure, value) in expected {
             let shown = element(identifier: "status.figure.\(figure)")
             XCTAssertTrue(
@@ -20,10 +20,10 @@ final class StatusUITests: GarageUITestCase {
                 "the \(figure) figure is not \(value) on an empty corpus (\(shown.exists ? shownText(of: shown) : "missing"))"
             )
         }
-        XCTAssertTrue(element(text: "no model").exists, "Embedded does not say there is no model")
+        XCTAssertTrue(element(text: "no model").exists, "Indexed does not say there is no model")
 
-        let title = element(identifier: "status.indexing.title")
-        XCTAssertTrue(title.waitForExistence(timeout: 15), "Indexing has no headline")
+        let title = element(identifier: "status.library.title")
+        XCTAssertTrue(title.waitForExistence(timeout: 15), "Library has no headline")
         XCTAssertEqual(shownText(of: title), "Nothing to index yet")
         XCTAssertTrue(element(identifier: "status.addSource").exists, "an empty corpus does not offer Add a Source")
         XCTAssertFalse(element(identifier: "status.updateEverything").exists, "Update Everything shows before there is a source")
@@ -69,7 +69,7 @@ final class StatusUITests: GarageUITestCase {
         XCTAssertTrue(element(identifier: "sources.template.documents").waitForExistence(timeout: 15), "Add a Source did not open Sources")
     }
 
-    /// With a source, Indexing trades Add a Source for Update Everything, the Sources figure counts
+    /// With a source, Library trades Add a Source for Update Everything, the Sources figure counts
     /// it, and Health stops asking for one. Update Everything is not clicked: with no model it only
     /// proves the scan, which the Sources tests cover.
     func testASourceTurnsAddASourceIntoUpdateEverything() throws {
@@ -80,7 +80,7 @@ final class StatusUITests: GarageUITestCase {
 
         open(section: "status")
         let update = element(identifier: "status.updateEverything")
-        XCTAssertTrue(update.waitForExistence(timeout: 30), "Indexing does not offer Update Everything with a source")
+        XCTAssertTrue(update.waitForExistence(timeout: 30), "Library does not offer Update Everything with a source")
         XCTAssertTrue(waitForEnabled(update), "Update Everything stayed disabled with a source and a running database")
         XCTAssertFalse(element(identifier: "status.addSource").exists, "Add a Source still shows with a source")
 

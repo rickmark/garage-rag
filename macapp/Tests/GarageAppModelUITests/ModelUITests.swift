@@ -85,7 +85,7 @@ final class ModelUITests: GarageUITestCase {
     }
 
     /// Ingests the corpus, registers the model, and embeds every chunk with Embed All, checking the
-    /// Status page's Embedded figure before (0%) and after (100%).
+    /// Status page's Indexed figure before (0%) and after (100%).
     private func ingestAndEmbed(file: StaticString = #filePath, line: UInt = #line) throws {
         try launchApp()
         waitForBackend(file: file, line: line)
@@ -95,7 +95,7 @@ final class ModelUITests: GarageUITestCase {
 
         registerModel(file: file, line: line)
         open(section: "status", file: file, line: line)
-        waitForStatusFigure("embedded", toRead: "0%", timeout: 30, file: file, line: line)
+        waitForStatusFigure("indexed", toRead: "0%", timeout: 30, file: file, line: line)
 
         open(section: "models", file: file, line: line)
         selectModelsTab("Overall", file: file, line: line)
@@ -104,7 +104,7 @@ final class ModelUITests: GarageUITestCase {
         click(embedAll)
 
         open(section: "status", file: file, line: line)
-        waitForStatusFigure("embedded", toRead: "100%", timeout: 180, file: file, line: line)
+        waitForStatusFigure("indexed", toRead: "100%", timeout: 180, file: file, line: line)
     }
 
     /// Replaces a plain-style field's text with `text` (empty clears it) and presses Return. Such a
@@ -146,7 +146,7 @@ final class ModelUITests: GarageUITestCase {
         return error.exists ? "error: \(shownText(of: error))" : "no results"
     }
 
-    /// Embed All moves the Status page's Embedded figure from 0% to 100%; then a search for each
+    /// Embed All moves the Status page's Indexed figure from 0% to 100%; then a search for each
     /// file's token ranks that file first, and clicking another hit opens it in the inspector.
     func testEmbedAllThenSearchFindsEachFileByItsToken() throws {
         try ingestAndEmbed()

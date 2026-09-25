@@ -81,8 +81,8 @@ struct MenuBarStatus: Equatable {
         var title: String {
             switch self {
             case .scan: "Scan"
-            case .ingest: "Ingest"
-            case .embed: "Embed"
+            case .ingest: "Read"
+            case .embed: "Index"
             case .distill: "Glean"
             }
         }
@@ -352,8 +352,8 @@ struct MenuBarStatus: Equatable {
         switch activity {
         case .idle: return "Ready"
         case .scanning: return "Scanning sources"
-        case .ingesting(let progress): return progress.source.isEmpty ? "Ingesting" : "Ingesting \(progress.source)"
-        case .embedding: return "Embedding chunks"
+        case .ingesting(let progress): return progress.source.isEmpty ? "Reading" : "Reading \(progress.source)"
+        case .embedding: return "Indexing chunks"
         case .distilling: return "Gleaning facts"
         }
     }

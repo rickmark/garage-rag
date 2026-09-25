@@ -169,12 +169,12 @@ struct StatusView: View {
         }
     }
 
-    // MARK: - Indexing
+    // MARK: - Library
 
     private var indexingSection: some View {
         let indexing = IndexingPresentation(appState: appState)
         let headline = indexing.headline
-        return GroupBox("Indexing") {
+        return GroupBox("Library") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
                     MenuBarSymbolCircle(symbol: headline.symbol, tint: headline.tint, isActive: headline.isActive)
@@ -185,7 +185,7 @@ struct StatusView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                                .accessibilityIdentifier("status.indexing.title")
+                                .accessibilityIdentifier("status.library.title")
                             if let percent = headline.percent {
                                 Text(percent)
                                     .font(.system(size: 13))
@@ -209,7 +209,7 @@ struct StatusView: View {
                                 .monospacedDigit()
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
-                                .accessibilityIdentifier("status.indexing.detail")
+                                .accessibilityIdentifier("status.library.detail")
                         }
                         if let item = headline.currentItem {
                             Text(item)
@@ -279,7 +279,7 @@ struct StatusView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(!enabled)
-            .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from the new documents")
+            .help("Scan and read every source, index the new chunks with every model, then glean facts from the new documents")
             .accessibilityIdentifier("status.updateEverything")
         case .stop(let isStopping):
             Button(isStopping ? "Stopping…" : "Stop") {
