@@ -1,20 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar item's popover. Top to bottom: a quick search of the corpus, the two services a
-/// glance is about (the database, and the MCP server Claude talks to), what the pipeline is doing
-/// with a way to start or stop it, and the two commands every menu bar app owes its user.
+/// The menu bar item's popover. Top to bottom: a header with the two commands every menu bar app
+/// owes its user (open the window, quit), a quick search of the corpus, one row for the services,
+/// and what the pipeline is doing with a way to start or stop it.
 ///
 /// Everything else the app can do lives in the window, one click away on any row.
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
-    static let width: CGFloat = 320
+    static let width: CGFloat = 360
 
     var body: some View {
         let status = MenuBarStatus(appState: appState)
         VStack(alignment: .leading, spacing: 10) {
+            header
+
             MenuBarQuickSearch(isEnabled: status.canSearch)
 
             servicesModule(status)
@@ -22,22 +24,29 @@ struct MenuBarView: View {
             if status.database == .running {
                 activityModule(status)
             }
-
-            VStack(spacing: 0) {
-                MenuBarCommandRow(title: "Open Garage", key: "o") {
-                    MenuBarNavigation.openMainWindow(openWindow: openWindow)
-                }
-                .accessibilityIdentifier("menubar.openGarage")
-
-                MenuBarCommandRow(title: "Quit Garage", key: "q") {
-                    AppDelegate.quit()
-                }
-                .accessibilityIdentifier("menubar.quit")
-            }
-            .padding(.horizontal, -4)
         }
         .padding(12)
         .frame(width: Self.width)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("Garage")
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            MenuBarHeaderButton(symbol: "macwindow", help: "Open Garage (⌘O)", key: "o") {
+                MenuBarNavigation.openMainWindow(openWindow: openWindow)
+            }
+            .accessibilityIdentifier("menubar.openGarage")
+
+            MenuBarHeaderButton(symbol: "power", help: "Quit Garage (⌘Q)", key: "q") {
+                AppDelegate.quit()
+            }
+            .accessibilityIdentifier("menubar.quit")
+        }
+        .padding(.leading, 2)
     }
 
     // MARK: - Services
