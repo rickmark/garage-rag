@@ -204,4 +204,28 @@ final class MenuBarStatusTests: XCTestCase {
         XCTAssertEqual(status.documentCount, 42)
         XCTAssertEqual(status.sourceCount, 0)
     }
+
+    // MARK: - All systems go
+
+    func testDatabaseAndServingMCPFoldIntoAllSystemsGo() {
+        let status = MenuBarStatus(database: .running, mcp: .running(clients: 2))
+        XCTAssertTrue(status.allSystemsGo)
+        XCTAssertEqual(status.allSystemsGoDetail, "Database and MCP running · 2 clients")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 1)).allSystemsGoDetail, "Database and MCP running · 1 client")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .running(clients: 0)).allSystemsGoDetail, "Database and MCP running · no clients registered")
+    }
+
+    func testAnyServiceNotFineSpellsTheRowsOutAgain() {
+        XCTAssertFalse(MenuBarStatus(database: .running, mcp: .stopped).allSystemsGo)
+        XCTAssertFalse(MenuBarStatus(database: .running, mcp: .failed("port in use")).allSystemsGo)
+        XCTAssertFalse(MenuBarStatus(database: .running, mcp: .starting).allSystemsGo)
+        XCTAssertFalse(MenuBarStatus(database: .stopped, mcp: .running(clients: 1)).allSystemsGo)
+        XCTAssertFalse(MenuBarStatus(database: .needsMigration, mcp: .running(clients: 1)).allSystemsGo)
+    }
+
+    func testIdleOnARunningDatabaseHasNoSecondStatusDot() {
+        XCTAssertFalse(MenuBarStatus(database: .running, mcp: .running(clients: 1)).showsActivityDot)
+        XCTAssertTrue(MenuBarStatus(database: .running, mcp: .running(clients: 1), activity: .embedding).showsActivityDot)
+        XCTAssertTrue(MenuBarStatus(database: .stopped).showsActivityDot)
+    }
 }
