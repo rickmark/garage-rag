@@ -103,6 +103,7 @@ extension ModelsView {
         Task {
             await appState.registerModel(preset: preset)
             await appState.fetchRegisteredModels()
+            await appState.fetchCorpusStats()
             registeringPresetSlug = nil
         }
     }

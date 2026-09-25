@@ -30,6 +30,9 @@ struct ModelsView: View {
     @State var pendingUnloadAlias: String? = nil
     @State var settingFactsModelSlug: String? = nil
     @State var registeringPresetSlug: String? = nil
+    /// The model an Embed started from this page runs for, or "*" for Embed All; nil while no
+    /// run was started here (a run started elsewhere, such as Update Everything, covers every model).
+    @State var backfillTarget: String? = nil
     @State var searchText: String = ""
     /// Rows whose details (file, hashes, table) are open.
     @State var expandedSlugs: Set<String> = []
@@ -241,13 +244,25 @@ struct ModelsView: View {
         if stats.totalChunks == 0 {
             return "\(models) · no chunks to embed until a source is ingested"
         }
-        let required = stats.totalRequiredEmbeddingsAcrossAllModels
-        let missing = stats.unembeddedChunks
+        let (required, missing) = embeddingsRequiredAndMissing
         if missing == 0 {
             return "\(models) · every chunk embedded"
         }
         let done = max(0, required - missing)
         return "\(models) · \(done.formatted()) of \(required.formatted()) embeddings done"
+    }
+
+    /// Embeddings the registered models need and how many are missing, counted over the models
+    /// registered now rather than the stats' model list, which lags a registration until the next
+    /// stats fetch.
+    var embeddingsRequiredAndMissing: (required: Int, missing: Int) {
+        let stats = appState.corpusStats
+        let required = unifiedModels.count * stats.totalChunks
+        let missing = unifiedModels.reduce(0) { sum, item in
+            let embedded = stats.modelStats.first { $0.slug == item.slug }?.embeddedCount ?? 0
+            return sum + max(0, stats.totalChunks - embedded)
+        }
+        return (required, missing)
     }
 
     func emptyState(symbol: String, title: String, detail: String?) -> some View {
@@ -676,28 +691,41 @@ struct ModelsView: View {
         Task {
             await appState.runOperation(triggersMaintenance: triggersMaintenance, operation)
             await appState.fetchRegisteredModels()
+            // A registry change moves the per-model stats the rows and headline read.
+            await appState.fetchCorpusStats()
             busy = false
         }
     }
 
     func backfillModel(slug: String) {
         busy = true
+        backfillTarget = slug
         Task {
             await appState.runBackfill(model: slug)
             await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
+            backfillTarget = nil
             busy = false
         }
     }
 
     func backfillAllModels() {
         busy = true
+        backfillTarget = "*"
         Task {
             await appState.runBackfill()
             await appState.fetchCorpusStats()
             await appState.fetchRegisteredModels()
+            backfillTarget = nil
             busy = false
         }
+    }
+
+    /// Whether the running backfill, if any, embeds under `slug`.
+    func isEmbedding(slug: String) -> Bool {
+        guard appState.backfill.isRunning else { return false }
+        guard let target = backfillTarget else { return true }
+        return target == "*" || target == slug
     }
 
     func enrichAllFacts() {

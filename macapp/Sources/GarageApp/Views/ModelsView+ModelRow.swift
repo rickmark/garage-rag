@@ -51,7 +51,7 @@ extension ModelsView {
                 text: "Embedded · \(totalChunks.formatted()) chunk\(totalChunks == 1 ? "" : "s")"
             )
         }
-        if appState.backfill.isRunning {
+        if isEmbedding(slug: item.slug) {
             return ModelRowState(
                 symbol: "circle.hexagongrid.fill",
                 tint: .blue,
