@@ -262,7 +262,7 @@ macos_lipo_app = rule(
             # the Developer ID platform, not whatever the command line selected; without
             # this it was signed under the default local identity.
             cfg = developer_id_transition,
-            doc = "The application target (.zip or .app) providing universal binary.",
+            doc = "The application target (.zip or .app) to stage.",
         ),
         "arch": attr.string(
             mandatory = True,

@@ -77,8 +77,6 @@ use_repo(uv, "pypi")
 
 register_toolchains("@uv//:all")
 
-register_toolchains("//bazel/toolchains:all")
-
 bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_foreign_cc", version = "0.16.0")
 

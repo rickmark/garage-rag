@@ -64,14 +64,12 @@ build:local_signed --platforms=//bazel:local_signed
 # CI runners have no local signing identity (and no Keychain to put one in), so
 # `aspect` runs there with --config=ci and sign ad hoc instead.
 build:ci --platforms=//bazel:adhoc
-build:arm_developer_id --platforms=//bazel:arm_developer_id
-build:developer_id --platforms=//bazel:universal_developer_id
-build:universal --platforms=//bazel:universal_developer_id
-build:appstore --platforms=//bazel:universal_store
+build:developer_id --platforms=//bazel:developer_id
+build:appstore --platforms=//bazel:store
 # The App Store build to upload: optimized, which (unlike signing) changes every compile
 # action, so it shares nothing with the fastbuild configs above.
 build:appstore_release --config=appstore --compilation_mode=opt
-build:store --platforms=//bazel:universal_store
+build:store --platforms=//bazel:store
 
 # Build against the bundled PostgreSQL 19 beta instead of 18 (see //ext:postgres_version).
 common:pg19 --//ext:postgres_version=19

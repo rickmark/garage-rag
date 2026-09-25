@@ -3,8 +3,9 @@ http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "ht
 # Sparkle's official binary distribution: a prebuilt, notarized `Sparkle.framework`
 # plus the `bin/` release tools (generate_keys, sign_update, generate_appcast,
 # BinaryDelta). Building Sparkle from source would mean carrying an Xcode project
-# through rules_apple for no benefit — the framework ships universal (arm64 +
-# x86_64) and is re-signed with our Developer ID when it is embedded.
+# through rules_apple for no benefit. The framework ships universal (arm64 +
+# x86_64); `macos_lipo_app` (//bazel:lipo.bzl) thins it to arm64 and re-signs it with
+# our Developer ID when it stages the app.
 http_archive(
     name = "sparkle",
     build_file = "@//ext/sparkle:sparkle.BUILD.bazel",

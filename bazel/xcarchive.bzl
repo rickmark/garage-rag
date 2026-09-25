@@ -104,7 +104,7 @@ _raw_xcarchive = rule(
 
 def _appstore_transition_impl(settings, attr):
     return {
-        "//command_line_option:platforms": ["//bazel:universal_store"],
+        "//command_line_option:platforms": ["//bazel:store"],
         "//command_line_option:macos_cpus": ["arm64"],
     }
 
