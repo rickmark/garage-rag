@@ -709,4 +709,71 @@ final class AppStateTests: XCTestCase {
 
         XCTAssertTrue(state.sourcesAwaitingScan.isEmpty)
     }
+
+    // MARK: - Queue and cancel
+
+    @MainActor
+    func testCancelAllEmptiesEveryQueue() {
+        let state = AppState()
+        state.scanner.isRunning = true
+        state.setQueuesForTesting(ingest: ["notes", "mail"], awaitingScan: ["photos"])
+
+        state.cancelAll()
+
+        XCTAssertTrue(state.isCancellingAll)
+        XCTAssertEqual(state.ingestQueue, [])
+        XCTAssertEqual(state.sourcesAwaitingScan, [])
+        XCTAssertFalse(state.isQueued(source: "mail"))
+    }
+
+    @MainActor
+    func testCancelAllWithNothingRunningDoesNothing() {
+        let state = AppState()
+
+        state.cancelAll()
+
+        XCTAssertFalse(state.isCancellingAll, "nothing ran, so nothing waits for the cancel to finish")
+    }
+
+    @MainActor
+    func testCancellingAQueuedSourceTakesOnlyItOut() async {
+        let state = AppState()
+        state.setQueuesForTesting(ingest: ["notes", "mail", "photos"], awaitingScan: ["mail"])
+
+        await state.cancel(source: "mail")
+
+        XCTAssertEqual(state.ingestQueue, ["notes", "photos"])
+        XCTAssertEqual(state.sourcesAwaitingScan, [])
+        XCTAssertFalse(state.isCancellingAll, "cancelling one source leaves the rest of the run going")
+    }
+
+    @MainActor
+    func testCancellingOneSourceDuringAScanOfAllLeavesTheOthers() async {
+        let state = AppState()
+        state.setScanningForTesting(source: "*", slugs: ["notes", "mail"])
+        XCTAssertTrue(state.isPending(source: "mail"))
+
+        await state.cancel(source: "mail")
+
+        XCTAssertFalse(state.isPending(source: "mail"))
+        XCTAssertFalse(state.isBusy(source: "mail"))
+        XCTAssertTrue(state.isPending(source: "notes"))
+    }
+
+    @MainActor
+    func testASourceAnIngestOfAllHasFinishedIsNotPendingAndCanLeaveTheRun() async {
+        let state = AppState()
+        state.setIngestingForTesting(true)
+        state.ingestService.setPendingSources(["notes", "mail"])
+        state.ingestService.markSourceActive("notes")
+        state.ingestService.markSourceActive("mail")
+        XCTAssertFalse(state.isPending(source: "notes"), "notes is done; mail is the one ingesting")
+        XCTAssertTrue(state.isBusy(source: "notes"))
+
+        await state.cancel(source: "notes")
+
+        XCTAssertFalse(state.isBusy(source: "notes"), "a finished source can be removed while the run goes on")
+        XCTAssertTrue(state.isBusy(source: "mail"))
+        XCTAssertTrue(state.isPending(source: "mail"))
+    }
 }

@@ -32,6 +32,20 @@ final class AppState: ObservableObject {
     @Published private(set) var scanningSlugs: Set<String> = []
     /// Sources added while a scan or ingest ran, waiting for their own scan and ingest once it ends.
     @Published private(set) var sourcesAwaitingScan: [String] = []
+    /// Sources a running ingest of every source has yet to reach, in the order it takes them.
+    /// Cancelling one (`cancel(source:)`) takes it out; `cancelAll()` empties it.
+    @Published private(set) var ingestQueue: [String] = []
+    /// Set by `cancelAll()` until the work it stopped has ended. An ingest of every source stops before
+    /// its next source, and maintenance and the queued source scans stop before their next step.
+    @Published private(set) var isCancellingAll = false
+    /// Sources `removeSource(slug:)` is cancelling and then removing.
+    @Published private(set) var sourcesBeingRemoved: Set<String> = []
+    /// Sources cancelled while a "*" scan still covered them. One server call walks every source, so the
+    /// scan cannot skip one; the ingest after it does. Emptied when that ingest ends or the scan fails.
+    private var sourcesCancelledFromRun: Set<String> = []
+    /// A "*" scan was cancelled so that a source it covered could be removed. It counts as finished,
+    /// so the ingest after it still runs, only without the rest of the scan's counts.
+    private var scanStoppedForRemoval = false
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -728,6 +742,11 @@ final class AppState: ObservableObject {
         self.scanningSource = source
         self.scanningSlugs = slugs
     }
+
+    func setQueuesForTesting(ingest: [String] = [], awaitingScan: [String] = []) {
+        self.ingestQueue = ingest
+        self.sourcesAwaitingScan = awaitingScan
+    }
     #endif
 
     /// Items a running scan has found: `sourceItems` in `source`, the one being walked, and
@@ -752,17 +771,21 @@ final class AppState: ObservableObject {
             lastCommandOutput = "A scan is already running."
             return false
         }
-        guard postgres.status == .running else { return false }
+        guard postgres.status == .running, !isCancellingAll else { return false }
         scanningSource = source
         scanProgress = ScanProgress(source: source, sourceItems: 0, totalItems: 0)
         defer {
             scanningSource = nil
             scanningSlugs = []
             scanProgress = nil
+            scanStoppedForRemoval = false
         }
         if source == "*" {
+            sourcesCancelledFromRun.removeAll()
             await fetchRegisteredSources()
-            scanningSlugs = Set(registeredSources.map(\.slug))
+            scanningSlugs = Set(registeredSources.map(\.slug)).subtracting(sourcesBeingRemoved)
+            // Cancelled while the sources were fetched, before the scan runner had anything to stop.
+            guard !isCancellingAll else { return false }
         }
         let grpc = self.grpc
         let result = await scanner.run { [weak self] _ in
@@ -775,11 +798,20 @@ final class AppState: ObservableObject {
                 )
             }.message
         }
+        var succeeded = result.succeeded
         lastCommandOutput = result.output
-        lastCommandSucceeded = result.succeeded
+        if !succeeded, scanStoppedForRemoval, !isCancellingAll {
+            succeeded = true
+            lastCommandOutput = "Scan stopped to remove a source; the rest of its counts are skipped."
+        }
+        lastCommandSucceeded = succeeded
+        if !succeeded {
+            // No ingest follows a failed scan, so nothing will skip these.
+            sourcesCancelledFromRun.removeAll()
+        }
         await fetchRegisteredSources()
         await fetchCorpusStats()
-        return result.succeeded
+        return succeeded
     }
 
     /// Runs one operation over gRPC on the general runner and shows what it reports.
@@ -834,18 +866,28 @@ final class AppState: ObservableObject {
             logger.warning("\(msg, privacy: .public)")
             return false
         }
-        let allSlugs = Set(sources.map(\.slug))
+        // Sources cancelled during the scan before this ingest, or being removed, sit this run out.
+        let skipped = sourcesCancelledFromRun.union(sourcesBeingRemoved)
+        let queued = sources.filter { !skipped.contains($0.slug) }
         ingestService.clearProgressBySource()
-        ingestService.setPendingSources(allSlugs)
+        ingestService.setPendingSources(Set(queued.map(\.slug)))
+        ingestQueue = queued.map(\.slug)
         defer {
+            ingestQueue = []
+            sourcesCancelledFromRun.removeAll()
             ingestService.clearPendingSources()
         }
         var allSucceeded = true
-        for source in sources {
-            if ingestService.isCancelling {
-                logger.info("ingestAllSources stopped because cancellation was requested.")
+        // The queue, not `sources`, decides what runs next: `cancel(source:)` takes a source out of it,
+        // and `cancelAll()` empties it. `IngestService.isCancelling` cannot stop the run, since it
+        // resets as each source's ingest ends.
+        while !ingestQueue.isEmpty {
+            if isCancellingAll {
+                logger.info("ingestAllSources stopped because every source was cancelled.")
                 break
             }
+            let slug = ingestQueue.removeFirst()
+            guard let source = queued.first(where: { $0.slug == slug }) else { continue }
             ingestService.markSourceActive(source.slug)
             let sourceOptions = IngestOptions(
                 includeCode: options.includeCode || source.includeCode,
@@ -1023,8 +1065,10 @@ final class AppState: ObservableObject {
         scanner.isRunning
     }
 
+    /// The scan's own Stop stops everything after it too: in a maintenance run or "Scan & Ingest All" the
+    /// ingest and backfill that would follow are part of the same run.
     func cancelScan() {
-        scanner.cancel()
+        cancelAll()
     }
 
     /// True while a scan or ingest covers `slug`: it cannot be removed or reconciled until that ends.
@@ -1036,7 +1080,7 @@ final class AppState: ObservableObject {
         if !ingestService.isRunning {
             ingesting = false
         } else if !ingestService.runSources.isEmpty {
-            ingesting = ingestService.runSources.contains(slug)
+            ingesting = ingestService.runSources.contains(slug) || ingestService.currentSource == slug
         } else {
             let current = ingestService.currentSource
             ingesting = current == nil || current == "*" || current == slug
@@ -1079,8 +1123,10 @@ final class AppState: ObservableObject {
                 if Task.isCancelled { return }
                 idleLooks = isIdleForQueuedScans ? idleLooks + 1 : 0
             }
-            guard postgres.status == .running else { break }
+            // `cancelAll()` or `cancel(source:)` may have emptied the queue while this waited.
+            guard postgres.status == .running, !isCancellingAll, !sourcesAwaitingScan.isEmpty else { break }
             let slug = sourcesAwaitingScan.removeFirst()
+            guard !sourcesBeingRemoved.contains(slug) else { continue }
             let includeCode = registeredSources.first(where: { $0.slug == slug })?.includeCode ?? false
             if await scanSources(source: slug, includeCode: includeCode) {
                 let options = IngestOptions(includeCode: includeCode)
@@ -1089,17 +1135,114 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        if ingestedAny, !Task.isCancelled {
+        if ingestedAny, !Task.isCancelled, !isCancellingAll {
             _ = await runBackfill()
             await fetchCorpusStats()
         }
     }
 
+    /// Every Cancel Ingest and Stop button cancels the whole run, not just the source being ingested.
     func cancelIngest() async {
+        cancelAll()
+    }
+
+    /// A scan, ingest, queued source scan or maintenance run is under way: what `cancelAll()` stops.
+    var hasCancellableWork: Bool {
+        isScanning || scanningSource != nil || isIngesting || isMaintenanceRunning
+            || !sourcesAwaitingScan.isEmpty || queuedSourceScanTask != nil
+    }
+
+    /// Stops everything: empties the queues (the sources an ingest of every source has yet to reach, and
+    /// the sources waiting for their own scan), then cancels the scan or ingest in progress, and the
+    /// backfill when maintenance or the queued scans started it. `isCancellingAll` stays set until that
+    /// work has ended, so no step after it starts.
+    func cancelAll() {
+        guard hasCancellableWork, !isCancellingAll else { return }
+        isCancellingAll = true
+        logger.info("Cancelling every queued and running scan and ingest.")
+        pendingMaintenanceTask?.cancel()
+        pendingMaintenanceTask = nil
+        sourcesAwaitingScan.removeAll()
+        ingestQueue.removeAll()
+        ingestService.dropPendingSources()
+        scanner.cancel()
+        if isMaintenanceRunning || queuedSourceScanTask != nil {
+            backfill.cancel()
+        }
         if ingestService.isRunning {
+            let service = ingestService
+            Task { _ = await service.cancel() }
+        }
+        Task { [weak self] in
+            // Each cancelled step ends at its next progress step; poll rather than track every path.
+            while self?.hasCancellableWork == true {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            self?.isCancellingAll = false
+            self?.sourcesCancelledFromRun.removeAll()
+        }
+    }
+
+    /// `slug` waits in a queue or is being scanned or ingested now: what its own Cancel stops. Unlike
+    /// `isBusy(source:)`, a source an ingest of every source has already finished is not pending.
+    func isPending(source slug: String) -> Bool {
+        if ingestQueue.contains(slug) || sourcesAwaitingScan.contains(slug) { return true }
+        if ingestService.isRunning, ingestService.currentSource == slug { return true }
+        return scanningSource == slug || (scanningSource == "*" && scanningSlugs.contains(slug))
+    }
+
+    /// `slug` waits in a queue and has not started.
+    func isQueued(source slug: String) -> Bool {
+        ingestQueue.contains(slug) || sourcesAwaitingScan.contains(slug)
+    }
+
+    /// Cancels `slug` alone. It leaves the queues, and its scan or ingest stops when it is the one running;
+    /// an ingest of every source goes on with the next source. A "*" scan walks every source in one server
+    /// call and cannot skip one, so the ingest after that scan skips it instead.
+    func cancel(source slug: String) async {
+        sourcesAwaitingScan.removeAll { $0 == slug }
+        ingestQueue.removeAll { $0 == slug }
+        ingestService.dropSource(slug)
+        if scanningSource == slug {
+            scanner.cancel()
+        } else if scanningSource == "*", scanningSlugs.contains(slug) {
+            sourcesCancelledFromRun.insert(slug)
+            scanningSlugs.remove(slug)
+        }
+        if ingestService.isRunning, ingestService.currentSource == slug {
             _ = await ingestService.cancel()
         }
     }
+
+    /// Removes `slug`, cancelling whatever covers it first (`cancel(source:)`) and waiting for that to stop,
+    /// so the removal never races a scan or ingest of it. A "*" scan stops as well: it holds the rows it has
+    /// counted until it ends. The ingest after that scan still runs, for the other sources.
+    @discardableResult
+    func removeSource(slug: String) async -> Bool {
+        guard !sourcesBeingRemoved.contains(slug) else { return false }
+        sourcesBeingRemoved.insert(slug)
+        defer { sourcesBeingRemoved.remove(slug) }
+        let stopsScanOfAll = scanningSource == "*" && scanningSlugs.contains(slug)
+        if stopsScanOfAll {
+            scanStoppedForRemoval = true
+            scanner.cancel()
+        }
+        await cancel(source: slug)
+        var looks = 0
+        while isBusy(source: slug) || (stopsScanOfAll && scanningSource != nil) {
+            guard looks < Self.removalWaitLooks else {
+                lastCommandSucceeded = false
+                lastCommandOutput = "Could not remove \(slug): its scan or ingest has not stopped yet. Try again shortly."
+                return false
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            looks += 1
+        }
+        return await runOperation { try await $0.removeSource(slug: slug).message }
+    }
+
+    /// A quarter second each: a minute for a cancelled scan or ingest to reach its next progress step.
+    static let removalWaitLooks = 240
 
     private func runScheduledMaintenance() async {
         // The assistant registers sources and then models, one operation at a time. A scan
@@ -1119,7 +1262,9 @@ final class AppState: ObservableObject {
         defer { isMaintenanceRunning = false }
 
         _ = await scanSources()
+        guard !isCancellingAll else { return }
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
+        guard !isCancellingAll else { return }
         let backfillSucceeded = await runBackfill()
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded

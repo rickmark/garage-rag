@@ -256,8 +256,8 @@ enum PageStatus {
                 let pct = appState.combinedIngestProgressPercent
                 headline = "Ingesting \(src)\(pct.isEmpty ? "" : " (\(pct))")"
                 details = appState.ingestService.latestProgress?.message ?? "Currently ingesting files into personal archive."
-                quickAction = PageStatusItem.QuickAction(label: appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
-                    Task { await appState.cancelIngest() }
+                quickAction = PageStatusItem.QuickAction(label: appState.isCancellingAll ? "Cancelling…" : "Cancel Ingest") {
+                    appState.cancelAll()
                 }
             } else if appState.isScanning {
                 severity = .info
