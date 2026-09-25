@@ -335,3 +335,23 @@ class IngestSeen(Base):
 
     run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("ingest_runs.id", ondelete="CASCADE"), primary_key=True)
     uri: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class IngestOutcome(Base):
+    """A file that produced no document: its stat, hash and extractor revision at the time.
+
+    Lets the next run skip it while nothing changed, instead of OCRing a textless image or
+    retrying a failed extraction every time. DDL in ``012_ingest_outcomes.sql``.
+    """
+
+    __tablename__ = "ingest_outcomes"
+
+    source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True)
+    uri: Mapped[str] = mapped_column(Text, primary_key=True)
+    outcome: Mapped[str] = mapped_column(Text)
+    byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mtime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_sha256: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    extractor_revision: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

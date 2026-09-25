@@ -8,10 +8,14 @@ leaves earlier documents committed and the current one untouched:
    placeholder whose row still holds content is judged by ``mtime`` alone when
    the stub reports no size, and is skipped without being materialized: it was
    indexed before the sync client evicted it, and nothing has changed since.
+   A file remembered in ``ingest_outcomes`` as holding no text, or as failing
+   extraction, is skipped the same way while its extractor's version is the one
+   that gave up on it.
 2. **raw hash.** If the stat changed but ``source_sha256`` did not (a touch, a
    copy that kept the bytes), refresh the stat fields and skip extraction.
 3. **extract**, then hash the extracted text. A file with no text makes no
-   document: any older row for it is dropped and it is counted as rejected.
+   document: any older row for it is dropped, it is counted as rejected, and its
+   stat and hash are remembered, as they are for a failed extraction.
 4. If ``content_sha256`` is unchanged *and* the chunker signature is unchanged,
    the chunks are still valid: refresh the stat fields, done. (Embeddings are
    not touched here; ``garage backfill`` fills in missing model vectors.)
@@ -108,6 +112,17 @@ def _has_indexed_content(existing: ExistingDocStat) -> bool:
     return state == "PLACEHOLDER" and bool(existing.content_sha256)
 
 
+# Outcomes of a file that made no document, remembered (with its stat and hash) so an
+# unchanged file is not extracted again. The gateway reports one only while the file's
+# extractor is the version that produced it.
+_REMEMBERED_OUTCOMES = frozenset({"NO_TEXT", "EXTRACT_FAILED"})
+
+
+def _is_settled(existing: ExistingDocStat) -> bool:
+    """Whether an unchanged file needs nothing done: it is indexed, or known to hold no text or to fail."""
+    return existing.exists and (_has_indexed_content(existing) or existing.state.upper() in _REMEMBERED_OUTCOMES)
+
+
 def _reject_empty(
     gateway: IngestStorageGateway,
     source_ctx: SourceContext,
@@ -138,15 +153,11 @@ def ingest_one(
 
     # --- step 1: skip on unchanged stat, without opening the file -----------
     # For a placeholder this is what avoids a download: opening it is what fetches it.
-    if (
-        existing_stat.exists
-        and not force
-        and _has_indexed_content(existing_stat)
-        and _stat_matches(existing_stat, candidate)
-    ):
+    if not force and _is_settled(existing_stat) and _stat_matches(existing_stat, candidate):
         log.debug(
-            "Skipped %s: stat matches existing document in DB%s",
+            "Skipped %s: stat matches the %s recorded in DB%s",
             candidate.uri,
+            existing_stat.state.lower(),
             " (placeholder left in the cloud)" if candidate.placeholder else "",
         )
         counters.skipped += 1
@@ -178,14 +189,24 @@ def ingest_one(
     except OSError:
         raw_hash_hex = None
 
-    if (
-        existing_stat.exists
-        and not force
-        and raw_hash_hex
-        and existing_stat.source_sha256 == raw_hash_hex
-        and _has_indexed_content(existing_stat)
-    ):
+    if not force and raw_hash_hex and existing_stat.source_sha256 == raw_hash_hex and _is_settled(existing_stat):
         log.debug("Skipped %s: source hash %s unchanged, refreshing stat", candidate.uri, raw_hash_hex[:8])
+        counters.skipped += 1
+        state = existing_stat.state.upper()
+        if state == "NO_TEXT":
+            gateway.record_no_text(
+                source_ctx.run_id,
+                source_ctx.slug,
+                candidate.uri,
+                byte_size=candidate.size,
+                mtime=candidate.mtime.timestamp(),
+                source_sha256=raw_hash_hex,
+            )
+            return
+        if state == "EXTRACT_FAILED":
+            # Its stored error stays; the next run hashes it again.
+            gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
+            return
         # Empty class and trust leave the row's own values in place.
         gateway.refresh_metadata(
             source_ctx.run_id,
@@ -197,7 +218,6 @@ def ingest_one(
             "",
             "",
         )
-        counters.skipped += 1
         return
 
     # --- step 3: extract ----------------------------------------------------
@@ -209,8 +229,18 @@ def ingest_one(
         )
     except NoTextFound as exc:
         # Read fine and holds no text (empty, an icon, a photo): nothing to index, and
-        # nothing wrong. Rejecting also drops a document an older version left.
-        _reject_empty(gateway, source_ctx, candidate, counters, str(exc))
+        # nothing wrong. This also drops a document an older version left, and
+        # remembers the file so it is not read again while it stays the same.
+        log.info("No text in %s: %s", candidate.uri, exc)
+        counters.rejected += 1
+        gateway.record_no_text(
+            source_ctx.run_id,
+            source_ctx.slug,
+            candidate.uri,
+            byte_size=candidate.size,
+            mtime=candidate.mtime.timestamp(),
+            source_sha256=raw_hash_hex or "",
+        )
         return
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
@@ -220,6 +250,9 @@ def ingest_one(
             source_ctx.slug,
             candidate.uri,
             str(exc),
+            byte_size=candidate.size,
+            mtime=candidate.mtime.timestamp(),
+            source_sha256=raw_hash_hex or "",
         )
         return
 

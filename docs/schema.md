@@ -236,3 +236,14 @@ walk that ran to exhaustion (not one cut short by `--limit` or cancellation).
 `ingest_seen` holds one row per observed URI per run, including files that were
 stat-skipped without being opened; nothing prunes old runs yet, so it grows
 with every ingest.
+
+### `ingest_outcomes`
+
+One row per file that made no document because it holds no text (`no_text`: an
+empty file, an icon, a photo) or its extraction failed (`extract_failed`, with
+`error`). It keeps the file's `byte_size`, `mtime` and `source_sha256`, and
+`extractor_revision`, the extractor and its `VERSION` at the time (`image:1`).
+While the stat or the raw hash still matches, the next run skips the file
+instead of reading it again. A row whose revision differs from the current
+extractor's is ignored, so bumping an extractor's `VERSION` retries every file it
+gave up on. Indexing the file deletes its row. DDL in `012_ingest_outcomes.sql`.
