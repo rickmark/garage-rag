@@ -796,4 +796,44 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(result)
         XCTAssertEqual(state.lastCommandOutput, "An ingest of every source is already running.")
     }
+
+    // MARK: - Update Everything and updates at launch
+
+    @MainActor
+    func testUpdateEverythingDoesNothingWhileTheDatabaseIsDown() async {
+        let state = AppState()
+        XCTAssertEqual(state.postgres.status, .stopped)
+
+        await state.updateEverything()
+
+        XCTAssertFalse(state.isUpdatingEverything)
+        XCTAssertFalse(state.isScanning, "Update Everything scanned with the database down")
+        XCTAssertFalse(state.backfill.isRunning)
+        XCTAssertFalse(state.enrichFacts.isRunning)
+        XCTAssertNil(state.lastCommandSucceeded, "a run that never started reports no outcome")
+    }
+
+    @MainActor
+    func testUpdateEverythingIsNotUnderWayAtLaunch() {
+        let state = AppState()
+        XCTAssertFalse(state.isUpdatingEverything)
+        XCTAssertFalse(state.hasCancellableWork)
+    }
+
+    @MainActor
+    func testUpdatesAtLaunchFollowTheSavedPreference() {
+        let state = AppState()
+        XCTAssertEqual(state.maintenanceRunsAtLaunch, UserDefaults.standard.bool(forKey: "scheduledMaintenanceRunsAtLaunch"))
+    }
+
+    @MainActor
+    func testUpdatesAtLaunchWaitForTheDatabase() {
+        let state = AppState()
+        // Called before any launch and with the database down, it must neither start a run nor fail.
+        state.runMaintenanceAtLaunchIfEnabled()
+
+        XCTAssertFalse(state.isScanning)
+        XCTAssertFalse(state.isUpdatingEverything)
+        XCTAssertFalse(state.hasCancellableWork)
+    }
 }
