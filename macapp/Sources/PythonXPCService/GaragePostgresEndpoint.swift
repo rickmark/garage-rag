@@ -287,4 +287,8 @@ public enum GarageAppLaunch {
     /// `--data-directory <path>`: run on this data folder instead of the real one, with no migration,
     /// no link and a separate Keychain item. For UI tests, which reset the database.
     public static let dataDirectoryArgument = "--data-directory"
+
+    /// `--appearance light|dark`: draw the app in this appearance whatever the system's is. For the
+    /// App Store screenshot tests, which shoot every page in both.
+    public static let appearanceArgument = "--appearance"
 }
