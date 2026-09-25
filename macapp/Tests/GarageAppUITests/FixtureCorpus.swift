@@ -42,4 +42,27 @@ extension GarageUITestCase {
         try FileManager.default.copyItem(at: bundled, to: copy)
         return copy
     }
+
+    /// Copies the corpus into this test's data folder, adds it as the source `slug`, runs its Scan &
+    /// Ingest and waits until the Status page counts every document. Leaves the Status page open.
+    @discardableResult
+    func ingestFixtureCorpus(slug: String = "fixture", file: StaticString = #filePath, line: UInt = #line) throws -> URL {
+        let corpus = try copyFixtureCorpus(file: file, line: line)
+        addCustomSource(slug: slug, root: corpus, file: file, line: line)
+
+        let scanIngest = element(identifier: "sources.row.\(slug).scanIngest")
+        XCTAssertTrue(waitForEnabled(scanIngest), "Scan & Ingest stayed disabled", file: file, line: line)
+        click(scanIngest)
+
+        open(section: "status", file: file, line: line)
+        let documents = element(identifier: "status.figure.documents")
+        let expected = String(FixtureCorpus.indexedWithoutCode.count)
+        XCTAssertTrue(
+            waitUntil(timeout: 240) { documents.exists && self.shownText(of: documents) == expected },
+            "the Status page never counted the corpus's \(expected) documents (\(documents.exists ? shownText(of: documents) : "missing"))",
+            file: file,
+            line: line
+        )
+        return corpus
+    }
 }
