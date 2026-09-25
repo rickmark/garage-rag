@@ -56,7 +56,7 @@ struct GarageApp: App {
             MenuBarView()
                 .environmentObject(appState)
         } label: {
-            Image(systemName: menuBarSymbol)
+            MenuBarLabel(status: MenuBarStatus(appState: appState))
                 // The menu bar item exists even when the window does not (a `--background`
                 // launch by the garage / garage-mcp launchers), so services start from here too.
                 .onAppear { appState.launch() }
@@ -97,8 +97,21 @@ struct GarageApp: App {
         NotificationCenter.default.post(name: .garageShowFirstRun, object: nil)
         appState.firstRun.begin(force: true)
     }
+}
 
-    private var menuBarSymbol: String {
-        "cylinder.split.1x2"
+/// The menu bar item itself: the cylinder, which fills while work runs and turns into a warning
+/// when the database needs the user, with the ingest's percentage beside it while one runs.
+struct MenuBarLabel: View {
+    let status: MenuBarStatus
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: status.symbol)
+            if let text = status.menuBarText {
+                Text(text).monospacedDigit()
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.accessibilityLabel)
     }
 }
