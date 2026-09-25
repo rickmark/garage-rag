@@ -385,6 +385,12 @@ final class FirstRunCoordinator: ObservableObject {
     @Published private(set) var registrationSummary: String?
 
     private let defaults: UserDefaults
+    /// Whether finishing records completion in `defaults`. On an overridden data folder (the UI
+    /// tests' throwaway folders) it lasts for this launch only, the way that folder's database
+    /// password and LM Studio token stay out of the Keychain: finishing or skipping there must not
+    /// change what the real install shows at its next launch.
+    private let persistsCompletion: Bool
+    private var completedThisLaunch = false
     private weak var appState: AppState?
     private var readinessTask: Task<Void, Never>?
 
@@ -392,8 +398,13 @@ final class FirstRunCoordinator: ObservableObject {
     /// assistant: deciding in `AppState.launch()` let the window draw the main
     /// pages first and then swap to the assistant, which showed as a flash.
     /// `begin` still runs from launch to start the readiness loop.
-    init(defaults: UserDefaults = .standard, arguments: [String] = CommandLine.arguments) {
+    init(
+        defaults: UserDefaults = .standard,
+        arguments: [String] = CommandLine.arguments,
+        persistsCompletion: Bool = GarageAppGroup.dataDirectoryOverride == nil
+    ) {
         self.defaults = defaults
+        self.persistsCompletion = persistsCompletion
         let afterDatabaseReset = arguments.contains(GarageAppLaunch.databaseResetArgument)
         isAfterDatabaseReset = afterDatabaseReset
         isActive = afterDatabaseReset || shouldPresentAtLaunch
@@ -405,7 +416,7 @@ final class FirstRunCoordinator: ObservableObject {
 
     /// True until the user has finished or skipped the assistant once.
     var hasCompleted: Bool {
-        defaults.bool(forKey: FirstRunPreferences.completedKey)
+        completedThisLaunch || defaults.bool(forKey: FirstRunPreferences.completedKey)
     }
 
     /// Whether launch should open straight into the assistant.
@@ -452,7 +463,11 @@ final class FirstRunCoordinator: ObservableObject {
     func finish() {
         readinessTask?.cancel()
         readinessTask = nil
-        defaults.set(true, forKey: FirstRunPreferences.completedKey)
+        if persistsCompletion {
+            defaults.set(true, forKey: FirstRunPreferences.completedKey)
+        } else {
+            completedThisLaunch = true
+        }
         isActive = false
         isWorking = false
         let resetStillPending = isAfterDatabaseReset && !hasFinishedDatabaseReset
@@ -485,6 +500,7 @@ final class FirstRunCoordinator: ObservableObject {
 
     /// Debug/test helper that forgets the completed flag.
     func resetCompletion() {
+        completedThisLaunch = false
         defaults.removeObject(forKey: FirstRunPreferences.completedKey)
     }
 
