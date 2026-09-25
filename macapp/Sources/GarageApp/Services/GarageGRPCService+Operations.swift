@@ -154,12 +154,14 @@ extension GarageGRPCService {
         source: String = "*",
         documentID: Int64? = nil,
         prompts: [String] = [],
+        staleOnly: Bool = false,
         onStatus: @MainActor (Garage_EnrichFactsStatus) -> Void
     ) async throws -> Garage_EnrichFactsStatus? {
         var request = Garage_EnrichFactsRequest()
         request.source = source
         request.documentID = documentID ?? 0
         request.prompts = prompts
+        request.staleOnly = staleOnly
         return try await call(timeout: nil) { client, options in
             var finished: Garage_EnrichFactsStatus?
             for try await status in client.enrichFacts(request, callOptions: options) {

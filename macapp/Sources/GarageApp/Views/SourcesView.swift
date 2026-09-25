@@ -178,6 +178,9 @@ struct SourcesView: View {
         if appState.backfill.isRunning, appState.isMaintenanceRunning {
             return .embedding()
         }
+        if appState.enrichFacts.isRunning, appState.isUpdatingEverything {
+            return .distilling()
+        }
         if !appState.sourcesAwaitingScan.isEmpty || !appState.ingestQueue.isEmpty {
             return .waiting(queued: appState.sourcesAwaitingScan + appState.ingestQueue)
         }
@@ -248,6 +251,11 @@ struct SourcesView: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // A whole-pipeline run reads as "step 2 of 4", not an ingest that never ends.
+                    if appState.isUpdatingEverything, let stage = activity.stage {
+                        MenuBarStageTrail(stages: MenuBarStatus.Stage.allCases, current: stage)
+                            .padding(.top, 2)
+                    }
                 }
                 .padding(8)
             }
@@ -278,12 +286,22 @@ struct SourcesView: View {
                 Text(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount))
                 Spacer()
 
+                Button("Update Everything") {
+                    Task { await appState.updateEverything() }
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork
+                          || appState.backfill.isRunning || appState.enrichFacts.isRunning)
+                .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from what has not been distilled yet.")
+                .accessibilityIdentifier("sources.updateEverything")
+
                 Button("Scan & Ingest All") {
                     scanAndIngest(slug: "*")
                 }
                 .controlSize(.small)
                 .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
-                .help("Count what every source holds, then index what is new or changed.")
+                .help("Count what every source holds, then index what is new or changed. Embedding and facts wait for the next automatic update.")
                 .accessibilityIdentifier("sources.scanIngestAll")
 
                 Button {
