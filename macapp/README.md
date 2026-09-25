@@ -390,12 +390,19 @@ refuses that). The marketing version is `short_version_string` in
    access), and adds `sparkle:hardwareRequirements` `arm64` so Intel Macs are never offered
    it. The script verifies that entry against the archive and leaves `docs/appcast.xml`
    updated and the signed archive at `dist/Garage-<version>.zip`.
-4. Publish in this order, so the feed never names a download that is not there yet:
+4. Publish in this order, so the feed never names a download that is not there yet. The
+   site's download buttons (`docs/assets/download.js`) look for an asset named exactly
+   `GarageInstaller_arm64.pkg`, so copy the notarized installer to that name first:
 
    ```bash
-   gh release upload v1.5 dist/Garage-1.5.zip
+   cp bazel-bin/macapp/package/GarageInstaller.pkg dist/GarageInstaller_arm64.pkg
+   gh release create v1.5 --verify-tag --title "Garage 1.5" --notes-file path/to/notes.md \
+     dist/Garage-1.5.zip dist/GarageInstaller_arm64.pkg
    git add docs/appcast.xml && git commit -S -m "Add Garage 1.5 to the appcast" && git push
    ```
+
+   `--verify-tag` makes `gh` refuse to create the release unless the signed `v1.5` tag is
+   already pushed.
 
    Upload `dist/Garage-<version>.zip` under exactly that name: the entry's signature and
    length are of that file, and its URL is
