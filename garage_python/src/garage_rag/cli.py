@@ -31,7 +31,9 @@ from garage_rag.config import (
     save_config,
     set_settings,
     setting_names,
+    setting_value,
 )
+from garage_rag.config.fact_prompts import EffectivePrompt
 from garage_rag.db.emb_tables import (
     count_vectors,
     list_models,
@@ -205,7 +207,7 @@ def config_get(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from None
     # typer.echo, not the rich console: a long URL must not be wrapped at the terminal width.
-    typer.echo(_format_setting(getattr(get_settings(), field)))
+    typer.echo(_format_setting(setting_value(get_settings(), field)))
 
 
 @config_app.command("set")
@@ -795,8 +797,26 @@ def enrich_facts(
             ),
         ),
     ] = None,
+    prompt: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--prompt",
+            "-p",
+            help=(
+                "Run only this fact prompt (repeatable), even if disabled. Default: every enabled prompt that "
+                "applies to the document; see 'garage facts prompts list'."
+            ),
+        ),
+    ] = None,
+    stale_only: Annotated[
+        bool,
+        typer.Option(
+            "--stale-only",
+            help="Skip a prompt whose last run on the document had the same prompt text, content and model.",
+        ),
+    ] = False,
 ) -> None:
-    """Distill documents into atomic facts. Re-extraction replaces a document's prior facts."""
+    """Distill documents into atomic facts, once per prompt. Re-extraction replaces that prompt's prior facts."""
     from garage_rag.ops.facts import EnrichEvent
     from garage_rag.ops.facts import enrich_facts as run_enrich
 
@@ -820,20 +840,101 @@ def enrich_facts(
             document_id=document_id,
             model=model,
             provider=provider,
+            prompts=prompt or None,
+            stale_only=stale_only,
             on_start=on_start,
             on_event=on_event,
         )
     except LookupError as exc:
-        console.print(f"[red]{exc}[/red]" if document_id else f"[yellow]{exc}[/yellow]")
+        console.print(f"[red]{exc}[/red]" if document_id or prompt else f"[yellow]{exc}[/yellow]")
         raise typer.Exit(code=1) from None
     finally:
         if status is not None:
             status.stop()
 
     line = f"{summary.enriched}/{summary.total} documents enriched, {summary.facts:,} facts extracted"
+    if summary.skipped:
+        line += f", {summary.skipped} skipped"
     if summary.failed:
         line += f", [red]{summary.failed} failed[/red]"
-    console.print(line)
+    console.print(line + f" (prompts: {', '.join(summary.prompts)})")
+
+
+# ---------------------------------------------------------------------------
+# fact prompts
+# ---------------------------------------------------------------------------
+facts_app = typer.Typer(help="Fact extraction: the prompts enrich-facts runs.", no_args_is_help=True)
+app.add_typer(facts_app, name="facts")
+prompts_app = typer.Typer(
+    help="The effective fact prompts: the built-in default merged with facts.prompts.", no_args_is_help=True
+)
+facts_app.add_typer(prompts_app, name="prompts")
+
+
+def _prompt_origin(prompt: EffectivePrompt) -> str:
+    if prompt.builtin:
+        return "built-in, customized" if prompt.customized else "built-in"
+    return "configured"
+
+
+@prompts_app.command("list")
+def facts_prompts_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print the prompts as a JSON array.")] = False,
+) -> None:
+    """List every fact prompt, enabled or not, with its scope and hash."""
+    from garage_rag.ops.facts import list_fact_prompts
+
+    prompts = list_fact_prompts()
+    if as_json:
+        typer.echo(json.dumps([_prompt_json(p) for p in prompts], indent=2, ensure_ascii=False))
+        return
+    table = Table("name", "enabled", "origin", "scope", "examples", "sha256")
+    for p in prompts:
+        scope = ", ".join([*p.corpus_classes, *(f"source:{s}" for s in p.sources)]) or "all documents"
+        table.add_row(
+            p.name, "yes" if p.enabled else "no", _prompt_origin(p), scope, str(len(p.examples)), p.sha256.hex()[:12]
+        )
+    console.print(table)
+
+
+@prompts_app.command("show")
+def facts_prompts_show(
+    name: Annotated[str, typer.Argument(help="Prompt name, e.g. default.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print the prompt as its facts.prompts JSON entry.")] = False,
+) -> None:
+    """Show one prompt in full: its instructions and few-shot examples."""
+    from garage_rag.ops.facts import get_fact_prompt
+
+    try:
+        prompt = get_fact_prompt(name)
+    except LookupError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(prompt.to_config(), indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"name:     {prompt.name} ({_prompt_origin(prompt)})")
+    typer.echo(f"enabled:  {'yes' if prompt.enabled else 'no'}")
+    typer.echo(f"classes:  {', '.join(prompt.corpus_classes) or 'all'}")
+    typer.echo(f"sources:  {', '.join(prompt.sources) or 'all'}")
+    typer.echo(f"sha256:   {prompt.sha256.hex()}")
+    typer.echo("")
+    typer.echo(prompt.description)
+    for number, example in enumerate(prompt.examples, start=1):
+        typer.echo("")
+        typer.echo(f"Example {number}: {example.text}")
+        for extraction in example.extractions:
+            attributes = f" {json.dumps(extraction.attributes)}" if extraction.attributes else ""
+            typer.echo(f"  - [{extraction.extraction_class}] {extraction.text}{attributes}")
+
+
+def _prompt_json(prompt: EffectivePrompt) -> dict:
+    return {
+        **prompt.to_config(),
+        "builtin": prompt.builtin,
+        "customized": prompt.customized,
+        "sha256": prompt.sha256.hex(),
+    }
 
 
 @app.command()

@@ -1,4 +1,4 @@
-"""Fact distillation over a set of documents, reported per document, and the
+"""Fact distillation over a set of documents, reported per document; the prompts it runs; and the
 listing the app's Facts page browses them through."""
 
 from __future__ import annotations
@@ -10,13 +10,18 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from garage_rag.config.fact_prompts import EffectivePrompt, select_prompts
 from garage_rag.db.engine import session_scope
-from garage_rag.db.models import Document, Source
+from garage_rag.db.models import Document, FactRun, Source
 
 
 @dataclass
 class EnrichEvent:
-    """One document processed: ``index`` of ``total``, with its fact count or error."""
+    """One document processed: ``index`` of ``total``, with its fact count or error.
+
+    ``prompts`` are the prompts that ran on it; ``skipped`` is true when none
+    did (none applies, or with ``stale_only`` every one is up to date).
+    """
 
     index: int
     total: int
@@ -24,6 +29,8 @@ class EnrichEvent:
     uri: str
     facts: int = 0
     error: str | None = None
+    prompts: list[str] = field(default_factory=list)
+    skipped: bool = False
 
 
 @dataclass
@@ -34,13 +41,29 @@ class EnrichSummary:
     enriched: int
     facts: int
     failed: int
+    skipped: int = 0
+    prompts: list[str] = field(default_factory=list)
 
     @property
     def message(self) -> str:
         text = f"{self.enriched}/{self.total} documents enriched, {self.facts:,} facts extracted"
+        if self.skipped:
+            text += f", {self.skipped} skipped"
         if self.failed:
             text += f", {self.failed} failed"
         return text
+
+
+def list_fact_prompts() -> list[EffectivePrompt]:
+    """The effective prompts: built-ins (as overridden) then the configured ones, enabled or not."""
+    from garage_rag.enrich.facts import configured_prompts
+
+    return configured_prompts()
+
+
+def get_fact_prompt(name: str) -> EffectivePrompt:
+    """One effective prompt by name; ``LookupError`` when there is none."""
+    return select_prompts(list_fact_prompts(), [name])[0]
 
 
 def enrich_facts(
@@ -49,18 +72,30 @@ def enrich_facts(
     document_id: int | None = None,
     model: str | None = None,
     provider: str | None = None,
+    prompts: list[str] | None = None,
+    stale_only: bool = False,
     on_start: Callable[[int, str, str], None] | None = None,
     on_event: Callable[[EnrichEvent], None] | None = None,
 ) -> EnrichSummary:
-    """Distill documents into atomic facts; re-extraction replaces a document's prior facts.
+    """Distill documents into atomic facts, once per prompt.
+
+    Runs every enabled prompt of ``facts.prompts`` that applies to a document
+    (its ``corpus_classes``/``sources`` scope), or exactly the prompts named in
+    ``prompts``. Re-extraction replaces only that prompt's prior facts for the
+    document. With ``stale_only``, a prompt whose last run on the document had
+    the same prompt text, document content and model is skipped.
 
     ``document_id`` picks one document and ignores ``source``. ``model``/``provider``
     default to facts.model/facts.provider. One failing document is recorded and
-    the run continues. Raises LookupError when there is nothing to enrich.
+    the run continues. Raises LookupError when there is nothing to enrich or a
+    named prompt does not exist.
     """
-    from garage_rag.enrich.facts import configured_backend, extract_and_store_facts
+    from garage_rag.enrich.facts import configured_backend, extract_and_store_facts, is_stale
 
     model_id, provider = configured_backend(model, provider)
+    selected = select_prompts(list_fact_prompts(), prompts)
+    if not selected:
+        raise LookupError("no fact prompts are enabled")
 
     with session_scope() as session:
         if document_id:
@@ -75,22 +110,42 @@ def enrich_facts(
             documents = query.order_by(Document.id).all()
         if not documents:
             raise LookupError("no documents to enrich")
+        slugs = dict(session.query(Source.id, Source.slug).all())
 
         if on_start is not None:
             on_start(len(documents), model_id, provider)
         failed = 0
+        skipped = 0
         total_facts = 0
         for index, document in enumerate(documents, start=1):
             event = EnrichEvent(index=index, total=len(documents), document_id=document.id, uri=document.uri or "")
-            try:
-                facts = extract_and_store_facts(session, document, model_id=model_id, provider=provider)
-                session.commit()
-                event.facts = len(facts)
-                total_facts += len(facts)
-            except Exception as exc:
-                session.rollback()
+            corpus_class = getattr(document.corpus_class, "value", document.corpus_class)
+            applicable = [p for p in selected if p.applies_to(corpus_class, slugs.get(document.source_id))]
+            if stale_only and applicable:
+                runs = {
+                    run.prompt_name: run
+                    for run in session.query(FactRun).filter(FactRun.document_id == document.id).all()
+                }
+                applicable = [p for p in applicable if is_stale(runs.get(p.name), document, p, model_id)]
+            errors: list[str] = []
+            for prompt in applicable:
+                try:
+                    facts = extract_and_store_facts(
+                        session, document, prompt=prompt, model_id=model_id, provider=provider
+                    )
+                    session.commit()
+                    event.facts += len(facts)
+                    event.prompts.append(prompt.name)
+                except Exception as exc:
+                    session.rollback()
+                    errors.append(f"{prompt.name}: {exc}" if len(applicable) > 1 else str(exc))
+            total_facts += event.facts
+            if errors:
                 failed += 1
-                event.error = str(exc)
+                event.error = "; ".join(errors)
+            elif not applicable:
+                skipped += 1
+                event.skipped = True
             if on_event is not None:
                 on_event(event)
 
@@ -98,9 +153,11 @@ def enrich_facts(
             model_id=model_id,
             provider=provider,
             total=len(documents),
-            enriched=len(documents) - failed,
+            enriched=len(documents) - failed - skipped,
             facts=total_facts,
             failed=failed,
+            skipped=skipped,
+            prompts=[prompt.name for prompt in selected],
         )
 
 

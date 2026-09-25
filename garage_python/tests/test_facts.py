@@ -11,7 +11,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from garage_rag.config import Settings, reset_settings, set_settings
-from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
+from garage_rag.config.fact_prompts import (
+    DEFAULT_DESCRIPTION,
+    FactExample,
+    FactExtractionExample,
+    FactPrompt,
+    effective_prompts,
+)
+from garage_rag.db.models import Chunk, CorpusClass, Document, Fact, FactRun
 from garage_rag.enrich import langextract as lx
 from garage_rag.enrich.facts import (
     DEFAULT_MODEL_ID,
@@ -22,6 +29,7 @@ from garage_rag.enrich.facts import (
     extract_facts,
     facts_from_extractions,
     facts_language_model,
+    is_stale,
     refuse_cloud_model_id,
 )
 from garage_rag.enrich.local_provider import LocalLanguageModel
@@ -443,3 +451,103 @@ def test_extract_and_store_facts_can_skip_embedding_queue(monkeypatch) -> None:
     assert not session.flush.called
     assert all(isinstance(row, Fact) for row in added)
     assert len(added) == 1
+
+
+# ---- prompts ------------------------------------------------------------------
+
+_PEOPLE = FactPrompt(
+    name="people",
+    description="List every person named.",
+    examples=[
+        FactExample(
+            text="Jane met Bob.",
+            extractions=[FactExtractionExample(extraction_class="person", text="Jane", attributes={"role": "host"})],
+        )
+    ],
+)
+
+
+def _people():
+    return next(p for p in effective_prompts([_PEOPLE]) if p.name == "people")
+
+
+def test_extract_facts_sends_the_prompts_own_text_and_examples(monkeypatch) -> None:
+    captured: dict = {}
+
+    class Result:
+        extractions: list = []
+
+    def fake_extract(**kwargs):
+        captured.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
+    extract_facts("Jane met Bob.", prompt=_people(), provider="llama_xpc", model_id="gemma2-2b")
+
+    assert captured["prompt_description"] == "List every person named."
+    (example,) = captured["examples"]
+    assert example.text == "Jane met Bob."
+    (extraction,) = example.extractions
+    assert (extraction.extraction_class, extraction.extraction_text, extraction.attributes) == (
+        "person",
+        "Jane",
+        {"role": "host"},
+    )
+
+
+def test_the_default_prompt_is_the_built_in_one(monkeypatch) -> None:
+    captured: dict = {}
+
+    class Result:
+        extractions: list = []
+
+    def fake_extract(**kwargs):
+        captured.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("garage_rag.enrich.facts.lx.extract", fake_extract)
+    extract_facts("text", provider="llama_xpc", model_id="gemma2-2b")
+    assert captured["prompt_description"] == DEFAULT_DESCRIPTION
+    assert captured["examples"][0].extractions[0].extraction_class == "fact"
+
+
+def test_facts_record_their_prompt() -> None:
+    people = _people()
+    facts = facts_from_extractions(7, [_extraction("Jane", start=0, end=4)], prompt=people)
+    assert facts[0].prompt_name == "people"
+    assert facts[0].prompt_sha256 == people.sha256
+    assert facts_from_extractions(7, [_extraction("x", start=0, end=1)])[0].prompt_name == "default"
+
+
+def test_re_extraction_deletes_only_this_prompts_facts_and_records_the_run(monkeypatch) -> None:
+    document = Document(id=9, content="Jane met Bob.", content_sha256=b"c")
+    monkeypatch.setattr("garage_rag.enrich.facts.extract_facts", lambda text, **kwargs: [])
+    people = _people()
+    session = MagicMock()
+
+    extract_and_store_facts(session, document, prompt=people, model_id="gemma2-2b", provider="llama_xpc")
+
+    (criteria,) = [call.args for call in session.query.return_value.filter.call_args_list]
+    assert [(c.left.name, c.right.value) for c in criteria] == [("document_id", 9), ("prompt_name", "people")]
+    (run,) = [call.args[0] for call in session.merge.call_args_list]
+    assert isinstance(run, FactRun)
+    assert (run.document_id, run.prompt_name, run.prompt_sha256, run.content_sha256, run.extractor_model) == (
+        9,
+        "people",
+        people.sha256,
+        b"c",
+        "gemma2-2b",
+    )
+    assert run.facts == 0
+
+
+def test_is_stale() -> None:
+    prompt = effective_prompts([])[0]
+    document = Document(id=1, content_sha256=b"c")
+    fresh = FactRun(prompt_sha256=prompt.sha256, content_sha256=b"c", extractor_model="m")
+    assert not is_stale(fresh, document, prompt, "m")
+    assert is_stale(None, document, prompt, "m")
+    assert is_stale(fresh, document, prompt, "other")
+    assert is_stale(fresh, Document(id=1, content_sha256=b"d"), prompt, "m")
+    reworded = effective_prompts([FactPrompt(name="default", description="Other.")])[0]
+    assert is_stale(fresh, document, reworded, "m")

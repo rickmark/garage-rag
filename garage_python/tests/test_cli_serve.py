@@ -256,3 +256,75 @@ def test_pgvector_hint_keys_on_the_sqlstate():
     wrapped.__cause__ = Missing("could not access file vector")
     assert "pgvector" in _pgvector_library_hint(wrapped)
     assert _pgvector_library_hint(RuntimeError("other")) is None
+
+
+def _prompts_config(tmp_path):
+    import json
+
+    cfg = tmp_path / "garage.json"
+    people = {
+        "name": "people",
+        "description": "List every person named.",
+        "corpus_classes": ["document"],
+        "examples": [{"text": "Jane met Bob.", "extractions": [{"class": "person", "text": "Jane"}]}],
+    }
+    cfg.write_text(json.dumps({"facts": {"prompts": [{"name": "default", "enabled": False}, people]}}))
+    return cfg
+
+
+def test_facts_prompts_list_shows_the_default_and_configured_prompts(tmp_path):
+    import json
+
+    cfg = _prompts_config(tmp_path)
+    result = runner.invoke(app, ["--config", str(cfg), "facts", "prompts", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    prompts = json.loads(result.output)
+    assert [(p["name"], p["enabled"], p["builtin"], p["customized"]) for p in prompts] == [
+        ("default", False, True, True),
+        ("people", True, False, False),
+    ]
+    assert prompts[0]["description"].startswith("Extract every standalone fact")
+    assert len(prompts[1]["sha256"]) == 64
+
+    table = runner.invoke(app, ["--config", str(cfg), "facts", "prompts", "list"])
+    assert table.exit_code == 0 and "people" in table.output and "default" in table.output
+
+
+def test_facts_prompts_show(tmp_path):
+    cfg = _prompts_config(tmp_path)
+    result = runner.invoke(app, ["--config", str(cfg), "facts", "prompts", "show", "people"])
+    assert result.exit_code == 0, result.output
+    assert "List every person named." in result.output
+    assert "[person] Jane" in result.output
+
+    missing = runner.invoke(app, ["--config", str(cfg), "facts", "prompts", "show", "nope"])
+    assert missing.exit_code == 1
+    assert "unknown fact prompt" in missing.output
+
+
+def test_config_get_prints_prompts_as_json(tmp_path):
+    import json
+
+    cfg = _prompts_config(tmp_path)
+    result = runner.invoke(app, ["--config", str(cfg), "config", "get", "facts.prompts"])
+    assert result.exit_code == 0, result.output
+    assert [p["name"] for p in json.loads(result.output)] == ["default", "people"]
+
+
+def test_enrich_facts_passes_prompts_and_stale_only(tmp_path, monkeypatch):
+    from garage_rag.ops.facts import EnrichSummary
+
+    received = {}
+
+    def fake(**kwargs):
+        received.update(kwargs)
+        return EnrichSummary("m", "ollama", total=1, enriched=0, facts=0, failed=0, skipped=1, prompts=["people"])
+
+    monkeypatch.setattr("garage_rag.ops.facts.enrich_facts", fake)
+    cfg = _prompts_config(tmp_path)
+    result = runner.invoke(
+        app, ["--config", str(cfg), "enrich-facts", "--prompt", "people", "-p", "default", "--stale-only"]
+    )
+    assert result.exit_code == 0, result.output
+    assert received["prompts"] == ["people", "default"] and received["stale_only"] is True
+    assert "1 skipped" in result.output and "prompts: people" in result.output

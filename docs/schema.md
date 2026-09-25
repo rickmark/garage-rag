@@ -130,9 +130,11 @@ Deleting a fact cascades into its chunk and, through `chunk_id`, into every
 ### `facts`
 
 Atomic, self-contained claims distilled out of a document's text by
-`enrich/facts.py` (`006_facts.sql`). Same shape as chunks: ordered rows scoped
-to a `document_id` (`ON DELETE CASCADE`, unique on `(document_id, ord)`),
-replaced wholesale when the document is re-extracted.
+`enrich/facts.py` (`006_facts.sql`, `011_fact_prompts.sql`). Same shape as
+chunks: ordered rows scoped to a `document_id` (`ON DELETE CASCADE`), and within
+it to the prompt that produced them (unique on `(document_id, prompt_name, ord)`).
+Running one prompt over a document again replaces that prompt's facts and
+leaves every other prompt's alone.
 
 | Column | Purpose |
 |---|---|
@@ -141,7 +143,20 @@ replaced wholesale when the document is re-extracted.
 | `attributes` | `jsonb` extractor attributes, default `'{}'` |
 | `char_start` / `char_end` | span of `documents.content` the fact was grounded to; an ungrounded fact is dropped by the extractor rather than stored |
 | `extractor` / `extractor_model` | provenance, default `'langextract'` and the model id |
+| `prompt_name` | the `facts.prompts` entry that produced the fact; `'default'` (the built-in prompt) for facts from before 011 |
+| `prompt_sha256` | SHA-256 of that prompt's description and examples when it ran; NULL before 011 |
 | `tsv` | generated `to_tsvector('english', fact)`, GIN-indexed — the keyword half of hybrid search over facts |
+
+### `fact_runs`
+
+The last extraction of each prompt over each document (`011_fact_prompts.sql`),
+keyed on `(document_id, prompt_name)` with `document_id` `ON DELETE CASCADE`:
+the prompt's hash (`prompt_sha256`), the document's `content_sha256` and the
+`extractor_model` it ran with, how many `facts` it found, and `extracted_at`. A
+run that found nothing still leaves a row. `garage enrich-facts --stale-only`
+compares all three inputs with the current ones and skips a prompt whose run is
+up to date, so changing a prompt's text, a document's content or the model
+re-extracts exactly what it affects.
 
 ### `conversations` / `messages`
 

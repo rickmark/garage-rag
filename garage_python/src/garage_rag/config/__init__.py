@@ -40,6 +40,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
+from garage_rag.config.fact_prompts import FactPrompt, validate_prompt_list
+
 log = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "garage.json"
@@ -419,6 +421,21 @@ class Settings(BaseModel):
             "use. Communications are only ever sent to a loopback host."
         ),
     )
+    fact_prompts: list[FactPrompt] = Field(
+        default_factory=list,
+        description=(
+            "Fact-extraction prompts for 'garage enrich-facts', each a name, a description (the "
+            "instructions), few-shot examples and an optional scope. Merged by name with the built-in "
+            "'default' prompt: an entry named 'default' overrides it (fields left out keep the "
+            "built-in's; enabled false turns it off), and any other entry is added. Every enabled "
+            "prompt that applies to a document runs; 'garage facts prompts list' shows the result."
+        ),
+    )
+
+    @field_validator("fact_prompts")
+    @classmethod
+    def _validate_fact_prompts(cls, v: list[FactPrompt]) -> list[FactPrompt]:
+        return validate_prompt_list(v)
 
     # ---- sources --------------------------------------------------------
     sources: list[SourceSpec] = Field(
@@ -510,8 +527,14 @@ SECTIONS: dict[str, dict[str, str]] = {
     "facts": {
         "model": "fact_model",
         "provider": "fact_provider",
+        "prompts": "fact_prompts",
     },
 }
+
+# Settings left out of a saved file while empty. An empty ``facts.prompts``
+# does not mean "no prompts" (the built-in default still runs), so writing
+# ``"prompts": []`` into every file would read as the opposite of what it does.
+OMITTED_WHEN_EMPTY = frozenset({"fact_prompts"})
 
 # Keys that older configs may still carry: settings that were removed, either
 # because no code path read them or because the feature behind them is gone.
@@ -607,7 +630,9 @@ def nest(
             value = getattr(settings, field)
             if not include_defaults and value == getattr(defaults, field):
                 continue
-            body[key] = value
+            if field in OMITTED_WHEN_EMPTY and not value:
+                continue
+            body[key] = to_json_value(value)
         if body:
             document[section] = body
 
@@ -616,6 +641,20 @@ def nest(
             spec.model_dump(by_alias=True, exclude_defaults=not include_defaults) for spec in settings.sources
         ]
     return document
+
+
+def to_json_value(value: Any) -> Any:
+    """A setting's value as plain JSON data: nested models become their file shape."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(by_alias=True, exclude_none=True)
+    if isinstance(value, list):
+        return [to_json_value(item) for item in value]
+    return value
+
+
+def setting_value(settings: Settings, field: str) -> Any:
+    """``Settings.<field>`` as plain JSON data, as ``config get`` prints it."""
+    return to_json_value(getattr(settings, field))
 
 
 def load_config(path: Path | None = None) -> Settings:
@@ -686,6 +725,7 @@ def json_schema() -> dict[str, Any]:
     """
     fields = Settings.model_fields
     properties: dict[str, Any] = {"$schema": {"type": "string", "description": "Path or URL to this schema."}}
+    definitions: dict[str, Any] = {}
 
     type_map: dict[Any, str] = {
         str: "string",
@@ -703,6 +743,9 @@ def json_schema() -> dict[str, Any]:
             if annotation == list[str]:
                 entry["type"] = "array"
                 entry["items"] = {"type": "string"}
+            elif annotation == list[FactPrompt]:
+                entry["type"] = "array"
+                entry["items"] = _model_schema(FactPrompt, definitions)
             elif annotation in type_map:
                 entry["type"] = type_map[annotation]
             elif annotation == (str | None):
@@ -714,7 +757,7 @@ def json_schema() -> dict[str, Any]:
                 entry["description"] = info.description
             default = Settings.model_fields[name].get_default(call_default_factory=True)
             if default is not None:
-                entry["default"] = default
+                entry["default"] = to_json_value(default)
             section_props[key] = entry
         properties[section] = {
             "type": "object",
@@ -745,13 +788,28 @@ def json_schema() -> dict[str, Any]:
         },
     }
 
-    return {
+    schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "garage-rag configuration",
         "type": "object",
         "additionalProperties": False,
         "properties": properties,
     }
+    if definitions:
+        schema["$defs"] = definitions
+    return schema
+
+
+def _model_schema(model: type[BaseModel], definitions: dict[str, Any]) -> dict[str, Any]:
+    """``model``'s JSON Schema, its nested models hoisted into the document's ``$defs``.
+
+    Pydantic writes nested models as ``$ref: #/$defs/Name`` inside the model's own
+    schema; a ``#`` reference resolves against the root document, so the
+    definitions have to live there.
+    """
+    generated = model.model_json_schema(by_alias=True, ref_template="#/$defs/{model}")
+    definitions.update(generated.pop("$defs", {}))
+    return generated
 
 
 def setting_names() -> list[str]:
@@ -786,7 +844,7 @@ def coerce_setting(field: str, raw: str) -> Any:
 
     ``bool`` accepts true/false, yes/no, on/off and 1/0; ``int``/``float`` parse
     numerically; ``list[str]`` splits on commas (an empty string is an empty
-    list); an optional string becomes ``None`` for ``""``/``none``/``null``.
+    list); ``facts.prompts`` takes a JSON array; an optional string becomes ``None`` for ``""``/``none``/``null``.
     Everything else -- plain strings and the ``Literal`` choices -- is passed
     through for pydantic to validate.
     """
@@ -811,6 +869,11 @@ def coerce_setting(field: str, raw: str) -> Any:
             raise ConfigError(f"{field}: expected a number, got {raw!r}") from None
     if annotation == list[str]:
         return [item.strip() for item in text.split(",") if item.strip()]
+    if annotation == list[FactPrompt]:
+        try:
+            return json.loads(text) if text else []
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{field}: expected a JSON array of prompts, got invalid JSON: {exc}") from None
     if annotation == (str | None) and text.lower() in {"", "none", "null"}:
         return None
     return raw
@@ -856,7 +919,7 @@ def update_config(path: Path, name: str, raw_value: str) -> tuple[Settings, Any]
         raise ConfigError(f"{name}: {exc}") from exc
     save_config(settings, path)
     settings.config_path = path.expanduser()
-    return settings, getattr(settings, field)
+    return settings, setting_value(settings, field)
 
 
 _settings: Settings | None = None

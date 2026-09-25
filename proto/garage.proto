@@ -49,6 +49,7 @@ service GarageService {
 
     // --- Facts ---
     rpc EnrichFacts (EnrichFactsRequest) returns (stream EnrichFactsStatus);
+    rpc ListFactPrompts (ListFactPromptsRequest) returns (ListFactPromptsResponse);
 
     // --- Schema, Stats & Settings ---
     rpc GetStats (StatsRequest) returns (StatsResponse);
@@ -530,6 +531,8 @@ message EnrichFactsRequest {
     int64 document_id = 2;   // > 0: just this document, ignoring source
     string model = 3;        // empty = facts.model
     string provider = 4;     // empty = facts.provider
+    repeated string prompts = 5;  // empty = every enabled prompt that applies; else exactly these
+    bool stale_only = 6;     // skip a prompt whose last run had the same prompt text, content and model
 }
 
 // phase is started (total, model, provider) | document (one per document) |
@@ -547,6 +550,29 @@ message EnrichFactsStatus {
     int64 enriched = 10;
     int64 failed = 11;
     string message = 12;
+    int64 skipped = 13;            // finished: documents no prompt ran on; document: 1 when skipped
+    repeated string prompts = 14;  // document: the prompts that ran on it; finished: the prompts selected
+}
+
+message ListFactPromptsRequest {}
+
+// One effective fact prompt: a built-in (as overridden by facts.prompts) or a
+// configured one.
+message FactPrompt {
+    string name = 1;
+    string description = 2;
+    string examples_json = 3;  // JSON array: [{"text", "extractions": [{"class", "text", "attributes"}]}]
+    repeated string corpus_classes = 4;  // empty = all
+    repeated string sources = 5;         // empty = all
+    bool enabled = 6;
+    bool builtin = 7;
+    bool customized = 8;  // a built-in with an entry in facts.prompts
+    string sha256 = 9;    // hex hash of description + examples, as stored on its facts
+}
+
+message ListFactPromptsResponse {
+    repeated FactPrompt prompts = 1;  // built-ins first, then facts.prompts order
+    string configured_json = 2;       // facts.prompts of the config in use, a JSON array (what SetSetting writes)
 }
 
 // ---------------------------------------------------------------------------

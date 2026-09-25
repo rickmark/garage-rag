@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import grpc
 import pytest
 
-from garage_rag.config import Settings, reset_settings
+from garage_rag.config import Settings, reset_settings, set_settings
 from garage_rag.ingest.scanner import SourceScanResult
 from garage_rag.ops.backfill import BackfillEvent
 from garage_rag.ops.facts import EnrichEvent, EnrichSummary
@@ -222,19 +222,41 @@ class TestStreaming:
         assert seen == ["complete"]
 
     def test_enrich_facts_streams_start_documents_and_summary(self, client: GarageClient) -> None:
-        def fake(*, source, document_id, model, provider, on_start, on_event):
-            on_start(2, "gemma2-2b", "llama_xpc")
-            on_event(EnrichEvent(index=1, total=2, document_id=7, uri="/a.md", facts=3))
-            on_event(EnrichEvent(index=2, total=2, document_id=8, uri="/b.md", error="boom"))
-            return EnrichSummary("gemma2-2b", "llama_xpc", total=2, enriched=1, facts=3, failed=1)
+        received: dict = {}
+
+        def fake(*, source, document_id, model, provider, prompts, stale_only, on_start, on_event):
+            received.update(prompts=prompts, stale_only=stale_only)
+            on_start(3, "gemma2-2b", "llama_xpc")
+            on_event(EnrichEvent(index=1, total=3, document_id=7, uri="/a.md", facts=3, prompts=["people"]))
+            on_event(EnrichEvent(index=2, total=3, document_id=8, uri="/b.md", error="boom"))
+            on_event(EnrichEvent(index=3, total=3, document_id=9, uri="/c.md", skipped=True))
+            return EnrichSummary(
+                "gemma2-2b", "llama_xpc", total=3, enriched=1, facts=3, failed=1, skipped=1, prompts=["people"]
+            )
 
         with patch("garage_rag.ops.facts.enrich_facts", side_effect=fake):
-            statuses = list(client.enrich_facts(EnrichFactsRequest(source="docs")))
-        assert [s.phase for s in statuses] == ["started", "document", "document", "finished"]
+            request = EnrichFactsRequest(source="docs", prompts=["people"], stale_only=True)
+            statuses = list(client.enrich_facts(request))
+        assert received == {"prompts": ["people"], "stale_only": True}
+        assert [s.phase for s in statuses] == ["started", "document", "document", "document", "finished"]
         assert statuses[0].provider == "llama_xpc"
+        assert list(statuses[1].prompts) == ["people"]
         assert statuses[2].error == "boom"
-        assert statuses[-1].enriched == 1 and statuses[-1].failed == 1
-        assert statuses[-1].message == "1/2 documents enriched, 3 facts extracted, 1 failed"
+        assert statuses[3].skipped == 1 and statuses[3].message.endswith(": skipped")
+        assert statuses[-1].enriched == 1 and statuses[-1].failed == 1 and statuses[-1].skipped == 1
+        assert list(statuses[-1].prompts) == ["people"]
+        assert statuses[-1].message == "1/3 documents enriched, 3 facts extracted, 1 skipped, 1 failed"
+
+    def test_enrich_facts_defaults_to_every_enabled_prompt(self, client: GarageClient) -> None:
+        received: dict = {}
+
+        def fake(**kwargs):
+            received.update(kwargs)
+            return EnrichSummary("m", "ollama", total=0, enriched=0, facts=0, failed=0)
+
+        with patch("garage_rag.ops.facts.enrich_facts", side_effect=fake):
+            list(client.enrich_facts(EnrichFactsRequest()))
+        assert received["prompts"] is None and received["stale_only"] is False
 
     def test_backfill_streams_over_a_real_channel(self) -> None:
         stop = threading.Event()
@@ -285,6 +307,55 @@ class TestStreaming:
             assert len(reported) < 10_000
         finally:
             server.stop(grace=None)
+
+
+class TestFactPrompts:
+    def test_lists_the_built_in_default_without_configuration(self, client: GarageClient) -> None:
+        set_settings(Settings())
+        try:
+            response = client.list_fact_prompts()
+        finally:
+            reset_settings()
+        assert [p.name for p in response.prompts] == ["default"]
+        default = response.prompts[0]
+        assert default.builtin and default.enabled and not default.customized
+        assert default.description.startswith("Extract every standalone fact")
+        assert json.loads(default.examples_json)[0]["extractions"][0]["class"] == "fact"
+        assert len(default.sha256) == 64
+        assert json.loads(response.configured_json) == []
+
+    def test_set_setting_writes_prompts_the_list_then_reflects(self, client: GarageClient, tmp_path: Path) -> None:
+        config = tmp_path / "garage.json"
+        prompts = [
+            {"name": "default", "enabled": False},
+            {
+                "name": "people",
+                "description": "List every person named.",
+                "examples": [{"text": "Jane met Bob.", "extractions": [{"class": "person", "text": "Jane"}]}],
+            },
+        ]
+        try:
+            client.set_setting("facts.prompts", json.dumps(prompts), path=str(config))
+            response = client.list_fact_prompts()
+        finally:
+            reset_settings()
+        assert [(p.name, p.enabled, p.builtin, p.customized) for p in response.prompts] == [
+            ("default", False, True, True),
+            ("people", True, False, False),
+        ]
+        assert [entry["name"] for entry in json.loads(response.configured_json)] == ["default", "people"]
+        assert json.loads(config.read_text())["facts"]["prompts"][0] == {
+            "name": "default",
+            "corpus_classes": [],
+            "sources": [],
+            "enabled": False,
+        }
+
+    def test_an_invalid_prompt_list_is_refused(self, client: GarageClient, tmp_path: Path) -> None:
+        config = tmp_path / "garage.json"
+        with pytest.raises(RuntimeError, match="INVALID_ARGUMENT"):
+            client.set_setting("facts.prompts", json.dumps([{"name": "x", "description": "d"}]), path=str(config))
+        assert not config.exists()
 
 
 class TestSettings:

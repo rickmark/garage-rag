@@ -209,6 +209,84 @@
           ],
           "description": "Which inference server runs fact distillation and rag_ask: 'llama_xpc' is the app's LlamaXPCService (llama.cpp on embedding.llama_host, loopback only); 'ollama' is the Ollama server on embedding.ollama_host; 'lmstudio' is the LM Studio server on embedding.lmstudio_host, which loads the model on first use. Communications are only ever sent to a loopback host.",
           "default": "llama_xpc"
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "description": "A named fact-extraction prompt, as written in ``facts.prompts``.",
+            "properties": {
+              "name": {
+                "description": "Unique name, recorded on every fact the prompt produces. The name of a built-in prompt ('default') overrides it instead of adding a new one.",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                "title": "Name",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The instructions given to the model. Required for a new prompt; an override of a built-in may leave it out to keep the built-in's.",
+                "title": "Description"
+              },
+              "examples": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/FactExample"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Few-shot examples (LangExtract's shape: text plus expected extractions). Required, and not empty, for a new prompt; an override of a built-in may leave it out to keep the built-in's.",
+                "title": "Examples"
+              },
+              "corpus_classes": {
+                "description": "Corpus classes the prompt runs on (document, code, communication); empty means all.",
+                "items": {
+                  "enum": [
+                    "document",
+                    "code",
+                    "communication"
+                  ],
+                  "type": "string"
+                },
+                "title": "Corpus Classes",
+                "type": "array"
+              },
+              "sources": {
+                "description": "Source slugs the prompt runs on; empty means every source.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sources",
+                "type": "array"
+              },
+              "enabled": {
+                "default": true,
+                "description": "Set false to stop running this prompt.",
+                "title": "Enabled",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "FactPrompt",
+            "type": "object"
+          },
+          "description": "Fact-extraction prompts for 'garage enrich-facts', each a name, a description (the instructions), few-shot examples and an optional scope. Merged by name with the built-in 'default' prompt: an entry named 'default' overrides it (fields left out keep the built-in's; enabled false turns it off), and any other entry is added. Every enabled prompt that applies to a document runs; 'garage facts prompts list' shows the result.",
+          "default": []
         }
       }
     },
@@ -253,6 +331,72 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "FactExample": {
+      "additionalProperties": false,
+      "description": "A few-shot example: a text and what should be extracted from it.",
+      "properties": {
+        "text": {
+          "description": "Example input text.",
+          "title": "Text",
+          "type": "string"
+        },
+        "extractions": {
+          "description": "The extractions expected from the text, in the order they appear.",
+          "items": {
+            "$ref": "#/$defs/FactExtractionExample"
+          },
+          "title": "Extractions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "FactExample",
+      "type": "object"
+    },
+    "FactExtractionExample": {
+      "additionalProperties": false,
+      "description": "One extraction the model should produce from an example's text.",
+      "properties": {
+        "class": {
+          "default": "fact",
+          "description": "Label for what kind of thing this is; stored as facts.fact_class.",
+          "title": "Class",
+          "type": "string"
+        },
+        "text": {
+          "description": "The extraction, quoted exactly from the example's text.",
+          "title": "Text",
+          "type": "string"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ]
+          },
+          "description": "Optional attributes the model should attach; stored as facts.attributes.",
+          "title": "Attributes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "FactExtractionExample",
+      "type": "object"
     }
   }
 }
