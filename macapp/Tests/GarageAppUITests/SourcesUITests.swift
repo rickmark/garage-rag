@@ -218,6 +218,85 @@ final class SourcesUITests: GarageUITestCase {
         XCTAssertFalse(element(text: "No sources configured yet.").exists, "the empty state stayed after adding a source")
     }
 
+    /// Stop ends a Scan & Ingest before it gets through the folder: the run ends as cancelled (or,
+    /// stopped while still counting, with no ingest at all), the row can be run again, and not every
+    /// note was indexed.
+    func testStopEndsARunningScanAndIngest() throws {
+        // The same long notes as the maintenance test above, so the run lasts long enough to stop.
+        var files: [String: String] = [:]
+        for index in 0..<12 {
+            files["long-\(index).md"] = "# Long note \(index)\n\n" + Self.prose(seed: UInt64(index + 1), characters: 1_200_000)
+        }
+        let notes = try makeNotesFolder(files: files)
+        try launchApp()
+        waitForBackend()
+        addSource(root: notes)
+
+        let scanIngest = element(identifier: "sources.row.\(slug).scanIngest")
+        XCTAssertTrue(waitForEnabled(scanIngest), "Scan & Ingest stayed disabled")
+        click(scanIngest)
+
+        let stop = element(identifier: "sources.cancelAll")
+        XCTAssertTrue(stop.waitForExistence(timeout: 30), "the run shows no Stop button")
+        XCTAssertTrue(element(identifier: "sources.row.\(slug).cancel").exists, "the running source's row offers no Cancel")
+        click(stop)
+
+        XCTAssertTrue(waitUntil(timeout: 120) { !stop.exists }, "the run did not stop")
+        let title = element(identifier: "sources.activity.title")
+        if title.exists {
+            XCTAssertTrue(shownText(of: title).hasSuffix("cancelled"), "a stopped run ended as \"\(shownText(of: title))\"")
+        }
+        XCTAssertTrue(waitForEnabled(scanIngest), "the row cannot be run again after Stop")
+
+        open(section: "status")
+        let documents = element(identifier: "status.figure.documents")
+        XCTAssertTrue(documents.waitForExistence(timeout: 30), "no Documents figure")
+        XCTAssertTrue(
+            holds(for: 5) { (Int(self.shownText(of: documents)) ?? 0) < files.count },
+            "every note was indexed although the run was stopped (\(shownText(of: documents)))"
+        )
+    }
+
+    /// A folder that is gone after it was added: the row says it cannot be read, with the UNREADABLE
+    /// tag, once access is checked again.
+    func testASourceWhoseFolderIsGoneCannotBeRead() throws {
+        let folder = try makeFolder(named: "vanishing", files: ["one.md": "# One\n"])
+        try launchApp()
+        waitForBackend()
+        addCustomSource(slug: "uitest-gone", root: folder)
+
+        let status = element(identifier: "sources.row.uitest-gone.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 15), "the row has no status line")
+        XCTAssertFalse(shownText(of: status).hasPrefix("Can't be read"), "a folder that exists cannot be read")
+
+        try FileManager.default.removeItem(at: folder)
+        click(element(identifier: "sources.diskAccess.refresh"))
+        XCTAssertTrue(
+            waitUntil(timeout: 15) { self.shownText(of: status).hasPrefix("Can't be read") },
+            "the row of a missing folder says \"\(shownText(of: status))\""
+        )
+        XCTAssertTrue(shownText(of: status).contains("does not exist"), "the row does not say the folder is gone (\(shownText(of: status)))")
+        XCTAssertTrue(element(text: "UNREADABLE").exists, "the row has no UNREADABLE tag")
+    }
+
+    /// A folder that does not exist is turned away: no source is added.
+    func testAddingAFolderThatDoesNotExistAddsNothing() throws {
+        try launchApp()
+        waitForBackend()
+        open(section: "sources")
+
+        let slugField = revealCustomSourceForm()
+        replaceText(in: element(identifier: "sources.form.root"), with: dataDirectory.appendingPathComponent("no-such-folder").path)
+        replaceText(in: slugField, with: "uitest-missing")
+        let submit = element(identifier: "sources.form.submit")
+        XCTAssertTrue(waitForEnabled(submit), "Add Source stayed disabled")
+        click(submit)
+
+        XCTAssertTrue(waitForEnabled(submit), "the form stayed busy")
+        XCTAssertTrue(holds(for: 5) { !self.element(identifier: "sources.row.uitest-missing").exists }, "a folder that does not exist was added")
+        XCTAssertTrue(element(text: "No sources configured yet.").exists, "the empty state went away")
+    }
+
     /// Deterministic, varied English-looking paragraphs of about `characters` characters.
     private static func prose(seed: UInt64, characters: Int) -> String {
         let words = [
