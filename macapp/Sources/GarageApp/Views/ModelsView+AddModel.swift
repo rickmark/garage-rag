@@ -137,12 +137,14 @@ extension ModelsView {
                     }
                     .labelsHidden()
                     .frame(maxWidth: 200, alignment: .leading)
+                    .accessibilityIdentifier("models.custom.provider")
                 }
                 GridRow {
                     formLabel("Dimensions")
                     TextField("e.g. 1024", text: $dims)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 120, alignment: .leading)
+                        .accessibilityIdentifier("models.custom.dims")
                 }
                 GridRow {
                     formLabel("Model ref")
@@ -153,6 +155,7 @@ extension ModelsView {
                     Color.clear.frame(width: 0, height: 0)
                     Toggle("Use for search and embedding by default", isOn: $makeDefault)
                         .toggleStyle(.checkbox)
+                        .accessibilityIdentifier("models.custom.makeDefault")
                 }
             }
 

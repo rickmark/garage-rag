@@ -164,6 +164,8 @@ extension ModelsView {
         .padding(10)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        // A container, so the identifier names the row instead of replacing its controls' own.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("models.row.\(item.slug)")
     }
 
@@ -291,6 +293,7 @@ extension ModelsView {
             Image(systemName: "ellipsis.circle")
         }
         .accessibilityLabel("Model actions")
+        .accessibilityIdentifier("models.row.\(item.slug).menu")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: 20)
