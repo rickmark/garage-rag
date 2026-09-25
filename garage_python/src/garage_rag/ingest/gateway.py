@@ -523,6 +523,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             CorpusClass,
             Document,
             DocumentAuthor,
+            FactRun,
             IngestSeen,
             IngestState,
             Source,
@@ -604,7 +605,9 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             # unchanged: its row, and so its vectors in every model table,
             # survive. A thread that gained messages or a file edited near its
             # end re-embeds only what changed. Fact chunks sit after the text
-            # chunks' ords and are always dropped, as before.
+            # chunks' ords and are always dropped, as before; the document's
+            # fact_runs go with them, so a stale-only Glean Facts extracts its
+            # facts (and so their chunks) again instead of counting it as done.
             kept: dict[int, Any] = {}
             stale: list[Any] = []
             wanted = {
@@ -632,6 +635,8 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     stale.append(row)
             if stale:
                 session.query(Chunk).filter(Chunk.id.in_([row.id for row in stale])).delete(synchronize_session=False)
+                if any(row.fact_id is not None for row in stale):
+                    session.query(FactRun).filter(FactRun.document_id == doc.id).delete(synchronize_session=False)
                 for row in stale:
                     session.expunge(row)
             session.flush()
