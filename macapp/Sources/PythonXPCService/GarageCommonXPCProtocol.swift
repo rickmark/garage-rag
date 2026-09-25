@@ -55,17 +55,19 @@ public protocol GarageCommonXPCServiceProtocol: NSObjectProtocol {
     func subscribeToLogStream(with reply: @escaping (Bool) -> Void)
 }
 
-/// Objective-C protocol for MCP Server XPC Service communication.
+/// Objective-C protocol for MCP Server XPC Service communication. It receives the LlamaXPCService
+/// endpoint because rag_search / rag_ask load llama_xpc models on demand.
 @objc(GarageMCPServerServiceProtocol)
-public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol {
+public protocol GarageMCPServerServiceProtocol: GarageCommonXPCServiceProtocol, GarageLlamaEndpointReceiverProtocol {
     func startServer(host: String, port: Int, path: String, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
     func stopServer(with reply: @escaping (Bool, String?) -> Void)
     func isServerRunning(with reply: @escaping (Bool) -> Void)
 }
 
-/// Objective-C protocol for Garage Core Backend XPC Service communication.
+/// Objective-C protocol for Garage Core Backend XPC Service communication. It receives the
+/// LlamaXPCService endpoint because Search, Backfill and EnrichFacts load llama_xpc models on demand.
 @objc(GarageXPCServiceProtocol)
-public protocol GarageXPCServiceProtocol: GarageCommonXPCServiceProtocol {
+public protocol GarageXPCServiceProtocol: GarageCommonXPCServiceProtocol, GarageLlamaEndpointReceiverProtocol {
     func startServer(host: String, port: Int, options: [String: String], with reply: @escaping (Bool, String?) -> Void)
     func stopServer(with reply: @escaping (Bool, String?) -> Void)
     func isServerRunning(with reply: @escaping (Bool) -> Void)

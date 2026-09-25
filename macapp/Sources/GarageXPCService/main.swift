@@ -145,9 +145,9 @@ final class GarageXPCServiceDelegate: GarageXPCServiceBase, GarageXPCServiceProt
         ]
     }
 
-    /// Search, Backfill and EnrichFacts run here; their llama_xpc models load on demand through
-    /// this process's NSXPC connection to LlamaXPCService. `EnsureLlamaModel` (the stdio
-    /// launchers' way in) uses the same loader.
+    /// Search, Backfill and EnrichFacts run here; their llama_xpc models load on demand over
+    /// NSXPC, through the LlamaXPCService endpoint the app hands this process
+    /// (`setLlamaEndpoint`). `EnsureLlamaModel` (the stdio launchers' way in) uses the same loader.
     override func pythonDidBecomeReady(_ environment: GaragePythonEnvironment) {
         LlamaModelLoaderBridge.install()
     }
