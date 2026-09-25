@@ -240,7 +240,7 @@ with every ingest.
 ### `ingest_outcomes`
 
 One row per file that made no document because it holds no text (`no_text`: an
-empty file, an icon, a photo) or its extraction failed (`extract_failed`, with
+empty file, an icon, a photo) or its extraction failed (`failed`, with
 `error`). It keeps the file's `byte_size`, `mtime` and `source_sha256`, and
 `extractor_revision`, the extractor and its `VERSION` at the time (`image:1`).
 While the stat or the raw hash still matches, the next run skips the file

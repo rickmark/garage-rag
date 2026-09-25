@@ -257,9 +257,9 @@ class TestIngestOutcomes:
             0, "outcomes", "/docs/broken.pdf", "bad xref", byte_size=5, mtime=1.7e9, source_sha256="ef" * 32
         )
 
-        assert gateway.check_stat("outcomes", "/docs/broken.pdf").state == "extract_failed"
+        assert gateway.check_stat("outcomes", "/docs/broken.pdf").state == "failed"
         row = db.execute(text("SELECT outcome, error, extractor_revision FROM ingest_outcomes")).one()
-        assert tuple(row) == ("extract_failed", "bad xref", "pdf:1")
+        assert tuple(row) == ("failed", "bad xref", "pdf:1")
 
     def test_an_outcome_from_another_extractor_version_is_ignored(self, db: Session) -> None:
         gateway = self._gateway(db)
