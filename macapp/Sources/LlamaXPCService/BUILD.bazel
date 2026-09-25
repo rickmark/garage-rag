@@ -2,16 +2,26 @@ load("@rules_apple//apple:macos.bzl", "macos_xpc_service")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 load("//bazel:codesign.bzl", "HARDENED_RUNTIME_CODESIGNOPTS")
 
-# Implementation library for LlamaXPCService
+# The UI tests' MockLlamaXPCService stands in for this service under the same bundle identifier,
+# with the same Info.plist and entitlements.
+exports_files(
+    [
+        "Info.plist",
+        "LlamaXPCService.entitlements",
+    ],
+    visibility = ["//macapp/Tests/MockLlamaXPCService:__pkg__"],
+)
+
+# Implementation library for LlamaXPCService: the entry point, which puts LlamaCppEngine behind
+# the shared front end in //macapp/Sources/LlamaServiceHost.
 swift_library(
     name = "LlamaXPCService_lib",
     srcs = glob(["**/*.swift"]),
     module_name = "LlamaXPCService",
     visibility = ["//visibility:private"],
     deps = [
-        "//macapp/Sources/LlamaClient",
         "//macapp/Sources/LlamaEngine",
-        "//macapp/Sources/PythonXPCService",
+        "//macapp/Sources/LlamaServiceHost",
     ],
 )
 
