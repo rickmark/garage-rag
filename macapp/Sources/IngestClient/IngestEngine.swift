@@ -383,9 +383,9 @@ public final class IngestEngine: @unchecked Sendable {
     private func tccHelpMessage(category: String?) -> String? {
         switch category {
         case "apple-sms":
-            return "macOS keeps Messages (~/Library/Messages) behind Full Disk Access, so Garage can't index your SMS and iMessage history without it, even if you choose the folder. Turn on Garage in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Garage. The App Store version then also needs access to ~/Library/Messages, or your startup disk, granted on the Sources page."
+            return "macOS protects Messages databases (~/Library/Messages). Turn on Full Disk Access for Garage in System Settings to index SMS and iMessage history. The App Store version also needs you to select your startup disk or the Messages folder so Garage can open it."
         case "apple-mail":
-            return "macOS keeps Mail (~/Library/Mail) behind Full Disk Access, so Garage can't index your email without it, even if you choose the folder. Turn on Garage in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Garage. The App Store version then also needs access to ~/Library/Mail, or your startup disk, granted on the Sources page."
+            return "macOS protects Mail storage (~/Library/Mail). Turn on Full Disk Access for Garage in System Settings to index email archives. The App Store version also needs you to select your startup disk or the Mail folder so Garage can open it."
         case "documents":
             return "Permission to access your Documents directory is required to index local documents."
         case "downloads":

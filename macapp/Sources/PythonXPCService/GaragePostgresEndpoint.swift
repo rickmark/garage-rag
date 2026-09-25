@@ -287,13 +287,4 @@ public enum GarageAppLaunch {
     /// `--data-directory <path>`: run on this data folder instead of the real one, with no migration,
     /// no link and a separate Keychain item. For UI tests, which reset the database.
     public static let dataDirectoryArgument = "--data-directory"
-
-    /// `--appearance light|dark`: draw the app in this appearance whatever the system's is. For the
-    /// App Store screenshot tests, which shoot every page in both.
-    public static let appearanceArgument = "--appearance"
-
-    /// `--window-size <width>x<height>`: open the main window at this frame size in points, title bar
-    /// included, at the top left of its screen. For the App Store screenshot tests, which need an exact
-    /// store size and cannot count on dragging the window's corner.
-    public static let windowSizeArgument = "--window-size"
 }

@@ -52,25 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// database is not running: start the services, keep to the menu bar, and close
     /// the window SwiftUI opens at launch (the Dock icon or menu bar item reopens it).
     func applicationDidFinishLaunching(_ notification: Notification) {
-        applyAppearanceArgument()
         guard CommandLine.arguments.contains(GarageAppLaunch.backgroundArgument) else { return }
         Task { @MainActor [weak self] in
             self?.appState?.launch()
             for window in NSApp.windows where window.title == "Garage" {
                 window.close()
             }
-        }
-    }
-
-    /// `--appearance light|dark` pins the app's appearance for this run (see `GarageAppLaunch`).
-    private func applyAppearanceArgument() {
-        let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: GarageAppLaunch.appearanceArgument),
-              arguments.indices.contains(index + 1) else { return }
-        switch arguments[index + 1].lowercased() {
-        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
-        case "light": NSApp.appearance = NSAppearance(named: .aqua)
-        default: break
         }
     }
 

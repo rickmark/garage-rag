@@ -50,7 +50,7 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 <h3 id="native-macos-application">Native macOS Application (<code>GarageApp</code>)</h3>
 
-Get Garage from the [Mac App Store](https://apps.apple.com/app/id6811306880), or download the signed and notarized installer from the [download page]({{ '/#download' | relative_url }}). Both versions share one library (the same data folder), so switching between them needs no re-indexing. The installer version updates itself through **Check for Updates…** after asking you once; the App Store version gets its updates from the App Store instead.
+Download the signed and notarized installer from the [download page]({{ '/#download' | relative_url }}). It updates itself through **Check for Updates…** after asking you once.
 
 `GarageApp` provides a menu bar utility and management window that bundles an embedded, relocatable instance of PostgreSQL 18 with `pgvector`:
 
@@ -232,10 +232,6 @@ When indexing Apple Messages (`~/Library/Messages`) or Apple Mail (`~/Library/Ma
 5. Restart Garage or run `garage ingest` again.
 
 The Sources page lists a source it cannot read at the top, with a button to grant access.
-
-### App Store version
-
-The App Store version runs in the macOS sandbox and can read only the folders you choose. It asks with the standard Open dialog when you add a source, or when it needs the disk (**Select Disk…** at the top of the Sources page, **Select Startup Disk…** in the setup assistant). For Messages and Mail, choose the folder and also turn on Full Disk Access as above.
 
 ---
 

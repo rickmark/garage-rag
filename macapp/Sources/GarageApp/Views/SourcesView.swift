@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 import Combine
 import IngestClient
-import PythonXPCService
 
 // The Sources page: what needs fixing at the top, what the pipeline is doing now, then one row per
 // source with its state and the one action that applies to it, and a form to add another. The
@@ -51,9 +50,7 @@ struct SourcesView: View {
         }
         .navigationTitle("Sources")
         .onAppear {
-            templates = FirstRunSourceTemplate.builtIn(
-                assumeAvailable: GarageAppGroup.isSandboxed && !appState.volumeAccess.status.isGranted
-            )
+            templates = FirstRunSourceTemplate.builtIn()
             refreshSourcesAndTestDisk()
         }
         .onChange(of: root) { _, _ in suggestSlugIfUnedited() }
@@ -815,8 +812,6 @@ struct SourcesView: View {
                         }
                         if registered {
                             StatusBadge("ADDED", tint: .green)
-                        } else if template.needsFullDiskAccess {
-                            StatusBadge("NEEDS FULL DISK ACCESS", tint: .orange)
                         } else if !template.isAvailable {
                             StatusBadge("NOT FOUND", tint: .secondary)
                         }
@@ -843,11 +838,7 @@ struct SourcesView: View {
         }
         .buttonStyle(.plain)
         .disabled(!template.isAvailable || registered || notReady || addingTemplateID != nil)
-        .help(registered
-            ? "Already one of your sources."
-            : template.needsFullDiskAccess
-                ? "Turn on Full Disk Access for Garage in System Settings → Privacy & Security, then quit and reopen Garage."
-                : "Add \(template.title) as a source.")
+        .help(registered ? "Already one of your sources." : "Add \(template.title) as a source.")
         .accessibilityLabel(registered ? "\(template.title), added" : "Add \(template.title)")
         .accessibilityIdentifier("sources.template.\(template.id)")
     }
