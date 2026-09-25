@@ -163,16 +163,18 @@ struct MenuBarView: View {
                 isDestructive: true,
                 isDisabled: status.isCancellingIngest
             ) {
-                Task { await appState.cancelIngest() }
+                appState.cancelAll()
             }
             .accessibilityIdentifier("menubar.cancel")
         case .scanning:
             MenuBarActionButton(title: "Stop", isDestructive: true) {
-                appState.cancelScan()
+                appState.cancelAll()
             }
             .accessibilityIdentifier("menubar.cancel")
         case .embedding:
             MenuBarActionButton(title: "Stop", isDestructive: true) {
+                // cancelAll stops a backfill only when maintenance started it; this one may not have.
+                appState.cancelAll()
                 appState.backfill.cancel()
             }
             .accessibilityIdentifier("menubar.cancel")
