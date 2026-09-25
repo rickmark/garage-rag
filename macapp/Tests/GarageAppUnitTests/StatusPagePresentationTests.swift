@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import PythonXPCService
 @testable import GarageApp
 
@@ -326,5 +327,282 @@ final class StatusPagePresentationTests: XCTestCase {
 
         let checking = XPCServiceInfo(id: "embed-xpc", name: "", bundleId: "", serviceDescription: "", state: .checking)
         XCTAssertTrue(ServiceRowPresentation.xpc(checking, report: nil, test: nil).isBusy)
+    }
+
+    // MARK: - Health: the rest of the problems
+
+    func testEachFixHasItsButtonLabel() {
+        XCTAssertEqual(StatusHealth.Fix.startDatabase.label, "Start")
+        XCTAssertEqual(StatusHealth.Fix.applyMigrations.label, "Apply Updates")
+        XCTAssertEqual(StatusHealth.Fix.startMCP.label, "Start")
+        XCTAssertEqual(StatusHealth.Fix.testMCP.label, "Test Again")
+        XCTAssertEqual(StatusHealth.Fix.chooseDisk.label, "Choose Disk…")
+        XCTAssertEqual(StatusHealth.Fix.grantFolder(slug: "mail", path: "/Users/rick/Library/Mail").label, "Grant Access…")
+        XCTAssertEqual(StatusHealth.Fix.openPrivacySettings.label, "Open Privacy Settings…")
+        XCTAssertEqual(StatusHealth.Fix.checkSourceAccess.label, "Check Again")
+        XCTAssertEqual(StatusHealth.Fix.refreshLlama.label, "Try Again")
+    }
+
+    func testServicesOnTheirWayUpOrDownAreNotProblems() {
+        for database in [MenuBarStatus.Database.starting, .stopping] {
+            XCTAssertTrue(StatusHealth(database: database, sourceCount: 1, embeddingModelCount: 1).isHealthy, "\(database)")
+        }
+        for mcp in [MenuBarStatus.Server.starting, .stopping] {
+            XCTAssertTrue(StatusHealth(database: .running, mcp: mcp, sourceCount: 1, embeddingModelCount: 1).isHealthy, "\(mcp)")
+        }
+    }
+
+    func testAnUnconfiguredDiskAsksForOne() throws {
+        let health = StatusHealth(database: .running, mcp: .running(clients: 0), diskAccess: .notConfigured, sourceCount: 1, embeddingModelCount: 1)
+        let problem = try XCTUnwrap(health.problems.first)
+        XCTAssertEqual(problem.id, "disk")
+        XCTAssertEqual(problem.title, "Garage has no disk access yet")
+        XCTAssertEqual(problem.severity, .warning)
+        XCTAssertEqual(problem.fix, .chooseDisk)
+        XCTAssertEqual(problem.section, .sources)
+    }
+
+    func testAnUnreadableSourceOffersToCheckAgain() throws {
+        let health = StatusHealth(
+            database: .running,
+            mcp: .running(clients: 0),
+            sourceAccess: [.init(slug: "usb", name: "usb", path: "/Volumes/Backup/Notes", needsPermission: false)],
+            sourceCount: 1,
+            embeddingModelCount: 1
+        )
+        let problem = try XCTUnwrap(health.problems.first)
+        XCTAssertEqual(problem.id, "source.usb")
+        XCTAssertEqual(problem.title, "usb can't be read")
+        XCTAssertEqual(problem.detail, "/Volumes/Backup/Notes")
+        XCTAssertEqual(problem.fix, .checkSourceAccess)
+        XCTAssertEqual(problem.fixLabel, "Check Again")
+    }
+
+    func testAFailedAccessCheckThatNamesNoSourceIsStillListed() {
+        let health = StatusHealth(
+            database: .running, mcp: .running(clients: 0), sourceAccessMessage: "The check could not run.",
+            sourceCount: 1, embeddingModelCount: 1
+        )
+        XCTAssertEqual(health.problems.map(\.id), ["source.access"])
+        XCTAssertEqual(health.problems.first?.detail, "The check could not run.")
+        XCTAssertTrue(health.problems.first?.detailIsError ?? false)
+
+        let empty = StatusHealth(database: .running, mcp: .running(clients: 0), sourceAccessMessage: "", sourceCount: 1, embeddingModelCount: 1)
+        XCTAssertTrue(empty.isHealthy, "an empty message is not a problem")
+    }
+
+    func testMissingCommandLineToolsSendToLogs() throws {
+        let health = StatusHealth(
+            database: .running, mcp: .running(clients: 0), sourceCount: 1, embeddingModelCount: 1,
+            launcherPath: "/Applications/Garage.app/Contents/MacOS/garage-mcp"
+        )
+        let problem = try XCTUnwrap(health.problems.first)
+        XCTAssertEqual(problem.id, "launcher")
+        XCTAssertEqual(problem.title, "Command-line tools missing")
+        XCTAssertTrue(problem.detail?.contains("/Applications/Garage.app/Contents/MacOS/garage-mcp") ?? false)
+        XCTAssertEqual(problem.section, .logs)
+        XCTAssertNil(problem.fix)
+    }
+
+    /// Within one severity the problems keep the order the pipeline needs them fixed in.
+    func testWarningsKeepThePipelineOrder() {
+        let health = StatusHealth(
+            database: .running,
+            mcp: .stopped,
+            diskAccess: .notConfigured,
+            sourceAccess: [.init(slug: "notes", name: "notes", path: "/Users/rick/Notes", needsPermission: false)],
+            sourceCount: 0,
+            embeddingModelCount: 0,
+            lastIngestError: "notes: permission denied",
+            launcherPath: "/nowhere/garage-mcp"
+        )
+        XCTAssertEqual(health.problems.map(\.id), ["mcp", "disk", "source.notes", "sources", "models", "ingest", "launcher"])
+        XCTAssertTrue(health.problems.allSatisfy { $0.severity == .warning })
+    }
+
+    func testTheSummaryRowFollowsTheServices() {
+        XCTAssertEqual(StatusHealth(database: .running, mcp: .running(clients: 1)).summary.title, "All systems go")
+        XCTAssertEqual(StatusHealth(database: .starting).summary.title, "Starting up…")
+    }
+
+    // MARK: - Indexing: the rest of the states
+
+    func testWaitingNamesTheFirstThreeQueuedSources() {
+        let few = IndexingPresentation(stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false, activity: .waiting(queued: ["notes", "mail"]))
+        XCTAssertEqual(few.headline.title, "Waiting to scan notes, mail")
+        XCTAssertTrue(few.headline.isIndeterminate)
+        XCTAssertNil(few.headline.stage)
+        XCTAssertEqual(few.action, .stop(isStopping: false))
+
+        let many = IndexingPresentation(
+            stats: CorpusStats(), sourceCount: 5, modelCount: 1, distillsFacts: false,
+            activity: .waiting(queued: ["notes", "mail", "photos", "code", "docs"])
+        )
+        XCTAssertEqual(many.headline.title, "Waiting to scan notes, mail, photos and 2 more")
+    }
+
+    func testScanningOneSourceNamesIt() {
+        let indexing = IndexingPresentation(stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false, activity: .scanning(source: "notes", itemsSoFar: 0))
+        XCTAssertEqual(indexing.headline.title, "Scanning notes…")
+        XCTAssertEqual(indexing.headline.detail, "Counting what there is to index.")
+        XCTAssertTrue(indexing.isRunning)
+    }
+
+    func testAnIngestOfAllBeforeTheScanSizedItUsesTheReportedFraction() throws {
+        let sized = IndexingPresentation(
+            stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false,
+            activity: .ingesting(.init(subject: nil, processed: 40, total: 0, reportedFraction: 0.25))
+        )
+        XCTAssertEqual(sized.headline.title, "Ingesting all sources")
+        XCTAssertEqual(try XCTUnwrap(sized.headline.progress), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(sized.headline.percent, "25%")
+        XCTAssertFalse(sized.headline.isIndeterminate)
+
+        let unsized = IndexingPresentation(
+            stats: CorpusStats(), sourceCount: 2, modelCount: 1, distillsFacts: false,
+            activity: .ingesting(.init(subject: "", processed: 40, total: 0))
+        )
+        XCTAssertEqual(unsized.headline.title, "Ingesting all sources", "an empty subject is not a source name")
+        XCTAssertNil(unsized.headline.progress)
+        XCTAssertNil(unsized.headline.percent)
+        XCTAssertTrue(unsized.headline.isIndeterminate)
+    }
+
+    func testAnIngestThatOverrunsItsTotalStopsAtAFullBar() throws {
+        let indexing = IndexingPresentation(
+            stats: CorpusStats(), sourceCount: 1, modelCount: 1, distillsFacts: false,
+            activity: .ingesting(.init(subject: "notes", processed: 130, total: 100))
+        )
+        XCTAssertEqual(try XCTUnwrap(indexing.headline.progress), 1)
+        XCTAssertEqual(indexing.headline.percent, "100%")
+    }
+
+    func testDistillingBeforeItsCountIsKnown() {
+        let indexing = IndexingPresentation(stats: CorpusStats(), sourceCount: 1, modelCount: 1, distillsFacts: true, activity: .distilling(index: 0, total: 0, document: nil))
+        XCTAssertEqual(indexing.headline.detail, "Facts for each document no prompt has distilled yet.")
+        XCTAssertTrue(indexing.headline.isIndeterminate)
+        XCTAssertNil(indexing.headline.currentItem)
+    }
+
+    func testNotIndexedYetShowsTheLastRunsError() {
+        let indexing = IndexingPresentation(
+            stats: CorpusStats(sourcesCount: 1), sourceCount: 1, modelCount: 1, distillsFacts: false,
+            lastRunError: "notes: folder not found\ntrace"
+        )
+        XCTAssertEqual(indexing.headline.title, "Not indexed yet")
+        XCTAssertEqual(indexing.headline.detail, "notes: folder not found")
+        XCTAssertTrue(indexing.headline.detailIsError)
+    }
+
+    func testNothingKnownYetHasNoBarAndNoRemainingLine() {
+        let indexing = IndexingPresentation(stats: CorpusStats(), sourceCount: 1, modelCount: 1, distillsFacts: true)
+        XCTAssertEqual(indexing.remaining, IndexingPresentation.Remaining())
+        XCTAssertEqual(indexing.remaining.total, 0)
+        XCTAssertNil(indexing.fraction)
+        XCTAssertNil(indexing.remainingLine)
+        XCTAssertFalse(indexing.isRunning)
+    }
+
+    func testTheCorpusLineIsSingularForOne() {
+        let indexing = IndexingPresentation(
+            stats: stats(documents: 1, expected: 1, chunks: 3, embedded: [3], distilled: 1, facts: 2),
+            sourceCount: 1, modelCount: 1, distillsFacts: true
+        )
+        XCTAssertEqual(indexing.corpusLine, "1 document in 1 source · embedded under 1 model · facts distilled")
+    }
+
+    func testAStoppedDatabaseWithoutSourcesOffersNothingToRun() {
+        let indexing = IndexingPresentation(stats: CorpusStats(), sourceCount: 0, modelCount: 0, distillsFacts: false, databaseIsRunning: false)
+        XCTAssertEqual(indexing.headline.title, "Database stopped")
+        XCTAssertEqual(indexing.action, .updateEverything(enabled: false), "Add Source needs the database")
+    }
+
+    func testFactsShowWhenThereAreSomeEvenWithoutAFactsModel() {
+        let indexing = IndexingPresentation(
+            stats: stats(documents: 4, expected: 4, chunks: 0, embedded: [], distilled: 0, facts: 9),
+            sourceCount: 1, modelCount: 1, distillsFacts: false
+        )
+        let figures = indexing.figures
+        XCTAssertEqual(figures.map(\.label), ["Sources", "Documents", "Chunks", "Embedded", "Facts"])
+        XCTAssertEqual(figures[3].value, "–", "a model with no chunks yet has no percentage")
+        XCTAssertEqual(figures[3].note, "1 model")
+        XCTAssertEqual(figures[4].value, "9")
+        XCTAssertNil(figures[4].note, "no document distilled yet")
+        XCTAssertNil(figures[1].note, "nothing failed")
+    }
+
+    func testPlural() {
+        XCTAssertEqual(IndexingPresentation.plural("source", 0), "sources")
+        XCTAssertEqual(IndexingPresentation.plural("source", 1), "source")
+        XCTAssertEqual(IndexingPresentation.plural("source", 2), "sources")
+    }
+
+    // MARK: - Helper services: every state
+
+    func testEachServiceIdHasItsShortName() {
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "ingest-xpc"), "Ingest")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "embed-xpc"), "Embeddings")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "llama-xpc"), "Inference")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "model-download-xpc"), "Model Downloads")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "mcp-server-xpc"), "MCP Server")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "garage-xpc"), "Garage Backend")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "something-new"), "something-new")
+    }
+
+    func testEachStateHasItsSymbolTintAndTitle() {
+        func row(_ state: ServiceRowPresentation.State) -> ServiceRowPresentation {
+            ServiceRowPresentation(id: "x", name: "X", state: state, detail: "", detailIsError: false)
+        }
+        let expected: [(ServiceRowPresentation.State, String, Color, Bool, String, Bool)] = [
+            (.running, "checkmark", .green, true, "Running", false),
+            (.checking, "ellipsis", .yellow, false, "Checking…", true),
+            (.restarting, "ellipsis", .yellow, false, "Restarting…", true),
+            (.stopped, "pause.fill", .secondary, false, "Stopped", false),
+            (.unreachable, "exclamationmark", .red, true, "Can't be reached", false),
+            (.unknown, "questionmark", .secondary, false, "Not checked yet", false),
+        ]
+        for (state, symbol, tint, isActive, title, isBusy) in expected {
+            let presentation = row(state)
+            XCTAssertEqual(presentation.symbol, symbol, "\(state)")
+            XCTAssertEqual(presentation.tint, tint, "\(state)")
+            XCTAssertEqual(presentation.isActive, isActive, "\(state)")
+            XCTAssertEqual(presentation.stateTitle, title, "\(state)")
+            XCTAssertEqual(presentation.isBusy, isBusy, "\(state)")
+        }
+    }
+
+    func testGRPCOnItsWayUpOrDownIsChecking() {
+        let starting = ServiceRowPresentation.grpc(status: .starting, host: "127.0.0.1", port: 50051, lastTest: nil)
+        XCTAssertEqual(starting.state, .checking)
+        XCTAssertEqual(starting.detail, "Starting with the database…")
+
+        let stopping = ServiceRowPresentation.grpc(status: .stopping, host: "127.0.0.1", port: 50051, lastTest: nil)
+        XCTAssertEqual(stopping.state, .checking)
+        XCTAssertEqual(stopping.detail, "Stopping…")
+
+        // A test result only speaks for a running backend.
+        let stoppedAfterATest = ServiceRowPresentation.grpc(status: .stopped, host: "127.0.0.1", port: 50051, lastTest: (isSuccess: false, summary: "old"))
+        XCTAssertFalse(stoppedAfterATest.detailIsError)
+        XCTAssertTrue(stoppedAfterATest.detail.hasPrefix("Starts with the database."), stoppedAfterATest.detail)
+    }
+
+    func testXPCRestartingUnknownAndAPassedTest() {
+        let restarting = XPCServiceInfo(id: "ingest-xpc", name: "", bundleId: "", serviceDescription: "", state: .restarting)
+        let restartingRow = ServiceRowPresentation.xpc(restarting, report: nil, test: nil)
+        XCTAssertEqual(restartingRow.state, .restarting)
+        XCTAssertEqual(restartingRow.detail, "Restarting…")
+
+        let unknown = XPCServiceInfo(id: "model-download-xpc", name: "", bundleId: "", serviceDescription: "", state: .unknown)
+        let unknownRow = ServiceRowPresentation.xpc(unknown, report: nil, test: nil)
+        XCTAssertEqual(unknownRow.name, "Model Downloads")
+        XCTAssertEqual(unknownRow.detail, "Not checked yet")
+
+        let running = XPCServiceInfo(id: "embed-xpc", name: "", bundleId: "", serviceDescription: "", state: .running(pid: 7, latencyMs: 3.0, response: "pong"))
+        let passed = ServiceDiagnosticTestResult(
+            serviceId: "embed-xpc", testName: "Ping", testDescription: "", isSuccess: true, durationMs: 3, summary: "pong", details: ""
+        )
+        let tested = ServiceRowPresentation.xpc(running, report: nil, test: passed)
+        XCTAssertEqual(tested.detail, "Running · 3 ms · test passed")
+        XCTAssertFalse(tested.detailIsError)
     }
 }
