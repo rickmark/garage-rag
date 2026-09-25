@@ -50,7 +50,8 @@
     if (title && version) { title.textContent = 'Garage ' + version + ' for Mac'; }
 
     var primary = byId('download-primary');
-    if (primary && version) { primary.textContent = '⬇︎ Download Garage ' + version; }
+    var primaryLabel = primary && primary.querySelector('.btn-label');
+    if (primaryLabel && version) { primaryLabel.textContent = 'Download Garage ' + version; }
 
     var parts = [];
     if (version) { parts.push('Version ' + version); }

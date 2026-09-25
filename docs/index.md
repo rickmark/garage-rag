@@ -9,7 +9,7 @@ description: Garage indexes your documents, code and messages on your Mac and se
   <h1>Your files, your Mac, your AI.</h1>
   <p>Garage indexes your documents, code repositories, notes and messages on your Mac and hands them to your AI assistant over the Model Context Protocol. Nothing is uploaded, nothing is sent anywhere you did not point it at.</p>
   <div class="hero-actions">
-    <a id="download-primary" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary btn-large">⬇︎ Download for Mac</a>
+    <a id="download-primary" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary btn-large"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="btn-label">Download for Mac</span></a>
     <a href="{{ '/support/' | relative_url }}" class="btn btn-secondary btn-large">Support Center</a>
   </div>
   <p class="download-meta" id="download-meta">Apple Silicon · macOS 14 Sonoma or later · notarized installer</p>
@@ -83,7 +83,7 @@ Garage walks the sources you register, extracts text, decides who wrote each doc
     <h3 id="download-title">Garage for Mac</h3>
     <p id="download-detail">Apple Silicon (M1 and later), macOS 14 Sonoma or later. A signed and notarized <code>.pkg</code> installer.</p>
     <div class="hero-actions download-actions">
-      <a id="download-pkg" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary">⬇︎ Download installer</a>
+      <a id="download-pkg" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="btn-label">Download installer</span></a>
       <a id="download-release" href="https://github.com/rickmark/garage-rag/releases/latest" class="btn btn-secondary" target="_blank" rel="noopener">All downloads on GitHub ↗</a>
     </div>
   </div>

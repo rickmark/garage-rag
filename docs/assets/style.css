@@ -193,6 +193,13 @@ a:hover {
   transition: all 0.15s ease;
   border: 1px solid transparent;
   text-decoration: none !important;
+  gap: 0.5em;
+}
+
+.btn-icon {
+  width: 1.2em;
+  height: 1.2em;
+  flex-shrink: 0;
 }
 
 .btn-primary {
