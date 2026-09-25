@@ -71,7 +71,7 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             BugNub()
-                .padding(.bottom, 48)
+                .padding(.bottom, 60)
         }
         .background(WindowReader { resolved in
             window = resolved
@@ -88,7 +88,11 @@ struct ContentView: View {
             if isActive {
                 MainWindowSizing.sizeForFirstRun(window)
             } else {
-                MainWindowSizing.growAfterFirstRun(window)
+                // Defer the grow until after SwiftUI finishes applying the mainWindow's
+                // size range, which would otherwise clamp the window back to its current size.
+                DispatchQueue.main.async {
+                    MainWindowSizing.growAfterFirstRun(window)
+                }
             }
         }
         .onAppear(perform: presentSplashAtLaunchIfNeeded)
