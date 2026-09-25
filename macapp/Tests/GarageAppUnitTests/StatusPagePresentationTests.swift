@@ -11,7 +11,7 @@ final class StatusPagePresentationTests: XCTestCase {
         let health = StatusHealth(database: .running, mcp: .running(clients: 2), sourceCount: 1, embeddingModelCount: 1)
         XCTAssertTrue(health.isHealthy)
         XCTAssertEqual(health.summary.title, "All systems go")
-        XCTAssertEqual(health.summary.detail, "Database and MCP running · 2 clients")
+        XCTAssertEqual(health.summary.detail, "Database and MCP running · 2 assistants connected")
     }
 
     func testStartingServicesAreNotAProblem() {
