@@ -1,0 +1,25 @@
+# The bundled embedding self-test: a small GGUF and the vectors llama.cpp gives for known inputs.
+# LlamaXPCService carries both in its Resources (its "Embedding Known Answers" self-test) and
+# //macapp/Tests/LlamaEngineTests runs the same comparison through LlamaCppEngine.
+
+filegroup(
+    name = "selftest_model",
+    srcs = ["@nomic_embed_text_q2k//file"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "known_answers",
+    srcs = ["known_answers.json"],
+    visibility = ["//visibility:public"],
+)
+
+# The pins, read by garage_python/tests/test_llama_known_answers.py to check the known answers
+# name this model and llama.cpp.
+exports_files(
+    [
+        "known_answers.json",
+        "nomic_embed.MODULE.bazel",
+    ],
+    visibility = ["//visibility:public"],
+)

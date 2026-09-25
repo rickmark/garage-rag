@@ -1,0 +1,69 @@
+# Reference embeddings for LlamaXPCService's "Embedding Known Answers" self-test.
+#
+# ext/nomic_embed/known_answers.json holds llama.cpp's vectors for a few fixed inputs, from the
+# llama.cpp source //ext/llama_cpp pins and the GGUF //ext/nomic_embed pins. This workflow
+# rebuilds llama-embedding and regenerates them:
+# - `cpu` (Linux x86-64) is the canonical reference; it fails when the committed file no longer
+#   matches, and uploads what it produced, which is the file to commit after bumping a pin;
+# - `macos` repeats it on Apple silicon, on the CPU and on Metal, and checks both against the
+#   reference, which is the evidence for the tolerance the self-test uses.
+on:
+  push:
+    paths:
+      - ext/llama_cpp/**
+      - ext/nomic_embed/**
+      - tools/llama/**
+      - .github/workflows/known-answers.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Generate on the CPU
+        run: |
+          compare=""
+          if [ -f ext/nomic_embed/known_answers.json ]; then
+            compare="--compare ext/nomic_embed/known_answers.json"
+          fi
+          tools/llama/gen_known_answers.sh --work "$RUNNER_TEMP/ka" --out "$RUNNER_TEMP/known_answers.json" $compare
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: known-answers-linux-cpu
+          path: ${{ runner.temp }}/known_answers.json
+
+  macos:
+    needs: cpu
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [cpu, metal]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: known-answers-linux-cpu
+          path: ${{ runner.temp }}/reference
+      - name: Generate and compare against the reference
+        run: |
+          reference=ext/nomic_embed/known_answers.json
+          [ -f "$reference" ] || reference="$RUNNER_TEMP/reference/known_answers.json"
+          flag=""
+          [ "${{ matrix.backend }}" = metal ] && flag="--metal"
+          tools/llama/gen_known_answers.sh $flag --work "$RUNNER_TEMP/ka" \
+            --out "$RUNNER_TEMP/known_answers.json" --compare "$reference"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: known-answers-macos-${{ matrix.backend }}
+          path: ${{ runner.temp }}/known_answers.json
