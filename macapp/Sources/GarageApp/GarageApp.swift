@@ -99,19 +99,16 @@ struct GarageApp: App {
     }
 }
 
-/// The menu bar item itself: the cylinder, which fills while work runs and turns into a warning
-/// when the database needs the user, with the ingest's percentage beside it while one runs.
+/// The menu bar item itself: a garage door, open while the database serves and closed while it is
+/// down, breathing while the pipeline works, and a warning only when something blocks the app.
+/// No text beside it: a label that appears and disappears makes every item to its left jump.
 struct MenuBarLabel: View {
     let status: MenuBarStatus
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: status.symbol)
-            if let text = status.menuBarText {
-                Text(text).monospacedDigit()
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(status.accessibilityLabel)
+        Image(systemName: status.symbol)
+            .symbolEffect(.pulse, options: .repeating, isActive: status.isPulsing)
+            .accessibilityLabel(status.accessibilityLabel)
+            .accessibilityIdentifier("menubar.item")
     }
 }

@@ -58,6 +58,19 @@ public struct SearchView: View {
             statusBarFooter
         }
         .navigationTitle("Search")
+        .onAppear(perform: runPendingMenuBarQuery)
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowSection)) { notification in
+            guard notification.object as? AppSection == .search else { return }
+            runPendingMenuBarQuery()
+        }
+    }
+
+    /// Runs the query typed into the menu bar's search field, when "See all results" brought the
+    /// user here.
+    private func runPendingMenuBarQuery() {
+        guard let pending = MenuBarNavigation.takePendingSearchQuery() else { return }
+        query = pending
+        runSearch()
     }
 
     // MARK: - Search Controls Header
