@@ -225,6 +225,36 @@ class GarageUITestCase: XCTestCase {
         return slugField
     }
 
+    /// Adds a filesystem source through the Sources page's custom form and waits for its row. `root`
+    /// should sit inside this test's data folder, so the source never points at real files.
+    func addCustomSource(slug: String, root: URL, file: StaticString = #filePath, line: UInt = #line) {
+        open(section: "sources", file: file, line: line)
+        let slugField = revealCustomSourceForm(file: file, line: line)
+        // The folder first: typing it fills in the name, which the slug then replaces.
+        replaceText(in: element(identifier: "sources.form.root"), with: root.path, file: file, line: line)
+        replaceText(in: slugField, with: slug, file: file, line: line)
+
+        let submit = element(identifier: "sources.form.submit")
+        XCTAssertTrue(waitForEnabled(submit), "Add Source stayed disabled", file: file, line: line)
+        click(submit)
+        XCTAssertTrue(
+            element(identifier: "sources.row.\(slug)").waitForExistence(timeout: 30),
+            "the source \(slug) did not appear in the list",
+            file: file,
+            line: line
+        )
+    }
+
+    /// A folder inside this test's data folder holding `files`.
+    func makeFolder(named name: String, files: [String: String] = [:]) throws -> URL {
+        let folder = dataDirectory.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (file, body) in files {
+            try Data(body.utf8).write(to: folder.appendingPathComponent(file))
+        }
+        return folder
+    }
+
     func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval = 30) -> Bool {
         waitUntil(timeout: timeout) { element.exists && element.isEnabled }
     }
