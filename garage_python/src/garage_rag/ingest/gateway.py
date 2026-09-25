@@ -600,8 +600,40 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     )
                 )
 
-            # Replace chunks
-            session.query(Chunk).filter_by(document_id=doc.id).delete()
+            # Replace chunks, keeping each one whose ord, text and chunker are
+            # unchanged: its row, and so its vectors in every model table,
+            # survive. A thread that gained messages or a file edited near its
+            # end re-embeds only what changed. Fact chunks sit after the text
+            # chunks' ords and are always dropped, as before.
+            kept: dict[int, Any] = {}
+            stale: list[Any] = []
+            wanted = {
+                c.ord: (
+                    c.chunk_sha256
+                    if isinstance(c.chunk_sha256, (bytes, bytearray))
+                    else (bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b""),
+                    c.chunker or doc.chunker or "default",
+                    c.text,
+                )
+                for c in chunks
+            }
+            for row in session.query(Chunk).filter(Chunk.document_id == doc.id).all():
+                match = wanted.get(row.ord)
+                if (
+                    row.fact_id is None
+                    and match is not None
+                    and match[0]
+                    and bytes(row.chunk_sha256) == match[0]
+                    and row.chunker == match[1]
+                    and row.text == match[2]
+                ):
+                    kept[row.ord] = row
+                else:
+                    stale.append(row)
+            if stale:
+                session.query(Chunk).filter(Chunk.id.in_([row.id for row in stale])).delete(synchronize_session=False)
+                for row in stale:
+                    session.expunge(row)
             session.flush()
             for c in chunks:
                 chunk_hash = (
@@ -609,6 +641,13 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     if isinstance(c.chunk_sha256, (bytes, bytearray))
                     else (bytes.fromhex(c.chunk_sha256) if c.chunk_sha256 else b"")
                 )
+                row = kept.get(c.ord)
+                if row is not None:
+                    row.token_count = c.token_count or None
+                    row.char_start = c.char_start
+                    row.char_end = c.char_end
+                    row.heading_path = c.heading_path or None
+                    continue
                 session.add(
                     Chunk(
                         document_id=doc.id,
