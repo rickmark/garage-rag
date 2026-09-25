@@ -8,7 +8,16 @@ final class LogsUITests: GarageUITestCase {
     private func counts() -> (visible: Int, total: Int)? {
         let badge = element(identifier: "logs.count")
         guard badge.exists else { return nil }
-        let numbers = shownText(of: badge).split(separator: " ").compactMap { Int($0) }
+        return Self.parseCounts(shownText(of: badge))
+    }
+
+    /// "3,000 of 4,000 entries" as (3000, 4000). The badge's `Text` interpolates its counts as
+    /// localized numbers, so a thousand or more carries a grouping separator ("4,000", "4 000"),
+    /// and the sources fill past that at launch from the helpers' log files.
+    static func parseCounts(_ text: String) -> (visible: Int, total: Int)? {
+        let halves = text.components(separatedBy: " of ")
+        guard halves.count == 2 else { return nil }
+        let numbers = halves.compactMap { Int(String($0.filter(\.isNumber))) }
         guard numbers.count == 2 else { return nil }
         return (numbers[0], numbers[1])
     }
@@ -21,6 +30,9 @@ final class LogsUITests: GarageUITestCase {
     }
 
     /// The live stream starts paused; "Fetch OSLog" reads this process's recent entries instead.
+    /// What that adds depends on what OSLogStore hands a test launch (only this process, and not its
+    /// debug entries), so the tests below do not count on it: the Unified Log also carries every
+    /// line the helper services stream over XPC and the tail of their log files.
     private func fetchRecentOSLog(file: StaticString = #filePath, line: UInt = #line) {
         let fetch = element(identifier: "logs.fetch")
         XCTAssertTrue(fetch.waitForExistence(timeout: 10), "Logs has no Fetch OSLog menu", file: file, line: line)
@@ -50,8 +62,8 @@ final class LogsUITests: GarageUITestCase {
         return texts.max { $0.count < $1.count }
     }
 
-    /// Fetching the app's recent OSLog fills the Unified Log; a phrase from one row narrows the table
-    /// to the rows holding it, a phrase from nowhere empties it, and Reset Filters brings it all back.
+    /// After fetching the app's recent OSLog the Unified Log has rows; a phrase from one row narrows the
+    /// table to the rows holding it, a phrase from nowhere empties it, and Reset Filters brings it all back.
     func testTableFillsAndTheTextFilterNarrowsIt() throws {
         try launchApp()
         waitForBackend()
@@ -59,7 +71,7 @@ final class LogsUITests: GarageUITestCase {
         selectSource("Unified Log")
         fetchRecentOSLog()
 
-        XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "fetching the OSLog left the Unified Log empty")
+        XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "the Unified Log has no rows (badge: \(String(describing: counts())))")
         let message = try XCTUnwrap(firstRowMessage(), "the table shows no rows")
         let firstLine = message.split(whereSeparator: \.isNewline).first.map(String.init) ?? message
         let phrase = String(firstLine.prefix(24)).trimmingCharacters(in: .whitespaces)
@@ -92,7 +104,7 @@ final class LogsUITests: GarageUITestCase {
         open(section: "logs")
         selectSource("Unified Log")
         fetchRecentOSLog()
-        XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "fetching the OSLog left the Unified Log empty")
+        XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "the Unified Log has no rows (badge: \(String(describing: counts())))")
         let before = try XCTUnwrap(counts()).total
 
         let clear = element(identifier: "logs.clear")
@@ -106,12 +118,15 @@ final class LogsUITests: GarageUITestCase {
     }
 
     /// A Scan & Ingest leaves its worker's lines under Ingest, which XPC delivers without the OSLog.
+    /// The source's name is new to this run: Ingest also shows the tail of the helper's log file,
+    /// which holds earlier runs' lines, so only a line naming this source shows this ingest's.
     func testIngestFillsTheIngestSource() throws {
         let notes = try makeFolder(named: "notes", files: ["one.md": "# One\n\nA short note for the ingest log.\n"])
+        let slug = "uitest-logs-" + UUID().uuidString.prefix(8).lowercased()
         try launchApp()
         waitForBackend()
-        addCustomSource(slug: "uitest-logs", root: notes)
-        let scanIngest = element(identifier: "sources.row.uitest-logs.scanIngest")
+        addCustomSource(slug: slug, root: notes)
+        let scanIngest = element(identifier: "sources.row.\(slug).scanIngest")
         XCTAssertTrue(waitForEnabled(scanIngest), "Scan & Ingest stayed disabled")
         click(scanIngest)
 
@@ -122,5 +137,15 @@ final class LogsUITests: GarageUITestCase {
         open(section: "logs")
         selectSource("Ingest")
         XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "an ingest left no lines under Ingest")
+        // The ingest worker logs "Initiating ingestion for source '<slug>'" through the XPC log stream.
+        // Filtered by it, the table holds only such lines, so one is on screen; the filter field holds
+        // the name too, which is why the row is looked for inside the table.
+        filter(by: slug)
+        let namingRow = app.tables.firstMatch.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", slug, slug)).firstMatch
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { namingRow.exists },
+            "no line under Ingest names the source \(slug) (\(String(describing: counts())))"
+        )
     }
 }
