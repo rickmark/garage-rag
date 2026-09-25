@@ -405,19 +405,77 @@ struct ModelsView: View {
                     .textSelection(.enabled)
                     .padding(.leading, 38)
             }
+
+            if llama.isConnected, !llama.models.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(llama.models, id: \.id) { model in
+                        residentModelRow(alias: model.id)
+                    }
+                }
+                .padding(.leading, 38)
+                .padding(.top, 2)
+            }
         }
+    }
+
+    /// One model LlamaXPCService holds in memory: what it is for, and Unload.
+    func residentModelRow(alias: String) -> some View {
+        let known = unifiedModels.first { $0.slug == alias || $0.effectiveFilename == alias }
+            ?? distillationModelItems.first { $0.slug == alias || $0.effectiveFilename == alias }
+        var roles: [String] = []
+        if let known, known.registeredModel != nil {
+            roles.append(known.isDefault ? "default embedding model" : "embedding model")
+        }
+        if appState.factsModel == alias {
+            roles.append("facts model")
+        }
+        if llama.activeModelId == alias {
+            roles.append("answers requests that name no model")
+        }
+        let detail = roles.isEmpty ? "Loaded" : "Loaded · \(roles.joined(separator: " · "))"
+
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(Color.purple)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(known?.name ?? alias)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    if let known, known.name != alias {
+                        Text(alias)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("Unload") {
+                pendingUnloadAlias = alias
+                showUnloadConfirmation = true
+            }
+            .controlSize(.small)
+            .disabled(llama.isBusy)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier("models.llama.resident.\(alias)")
     }
 
     /// "Running · 2 models loaded · 3 slots idle", from the service's own status line.
     var llamaDetail: String {
         var parts: [String] = [llama.statusMessage]
         if llama.isConnected {
-            let loaded = llama.loadedModelIds
-            if loaded.isEmpty {
-                parts.append("no model loaded")
-            } else {
-                parts.append("loaded: \(loaded.joined(separator: ", "))")
-            }
+            let loaded = llama.loadedModelIds.count
+            parts.append(loaded == 0 ? "no model loaded" : "\(loaded) model\(loaded == 1 ? "" : "s") loaded")
             if let health = llama.health, let idle = health.slotsIdle, let proc = health.slotsProcessing {
                 parts.append("\(idle) slot\(idle == 1 ? "" : "s") idle, \(proc) processing")
             }
