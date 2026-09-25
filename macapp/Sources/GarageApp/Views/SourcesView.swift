@@ -812,9 +812,13 @@ struct SourcesView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    // Badges get their own row so a three-column title never hyphenates. The row is
-                    // there on every card, badges or not, and the subtitle always takes two lines, so
-                    // the cards in a grid row are the same height.
+                    .font(.subheadline)
+                    .frame(height: 18)
+                    // A LazyVGrid sizes each card to its content rather than stretching it to the row,
+                    // so every line has a fixed height whatever it shows: the title row is 18 points
+                    // with or without its trailing icon or spinner, the badge row is there on every
+                    // card, badges or not, and the subtitle always takes two lines. Badges get their
+                    // own row so a three-column title never hyphenates.
                     HStack(spacing: 4) {
                         if template.isCommunication {
                             StatusBadge("PRIVATE", tint: .purple)
