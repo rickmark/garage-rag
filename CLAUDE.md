@@ -413,8 +413,13 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
 - `LlamaXPCService` hosts llama.cpp itself (`macapp/Sources/LlamaEngine`, statically linked from
   `//ext/llama_cpp`, Metal + Accelerate) and serves it two ways: NSXPC for the app (load/unload,
   health, test calls) and a llama-server-compatible HTTP API on `127.0.0.1:8790` for the Python
-  `llama_xpc` provider (`backfill`, `enrich-facts` run in their own process). `MockLlamaServerEngine`
-  in `macapp/Tests/LlamaTestSupport` is the only other `LlamaInferenceEngine` and is test-only.
+  `llama_xpc` provider (`backfill`, `enrich-facts` run in their own process). Both front ends live
+  in `macapp/Sources/LlamaServiceHost`, which takes any `LlamaInferenceEngine`; the other engines
+  are test-only, in `macapp/Tests/LlamaTestSupport`: `MockLlamaServerEngine` for the unit tests,
+  and `DeterministicLlamaEngine` (hashed bag-of-words embeddings, one grounded fact per sentence),
+  which `macapp/Tests/MockLlamaXPCService` serves under LlamaXPCService's bundle identifier in
+  `GarageApp_uitest`, the testonly host of the model UI tests (`macapp/Tests/GarageAppModelUITests`).
+  Both apps come from `garage_macos_application` in `bazel/garage_app.bzl`.
   The app loads the default `llama_xpc` embedding model once Postgres is up (and again when the
   default changes), and loads the facts model only for a distillation run, unloading it afterwards
   unless it is also the search model (`AppState+LlamaModels.swift`). Other models load on demand and

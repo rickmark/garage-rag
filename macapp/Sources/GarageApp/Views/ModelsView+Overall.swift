@@ -158,6 +158,7 @@ extension ModelsView {
                     }
                     .disabled(notReady || appState.enrichFacts.isRunning)
                     .help("Run every enabled prompt over every document that has no facts from it yet")
+                    .accessibilityIdentifier("models.gleanFacts")
 
                     Button("Manage…") {
                         selectedTab = .distillation
