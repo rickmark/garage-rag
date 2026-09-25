@@ -58,7 +58,13 @@ struct ContentView: View {
     var body: some View {
         Group {
             if appState.firstRun.isActive {
+                // A fixed size, which `.windowResizability(.contentSize)` makes the window's minimum
+                // and maximum. Setting the frame alone did not hold after "Reset Database": the
+                // relaunch restores the last frame after the window is built, over the size set in
+                // `WindowReader`. The content's size range is applied whenever the window lays out,
+                // so it wins over a restored or autosaved frame.
                 FirstRunView()
+                    .frame(width: MainWindowSizing.assistantSize.width, height: MainWindowSizing.assistantSize.height)
             } else {
                 mainWindow
             }
