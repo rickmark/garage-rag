@@ -384,6 +384,10 @@ struct DatabaseView: View {
                 .accessibilityIdentifier("database.contents.refresh")
             }
         }
+        // A GroupBox with a custom label exposes no title, unlike GroupBox("Postgres") and the other
+        // boxes, so name the box itself; its figures and Refresh button stay reachable inside it.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Contents")
     }
 
     // MARK: - Backups
