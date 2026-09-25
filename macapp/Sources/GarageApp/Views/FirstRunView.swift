@@ -275,6 +275,9 @@ private struct FirstRunBadge: View {
             .background(tint.opacity(0.15))
             .foregroundStyle(tint)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            // A badge is one token: never wrap it ("ADD ED") when its row runs short.
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -534,13 +537,22 @@ struct FirstRunSelectDataPage: View {
                             .foregroundStyle(.secondary)
                         Text(template.title)
                             .font(.subheadline.weight(.semibold))
-                        if template.isCommunication {
-                            FirstRunBadge(text: "PRIVATE", tint: .purple)
-                        } else if template.corpusClass == "code" {
-                            FirstRunBadge(text: "CODE", tint: .indigo)
-                        }
-                        if alreadyRegistered {
-                            FirstRunBadge(text: "ADDED", tint: .green)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    // Badges get their own row: beside the title they squeezed it into
+                    // hyphenating ("Mes-sages") at three columns.
+                    let isCode = !template.isCommunication && template.corpusClass == "code"
+                    if template.isCommunication || isCode || alreadyRegistered {
+                        HStack(spacing: 4) {
+                            if template.isCommunication {
+                                FirstRunBadge(text: "PRIVATE", tint: .purple)
+                            } else if isCode {
+                                FirstRunBadge(text: "CODE", tint: .indigo)
+                            }
+                            if alreadyRegistered {
+                                FirstRunBadge(text: "ADDED", tint: .green)
+                            }
                         }
                     }
                     Text(template.subtitle)
