@@ -565,6 +565,12 @@ final class PostgresService: ObservableObject {
         guard !isRunningInTestEnvironment else { return }
         let pidFile = Paths.pgDataDir.appendingPathComponent("postmaster.pid")
         guard FileManager.default.fileExists(atPath: pidFile.path) else { return }
+        // After a crash or power loss the file can outlive its postmaster, and its pid may since
+        // belong to another process. Signal nothing that is not a postgres; the file is stale.
+        guard GarageDataMigration.runningPostmaster(in: Paths.pgDataDir) != nil else {
+            try? FileManager.default.removeItem(at: pidFile)
+            return
+        }
 
         let pgCtl = Paths.postgresTool("pg_ctl")
         if FileManager.default.isExecutableFile(atPath: pgCtl.path) {
@@ -582,7 +588,7 @@ final class PostgresService: ObservableObject {
             return
         }
 
-        if kill(pid, 0) == 0 {
+        if GarageDataMigration.isPostgresProcess(pid) {
             // Fast shutdown, as in stop(); SIGTERM would wait for connected clients.
             kill(pid, SIGINT)
             var exited = false
