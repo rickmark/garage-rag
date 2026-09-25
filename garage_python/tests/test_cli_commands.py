@@ -37,9 +37,9 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _wide_console_and_fresh_settings(monkeypatch: pytest.MonkeyPatch):
-    # Rich wraps tables to the terminal width, 80 columns under the runner; wide enough that
-    # every cell prints whole.
-    monkeypatch.setattr(cli.console, "_width", 240)
+    # Rich wraps to the terminal width, 80 columns under the runner. Make it wide enough that every
+    # table cell and every path prints whole, Bazel's sandbox paths (often past 240 columns) included.
+    monkeypatch.setattr(cli.console, "_width", 10_000)
     monkeypatch.delenv("GARAGE_DATABASE_URL", raising=False)
     yield
     reset_settings()
