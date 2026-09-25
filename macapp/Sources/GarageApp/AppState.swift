@@ -957,7 +957,7 @@ final class AppState: ObservableObject {
             await fetchCorpusStats()
             if !result.succeeded {
                 allSucceeded = false
-                failures.append((source.slug, result.message))
+                failures.append((source.slug, result.message ?? ""))
             }
         }
         return allSucceeded
