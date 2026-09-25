@@ -248,13 +248,14 @@ final class AppState: ObservableObject {
         Task { await llama.refreshStatus() }
         Task { await modelDownload.refresh() }
         Task { await xpcServices.refreshAll() }
-        guard startsPostgres else { return }
-        if firstRun.shouldPresentAtLaunch {
-            // The assistant's first page drives Postgres and service startup
-            // itself so it can show progress and retry on failure.
-            firstRun.begin()
+        // The window already opened on the assistant (`FirstRunCoordinator.init`); its first page
+        // drives Postgres and service startup itself so it can show progress and retry on failure.
+        // After "Reset Database", `launch()` begins it once the old instance has exited.
+        if firstRun.isActive {
+            if !firstRun.isAfterDatabaseReset { firstRun.begin() }
             return
         }
+        guard startsPostgres else { return }
         Task { await startPostgres() }
     }
 

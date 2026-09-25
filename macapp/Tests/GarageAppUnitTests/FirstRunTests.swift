@@ -2,6 +2,7 @@ import XCTest
 import SwiftUI
 import AppKit
 @testable import GarageApp
+import PythonXPCService
 
 final class FirstRunTests: XCTestCase {
 
@@ -196,6 +197,18 @@ final class FirstRunTests: XCTestCase {
         XCTAssertFalse(coordinator.isActive)
         XCTAssertFalse(coordinator.hasCompleted)
         XCTAssertFalse(coordinator.shouldPresentAtLaunch, "tests run under XCTest, where the assistant must stay hidden")
+        XCTAssertEqual(coordinator.step, .settingUp)
+    }
+
+    @MainActor
+    func testRelaunchAfterDatabaseResetOpensOnTheAssistant() {
+        // Decided at init, before the window exists, so the window never draws the main pages first.
+        let coordinator = FirstRunCoordinator(
+            defaults: makeDefaults(),
+            arguments: ["GarageApp", GarageAppLaunch.databaseResetArgument, "123"]
+        )
+        XCTAssertTrue(coordinator.isActive)
+        XCTAssertTrue(coordinator.isAfterDatabaseReset)
         XCTAssertEqual(coordinator.step, .settingUp)
     }
 
