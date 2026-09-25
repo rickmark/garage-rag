@@ -7,7 +7,7 @@ final class NavigationUITests: GarageUITestCase {
     private static let pages: [(section: String, marker: String)] = [
         ("status", "Corpus & Pipeline Overview"),
         ("database", "Schema & Migrations"),
-        ("sources", "Configured Ingest Sources"),
+        ("sources", "Add a Source"),
         ("documents", "Filter by title or URI…"),
         ("facts", "Search facts…"),
         ("models", "Embed All"),

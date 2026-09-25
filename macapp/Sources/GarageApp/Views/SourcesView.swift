@@ -3,6 +3,10 @@ import AppKit
 import Combine
 import IngestClient
 
+// The Sources page: what needs fixing at the top, what the pipeline is doing now, then one row per
+// source with its state and the one action that applies to it, and a form to add another. The
+// logic behind every row and the attention list is in SourcesPresentation.swift.
+
 @MainActor
 struct SourcesView: View {
     @EnvironmentObject var appState: AppState
@@ -16,6 +20,7 @@ struct SourcesView: View {
 
     @State private var busy = false
     @State private var ingestAutoDismissTask: Task<Void, Never>?
+    @AppStorage("garage.sources.showIngestOutput") private var showIngestOutput = false
 
     private let kinds = ["filesystem", "git", "sqlite", "maildir", "feed"]
     private let classes = ["document", "code", "communication"]
@@ -24,11 +29,11 @@ struct SourcesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                diskAccessSection
-                ingestProgressSection
-                configuredSourcesSection
-                addOrUpdateSourceSection
-                scheduledMaintenanceSection
+                attentionSection
+                activitySection
+                sourcesSection
+                addSourceSection
+                automaticUpdatesSection
                 ingestOutputSection
             }
             .padding(20)
@@ -49,696 +54,595 @@ struct SourcesView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Disk Access Section
-
-    /// The root-volume picker and its explanation only matter while access is missing
-    /// or the last check found a source path Garage cannot read.
-    private var needsDiskAccess: Bool {
-        !appState.volumeAccess.status.isGranted || appState.volumeAccess.lastTestResult?.isAccessible == false
-    }
-
-    private var diskAccessSection: some View {
-        GroupBox("App Sandbox & Disk Access") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: appState.volumeAccess.status.symbol)
-                        .font(.title2)
-                        .foregroundStyle(appState.volumeAccess.status.color)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appState.volumeAccess.status.title)
-                            .fontWeight(.semibold)
-                        Text(appState.volumeAccess.status.displayDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if needsDiskAccess {
-                        Button("Select Root Hard Drive…") {
-                            appState.promptAndSelectRootVolume()
-                            _ = appState.testVolumeAccess()
-                        }
-                    }
-                    Button("Open Privacy Settings…") {
-                        appState.openPrivacySettings(for: .fullDiskAccess)
-                    }
-                    if appState.volumeAccess.status.isGranted {
-                        Button("Revoke Access") {
-                            appState.revokeVolumeAccess()
-                        }
-                        .foregroundStyle(.red)
-                    }
-                    Button {
-                        _ = appState.testVolumeAccess()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Re-check disk access for every ingest source path")
-                    .accessibilityLabel("Re-check disk access")
-                    .accessibilityIdentifier("sources.diskAccess.refresh")
-                }
-
-                if needsDiskAccess {
-                    Text("To allow Garage to ingest documents across your system within the macOS Sandbox, select your root hard-drive (e.g. Macintosh HD or '/'). Disk access is verified for each configured ingest source path.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let testResult = appState.volumeAccess.lastTestResult {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: testResult.isAccessible ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(testResult.isAccessible ? Color.green : Color.orange)
-                                .font(.caption)
-                            Text("Overall Disk Access:")
-                                .font(.caption.bold())
-                            Text(testResult.isAccessible ? "All Paths Accessible" : "Attention Needed")
-                                .font(.caption.bold())
-                                .foregroundStyle(testResult.isAccessible ? .green : .orange)
-                        }
-                        Text(testResult.message)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
+        .onChange(of: appState.ingestService.isRunning) { _, isRunning in
+            ingestAutoDismissTask?.cancel()
+            guard !isRunning else { return }
+            ingestAutoDismissTask = Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard !Task.isCancelled else { return }
+                appState.ingestService.clearTransientMessages()
             }
-            .padding(8)
         }
     }
 
-    // MARK: - Ingest Progress Section
+    // MARK: - Attention
 
-    private var ingestProgressSection: some View {
-        Group {
-            if appState.isScanning {
-                GroupBox("Scan in Progress") {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Scanning sources to update item counts and expected elements…")
-                            .font(.subheadline)
-                        Spacer()
-                        Button("Cancel Scan") {
-                            appState.cancelScan()
-                        }
-                        .controlSize(.small)
-                    }
-                    .padding(8)
-                }
-            }
+    private var attentions: [SourcesAttention] {
+        SourcesAttention.attentions(
+            volumeStatus: appState.volumeAccess.status,
+            testResult: appState.volumeAccess.lastTestResult,
+            sources: appState.registeredSources
+        )
+    }
 
-            if appState.ingestService.isRunning || appState.ingestService.latestProgress != nil {
-                GroupBox("Live Ingest Progress") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let progress = appState.ingestService.latestProgress {
-                            HStack(alignment: .center, spacing: 8) {
-                                if appState.ingestService.isRunning {
-                                    ProgressView().controlSize(.small)
-                                } else if progress.isCancelled {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.orange)
-                                } else if progress.isError {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.red)
-                                } else {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                }
-
-                                Text(appState.combinedIngestTitle)
+    /// One row per problem, each with the action that fixes it. Nothing at all while every source reads.
+    @ViewBuilder
+    private var attentionSection: some View {
+        let items = attentions
+        if !items.isEmpty {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { Divider().padding(.vertical, 6) }
+                        HStack(alignment: .top, spacing: 12) {
+                            MenuBarSymbolCircle(symbol: item.symbol, tint: item.tint)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title)
                                     .font(.headline)
-
-                                StatusBadge(progress.phase.uppercased(), tint: .blue)
-                                if let mode = appState.ingestService.activeMode {
-                                    StatusBadge(mode.shortTitle.uppercased(), tint: .purple)
-                                } else {
-                                    StatusBadge(appState.ingestService.executionMode.shortTitle.uppercased(), tint: .purple)
-                                }
-
-                                Spacer()
-
-                                Text(appState.combinedIngestProgressPercent)
-                                    .font(.headline.monospaced())
-                                    .foregroundStyle(.primary)
-
-                                if appState.ingestService.isRunning {
-                                    Button(appState.isCancellingAll ? "Cancelling…" : "Cancel All") {
-                                        appState.cancelAll()
-                                    }
-                                    .controlSize(.small)
-                                    .disabled(appState.isCancellingAll)
-                                    .help("Stop this ingest and every source still queued after it.")
-                                }
-                            }
-
-                            ProgressView(value: appState.combinedIngestProgressFraction)
-                                .progressViewStyle(.linear)
-
-                            HStack(spacing: 8) {
-                                StatusBadge("\(appState.combinedIngestProcessedCount)/\(appState.combinedIngestTotalExpected) \(appState.combinedIngestItemType)", tint: .primary)
-                                StatusBadge("\(appState.combinedIngestIndexedCount) indexed", tint: .green)
-                                StatusBadge("\(appState.combinedIngestSkippedCount) skipped", tint: .secondary)
-                                if appState.combinedIngestFailedCount > 0 {
-                                    StatusBadge("\(appState.combinedIngestFailedCount) failed", tint: .red)
-                                }
-                                if appState.combinedIngestPlaceholdersCount > 0 {
-                                    StatusBadge("\(appState.combinedIngestPlaceholdersCount) placeholders", tint: .orange)
-                                }
-                                if appState.combinedIngestChunksCount > 0 {
-                                    StatusBadge("\(appState.combinedIngestChunksCount) chunks", tint: .purple)
-                                }
-                                Spacer()
-                            }
-
-                            if let cur = progress.currentItem, !cur.isEmpty {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "doc.text")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text("Current:")
-                                        .font(.caption.bold())
-                                        .foregroundStyle(.secondary)
-                                    Text(cur)
-                                        .font(.caption.monospaced())
-                                        .lineLimit(1)
-                                }
-                            }
-
-                            if !progress.message.isEmpty {
-                                Text(progress.message)
+                                Text(item.detail)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-
-                            if let err = progress.error {
-                                Text("Last Error: \(err)")
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
+                            Spacer(minLength: 12)
+                            HStack(spacing: 8) {
+                                ForEach(item.secondary, id: \.title) { command in
+                                    Button(command.title) { perform(command.action) }
+                                        .controlSize(.small)
+                                }
+                                Button(item.primary.title) { perform(item.primary.action) }
+                                    .controlSize(.small)
+                                    .buttonStyle(.borderedProminent)
                             }
+                            .fixedSize()
                         }
-                    }
-                    .padding(8)
-                }
-                .onChange(of: appState.ingestService.isRunning) { _, isRunning in
-                    ingestAutoDismissTask?.cancel()
-                    guard !isRunning else { return }
-                    ingestAutoDismissTask = Task {
-                        try? await Task.sleep(nanoseconds: 4_000_000_000)
-                        guard !Task.isCancelled else { return }
-                        appState.ingestService.clearTransientMessages()
+                        .padding(.vertical, 4)
                     }
                 }
+                .padding(8)
             }
+            .accessibilityIdentifier("sources.attention")
         }
     }
 
-    // MARK: - Configured Sources Section
+    private func perform(_ action: SourcesAttention.Action) {
+        switch action {
+        case .selectDisk:
+            _ = appState.promptAndSelectRootVolume()
+            _ = appState.testVolumeAccess()
+        case .grantFolder(let slug, let path):
+            _ = appState.promptAndSelectSourceDirectory(slug: slug, suggestedPath: path)
+        case .tccPrompt(let category, let slug, let path):
+            _ = appState.promptTCCPermission(category: category, sourceSlug: slug, sourcePath: path)
+        case .openPrivacySettings(let category):
+            appState.openPrivacySettings(for: category)
+        case .recheck:
+            _ = appState.testVolumeAccess()
+        }
+    }
 
-    private var configuredSourcesSection: some View {
-        GroupBox("Configured Ingest Sources") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(appState.registeredSources.count) source\(appState.registeredSources.count == 1 ? "" : "s") configured across config files and database.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+    // MARK: - Activity
 
-                    if appState.hasCancellableWork {
-                        Button(appState.isCancellingAll ? "Cancelling…" : "Cancel All") {
-                            appState.cancelAll()
-                        }
-                        .disabled(appState.isCancellingAll)
-                        .help("Stop the scan or ingest in progress and clear every source queued after it.")
-                        .accessibilityIdentifier("sources.cancelAll")
-                    } else {
-                        Button("Scan & Ingest All") {
-                            scanAndIngest(slug: "*")
-                        }
-                        .disabled(appState.registeredSources.isEmpty || notReady)
-                        .accessibilityIdentifier("sources.scanIngestAll")
-                    }
+    /// What the pipeline is doing, or what the last run left behind (kept for a few seconds).
+    private var activity: SourcesActivityPresentation? {
+        let service = appState.ingestService
+        if appState.isScanning {
+            let scan = appState.scanProgress
+            return .scanning(source: scan?.source ?? "*", itemsSoFar: scan?.totalItems ?? 0)
+        }
+        if service.isRunning {
+            let single = service.runSources.count <= 1 && service.currentSource != "*" ? service.currentSource : nil
+            let total = appState.combinedIngestTotalExpected
+            let counts = SourceRowPresentation.runCounts(
+                seen: appState.combinedIngestProcessedCount,
+                total: total,
+                indexed: appState.combinedIngestIndexedCount,
+                skipped: appState.combinedIngestSkippedCount,
+                failed: appState.combinedIngestFailedCount,
+                itemType: appState.combinedIngestItemType
+            )
+            return .ingesting(
+                subject: single,
+                current: service.currentSource,
+                fraction: appState.combinedIngestProgressFraction,
+                hasTotal: total > 0,
+                percent: appState.combinedIngestProgressPercent,
+                counts: counts,
+                currentItem: service.latestProgress?.currentItem,
+                isCancelling: service.isCancelling || appState.isCancellingAll
+            )
+        }
+        if appState.backfill.isRunning, appState.isMaintenanceRunning {
+            return .embedding()
+        }
+        if !appState.sourcesAwaitingScan.isEmpty || !appState.ingestQueue.isEmpty {
+            return .waiting(queued: appState.sourcesAwaitingScan + appState.ingestQueue)
+        }
+        if let last = service.latestProgress {
+            let single = last.source.isEmpty || last.source == "*" ? nil : last.source
+            let counts = SourceRowPresentation.runCounts(
+                seen: last.seen, total: last.totalItems, indexed: last.indexed,
+                skipped: last.skipped, failed: last.failed, itemType: last.itemType
+            )
+            return .ended(subject: single, counts: counts, wasCancelled: last.isCancelled, error: last.error ?? service.lastError)
+        }
+        return nil
+    }
 
-                    Button {
-                        syncSources()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Sync sources: add database-only sources to the config file, then apply the config file to the database")
-                    .accessibilityLabel("Sync sources")
-                    .accessibilityIdentifier("sources.sync")
-                    .disabled(notReady)
-                }
-
-                if appState.registeredSources.isEmpty {
-                    VStack(alignment: .center, spacing: 8) {
-                        Image(systemName: "tray")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("No sources configured yet.")
+    @ViewBuilder
+    private var activitySection: some View {
+        if let activity {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .center, spacing: 12) {
+                        MenuBarSymbolCircle(symbol: activity.symbol, tint: activity.tint)
+                        Text(activity.title)
                             .font(.headline)
-                        Text("Add a source below, or define sources in your ~/.garage.json config file and click the refresh button.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(20)
-                    .background(Color.primary.opacity(0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(appState.registeredSources) { source in
-                            sourceCard(for: source)
-                        }
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private func sourceCard(for source: RegisteredSource) -> some View {
-        let accessResult = appState.volumeAccess.lastTestResult?.sourcePathResults.first {
-            $0.slug == source.slug || $0.rawPath == source.root
-        }
-        let isCurrentIngest = appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug
-        let isRemoving = appState.sourcesBeingRemoved.contains(source.slug)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            // Header Row: Slug and Per-Source Ingest/Scan Actions
-            HStack(alignment: .center, spacing: 6) {
-                Text(source.slug)
-                    .font(.headline)
-                    .accessibilityIdentifier("sources.row.\(source.slug)")
-
-                Spacer()
-
-                HStack(spacing: 8) {
-                    if appState.isPending(source: source.slug) || isRemoving {
-                        // Cancels this source alone: out of the queue, or its scan or ingest stopped, while a
-                        // run over every source goes on with the next one.
-                        Button(isRemoving || (isCurrentIngest && appState.ingestService.isCancelling) ? "Cancelling…" : "Cancel") {
-                            Task { await appState.cancel(source: source.slug) }
-                        }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                        .disabled(isRemoving || appState.isCancellingAll || (isCurrentIngest && appState.ingestService.isCancelling))
-                        .accessibilityIdentifier("sources.row.\(source.slug).cancel")
-                    } else {
-                        Button("Scan & Ingest") {
-                            scanAndIngest(slug: source.slug, includeCode: source.includeCode)
-                        }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(notReady || jobRunning)
-                        .accessibilityIdentifier("sources.row.\(source.slug).scanIngest")
-                    }
-
-                    Menu {
-                        Button("Ingest (Include Code)") {
-                            ingestSource(slug: source.slug, includeCode: true)
-                        }
-                        .disabled(notReady || jobRunning)
-
-                        Button("Ingest (Force Re-index)") {
-                            ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
-                        }
-                        .disabled(notReady || jobRunning)
-
-                        Button("Scan Source") {
-                            scanSource(slug: source.slug, includeCode: source.includeCode)
-                        }
-                        .disabled(notReady || jobRunning)
-
-                        Button("Reconcile (Dry Run)") {
-                            run { try await $0.reconcile(source: source.slug, apply: false).message }
-                        }
-                        .disabled(notReady || appState.isBusy(source: source.slug))
-
-                        Button("Glean Facts") {
-                            enrichFacts(source: source.slug)
-                        }
-                        .disabled(notReady || appState.enrichFacts.isRunning)
-
-                        Button("Reconcile (Apply Deletions)", role: .destructive) {
-                            run { try await $0.reconcile(source: source.slug, apply: true).message }
-                        }
-                        .disabled(notReady || appState.isBusy(source: source.slug))
-
-                        Divider()
-
-                        Button("Populate Form for Editing") {
-                            populateForm(from: source)
-                        }
-
-                        if let access = accessResult, !access.isAccessible {
-                            Button("Grant Directory Access…") {
-                                appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
-                            }
-
-                            if let cat = access.tccCategory {
-                                Button("TCC Permission Prompt…") {
-                                    appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
-                                }
-
-                                Button("Open Privacy Settings…") {
-                                    appState.openPrivacySettings(for: cat)
-                                }
-                            }
-                        }
-
-                        Divider()
-
-                        // Allowed while the source is queued, scanned or ingested: removing cancels that first.
-                        Button("Remove Source", role: .destructive) {
-                            removeSource(slug: source.slug)
-                        }
-                        .disabled(notReady || isRemoving)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .accessibilityLabel("Source actions")
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 24)
-                }
-            }
-
-            // Badges wrap onto more lines rather than widening the card.
-            WrappingHStack {
-                originBadge(for: source.origin)
-
-                if isRemoving {
-                    StatusBadge("REMOVING", tint: .red)
-                } else if isCurrentIngest {
-                    StatusBadge("INGESTING", tint: .blue)
-                } else if appState.isQueued(source: source.slug) {
-                    StatusBadge("QUEUED", tint: .secondary)
-                }
-
-                if source.expectedElements > 0 {
-                    if source.documentCount >= source.expectedElements {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS (UP TO DATE)", tint: .green)
-                    } else {
-                        StatusBadge("\(source.documentCount)/\(source.expectedElements) DOCS", tint: .blue)
-                        StatusBadge("\(max(0, source.expectedElements - source.documentCount)) UNINGESTED", tint: .orange)
-                    }
-                } else {
-                    StatusBadge("\(source.documentCount) doc\(source.documentCount == 1 ? "" : "s")", tint: .blue)
-                }
-
-                if !source.enabled {
-                    StatusBadge("DISABLED", tint: .secondary)
-                }
-
-                if source.includeCode {
-                    StatusBadge("CODE", tint: .purple)
-                }
-
-                if let access = accessResult {
-                    if access.isAccessible {
-                        StatusBadge("DISK OK", tint: .green)
-                    } else if access.requiresTCCPermission || access.tccCategory != nil {
-                        StatusBadge("PERMISSIONS NEEDED", tint: .orange)
-                    } else {
-                        StatusBadge("DISK INACCESSIBLE", tint: .red)
-                    }
-                }
-            }
-
-            // Path and configuration metadata
-            HStack(spacing: 4) {
-                Text("Path:")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Text(source.root)
-                    .font(.caption.monospaced())
-                if source.root.hasPrefix("~") {
-                    Text("(\(source.expandedRootPath))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Text("Kind: \(source.kind) • Class: \(source.corpusClass) • Trust: \(source.trust)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            // Ingest Results & Progress Per Source
-            VStack(alignment: .leading, spacing: 4) {
-                if appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug,
-                   let progress = appState.ingestService.latestProgress {
-                    let sourceTotal = appState.sourceTotalExpected(for: source.slug)
-                    let totalItems = sourceTotal > 0 ? sourceTotal : progress.totalItems
-                    let sourceFraction = appState.sourceProgressFraction(for: source.slug)
-                    let displayPercent = totalItems > 0 ? appState.sourceProgressPercent(for: source.slug) : progress.formattedPercent
-                    HStack {
-                        ProgressView().controlSize(.small)
-                        Text("Ingesting (\(progress.phase)): \(displayPercent)")
-                            .font(.caption.bold())
-                            .foregroundStyle(.blue)
-                        Spacer()
-                        if totalItems > 0 {
-                            Text("Scanned: \(progress.seen)/\(totalItems) \(progress.itemType) • Ingested: \(progress.indexed)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Scanned: \(progress.seen) \(progress.itemType) • Ingested: \(progress.indexed)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    ProgressView(value: sourceFraction)
-                        .progressViewStyle(.linear)
-                        .tint(.blue)
-
-                    if let cur = progress.currentItem, !cur.isEmpty {
-                        Text("Current: \(cur)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
                             .lineLimit(1)
-                    }
-                    if !progress.message.isEmpty {
-                        Text(progress.message)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if appState.ingestService.pendingSources.contains(source.slug) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.badge.checkmark")
-                            .foregroundStyle(.orange)
-                            .font(.caption)
-                        Text("Pending Ingest")
-                            .font(.caption.bold())
-                            .foregroundStyle(.orange)
-                        Text("• Queued in batch run…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if source.expectedElements > 0 {
-                            Text("0/\(source.expectedElements) items")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if source.expectedElements > 0 {
-                        ProgressView(
-                            value: Double(source.documentCount),
-                            total: Double(max(source.documentCount, source.expectedElements))
-                        )
-                        .progressViewStyle(.linear)
-                    }
-                } else if source.documentCount == 0 {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        Text("Pending Ingest:")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        if source.expectedElements > 0 {
-                            Text("\(source.expectedElements) item\(source.expectedElements == 1 ? "" : "s") found by scan • Not yet ingested")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("No documents indexed yet • Ready to ingest")
-                                .font(.caption)
+                            .truncationMode(.middle)
+                        if let percent = activity.percent {
+                            Text(percent)
+                                .font(.headline.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                    }
-                    if source.expectedElements > 0 {
-                        ProgressView(
-                            value: 0.0,
-                            total: Double(source.expectedElements)
-                        )
-                        .progressViewStyle(.linear)
-                    }
-                } else if let progress = appState.ingestService.progressBySource[source.slug] {
-                    let sourceTotal = appState.sourceTotalExpected(for: source.slug)
-                    let totalItems = sourceTotal > 0 ? sourceTotal : progress.totalItems
-                    HStack {
-                        Image(systemName: progress.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(progress.isError ? Color.red : Color.green)
-                            .font(.caption)
-                        Text("Last Ingest (\(progress.phase)): \(progress.indexed) ingested, \(progress.skipped) skipped, \(progress.failed) failed")
-                            .font(.caption)
-                        Spacer()
-                        if totalItems > 0 {
-                            Text("Scanned: \(progress.seen)/\(totalItems) \(progress.itemType)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        } else if progress.seen > 0 {
-                            Text("Scanned: \(progress.seen) \(progress.itemType)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if totalItems > 0 {
-                        let processed = max(source.documentCount, progress.indexed, progress.seen)
-                        ProgressView(
-                            value: Double(processed),
-                            total: Double(max(processed, totalItems))
-                        )
-                        .progressViewStyle(.linear)
-                    } else if source.expectedElements > 0 {
-                        ProgressView(
-                            value: Double(source.documentCount),
-                            total: Double(max(source.documentCount, source.expectedElements))
-                        )
-                        .progressViewStyle(.linear)
-                    }
-                } else {
-                    HStack {
-                        Text("Ingest Status:")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-
-                        if source.expectedElements > 0 {
-                            let uningested = max(0, source.expectedElements - source.documentCount)
-                            Text("\(source.documentCount) of \(source.expectedElements) documents ingested (\(uningested) uningested)")
-                                .font(.caption)
-                        } else {
-                            Text("\(source.documentCount) document\(source.documentCount == 1 ? "" : "s") indexed in database")
-                                .font(.caption)
-                        }
-                        Spacer()
-                    }
-
-                    if source.expectedElements > 0 {
-                        ProgressView(
-                            value: Double(source.documentCount),
-                            total: Double(max(source.documentCount, source.expectedElements))
-                        )
-                        .progressViewStyle(.linear)
-                    }
-                }
-            }
-            .padding(6)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            // Test Results & Disk Access Per Source
-            if let access = accessResult {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: access.isAccessible ? "checkmark.circle.fill" : (access.requiresTCCPermission ? "lock.shield.fill" : "xmark.circle.fill"))
-                            .foregroundStyle(access.isAccessible ? Color.green : (access.requiresTCCPermission ? Color.orange : Color.red))
-                            .font(.caption)
-
-                        Text("Disk Access Test:")
-                            .font(.caption.bold())
-
-                        Text(access.statusDescription)
-                            .font(.caption)
-                            .foregroundStyle(access.isAccessible ? Color.secondary : (access.requiresTCCPermission ? Color.orange : Color.red))
-
-                        if let count = access.itemCount, count > 0 {
-                            Text("(\(count) item\(count == 1 ? "" : "s") found)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if access.rawPath != access.resolvedPath {
-                            Text("• Resolved: \(access.resolvedPath)")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.tertiary)
-                        }
-
-                        Spacer()
-                    }
-
-                    if !access.isAccessible {
-                        let cat = access.tccCategory ?? TCCPermissionCategory.detect(slug: source.slug, path: source.root)
-
-                        if let help = access.tccHelpMessage ?? cat?.helpMessage {
-                            Text(help)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        HStack(spacing: 8) {
-                            Button("Grant Folder Access…") {
-                                appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                        if activity.isRunning {
+                            Button(appState.isCancellingAll ? "Stopping…" : "Stop") {
+                                appState.cancelAll()
                             }
                             .controlSize(.small)
-                            .buttonStyle(.borderedProminent)
-
-                            if let cat = cat {
-                                Button("TCC Prompt…") {
-                                    appState.promptTCCPermission(category: cat, sourceSlug: source.slug, sourcePath: source.root)
-                                }
-                                .controlSize(.small)
-
-                                Button("Open Privacy Settings…") {
-                                    appState.openPrivacySettings(for: cat)
-                                }
-                                .controlSize(.small)
-                            }
+                            .tint(.red)
+                            .disabled(appState.isCancellingAll)
+                            .help("Stop this run and everything queued after it.")
+                            .accessibilityIdentifier("sources.cancelAll")
                         }
-                        .padding(.top, 2)
+                    }
+
+                    if activity.isIndeterminate {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                    } else if let progress = activity.progress {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                    }
+
+                    if let detail = activity.detail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let item = activity.currentItem {
+                        Text(item)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let error = activity.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(6)
-                .background((access.isAccessible ? Color.primary.opacity(0.03) : (access.requiresTCCPermission ? Color.orange : Color.red).opacity(0.08)))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(8)
+            }
+            .accessibilityIdentifier("sources.activity")
+        }
+    }
+
+    // MARK: - Sources
+
+    private var sourcesSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 0) {
+                if appState.registeredSources.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(Array(appState.registeredSources.enumerated()), id: \.element.id) { index, source in
+                        if index > 0 { Divider().padding(.vertical, 8) }
+                        sourceRow(for: source)
+                    }
+                }
+
+                Divider().padding(.top, 10).padding(.bottom, 6)
+                diskAccessFooter
+            }
+            .padding(8)
+        } label: {
+            HStack(spacing: 8) {
+                Text(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount))
+                Spacer()
+
+                Button("Scan & Ingest All") {
+                    scanAndIngest(slug: "*")
+                }
+                .controlSize(.small)
+                .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
+                .help("Count what every source holds, then index what is new or changed.")
+                .accessibilityIdentifier("sources.scanIngestAll")
+
+                Button {
+                    syncSources()
+                } label: {
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .controlSize(.small)
+                .help("Keep garage.json and the database listing the same sources: sources added here are written to the file, and sources declared in the file are applied.")
+                .accessibilityLabel("Sync sources")
+                .accessibilityIdentifier("sources.sync")
+                .disabled(notReady)
             }
         }
-        .padding(10)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func originBadge(for origin: RegisteredSource.SourceOrigin) -> some View {
-        switch origin {
-        case .config:
-            return StatusBadge("CONFIG", tint: .orange)
-        case .database:
-            return StatusBadge("DB", tint: .teal)
-        case .both:
-            return StatusBadge("CONFIG & DB", tint: .indigo)
+    private var emptyState: some View {
+        VStack(alignment: .center, spacing: 8) {
+            Image(systemName: "tray")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("No sources configured yet.")
+                .font(.headline)
+            Text("Add a folder below, pick a preset such as Documents or Messages, or declare sources in garage.json and click Sync.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    private var diskAccessIsFine: Bool {
+        appState.volumeAccess.status.isGranted && appState.volumeAccess.lastTestResult?.isAccessible != false
+    }
+
+    /// Only access the person granted by picking a disk can be revoked or moved to another disk.
+    private var diskAccessIsSecurityScoped: Bool {
+        if case .accessGranted(_, let isSecurityScoped) = appState.volumeAccess.status {
+            return isSecurityScoped
+        }
+        return false
+    }
+
+    /// One line on disk access at the foot of the list. It only repeats the attention list while
+    /// something is wrong; the rest of the time it is the one place that says access is fine.
+    private var diskAccessFooter: some View {
+        let symbol = diskAccessIsFine ? "checkmark.seal" : appState.volumeAccess.status.symbol
+        let color = diskAccessIsFine ? Color.green : appState.volumeAccess.status.color
+        return HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .font(.caption)
+            Text(diskAccessSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Button("Re-check") {
+                _ = appState.testVolumeAccess()
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderless)
+            .help("Check again that every source folder can be read.")
+            .accessibilityLabel("Re-check disk access")
+            .accessibilityIdentifier("sources.diskAccess.refresh")
+
+            Menu {
+                Button("Open Privacy Settings…") {
+                    appState.openPrivacySettings(for: .fullDiskAccess)
+                }
+                if diskAccessIsSecurityScoped {
+                    Button("Choose Another Disk…") {
+                        _ = appState.promptAndSelectRootVolume()
+                        _ = appState.testVolumeAccess()
+                    }
+                    Divider()
+                    Button("Revoke Disk Access", role: .destructive) {
+                        appState.revokeVolumeAccess()
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 24)
+            .accessibilityLabel("Disk access options")
         }
     }
 
+    private var diskAccessSummary: String {
+        switch appState.volumeAccess.status {
+        case .accessGranted(let url, let isSecurityScoped):
+            if let result = appState.volumeAccess.lastTestResult, !result.isAccessible {
+                return "Some source folders can't be read. See the top of the page."
+            }
+            let where_ = isSecurityScoped ? "Reads \(url.path) with the access you granted." : "Reads the whole disk (no sandbox)."
+            if let result = appState.volumeAccess.lastTestResult, !result.sourcePathResults.isEmpty {
+                return "Every source folder can be read. \(where_)"
+            }
+            return where_
+        case .notConfigured:
+            return "No disk selected yet: only folders you grant one by one can be read."
+        case .accessDenied(let reason):
+            return "Disk access denied: \(reason)"
+        case .staleBookmark(let url):
+            return "The saved access to \(url.path) needs re-granting."
+        }
+    }
 
-    // MARK: - Add / Update Source Section
+    // MARK: - Source rows
 
-    private var addOrUpdateSourceSection: some View {
-        GroupBox("Add / Update a Source") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Quick Presets:")
-                        .font(.caption.bold())
+    private func activity(for source: RegisteredSource) -> SourceActivity {
+        let service = appState.ingestService
+        if appState.sourcesBeingRemoved.contains(source.slug) {
+            return .removing
+        }
+        if service.isRunning, service.currentSource == source.slug, let progress = service.latestProgress {
+            let total = appState.sourceTotalExpected(for: source.slug)
+            let hasTotal = total > 0 || progress.totalItems > 0
+            return .ingesting(SourceIngestSnapshot(
+                phase: progress.phase,
+                fraction: hasTotal ? appState.sourceProgressFraction(for: source.slug) : nil,
+                percent: hasTotal ? appState.sourceProgressPercent(for: source.slug) : progress.formattedPercent,
+                seen: progress.seen,
+                total: total > 0 ? total : progress.totalItems,
+                indexed: progress.indexed,
+                skipped: progress.skipped,
+                failed: progress.failed,
+                itemType: progress.itemType,
+                currentItem: progress.currentItem,
+                message: progress.message,
+                isCancelling: service.isCancelling
+            ))
+        }
+        if let scanning = appState.scanningSource, scanning == source.slug || (scanning == "*" && appState.scanningSlugs.contains(source.slug)) {
+            return .scanning
+        }
+        if appState.isQueued(source: source.slug) || appState.isPending(source: source.slug) {
+            return .queued
+        }
+        return .idle
+    }
+
+    private func lastRun(for source: RegisteredSource) -> SourceLastRun? {
+        guard let progress = appState.ingestService.progressBySource[source.slug] else { return nil }
+        return SourceLastRun(
+            indexed: progress.indexed,
+            skipped: progress.skipped,
+            failed: progress.failed,
+            error: progress.error,
+            wasCancelled: progress.isCancelled
+        )
+    }
+
+    private func accessResult(for source: RegisteredSource) -> SourcePathAccessResult? {
+        appState.volumeAccess.lastTestResult?.sourcePathResults.first {
+            $0.slug == source.slug || $0.rawPath == source.root
+        }
+    }
+
+    private func sourceRow(for source: RegisteredSource) -> some View {
+        let access = accessResult(for: source)
+        let row = SourceRowPresentation.make(
+            source: source,
+            access: access,
+            activity: activity(for: source),
+            lastRun: lastRun(for: source),
+            isCancellingAll: appState.isCancellingAll
+        )
+        let isRemoving = appState.sourcesBeingRemoved.contains(source.slug)
+
+        return HStack(alignment: .top, spacing: 12) {
+            MenuBarSymbolCircle(symbol: row.symbol, tint: row.tint)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(row.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .accessibilityIdentifier("sources.row.\(source.slug)")
+
+                    // Each badge is one token; the title truncates before a badge wraps.
+                    HStack(spacing: 6) {
+                        CorpusClassBadge(corpusClass: source.corpusClass)
+                        TrustTierBadge(tier: source.trust)
+                        ForEach(row.badges) { badge in
+                            StatusBadge(badge.text, tint: badge.tone.color)
+                        }
+                    }
+                    .fixedSize()
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 8) {
+                        if row.showsCancel {
+                            Button(row.cancelTitle) {
+                                Task { await appState.cancel(source: source.slug) }
+                            }
+                            .controlSize(.small)
+                            .tint(.red)
+                            .disabled(row.cancelDisabled)
+                            .help("Take this source out of the run; the others go on.")
+                            .accessibilityIdentifier("sources.row.\(source.slug).cancel")
+                        } else {
+                            Button("Scan & Ingest") {
+                                scanAndIngest(slug: source.slug, includeCode: source.includeCode)
+                            }
+                            .controlSize(.small)
+                            .disabled(notReady || jobRunning)
+                            .accessibilityIdentifier("sources.row.\(source.slug).scanIngest")
+                        }
+
+                        sourceMenu(for: source, access: access, isRemoving: isRemoving)
+                    }
+                    .fixedSize()
+                }
+
+                HStack(spacing: 6) {
+                    Text(row.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Text(source.kind)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if row.isIndeterminate {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                } else if let progress = row.progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                        .tint(row.statusTone == .active ? .blue : row.statusTone.color)
+                }
+
+                HStack(spacing: 8) {
+                    Text(row.status)
+                        .font(.caption)
+                        .foregroundStyle(row.statusTone.color)
+                    Spacer()
+                    if let counts = row.counts {
+                        Text(counts)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let item = row.currentItem {
+                    Text(item)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if let error = row.error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Everything else a source can do, behind one button: the rarer ingests, facts, reconciling,
+    /// editing, and removing.
+    private func sourceMenu(for source: RegisteredSource, access: SourcePathAccessResult?, isRemoving: Bool) -> some View {
+        Menu {
+            Button("Ingest Including Code") {
+                ingestSource(slug: source.slug, includeCode: true)
+            }
+            .disabled(notReady || jobRunning)
+
+            Button("Re-index Everything") {
+                ingestSource(slug: source.slug, includeCode: source.includeCode, force: true)
+            }
+            .disabled(notReady || jobRunning)
+
+            Button("Scan Only") {
+                scanSource(slug: source.slug, includeCode: source.includeCode)
+            }
+            .disabled(notReady || jobRunning)
+
+            Button("Glean Facts") {
+                enrichFacts(source: source.slug)
+            }
+            .disabled(notReady || appState.enrichFacts.isRunning)
+
+            Divider()
+
+            Button("Check for Deleted Files") {
+                run { try await $0.reconcile(source: source.slug, apply: false).message }
+            }
+            .disabled(notReady || appState.isBusy(source: source.slug))
+
+            Button("Forget Deleted Files", role: .destructive) {
+                run { try await $0.reconcile(source: source.slug, apply: true).message }
+            }
+            .disabled(notReady || appState.isBusy(source: source.slug))
+
+            Divider()
+
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([source.expandedRootURL])
+            }
+
+            Button("Edit…") {
+                populateForm(from: source)
+            }
+
+            if let access, !access.isAccessible {
+                Divider()
+                Button("Grant Folder Access…") {
+                    _ = appState.promptAndSelectSourceDirectory(slug: source.slug, suggestedPath: source.root)
+                }
+                if let category = access.tccCategory {
+                    Button("Open Privacy Settings…") {
+                        appState.openPrivacySettings(for: category)
+                    }
+                }
+            }
+
+            Divider()
+
+            // Allowed while the source is queued, scanned or ingested: removing cancels that first.
+            Button("Remove Source", role: .destructive) {
+                removeSource(slug: source.slug)
+            }
+            .disabled(notReady || isRemoving)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Source actions")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 24)
+    }
+
+    // MARK: - Add a source
+
+    private var trimmedSlug: String {
+        slug.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedRoot: String {
+        root.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The form names a source that is already registered, so submitting updates it.
+    private var formEditsExistingSource: Bool {
+        appState.registeredSources.contains { $0.slug == trimmedSlug }
+    }
+
+    private var addSourceSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text("Start from a preset")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                     Menu("Choose preset…") {
                         ForEach(SourcePreset.all) { preset in
@@ -748,102 +652,138 @@ struct SourcesView: View {
                         }
                     }
                     .controlSize(.small)
-
+                    .fixedSize()
                     Spacer()
+                }
 
-                    if !appState.registeredSources.isEmpty {
-                        Text("Fill from existing:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Menu("Select source…") {
-                            ForEach(appState.registeredSources) { src in
-                                Button(src.slug) {
-                                    populateForm(from: src)
-                                }
-                            }
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Name")
+                            .gridColumnAlignment(.trailing)
+                        TextField("notes", text: $slug)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 260)
+                            .help("How the CLI, MCP tools and this page refer to the source.")
+                            .accessibilityIdentifier("sources.form.slug")
+                    }
+                    GridRow {
+                        Text("Folder")
+                        HStack(spacing: 8) {
+                            TextField("~/Notes", text: $root)
+                                .textFieldStyle(.roundedBorder)
+                                .accessibilityIdentifier("sources.form.root")
+                            Button("Choose…") { chooseRoot() }
                         }
-                        .controlSize(.small)
+                    }
+                    GridRow {
+                        Text("Contents")
+                        HStack(spacing: 12) {
+                            Picker("Kind", selection: $kind) {
+                                ForEach(kinds, id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            Picker("Class", selection: $corpusClass) {
+                                ForEach(classes, id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            Picker("Trust", selection: $trust) {
+                                ForEach(trusts, id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            Text(contentsHint)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
 
-                LabeledContent("Slug") {
-                    TextField("dropbox", text: $slug).textFieldStyle(.roundedBorder)
-                        .accessibilityIdentifier("sources.form.slug")
-                }
-                LabeledContent("Root") {
-                    HStack {
-                        TextField("~/Dropbox", text: $root).textFieldStyle(.roundedBorder)
-                            .accessibilityIdentifier("sources.form.root")
-                        Button("Choose…") { chooseRoot() }
-                    }
-                }
-                Picker("Kind", selection: $kind) {
-                    ForEach(kinds, id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Class", selection: $corpusClass) {
-                    ForEach(classes, id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Trust", selection: $trust) {
-                    ForEach(trusts, id: \.self) { Text($0).tag($0) }
-                }
-
-                HStack {
-                    Button("Add / Update Source") {
+                HStack(spacing: 8) {
+                    Button(formEditsExistingSource ? "Update Source" : "Add Source") {
                         addOrUpdateSource()
                     }
-                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBusy)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmedSlug.isEmpty || trimmedRoot.isEmpty || notReady || formSourceIsBusy)
                     .accessibilityIdentifier("sources.form.submit")
 
                     Button("Remove Source", role: .destructive) {
                         removeSource(slug: slug)
                     }
-                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBeingRemoved)
+                    .disabled(trimmedSlug.isEmpty || !formEditsExistingSource || notReady || formSourceIsBeingRemoved)
                     .accessibilityIdentifier("sources.form.remove")
 
-                    Button("Clear Form") {
-                        slug = ""
-                        root = ""
-                        kind = "filesystem"
-                        corpusClass = "document"
-                        trust = "authored"
+                    Button("Clear") {
+                        clearForm()
                     }
+                    .disabled(slug.isEmpty && root.isEmpty)
 
                     if busy { ProgressView().controlSize(.small) }
                 }
             }
             .padding(8)
+        } label: {
+            Text("Add a Source")
         }
     }
 
-    // MARK: - Scheduled Maintenance Section
+    /// One line on what the three pickers mean, in the order they appear.
+    private var contentsHint: String {
+        let what: String
+        switch kind {
+        case "git": what = "a git repository"
+        case "sqlite": what = "a SQLite database (Messages)"
+        case "maildir": what = "mailboxes"
+        case "feed": what = "a feed"
+        default: what = "files in a folder"
+        }
+        let who: String
+        switch trust {
+        case "authored": who = "you wrote"
+        case "reference": who = "you keep for reference"
+        default: who = "you received"
+        }
+        let privacy = corpusClass == "communication" ? ", never sent off this Mac" : ""
+        return "\(what), indexed as \(corpusClass) \(who)\(privacy)."
+    }
 
-    private var scheduledMaintenanceSection: some View {
-        GroupBox("Scheduled maintenance") {
+    // MARK: - Automatic updates
+
+    private var automaticUpdatesSection: some View {
+        GroupBox("Automatic Updates") {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle("Run ingest and embedding automatically", isOn: $appState.scheduledMaintenanceEnabled)
-                Picker("Every", selection: $appState.scheduledMaintenanceInterval) {
-                    Text("15 minutes").tag(TimeInterval(15 * 60))
-                    Text("1 hour").tag(TimeInterval(60 * 60))
-                    Text("6 hours").tag(TimeInterval(6 * 60 * 60))
-                    Text("24 hours").tag(TimeInterval(24 * 60 * 60))
+                HStack(spacing: 16) {
+                    Toggle("Keep every source up to date", isOn: $appState.scheduledMaintenanceEnabled)
+                    Picker("Every", selection: $appState.scheduledMaintenanceInterval) {
+                        Text("15 minutes").tag(TimeInterval(15 * 60))
+                        Text("hour").tag(TimeInterval(60 * 60))
+                        Text("6 hours").tag(TimeInterval(6 * 60 * 60))
+                        Text("24 hours").tag(TimeInterval(24 * 60 * 60))
+                    }
+                    .fixedSize()
+                    .disabled(!appState.scheduledMaintenanceEnabled)
                 }
-                .disabled(!appState.scheduledMaintenanceEnabled)
-                Text("Each run ingests all sources, then embeds new chunks with every registered model. The first run starts after the selected interval.")
+                Text("Each run scans and ingests every source, then embeds the new chunks with every registered model. The first run starts after the chosen interval; a source added meanwhile is scanned as soon as the current run ends.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
         }
     }
 
-    // MARK: - Ingest Output Section
+    // MARK: - Ingest output
 
+    /// The log of every ingest, folded away: it is for looking into a failure, not for glancing at.
+    @ViewBuilder
     private var ingestOutputSection: some View {
-        Group {
-            let combinedLogs = appState.combinedIngestLogs
-            if !combinedLogs.isEmpty {
-                GroupBox("Ingest output") {
+        let combinedLogs = appState.combinedIngestLogs
+        if !combinedLogs.isEmpty {
+            GroupBox {
+                if showIngestOutput {
                     LogTableView(
                         lines: combinedLogs,
                         sourceName: "Ingest",
@@ -853,6 +793,20 @@ struct SourcesView: View {
                     )
                     .frame(minHeight: 200, maxHeight: 350)
                 }
+            } label: {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showIngestOutput.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        DisclosureChevron(isExpanded: showIngestOutput)
+                        Text("Ingest Output")
+                        Text("\(combinedLogs.count.formatted()) \(SourceRowPresentation.plural("line", combinedLogs.count))")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sources.ingestOutput.toggle")
             }
         }
     }
@@ -874,11 +828,11 @@ struct SourcesView: View {
     /// The form's source is being scanned or ingested, so it cannot be updated yet. It can be removed:
     /// that cancels the scan or ingest first.
     private var formSourceIsBusy: Bool {
-        appState.isBusy(source: slug.trimmingCharacters(in: .whitespacesAndNewlines))
+        appState.isBusy(source: trimmedSlug)
     }
 
     private var formSourceIsBeingRemoved: Bool {
-        appState.sourcesBeingRemoved.contains(slug.trimmingCharacters(in: .whitespacesAndNewlines))
+        appState.sourcesBeingRemoved.contains(trimmedSlug)
     }
 
     private func chooseRoot() {
@@ -907,9 +861,18 @@ struct SourcesView: View {
         trust = source.trust
     }
 
+    private func clearForm() {
+        slug = ""
+        root = ""
+        kind = "filesystem"
+        corpusClass = "document"
+        trust = "authored"
+    }
+
     private func refreshSourcesAndTestDisk() {
         Task {
             await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
             _ = appState.testVolumeAccess()
         }
     }
@@ -954,8 +917,6 @@ struct SourcesView: View {
 
     private func addOrUpdateSource() {
         busy = true
-        let trimmedSlug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
         let spec = SourceSpec(
             slug: trimmedSlug,
             root: trimmedRoot,
@@ -966,6 +927,7 @@ struct SourcesView: View {
         Task {
             await appState.addSource(spec)
             await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
             _ = appState.testVolumeAccess()
             busy = false
         }
@@ -978,6 +940,7 @@ struct SourcesView: View {
         Task {
             await appState.removeSource(slug: trimmed)
             await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
             _ = appState.testVolumeAccess()
         }
     }
@@ -997,5 +960,4 @@ struct SourcesView: View {
             await appState.runEnrichFacts(source: source)
         }
     }
-
 }
