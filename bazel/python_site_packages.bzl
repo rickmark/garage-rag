@@ -105,6 +105,25 @@ if [ "${#srcs[@]}" -gt 0 ]; then
         fi
     done
 fi
+
+# Garage ships Apple Silicon only, but universal2 wheels (grpcio, lxml, cryptography, ...)
+# carry an x86_64 slice too. Thin each fat extension to arm64 here, so the App Store archive,
+# which takes these files as they are, ships none; macos_lipo_app (//bazel:lipo.bzl) thins
+# the Developer ID app again as a whole. The arm64 slice keeps its own signature.
+if command -v lipo >/dev/null 2>&1; then
+    chmod -R u+w "$out"
+    find "$out" -type f \\( -name '*.so' -o -name '*.dylib' \\) -print0 |
+        while IFS= read -r -d '' f; do
+            archs="$(lipo -archs "$f" 2>/dev/null || true)"
+            case " $archs " in
+                "  " | " arm64 ") ;;
+                *" arm64 "*)
+                    lipo -thin arm64 "$f" -output "$f.thin"
+                    mv "$f.thin" "$f"
+                    ;;
+            esac
+        done
+fi
 """,
         mnemonic = "PythonSitePackages",
         progress_message = "Assembling Python site-packages for {}".format(ctx.label),
