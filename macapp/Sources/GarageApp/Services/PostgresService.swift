@@ -56,6 +56,10 @@ public struct CorpusStats: Equatable, Sendable {
     /// Documents per source slug, carried here because the same stats query
     /// already has to visit `documents` — see `PostgresService.fetchCorpusStats`.
     public var sourceDocumentCounts: [String: Int]
+    /// Facts distilled so far, and the documents a current fact run covers (one whose
+    /// `content_sha256` still matches the document's). Zero on a database without `fact_runs`.
+    public var factsCount: Int
+    public var documentsDistilledCount: Int
     public var lastUpdated: Date?
 
     public init(
@@ -70,6 +74,8 @@ public struct CorpusStats: Equatable, Sendable {
         totalExpectedElements: Int = 0,
         modelStats: [ModelEmbeddingStats] = [],
         sourceDocumentCounts: [String: Int] = [:],
+        factsCount: Int = 0,
+        documentsDistilledCount: Int = 0,
         lastUpdated: Date? = nil
     ) {
         self.sourcesCount = sourcesCount
@@ -83,6 +89,8 @@ public struct CorpusStats: Equatable, Sendable {
         self.totalExpectedElements = totalExpectedElements
         self.modelStats = modelStats
         self.sourceDocumentCounts = sourceDocumentCounts
+        self.factsCount = factsCount
+        self.documentsDistilledCount = documentsDistilledCount
         self.lastUpdated = lastUpdated
     }
 
@@ -929,6 +937,15 @@ final class PostgresService: ObservableObject {
     ORDER BY id;
     """
 
+    /// Facts and the documents with a current fact run. A separate statement, like the registry's,
+    /// because a database from before `013_fact_prompts.sql` has no `fact_runs`.
+    private static let factsStatsSQL = """
+    SELECT (SELECT count(*) FROM facts)::text,
+           (SELECT count(DISTINCT r.document_id)
+              FROM fact_runs r
+              JOIN documents d ON d.id = r.document_id AND d.content_sha256 = r.content_sha256)::text;
+    """
+
     /// Queries the Postgres database for overall corpus, ingestion, and embedding statistics.
     func fetchCorpusStats() async throws -> CorpusStats {
         try requireRunning()
@@ -968,6 +985,13 @@ final class PostgresService: ObservableObject {
         }
         modelStats = try await countEmbeddings(for: modelStats, existingTables: existingModelTables)
 
+        var factsCount = 0
+        var documentsDistilledCount = 0
+        if let row = (try? await commandRunner().query(Self.factsStatsSQL))?.first, row.count >= 2 {
+            factsCount = Int(row[0]) ?? 0
+            documentsDistilledCount = Int(row[1]) ?? 0
+        }
+
         // The headline "embedded" number is the default model's, so the
         // progress bar tracks the model search actually uses.
         let embeddedChunks = modelStats.first(where: \.isDefault)?.embeddedCount
@@ -986,6 +1010,8 @@ final class PostgresService: ObservableObject {
             totalExpectedElements: Int(core[7]) ?? 0,
             modelStats: modelStats,
             sourceDocumentCounts: sourceDocumentCounts,
+            factsCount: factsCount,
+            documentsDistilledCount: documentsDistilledCount,
             lastUpdated: Date()
         )
     }

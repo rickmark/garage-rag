@@ -121,9 +121,10 @@ final class SourcesUITests: GarageUITestCase {
         scanIngest.click()
 
         open(section: "status")
+        let documents = element(identifier: "status.figure.documents")
         XCTAssertTrue(
-            element(textBeginningWith: "All 2 docs ingested").waitForExistence(timeout: 240),
-            "the Status page never reported both notes ingested"
+            waitUntil(timeout: 240) { documents.exists && documents.label == "2" },
+            "the Status page never counted both notes"
         )
 
         open(section: "documents")

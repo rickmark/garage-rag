@@ -96,6 +96,22 @@ final class AppState: ObservableObject {
     /// clears `IngestService.lastError` as it starts, so a later success would otherwise hide an
     /// earlier failure. Cleared when the next batch starts.
     @Published private(set) var lastIngestAllFailure: String?
+    /// Where the running backfill is, from its stream: the model being embedded and its counts.
+    @Published private(set) var backfillProgress: BackfillProgress?
+    /// Where the running `enrich-facts` is, from its stream.
+    @Published private(set) var enrichFactsProgress: EnrichFactsProgress?
+
+    struct BackfillProgress: Equatable {
+        var model: String
+        var embedded: Int
+        var total: Int
+    }
+
+    struct EnrichFactsProgress: Equatable {
+        var index: Int
+        var total: Int
+        var documentURI: String?
+    }
     /// What the running scan has found so far; nil when no scan is running.
     @Published var scanProgress: ScanProgress?
     @Published private(set) var isFetchingStats = false
@@ -1016,14 +1032,24 @@ final class AppState: ObservableObject {
     @discardableResult
     func runBackfill(model: String? = nil) async -> Bool {
         let grpc = self.grpc
+        backfillProgress = nil
         let result = await backfill.run { runner in
             _ = try await grpc.backfill(model: model) { status in
                 if !status.message.isEmpty {
                     runner.appendLog(status.message)
                 }
+                // "started" and "progress" carry the model's counts; the per-model outcomes end it.
+                if status.phase == "started" || status.phase == "progress" {
+                    self.backfillProgress = BackfillProgress(
+                        model: status.modelSlug,
+                        embedded: Int(status.embedded),
+                        total: Int(status.total)
+                    )
+                }
             }
             return ""
         }
+        backfillProgress = nil
         await fetchCorpusStats()
         await fetchRegisteredModels()
         return result.succeeded
@@ -1035,6 +1061,7 @@ final class AppState: ObservableObject {
     @discardableResult
     func runEnrichFacts(source: String = "*", documentID: Int64? = nil, prompts: [String] = [], staleOnly: Bool = false) async -> Bool {
         let grpc = self.grpc
+        enrichFactsProgress = nil
         let result = await enrichFacts.run { runner in
             // Inside the runner, so a run refused as "already running" never loads or unloads.
             await self.loadFactsModelForDistilling(runner)
@@ -1043,9 +1070,17 @@ final class AppState: ObservableObject {
                 if status.phase != "finished", !status.message.isEmpty {
                     runner.appendLog(status.message, stream: status.error.isEmpty ? .stdout : .stderr)
                 }
+                if status.phase == "started" || status.phase == "document" {
+                    self.enrichFactsProgress = EnrichFactsProgress(
+                        index: Int(status.index),
+                        total: Int(status.total),
+                        documentURI: status.documentUri.isEmpty ? nil : status.documentUri
+                    )
+                }
             }
             return finished?.message ?? ""
         }
+        enrichFactsProgress = nil
         await unloadFactsModelAfterDistilling()
         return result.succeeded
     }
