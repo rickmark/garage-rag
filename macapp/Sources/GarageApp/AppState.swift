@@ -818,6 +818,17 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
+    /// The App Store build's one grant for the usual sources: the home folder.
+    @discardableResult
+    func promptAndSelectHomeFolder() -> URL? {
+        let url = volumeAccess.promptForHomeFolderSelection()
+        if let url {
+            lastCommandSucceeded = true
+            lastCommandOutput = "Granted folder access for: \(url.path)"
+        }
+        return url
+    }
+
     func testVolumeAccess() -> VolumeAccessTestResult {
         let sourceTuples = registeredSources.map { (slug: $0.slug, root: $0.root) }
         let result = volumeAccess.testFullVolumeAccess(sourcePaths: sourceTuples)
