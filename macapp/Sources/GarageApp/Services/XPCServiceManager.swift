@@ -325,6 +325,9 @@ public final class XPCServiceManager: ObservableObject {
 
     private let pingExecutor: PingExecutor
     private let killExecutor: KillExecutor
+    /// Hands LlamaXPCService's endpoint to the services that load llama_xpc models on demand, which
+    /// cannot look it up by name themselves. None in unit tests unless one is injected.
+    let llamaEndpointBroker: LlamaEndpointBroker?
 
     public nonisolated static let defaultServices: [XPCServiceInfo] = [
         XPCServiceInfo(
@@ -378,11 +381,32 @@ public final class XPCServiceManager: ObservableObject {
     private static let selfTestCallTimeout: UInt64 = 180_000_000_000
     private static let restartCallTimeout: UInt64 = 120_000_000_000
 
-    public init(
+    public convenience init(
         initialServices: [XPCServiceInfo] = defaultServices,
         pingExecutor: PingExecutor? = nil,
         killExecutor: KillExecutor? = nil
     ) {
+        let broker: LlamaEndpointBroker?
+        if isRunningInTestEnvironment {
+            broker = nil
+        } else {
+            var bundleIds: [String: String] = [:]
+            for service in initialServices {
+                bundleIds[service.id] = service.bundleId
+            }
+            let llamaBundleId = initialServices.first { $0.id == "llama-xpc" }?.bundleId ?? LlamaXPCConstants.serviceName
+            broker = LlamaEndpointBroker(connector: .xpc(llamaBundleId: llamaBundleId, receiverBundleIds: bundleIds))
+        }
+        self.init(initialServices: initialServices, pingExecutor: pingExecutor, killExecutor: killExecutor, llamaEndpointBroker: broker)
+    }
+
+    init(
+        initialServices: [XPCServiceInfo],
+        pingExecutor: PingExecutor?,
+        killExecutor: KillExecutor?,
+        llamaEndpointBroker: LlamaEndpointBroker?
+    ) {
+        self.llamaEndpointBroker = llamaEndpointBroker
         self.services = initialServices
         self.pingExecutor = pingExecutor ?? { bundleId in
             try await Self.performXPCPing(bundleId: bundleId)
@@ -394,6 +418,11 @@ public final class XPCServiceManager: ObservableObject {
                 _ = kill(pid, SIGKILL)
             }
             return true
+        }
+        llamaEndpointBroker?.setReporter { [weak self] message, isError in
+            Task { @MainActor [weak self] in
+                self?.appendLog(message, stream: isError ? .stderr : .stdout, source: "llama-xpc", level: isError ? .error : .info)
+            }
         }
     }
 
@@ -693,6 +722,13 @@ public final class XPCServiceManager: ObservableObject {
 
         // Ping the service to spawn a fresh instance via launchd / XPC runtime
         let newState = await refresh(serviceId: service.id)
+        // A relaunched LlamaXPCService has a new endpoint, a relaunched receiver has none. The
+        // broker also notices the lost connection; this covers a kill it did not see.
+        if service.id == "llama-xpc" {
+            llamaEndpointBroker?.handOverAgain(refetch: true)
+        } else if LlamaEndpointBroker.receiverServiceIds.contains(service.id) {
+            llamaEndpointBroker?.handOverAgain()
+        }
         appendLog("[\(service.name)] Restart finished with state: \(newState.title)", source: service.id, level: newState.isRunning ? .info : .error)
         return newState.isRunning
     }
@@ -718,6 +754,8 @@ public final class XPCServiceManager: ObservableObject {
     /// Terminates all known running XPC helper services and drops the live log streaming connections.
     public func terminateAll() {
         appendLog("Terminating all active XPC helper processes...", source: "xpc-services", level: .warning)
+        // First, so the broker does not relaunch the helpers it sees go away.
+        llamaEndpointBroker?.stop()
         stopAllStreaming()
         for service in services {
             if let currentPid = service.pid, currentPid > 0 {
@@ -819,11 +857,13 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
-    /// Starts streaming logs for all known XPC helper services.
+    /// Starts streaming logs for all known XPC helper services, and the LlamaXPCService endpoint
+    /// hand-over (`LlamaEndpointBroker`), which every launch path and a failed reset go through.
     public func startStreamingAllServices() {
         for service in services {
             startStreamingLogs(for: service.id)
         }
+        llamaEndpointBroker?.start()
     }
 
     /// Stops live log streaming for a given service.

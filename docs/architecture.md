@@ -268,7 +268,9 @@ it and retries once:
   (`LlamaModelLoaderBridge`, a C function Python calls through ctypes, which
   releases the GIL); it resolves the slug to the downloaded GGUF and the Models
   page's load settings (`LlamaModelResolver`) and calls `ensureModel` on
-  `LlamaXPCService` over NSXPC;
+  `LlamaXPCService` over NSXPC, through the endpoint of its anonymous listener,
+  which the app hands each of these services at launch and after any of them
+  restarts (a sibling XPC service cannot look `LlamaXPCService` up by name);
 - elsewhere (the `garage`/`garage-mcp` launchers, or a venv while the app runs)
   it asks the app's `EnsureLlamaModel` RPC, which uses `GarageXPCService`'s
   loader;

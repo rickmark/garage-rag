@@ -480,6 +480,12 @@ with the Status page listing the missing sources and model under Health.
   embeds its query at once, and the facts model only while a distillation run lasts (unloaded
   afterwards unless it is also the search model). Anything else loads on demand and stays until the
   Models page unloads it.
+- `LlamaEndpointBroker` (owned by `XPCServiceManager`) — the on-demand loads happen inside
+  `GarageXPCService`, `GarageEmbedXPCService` and `GarageMCPServerService`, and an XPC service can't
+  look up its sibling `LlamaXPCService` by name (only the app can). So the broker asks
+  `LlamaXPCService` for its anonymous listener's endpoint and hands it to those three, and does it again
+  whenever one of the connections is interrupted or invalidated (a restart or a crash). Their "Llama
+  Loader" self test is skipped until the endpoint arrives and re-runs when it does.
 - Views, in sidebar order (`AppSection` / `SidebarGroup` in `Views/ContentView.swift`): **Status** on
   a row of its own, then **Configuration** (Sources, Models, MCP Server), **Data** (Documents, Facts,
   Search) and **Advanced** (Database, Logs).
