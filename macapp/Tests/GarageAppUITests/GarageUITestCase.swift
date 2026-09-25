@@ -7,9 +7,10 @@ import XCTest
 ///
 /// Launch arguments set the launch-time preferences in the argument domain, which overrides
 /// UserDefaults for that run without writing them. A test that clicks a control that saves a
-/// preference (the splash's "Show this window at launch", the setup assistant's Finish or Skip)
-/// does write the real `me.rickmark.garage-rag` domain, so tests leave those controls alone or
-/// only reach states they already have.
+/// preference (such as the splash's "Show this window at launch") does write the real
+/// `me.rickmark.garage-rag` domain, so tests leave those controls alone or only reach states they
+/// already have. The setup assistant's Finish and Skip are the exception: on a `--data-directory`
+/// launch they last for that launch only.
 ///
 /// The app's Postgres uses the fixed port 14824 and its quit path stops XPC services by executable
 /// name, so a test refuses to run while another Garage is running or its ports are taken.

@@ -239,6 +239,28 @@ final class FirstRunTests: XCTestCase {
         XCTAssertFalse(coordinator.hasCompleted)
     }
 
+    /// On an overridden data folder (UI tests) finishing or skipping lasts for the launch only, so a
+    /// test that walks the assistant leaves the real preference alone.
+    @MainActor
+    func testCompletionOnAThrowawayDataFolderIsNotSaved() {
+        let defaults = makeDefaults()
+        let coordinator = FirstRunCoordinator(defaults: defaults, persistsCompletion: false)
+
+        coordinator.begin()
+        coordinator.finish()
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertTrue(coordinator.hasCompleted, "a finished assistant counts as completed for the rest of the launch")
+        XCTAssertNil(defaults.object(forKey: FirstRunPreferences.completedKey), "finishing saved the preference")
+
+        coordinator.begin(force: true)
+        coordinator.skip()
+        XCTAssertTrue(coordinator.hasCompleted)
+        XCTAssertNil(defaults.object(forKey: FirstRunPreferences.completedKey), "skipping saved the preference")
+
+        coordinator.resetCompletion()
+        XCTAssertFalse(coordinator.hasCompleted)
+    }
+
     @MainActor
     func testAfterDatabaseResetRunsEvenWhenCompletedAndClearsOnSkip() {
         let coordinator = FirstRunCoordinator(defaults: makeDefaults())
