@@ -204,6 +204,7 @@ py_test(
     deps = [
         ":conftest",
         "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/ops",
         "//garage_python/src/garage_rag/proto",
         "//garage_python/src/garage_rag/service",
         "@pypi//grpcio",
@@ -390,6 +391,7 @@ py_test(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/ops",
         "//garage_python/src/garage_rag/search",
         "@pypi//pytest",
         "@pypi//sqlalchemy",
