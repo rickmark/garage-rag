@@ -100,6 +100,25 @@ def is_dependency_dir(path: Path, root: Path) -> bool:
     return relative != "." and is_dependency_path(f"/{relative}/")
 
 
+def is_inside_git_dir(path: Path) -> bool:
+    """Whether ``path`` is a ``.git`` directory or lies inside one.
+
+    Checked on the source root, which the walk's pruning never sees: a source
+    added at ``repo/.git`` (or below it) would otherwise index git's internals.
+    """
+    return any(part.lower() == ".git" for part in path.parts)
+
+
+def is_git_dir(dirnames: list[str], filenames: list[str]) -> bool:
+    """Whether a directory's listing is a git directory's: ``HEAD``, ``objects/`` and ``refs/``.
+
+    Catches what pruning ``.git`` by name misses -- bare repositories and mirrors
+    (``project.git``), and a root that is itself a git directory -- from the
+    listing ``os.walk`` already made, without another stat.
+    """
+    return "HEAD" in filenames and "objects" in dirnames and "refs" in dirnames
+
+
 def _is_hidden(name: str) -> bool:
     # Dotfiles are configuration or caches, not writing. The few exceptions
     # (dotfile repos) are not worth the noise of indexing every .DS_Store.
@@ -122,6 +141,9 @@ def walk(
     limit = get_settings().max_file_bytes
     tally = stats if stats is not None else WalkStats()
     root = root.expanduser()
+    if is_inside_git_dir(root):
+        log.info("Not walking %s: it is inside a git directory", root)
+        return
 
     def on_error(exc: OSError) -> None:
         # Permission-denied on a subtree (TCC, or another user's files) should
@@ -132,6 +154,13 @@ def walk(
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error, followlinks=False):
         tally.dirs += 1
         current = Path(dirpath)
+
+        # Git's own object store and refs, under whatever name: never writing.
+        if is_git_dir(dirnames, filenames):
+            log.debug("Walker pruning git directory: %s", dirpath)
+            dirnames[:] = []
+            tally.skipped_excluded_dir += 1
+            continue
 
         # Whole dependency caches: stop descending entirely.
         if is_dependency_dir(current, root):

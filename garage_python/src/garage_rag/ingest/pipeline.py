@@ -207,8 +207,10 @@ def ingest_one(
         log.debug(
             "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
         )
-    except NoTextFound:
-        _reject_empty(gateway, source_ctx, candidate, counters, "no text")
+    except NoTextFound as exc:
+        # Read fine and holds no text (empty, an icon, a photo): nothing to index, and
+        # nothing wrong. Rejecting also drops a document an older version left.
+        _reject_empty(gateway, source_ctx, candidate, counters, str(exc))
         return
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
