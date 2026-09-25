@@ -787,6 +787,41 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testAQueuedSourceKeepsStopUpAndStopEmptiesTheQueue() {
+        let state = AppState()
+        // A Scan & Ingest of one source between its scan and its ingest: nothing runs, the source waits.
+        state.setQueuesForTesting(ingest: ["notes"])
+        XCTAssertTrue(state.hasCancellableWork, "Stop went away between the scan and the ingest")
+
+        state.cancelAll()
+
+        XCTAssertTrue(state.ingestQueue.isEmpty, "Stop left the source queued, so its ingest would still start")
+    }
+
+    @MainActor
+    func testAScanAndIngestThatCannotScanLeavesNothingQueued() async {
+        let state = AppState()
+        XCTAssertEqual(state.postgres.status, .stopped)
+
+        let result = await state.scanAndIngestSource(slug: "notes")
+
+        XCTAssertFalse(result)
+        XCTAssertTrue(state.ingestQueue.isEmpty)
+        XCTAssertFalse(state.isIngesting, "the ingest ran although the scan did not")
+    }
+
+    @MainActor
+    func testAScanAndIngestOfAQueuedSourceIsTurnedAway() async {
+        let state = AppState()
+        state.setQueuesForTesting(ingest: ["notes"])
+
+        let result = await state.scanAndIngestSource(slug: "notes")
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.ingestQueue, ["notes"], "the second run took the first run's place in the queue")
+    }
+
+    @MainActor
     func testASecondIngestOfAllIsTurnedAway() async {
         let state = AppState()
         state.setIngestingAllForTesting(true)

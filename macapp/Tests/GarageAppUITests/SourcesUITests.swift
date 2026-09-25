@@ -210,7 +210,12 @@ final class SourcesUITests: GarageUITestCase {
 
         addCustomSource(slug: "documents", root: folder)
 
-        XCTAssertTrue(waitUntil(timeout: 15) { card.label == "Documents, added" }, "the Documents card does not say it is added (\(card.label))")
+        // The grid is rebuilt when the source list refreshes, and reading a label while the card is
+        // briefly gone fails the test outright, so check that it exists first.
+        XCTAssertTrue(
+            waitUntil(timeout: 15) { card.exists && card.label == "Documents, added" },
+            "the Documents card does not say it is added (\(card.exists ? card.label : "no card"))"
+        )
         XCTAssertFalse(card.isEnabled, "the Documents card can still be clicked once added")
         XCTAssertTrue(waitForEnabled(element(identifier: "sources.updateEverything")), "Update Everything stayed disabled with a source")
         XCTAssertTrue(waitForEnabled(element(identifier: "sources.scanIngestAll")), "Scan & Ingest All stayed disabled with a source")

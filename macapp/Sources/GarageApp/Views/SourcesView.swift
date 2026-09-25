@@ -1103,8 +1103,9 @@ struct SourcesView: View {
     }
 
     /// Only one scan and one ingest run at a time, so starting another waits for them.
+    /// A queued source counts: a Scan & Ingest of one source keeps it queued between its scan and ingest.
     private var jobRunning: Bool {
-        appState.isIngesting || appState.isIngestingAll || appState.isScanning
+        appState.isIngesting || appState.isIngestingAll || appState.isScanning || !appState.ingestQueue.isEmpty
     }
 
     /// The form's source is being scanned or ingested, so it cannot be updated yet. It can be removed:
@@ -1179,8 +1180,11 @@ struct SourcesView: View {
     private func scanAndIngest(slug: String, includeCode: Bool = false) {
         guard !jobRunning else { return }
         Task {
-            if await appState.scanSources(source: slug, includeCode: includeCode, followedByIngest: slug == "*") {
-                _ = await appState.ingestSource(slug: slug, options: IngestOptions(includeCode: includeCode))
+            let options = IngestOptions(includeCode: includeCode)
+            if slug != "*" {
+                _ = await appState.scanAndIngestSource(slug: slug, options: options)
+            } else if await appState.scanSources(source: slug, includeCode: includeCode, followedByIngest: true) {
+                _ = await appState.ingestSource(slug: slug, options: options)
             }
         }
     }
