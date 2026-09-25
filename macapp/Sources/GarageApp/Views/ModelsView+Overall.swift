@@ -48,8 +48,7 @@ extension ModelsView {
                 detail: "\(models) registered; there are no chunks to embed until a source is ingested."
             )
         }
-        let required = stats.totalRequiredEmbeddingsAcrossAllModels
-        let missing = stats.unembeddedChunks
+        let (required, missing) = embeddingsRequiredAndMissing
         let fraction = required > 0 ? Double(max(0, required - missing)) / Double(required) : 0
         if missing == 0 {
             return OverallHeadline(
