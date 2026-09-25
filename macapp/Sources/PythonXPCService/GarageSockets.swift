@@ -52,6 +52,19 @@ public enum GarageSockets {
         path.utf8.count <= maxPathLength
     }
 
+    /// The variable that tells Python where LlamaXPCService's llama-server API listens.
+    public static let llamaSocketVariable = "GARAGE_LLAMA_SOCKET"
+
+    /// Sets `GARAGE_LLAMA_SOCKET` for the Python this process embeds, before it starts, unless it is
+    /// set already or `GARAGE_LLAMA_HTTP_PORT` moved LlamaXPCService to a loopback port.
+    public static func exportLlamaSocket() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment[llamaSocketVariable] == nil,
+              environment["GARAGE_LLAMA_HTTP_PORT"] == nil,
+              let path = path(for: llamaName) else { return }
+        setenv(llamaSocketVariable, path, 0)
+    }
+
     /// Creates `directory` owner-only (0700), tightening it when it already exists.
     @discardableResult
     public static func ensureDirectory(_ directory: URL = directory) throws -> URL {

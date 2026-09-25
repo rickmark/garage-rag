@@ -68,6 +68,7 @@ class _GuardedTransport:
             timeout=backend.timeout,
             headers=headers,
             settings=settings,
+            uds=backend.socket_path,
         )
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> RawResponse:
