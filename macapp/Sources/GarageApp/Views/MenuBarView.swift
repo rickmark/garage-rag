@@ -73,7 +73,7 @@ struct MenuBarView: View {
                 Button("Ingest now") {
                     Task { await appState.ingestAllSources() }
                 }
-                .disabled(appState.postgres.status != .running || appState.isIngesting || appState.isScanning)
+                .disabled(appState.postgres.status != .running || appState.isIngesting || appState.isIngestingAll || appState.isScanning)
             }
 
             Divider()
