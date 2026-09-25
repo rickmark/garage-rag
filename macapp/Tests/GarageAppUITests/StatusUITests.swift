@@ -10,22 +10,21 @@ final class StatusUITests: GarageUITestCase {
         waitForBackend()
         open(section: "status")
 
-        // The figures show once the database runs and the first stats have been read.
-        let expected = ["sources": "0", "documents": "0", "chunks": "0", "embedded": "–"]
+        // The figures show once the database runs and the first stats have been read. An empty
+        // garage.json still names a facts model (the default, gemma2-2b), so Facts is on the row too.
+        let expected = ["sources": "0", "documents": "0", "chunks": "0", "embedded": "–", "facts": "0"]
         for (figure, value) in expected {
             let shown = element(identifier: "status.figure.\(figure)")
             XCTAssertTrue(
-                waitUntil(timeout: 60) { shown.exists && shown.label == value },
-                "the \(figure) figure is not \(value) on an empty corpus (\(shown.exists ? shown.label : "missing"))"
+                waitUntil(timeout: 60) { shown.exists && self.shownText(of: shown) == value },
+                "the \(figure) figure is not \(value) on an empty corpus (\(shown.exists ? shownText(of: shown) : "missing"))"
             )
         }
         XCTAssertTrue(element(text: "no model").exists, "Embedded does not say there is no model")
-        // No facts model and no facts: the Facts figure stays off the row.
-        XCTAssertFalse(element(identifier: "status.figure.facts").exists, "Facts shows with no distillation model")
 
         let title = element(identifier: "status.indexing.title")
         XCTAssertTrue(title.waitForExistence(timeout: 15), "Indexing has no headline")
-        XCTAssertEqual(title.label, "Nothing to index yet")
+        XCTAssertEqual(shownText(of: title), "Nothing to index yet")
         XCTAssertTrue(element(identifier: "status.addSource").exists, "an empty corpus does not offer Add a Source")
         XCTAssertFalse(element(identifier: "status.updateEverything").exists, "Update Everything shows before there is a source")
         XCTAssertFalse(element(identifier: "status.stop").exists, "Stop shows with nothing running")
@@ -86,7 +85,7 @@ final class StatusUITests: GarageUITestCase {
         XCTAssertFalse(element(identifier: "status.addSource").exists, "Add a Source still shows with a source")
 
         let sources = element(identifier: "status.figure.sources")
-        XCTAssertTrue(waitUntil(timeout: 30) { sources.exists && sources.label == "1" }, "the Sources figure did not count the source")
+        XCTAssertTrue(waitUntil(timeout: 30) { sources.exists && self.shownText(of: sources) == "1" }, "the Sources figure did not count the source")
         XCTAssertTrue(
             waitUntil(timeout: 30) { !self.element(identifier: "status.health.sources").exists },
             "Health still says there are no sources"
