@@ -41,6 +41,9 @@ public struct MCPClientConfig: Identifiable, Equatable {
     public var path: URL
     public var existsOnDisk: Bool
     public var isRegistered: Bool
+    /// The URL the registered entry points at, when it is an HTTP entry. A stdio entry, or no
+    /// entry at all, has none.
+    public var registeredURL: String?
     /// A config that lives in the current project (e.g. `.mcp.json`), shared with
     /// collaborators, as opposed to a per-user client config.
     public var isProjectScoped: Bool
@@ -53,13 +56,15 @@ public struct MCPClientConfig: Identifiable, Equatable {
         existsOnDisk: Bool,
         isRegistered: Bool,
         isProjectScoped: Bool = false,
-        note: String = ""
+        note: String = "",
+        registeredURL: String? = nil
     ) {
         self.id = id
         self.label = label
         self.path = path
         self.existsOnDisk = existsOnDisk
         self.isRegistered = isRegistered
+        self.registeredURL = registeredURL
         self.isProjectScoped = isProjectScoped
         self.note = note
     }
@@ -267,27 +272,30 @@ final class GarageMCPService: ObservableObject {
 
         return standardTargets.map { target in
             let exists = FileManager.default.fileExists(atPath: target.path.path)
-            let isRegistered = checkIsRegistered(at: target.path)
+            let entry = registeredEntry(at: target.path)
             return MCPClientConfig(
                 id: target.id,
                 label: target.label,
                 path: target.path,
                 existsOnDisk: exists,
-                isRegistered: isRegistered,
+                isRegistered: entry != nil,
                 isProjectScoped: target.projectScoped,
-                note: target.note
+                note: target.note,
+                registeredURL: entry?["url"] as? String
             )
         }
     }
 
-    private func checkIsRegistered(at url: URL, serverName: String = "garage-rag") -> Bool {
+    /// This server's entry in a client config, or `nil` when the file has none.
+    private func registeredEntry(at url: URL, serverName: String = "garage-rag") -> [String: Any]? {
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let servers = json["mcpServers"] as? [String: Any] else {
-            return false
+              let servers = json["mcpServers"] as? [String: Any],
+              let entry = servers[serverName] else {
+            return nil
         }
-        return servers[serverName] != nil
+        return (entry as? [String: Any]) ?? [:]
     }
 
     // MARK: - Client Registration Actions
@@ -340,6 +348,30 @@ final class GarageMCPService: ObservableObject {
             refreshDetectedClients()
         }
         return await install(.path(url.path), force: force)
+    }
+
+    /// Removes this server's entry from one client's config through the McpUninstall RPC.
+    @discardableResult
+    func unregisterTarget(_ targetId: String) async -> (success: Bool, message: String) {
+        isRegistering = true
+        defer {
+            isRegistering = false
+            refreshDetectedClients()
+        }
+        guard let grpc else {
+            let message = "gRPC service unavailable; cannot disconnect MCP clients."
+            appendLog(LogLine(stream: .stderr, text: message, source: "garage-mcp"))
+            return (false, message)
+        }
+        do {
+            let response = try await grpc.mcpUninstall(target: targetId)
+            appendLog(LogLine(stream: .stdout, text: response.message, source: "garage-mcp"))
+            return (true, response.message)
+        } catch {
+            let message = "MCP disconnect failed: \(error.localizedDescription)"
+            appendLog(LogLine(stream: .stderr, text: message, source: "garage-mcp"))
+            return (false, message)
+        }
     }
 
     // MARK: - Testing & Diagnostics
