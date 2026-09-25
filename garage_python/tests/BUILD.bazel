@@ -553,3 +553,20 @@ py_test(
         "@pypi//pytest",
     ],
 )
+
+py_test(
+    name = "test_cli_commands",
+    srcs = ["test_cli_commands.py"],
+    deps = [
+        ":conftest",
+        "//garage_python/src/garage_rag",
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/extract",
+        "//garage_python/src/garage_rag/ingest",
+        "//garage_python/src/garage_rag/ops",
+        "//garage_python/src/garage_rag/search",
+        "@pypi//pytest",
+        "@pypi//typer",
+    ],
+)
