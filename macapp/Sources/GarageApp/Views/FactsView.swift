@@ -26,6 +26,9 @@ public struct FactsView: View {
     @State private var isLoadingMore = false
     @State private var errorMessage: String?
     @State private var hasLoaded = false
+    /// Counts refreshes; a response is applied only if no newer refresh started
+    /// after its request, so a slow answer for old filters never lands.
+    @State private var generation = 0
 
     private static let pageSize = 200
     private let corpusClasses = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.corpusClasses)
@@ -455,19 +458,26 @@ public struct FactsView: View {
     // MARK: - Data Loading
 
     private func refreshFacts() {
+        // Every refresh supersedes whatever is in flight, a Load More included.
+        generation += 1
+        let request = generation
         guard appState.postgres.status == .running else {
             facts = []
             totalCount = 0
             classes = []
+            isLoading = false
+            isLoadingMore = false
             return
         }
         isLoading = true
+        isLoadingMore = false
         errorMessage = nil
 
         Task {
             do {
                 let page = try await fetch(offset: 0)
                 await MainActor.run {
+                    guard request == self.generation else { return }
                     self.facts = page.items
                     self.totalCount = page.totalCount
                     self.classes = page.classes
@@ -478,6 +488,7 @@ public struct FactsView: View {
                 }
             } catch {
                 await MainActor.run {
+                    guard request == self.generation else { return }
                     self.errorMessage = error.localizedDescription
                     self.isLoading = false
                 }
@@ -486,11 +497,13 @@ public struct FactsView: View {
     }
 
     private func loadMore() {
+        let request = generation
         isLoadingMore = true
         Task {
             do {
                 let page = try await fetch(offset: facts.count)
                 await MainActor.run {
+                    guard request == self.generation else { return }
                     let known = Set(self.facts.map(\.id))
                     self.facts += page.items.filter { !known.contains($0.id) }
                     self.totalCount = page.totalCount
@@ -498,6 +511,7 @@ public struct FactsView: View {
                 }
             } catch {
                 await MainActor.run {
+                    guard request == self.generation else { return }
                     self.errorMessage = error.localizedDescription
                     self.isLoadingMore = false
                 }
