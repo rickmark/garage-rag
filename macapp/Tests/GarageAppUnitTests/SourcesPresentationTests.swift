@@ -360,6 +360,34 @@ final class SourcesPresentationTests: XCTestCase {
         XCTAssertEqual(many.title, "Waiting to scan a, b, c and 2 more")
     }
 
+    // MARK: - Suggested names
+
+    func testTheNameComesFromTheFolder() {
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Notes", kind: "filesystem", taken: []), "notes")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "/Users/rick/My Notes (2024)/", kind: "filesystem", taken: []), "my-notes-2024")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Developer/garage-rag", kind: "git", taken: []), "garage-rag")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Library/Mobile Documents/com~apple~CloudDocs", kind: "filesystem", taken: []), "icloud-drive")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~", kind: "filesystem", taken: []), "home")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "   ", kind: "filesystem", taken: []), "")
+    }
+
+    func testTheNameFollowsTheKind() {
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "/tmp/fixtures/chat.db", kind: "sqlite", taken: []), "chat")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "https://example.com/feed.xml", kind: "feed", taken: []), "example-com")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Library/Mail", kind: "maildir", taken: []), "apple-mail")
+    }
+
+    func testAPresetLocationKeepsThePresetsName() {
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Library/Messages", kind: "sqlite", taken: []), "apple-sms")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Documents", kind: "filesystem", taken: []), "documents")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Documents", kind: "git", taken: []), "documents", "a different kind still names the folder")
+    }
+
+    func testATakenNameGetsANumber() {
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Notes", kind: "filesystem", taken: ["notes"]), "notes-2")
+        XCTAssertEqual(SourceSlugSuggestion.suggest(root: "~/Notes", kind: "filesystem", taken: ["notes", "notes-2"]), "notes-3")
+    }
+
     // MARK: - Summary
 
     func testTheSummaryLineCountsDocumentsAndSources() {

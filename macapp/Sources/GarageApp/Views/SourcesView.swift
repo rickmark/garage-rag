@@ -22,6 +22,16 @@ struct SourcesView: View {
     @State private var ingestAutoDismissTask: Task<Void, Never>?
     @AppStorage("garage.sources.showIngestOutput") private var showIngestOutput = false
 
+    /// The common locations, resolved against the disk once per visit rather than on every draw.
+    @State private var templates: [FirstRunSourceTemplate] = []
+    @State private var addingTemplateID: String? = nil
+    @State private var addFolderError: String? = nil
+    /// The custom-source form is folded away until "Custom Source…" or a row's "Edit…" opens it.
+    @State private var showCustomForm = false
+    /// The last name the form filled in by itself. While the field still holds it (or nothing),
+    /// a new folder or kind fills in a new one; a name the person typed is kept.
+    @State private var suggestedSlug = ""
+
     private let kinds = ["filesystem", "git", "sqlite", "maildir", "feed"]
     private let classes = ["document", "code", "communication"]
     private let trusts = ["authored", "reference", "received"]
@@ -40,8 +50,11 @@ struct SourcesView: View {
         }
         .navigationTitle("Sources")
         .onAppear {
+            templates = FirstRunSourceTemplate.builtIn()
             refreshSourcesAndTestDisk()
         }
+        .onChange(of: root) { _, _ in suggestSlugIfUnedited() }
+        .onChange(of: kind) { _, _ in suggestSlugIfUnedited() }
         .onDisappear {
             ingestAutoDismissTask?.cancel()
             ingestAutoDismissTask = nil
@@ -294,7 +307,7 @@ struct SourcesView: View {
                 .foregroundStyle(.secondary)
             Text("No sources configured yet.")
                 .font(.headline)
-            Text("Add a folder below, pick a preset such as Documents or Messages, or declare sources in garage.json and click Sync.")
+            Text("Pick a location below, add a folder of your own, or declare sources in garage.json and click Sync.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -637,95 +650,228 @@ struct SourcesView: View {
         appState.registeredSources.contains { $0.slug == trimmedSlug }
     }
 
+    private var registeredSlugs: Set<String> {
+        Set(appState.registeredSources.map(\.slug))
+    }
+
+    /// Two to four cards a row, as the setup assistant lays them out.
+    private let templateColumns = [GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 10, alignment: .top)]
+
+    /// The setup assistant's data page, for a running app: the common locations as cards that add
+    /// with one click, a folder chooser that also grants access, and the custom form behind a button.
     private var addSourceSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Text("Start from a preset")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Menu("Choose preset…") {
-                        ForEach(SourcePreset.all) { preset in
-                            Button(preset.title) {
-                                applyPreset(preset)
-                            }
+                if !templates.isEmpty {
+                    LazyVGrid(columns: templateColumns, alignment: .leading, spacing: 10) {
+                        ForEach(templates) { template in
+                            templateCard(template)
                         }
                     }
-                    .controlSize(.small)
-                    .fixedSize()
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        chooseFoldersToAdd()
+                    } label: {
+                        Label("Add Folder…", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(notReady)
+                    .help("Choose any folder. Choosing it here also grants Garage permission to read it.")
+                    .accessibilityIdentifier("sources.addFolder")
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { showCustomForm.toggle() }
+                    } label: {
+                        Label(showCustomForm ? "Hide Custom Source" : "Custom Source…", systemImage: "slider.horizontal.3")
+                    }
+                    .help("A source of another kind (a git repository, a Messages database, mailboxes, a feed), or one with its own class and trust.")
+                    .accessibilityIdentifier("sources.form.show")
+
                     Spacer()
+                    if busy || addingTemplateID != nil { ProgressView().controlSize(.small) }
                 }
 
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                    GridRow {
-                        Text("Name")
-                            .gridColumnAlignment(.trailing)
-                        TextField("notes", text: $slug)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 260)
-                            .help("How the CLI, MCP tools and this page refer to the source.")
-                            .accessibilityIdentifier("sources.form.slug")
-                    }
-                    GridRow {
-                        Text("Folder")
-                        HStack(spacing: 8) {
-                            TextField("~/Notes", text: $root)
-                                .textFieldStyle(.roundedBorder)
-                                .accessibilityIdentifier("sources.form.root")
-                            Button("Choose…") { chooseRoot() }
-                        }
-                    }
-                    GridRow {
-                        Text("Contents")
-                        HStack(spacing: 12) {
-                            Picker("Kind", selection: $kind) {
-                                ForEach(kinds, id: \.self) { Text($0).tag($0) }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-                            Picker("Class", selection: $corpusClass) {
-                                ForEach(classes, id: \.self) { Text($0).tag($0) }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-                            Picker("Trust", selection: $trust) {
-                                ForEach(trusts, id: \.self) { Text($0).tag($0) }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-                            Text(contentsHint)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
+                if let addFolderError {
+                    Text(addFolderError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 8) {
-                    Button(formEditsExistingSource ? "Update Source" : "Add Source") {
-                        addOrUpdateSource()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(trimmedSlug.isEmpty || trimmedRoot.isEmpty || notReady || formSourceIsBusy)
-                    .accessibilityIdentifier("sources.form.submit")
-
-                    Button("Remove Source", role: .destructive) {
-                        removeSource(slug: slug)
-                    }
-                    .disabled(trimmedSlug.isEmpty || !formEditsExistingSource || notReady || formSourceIsBeingRemoved)
-                    .accessibilityIdentifier("sources.form.remove")
-
-                    Button("Clear") {
-                        clearForm()
-                    }
-                    .disabled(slug.isEmpty && root.isEmpty)
-
-                    if busy { ProgressView().controlSize(.small) }
+                if showCustomForm {
+                    Divider()
+                    customSourceForm
                 }
             }
             .padding(8)
         } label: {
             Text("Add a Source")
+        }
+    }
+
+    private func templateCard(_ template: FirstRunSourceTemplate) -> some View {
+        let registered = registeredSlugs.contains(template.slug)
+        let isAdding = addingTemplateID == template.id
+        let isCode = !template.isCommunication && template.corpusClass == "code"
+
+        return Button {
+            addTemplate(template)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                MenuBarSymbolCircle(
+                    symbol: template.symbol,
+                    tint: SourceRowPresentation.tint(forCorpusClass: template.corpusClass),
+                    isActive: template.isAvailable && !registered
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(template.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                        if isAdding {
+                            ProgressView().controlSize(.small)
+                        } else if registered {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if template.isAvailable {
+                            Image(systemName: "plus.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    // Badges get their own row so a three-column title never hyphenates.
+                    if template.isCommunication || isCode || registered || !template.isAvailable {
+                        HStack(spacing: 4) {
+                            if template.isCommunication {
+                                StatusBadge("PRIVATE", tint: .purple)
+                            } else if isCode {
+                                StatusBadge("CODE", tint: .indigo)
+                            }
+                            if registered {
+                                StatusBadge("ADDED", tint: .green)
+                            } else if !template.isAvailable {
+                                StatusBadge("NOT FOUND", tint: .secondary)
+                            }
+                        }
+                        .fixedSize()
+                    }
+                    Text(template.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(template.root)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(FirstRunStyle.cardBackground(selected: false))
+            .opacity(template.isAvailable ? 1 : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: FirstRunStyle.cardCorner))
+        }
+        .buttonStyle(.plain)
+        .disabled(!template.isAvailable || registered || notReady || addingTemplateID != nil)
+        .help(registered ? "Already one of your sources." : "Add \(template.title) as a source.")
+        .accessibilityLabel(registered ? "\(template.title), added" : "Add \(template.title)")
+        .accessibilityIdentifier("sources.template.\(template.id)")
+    }
+
+    private var customSourceForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(formEditsExistingSource ? "Editing \(trimmedSlug)" : "Custom source")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("Start from a preset")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Menu("Choose preset…") {
+                    ForEach(SourcePreset.all) { preset in
+                        Button(preset.title) {
+                            applyPreset(preset)
+                        }
+                    }
+                }
+                .controlSize(.small)
+                .fixedSize()
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Folder")
+                        .gridColumnAlignment(.trailing)
+                    HStack(spacing: 8) {
+                        TextField("~/Notes", text: $root)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("sources.form.root")
+                        Button("Choose…") { chooseRoot() }
+                    }
+                }
+                GridRow {
+                    Text("Name")
+                    HStack(spacing: 8) {
+                        TextField("notes", text: $slug)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 260)
+                            .help("How the CLI, MCP tools and this page refer to the source. Filled in from the folder until you change it.")
+                            .accessibilityIdentifier("sources.form.slug")
+                        if !suggestedSlug.isEmpty, trimmedSlug == suggestedSlug {
+                            Text("from the folder")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                GridRow {
+                    Text("Contents")
+                    HStack(spacing: 12) {
+                        Picker("Kind", selection: $kind) {
+                            ForEach(kinds, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Picker("Class", selection: $corpusClass) {
+                            ForEach(classes, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Picker("Trust", selection: $trust) {
+                            ForEach(trusts, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Text(contentsHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button(formEditsExistingSource ? "Update Source" : "Add Source") {
+                    addOrUpdateSource()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(trimmedSlug.isEmpty || trimmedRoot.isEmpty || notReady || formSourceIsBusy)
+                .accessibilityIdentifier("sources.form.submit")
+
+                Button("Remove Source", role: .destructive) {
+                    removeSource(slug: slug)
+                }
+                .disabled(trimmedSlug.isEmpty || !formEditsExistingSource || notReady || formSourceIsBeingRemoved)
+                .accessibilityIdentifier("sources.form.remove")
+
+                Button("Clear") {
+                    clearForm()
+                }
+                .disabled(slug.isEmpty && root.isEmpty)
+            }
         }
     }
 
@@ -749,6 +895,65 @@ struct SourcesView: View {
         return "\(what), indexed as \(corpusClass) \(who)\(privacy)."
     }
 
+    /// Fills in the name from the folder and kind unless the person typed one.
+    private func suggestSlugIfUnedited() {
+        guard trimmedSlug.isEmpty || trimmedSlug == suggestedSlug else { return }
+        let suggestion = SourceSlugSuggestion.suggest(root: root, kind: kind, taken: registeredSlugs)
+        slug = suggestion
+        suggestedSlug = suggestion
+    }
+
+    private func addTemplate(_ template: FirstRunSourceTemplate) {
+        guard addingTemplateID == nil else { return }
+        addingTemplateID = template.id
+        addFolderError = nil
+        Task {
+            await appState.addSource(template.spec)
+            await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
+            _ = appState.testVolumeAccess()
+            addingTemplateID = nil
+        }
+    }
+
+    /// The setup assistant's "Add custom folder…": each chosen folder becomes a document source
+    /// named after it, and the panel's grant is kept so the sandboxed app can read it later.
+    private func chooseFoldersToAdd() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a folder for Garage to index"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let urls = panel.urls
+        addFolderError = nil
+        busy = true
+        Task {
+            var taken = registeredSlugs
+            var problems: [String] = []
+            for url in urls {
+                do {
+                    try appState.volumeAccess.grantSourceAccess(for: url, forSourcePath: url.path)
+                } catch {
+                    problems.append("Could not keep access to \(url.lastPathComponent): \(error.localizedDescription)")
+                }
+                let name = SourceSlugSuggestion.suggest(root: url.path, kind: "filesystem", taken: taken)
+                taken.insert(name)
+                let spec = SourceSpec(slug: name, root: url.path, kind: "filesystem", corpusClass: "document", trust: "authored")
+                let added = await appState.addSource(spec)
+                if !added {
+                    problems.append("\(url.lastPathComponent): \(appState.lastCommandOutput.trimmingCharacters(in: .whitespacesAndNewlines))")
+                }
+            }
+            await appState.fetchRegisteredSources()
+            await appState.fetchCorpusStats()
+            _ = appState.testVolumeAccess()
+            addFolderError = problems.isEmpty ? nil : problems.joined(separator: "\n")
+            busy = false
+        }
+    }
+
     // MARK: - Automatic updates
 
     private var automaticUpdatesSection: some View {
@@ -765,7 +970,11 @@ struct SourcesView: View {
                     .fixedSize()
                     .disabled(!appState.scheduledMaintenanceEnabled)
                 }
-                Text("Each run scans and ingests every source, then embeds the new chunks with every registered model. The first run starts after the chosen interval; a source added meanwhile is scanned as soon as the current run ends.")
+                Toggle("Also run when Garage starts", isOn: $appState.maintenanceRunsAtLaunch)
+                    .disabled(!appState.scheduledMaintenanceEnabled)
+                    .help("Run once as soon as the database is up after launch, instead of waiting a whole interval for the first run.")
+                    .accessibilityIdentifier("sources.maintenance.atLaunch")
+                Text("Each run scans and ingests every source, then embeds the new chunks with every registered model. Otherwise the first run starts after the chosen interval; a source added meanwhile is scanned as soon as the current run ends.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -845,7 +1054,10 @@ struct SourcesView: View {
         }
     }
 
+    /// A preset's slug is the one every page agrees on, so it is kept even if the folder changes
+    /// (a fixture standing in for Messages stays "apple-sms").
     private func applyPreset(_ preset: SourcePreset) {
+        suggestedSlug = ""
         slug = preset.spec.slug
         root = preset.spec.root
         kind = preset.spec.kind
@@ -854,14 +1066,17 @@ struct SourcesView: View {
     }
 
     private func populateForm(from source: RegisteredSource) {
+        suggestedSlug = ""
         slug = source.slug
         root = source.root
         kind = source.kind
         corpusClass = source.corpusClass
         trust = source.trust
+        withAnimation(.easeInOut(duration: 0.2)) { showCustomForm = true }
     }
 
     private func clearForm() {
+        suggestedSlug = ""
         slug = ""
         root = ""
         kind = "filesystem"

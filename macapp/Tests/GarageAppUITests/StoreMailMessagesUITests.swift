@@ -75,8 +75,7 @@ class StoreUITestCase: GarageUITestCase {
     /// replaces the slug and root when given.
     func addSource(preset: String, slug: String? = nil, root: String? = nil, file: StaticString = #filePath, line: UInt = #line) {
         open(section: "sources", file: file, line: line)
-        let slugField = element(identifier: "sources.form.slug")
-        XCTAssertTrue(slugField.waitForExistence(timeout: 15), "no slug field", file: file, line: line)
+        let slugField = revealCustomSourceForm(file: file, line: line)
 
         let menu = app.menuButtons["Choose preset…"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), "no Quick Presets menu", file: file, line: line)

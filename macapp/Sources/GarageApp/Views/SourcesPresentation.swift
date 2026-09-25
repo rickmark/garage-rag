@@ -566,3 +566,35 @@ enum SourcesSummary {
         return "\(docs) in \(sources.formatted()) \(SourceRowPresentation.plural("source", sources))"
     }
 }
+
+/// The name the form suggests for a source, from where it points and what it is, so people only
+/// type one when they want something other than the folder's own name.
+enum SourceSlugSuggestion {
+    /// The preset's slug for a preset's location; otherwise the last path component (a file's name
+    /// without its extension for a database; a feed's host), folded to `[a-z0-9-]` the way the setup
+    /// assistant names a custom folder, and made unique against `taken` with "-2", "-3", ….
+    static func suggest(root: String, kind: String, taken: Set<String>) -> String {
+        let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if let preset = SourcePreset.all.first(where: { $0.spec.root == trimmed && $0.spec.kind == kind }) {
+            return preset.spec.slug
+        }
+        let base: String
+        switch kind.lowercased() {
+        case "feed":
+            let host = URL(string: trimmed)?.host ?? trimmed
+            base = FirstRunSourceTemplate.slug(forFolderNamed: host)
+        case "sqlite":
+            let file = (trimmed as NSString).lastPathComponent
+            let name = (file as NSString).deletingPathExtension
+            base = FirstRunSourceTemplate.slug(forFolderNamed: name.isEmpty ? file : name)
+        default:
+            let path = trimmed.hasSuffix("/") && trimmed.count > 1 ? String(trimmed.dropLast()) : trimmed
+            var name = (path as NSString).lastPathComponent
+            if name == "~" || name.isEmpty || name == "/" { name = "home" }
+            if name == "com~apple~CloudDocs" { name = "icloud-drive" }
+            base = FirstRunSourceTemplate.slug(forFolderNamed: name)
+        }
+        return FirstRunSourceTemplate.uniqueSlug(base: base, taken: taken)
+    }
+}

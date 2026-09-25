@@ -18,8 +18,7 @@ final class SourcesUITests: GarageUITestCase {
 
     private func addSource(root: URL, file: StaticString = #filePath, line: UInt = #line) {
         open(section: "sources", file: file, line: line)
-        let slugField = element(identifier: "sources.form.slug")
-        XCTAssertTrue(slugField.waitForExistence(timeout: 15), "no slug field", file: file, line: line)
+        let slugField = revealCustomSourceForm(file: file, line: line)
         replaceText(in: slugField, with: slug, file: file, line: line)
         replaceText(in: element(identifier: "sources.form.root"), with: root.path, file: file, line: line)
 
@@ -45,6 +44,15 @@ final class SourcesUITests: GarageUITestCase {
         XCTAssertFalse(scanIngestAll.isEnabled, "Scan & Ingest All is enabled with no sources")
         XCTAssertTrue(element(identifier: "sources.sync").exists, "no sync button")
         XCTAssertTrue(element(identifier: "sources.diskAccess.refresh").exists, "no disk access refresh button")
+
+        // The common locations are cards; the custom form is folded away until asked for.
+        XCTAssertTrue(element(identifier: "sources.template.documents").exists, "no Documents card")
+        XCTAssertTrue(element(identifier: "sources.addFolder").exists, "no Add Folder button")
+        XCTAssertFalse(element(identifier: "sources.form.slug").exists, "the custom form is open before anyone asked for it")
+        let show = element(identifier: "sources.form.show")
+        XCTAssertTrue(show.exists, "no Custom Source button")
+        click(show)
+        XCTAssertTrue(element(identifier: "sources.form.slug").waitForExistence(timeout: 10), "Custom Source did not open the form")
 
         // Folded into the buttons above.
         for retired in ["Refresh Sources", "Scan All Sources", "Ingest All Sources", "Sync Config → DB", "Import DB → Config", "Test Ingest Paths & Disk Access"] {
