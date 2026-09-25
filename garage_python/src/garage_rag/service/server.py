@@ -1388,6 +1388,10 @@ class GarageRpcServicer(GarageServiceServicer):
             return UpdateEmbeddingsResponse(success=True, count=len(params))
 
 
+# Largest request the server accepts.
+MAX_REQUEST_BYTES = 256 * 1024 * 1024
+
+
 def create_grpc_server(
     host: str = "127.0.0.1",
     port: int = 50051,
@@ -1400,7 +1404,12 @@ def create_grpc_server(
     When ``stop_event`` is given, setting it stops the server with ``stop_grace``
     seconds of grace; ``serve_grpc`` sets it from SIGINT/SIGTERM.
     """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        # PersistDocument carries a document's whole text and every chunk; a
+        # years-long Messages thread outgrows gRPC's 4 MiB default.
+        options=[("grpc.max_receive_message_length", MAX_REQUEST_BYTES)],
+    )
     servicer = GarageRpcServicer(stop_event=stop_event)
     add_GarageServiceServicer_to_server(servicer, server)
 
