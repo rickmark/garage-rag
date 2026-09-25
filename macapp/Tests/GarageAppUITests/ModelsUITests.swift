@@ -26,11 +26,11 @@ final class ModelsUITests: GarageUITestCase {
         // data folder does not have: the card names the model and says it is not downloaded.
         XCTAssertTrue(element(text: "Gemma 2 2B Instruct").exists, "the Fact Distillation card does not name the default facts model")
         XCTAssertTrue(
-            element(text: "Not downloaded · via Llama XPC.").exists,
+            element(text: "Not downloaded · via Built-in engine.").exists,
             "the Fact Distillation card does not say the default facts model is not downloaded"
         )
         XCTAssertFalse(element(text: "No distillation model").exists, "the card says there is no facts model although one is named")
-        XCTAssertTrue(element(text: "Llama XPC").exists, "Providers does not list Llama XPC")
+        XCTAssertTrue(element(text: "Built-in engine").exists, "Providers does not list the built-in engine")
         XCTAssertTrue(element(identifier: "models.overall.manageEmbedding").exists, "the Embedding card has no Manage button")
         XCTAssertTrue(element(identifier: "models.overall.manageDistillation").exists, "the Fact Distillation card has no Manage button")
         // Tab contents stay on their tabs.

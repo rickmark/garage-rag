@@ -152,7 +152,7 @@ public struct DocumentsView: View {
         if isLoadingList && documents.isEmpty {
             VStack(spacing: 12) {
                 Spacer()
-                ProgressView("Loading documents via gRPC…")
+                ProgressView("Loading documents…")
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

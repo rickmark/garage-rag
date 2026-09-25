@@ -77,7 +77,7 @@ extension ModelsView {
         switch item.provider {
         case .llamaXPC:
             if llama.isModelLoaded(alias: item.slug) {
-                return ModelRowState(symbol: "bolt.fill", tint: .purple, isActive: true, text: "Loaded in Llama XPC")
+                return ModelRowState(symbol: "bolt.fill", tint: .purple, isActive: true, text: "Loaded in the built-in engine")
             }
             return ModelRowState(symbol: "internaldrive", tint: .secondary, isActive: false, text: "On disk · loads when facts are gleaned")
         case .ollama, .lmStudio:
@@ -217,7 +217,7 @@ extension ModelsView {
                 }
                 .controlSize(.small)
                 .disabled(llama.isBusy)
-                .help("Load the model into Llama XPC now rather than on first use")
+                .help("Load the model into the built-in engine now rather than on first use")
             }
         }
 
@@ -450,6 +450,7 @@ extension ModelsView {
             }
             .buttonStyle(.plain)
             .help("Copy SHA-256")
+            .accessibilityLabel("Copy SHA-256")
         }
     }
 }

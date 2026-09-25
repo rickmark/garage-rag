@@ -99,6 +99,7 @@ extension ModelsView {
             $0.name.lowercased().contains(trimmed) ||
             $0.slug.lowercased().contains(trimmed) ||
             $0.provider.displayName.lowercased().contains(trimmed) ||
+            $0.provider.rawValue.lowercased().contains(trimmed) ||
             $0.modelRef.lowercased().contains(trimmed)
         }
     }

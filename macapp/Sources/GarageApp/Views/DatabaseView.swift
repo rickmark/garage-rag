@@ -157,7 +157,7 @@ struct DatabaseView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(busy != nil)
-                .help("Stop Postgres and start it again, with the MCP and gRPC servers")
+                .help("Stop Postgres and start it again, with the MCP server and Index Manager")
                 .accessibilityIdentifier("database.restart")
             Button("Stop") { Task { await appState.stopPostgres() } }
                 .buttonStyle(.bordered)
@@ -300,7 +300,7 @@ struct DatabaseView: View {
                         EmptyView()
                     }
                     Menu {
-                        Button("Check for Updates") { appState.checkPendingMigrations() }
+                        Button("Check for Schema Updates") { appState.checkPendingMigrations() }
                         Button("Re-apply the Whole Schema") { reapplySchema() }
                             .help("Run every schema file again. They are written to be re-applied, so nothing is lost.")
                     } label: {

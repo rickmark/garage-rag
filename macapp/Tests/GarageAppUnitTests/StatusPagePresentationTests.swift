@@ -144,7 +144,7 @@ final class StatusPagePresentationTests: XCTestCase {
             sourceCount: 3, modelCount: 2, distillsFacts: true
         )
         XCTAssertEqual(indexing.headline.title, "Up to date")
-        XCTAssertEqual(indexing.headline.detail, "1,234 documents in 3 sources · embedded under 2 models · facts distilled")
+        XCTAssertEqual(indexing.headline.detail, "1,234 documents in 3 sources · embedded under 2 models · facts gleaned")
         XCTAssertEqual(indexing.headline.tint, .green)
         XCTAssertNil(indexing.headline.progress)
         XCTAssertEqual(indexing.fraction, 1)
@@ -165,7 +165,7 @@ final class StatusPagePresentationTests: XCTestCase {
         )
         XCTAssertEqual(indexing.remaining, IndexingPresentation.Remaining(documentsToIngest: 24, embeddingsToGo: 880, documentsToDistill: 300))
         XCTAssertEqual(indexing.headline.title, "1,204 items to index")
-        XCTAssertEqual(indexing.headline.detail, "24 documents to ingest · 880 embeddings to go · 300 documents to distill")
+        XCTAssertEqual(indexing.headline.detail, "24 documents to ingest · 880 embeddings to go · 300 documents to glean")
         XCTAssertEqual(indexing.headline.tint, .orange)
         let expected = (1180.0 / 1204.0 + 9_120.0 / 10_000.0 + 880.0 / 1180.0) / 3
         XCTAssertEqual(try XCTUnwrap(indexing.headline.progress), expected, accuracy: 0.0001)
@@ -320,7 +320,7 @@ final class StatusPagePresentationTests: XCTestCase {
 
         let unreachable = XPCServiceInfo(id: "llama-xpc", name: "", bundleId: "", serviceDescription: "", state: .unreachable(error: "Couldn't communicate with a helper application.\ndetails"))
         let down = ServiceRowPresentation.xpc(unreachable, report: nil, test: nil)
-        XCTAssertEqual(down.name, "Inference")
+        XCTAssertEqual(down.name, "Built-in Engine")
         XCTAssertEqual(down.state, .unreachable)
         XCTAssertEqual(down.detail, "Can't be reached: Couldn't communicate with a helper application.")
         XCTAssertEqual(down.tint, .red)
@@ -508,7 +508,7 @@ final class StatusPagePresentationTests: XCTestCase {
             stats: stats(documents: 1, expected: 1, chunks: 3, embedded: [3], distilled: 1, facts: 2),
             sourceCount: 1, modelCount: 1, distillsFacts: true
         )
-        XCTAssertEqual(indexing.corpusLine, "1 document in 1 source · embedded under 1 model · facts distilled")
+        XCTAssertEqual(indexing.corpusLine, "1 document in 1 source · embedded under 1 model · facts gleaned")
     }
 
     func testAStoppedDatabaseWithoutSourcesOffersNothingToRun() {
@@ -542,7 +542,7 @@ final class StatusPagePresentationTests: XCTestCase {
     func testEachServiceIdHasItsShortName() {
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "ingest-xpc"), "Ingest")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "embed-xpc"), "Embeddings")
-        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "llama-xpc"), "Inference")
+        XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "llama-xpc"), "Built-in Engine")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "model-download-xpc"), "Model Downloads")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "mcp-server-xpc"), "MCP Server")
         XCTAssertEqual(ServiceRowPresentation.name(forServiceId: "garage-xpc"), "Garage Backend")

@@ -281,9 +281,9 @@ public final class IngestEngine: @unchecked Sendable {
                 canOpenFiles = false
             } else if !isReadable {
                 if let cat = tccCategory {
-                    errorMsg = "TCC permission required (\(cat))"
+                    errorMsg = "Needs permission (\(IngestSourcePathAccessResult.permissionName(of: cat)))"
                 } else {
-                    errorMsg = "Permission denied / not readable"
+                    errorMsg = "Garage isn't allowed to read this folder"
                 }
                 canOpenFiles = false
             }
@@ -383,9 +383,9 @@ public final class IngestEngine: @unchecked Sendable {
     private func tccHelpMessage(category: String?) -> String? {
         switch category {
         case "apple-sms":
-            return "macOS protects Messages databases (~/Library/Messages). Full Disk Access in System Settings or selecting the Messages directory directly is required to index SMS and iMessage history."
+            return "macOS protects Messages databases (~/Library/Messages). Turn on Full Disk Access for Garage in System Settings to index SMS and iMessage history. The App Store version also needs you to select your startup disk or the Messages folder so Garage can open it."
         case "apple-mail":
-            return "macOS protects Mail storage (~/Library/Mail). Full Disk Access in System Settings or selecting the Mail directory directly is required to index email archives."
+            return "macOS protects Mail storage (~/Library/Mail). Turn on Full Disk Access for Garage in System Settings to index email archives. The App Store version also needs you to select your startup disk or the Mail folder so Garage can open it."
         case "documents":
             return "Permission to access your Documents directory is required to index local documents."
         case "downloads":

@@ -286,7 +286,7 @@ struct StatusHealth: Equatable {
 
         if let llamaError, !llamaError.isEmpty {
             list.append(Problem(
-                id: "llama", severity: .critical, title: "Llama can't be reached",
+                id: "llama", severity: .critical, title: "Built-in engine can't be reached",
                 detail: MenuBarStatus.firstLine(llamaError), detailIsError: true,
                 section: .models, fix: .refreshLlama
             ))
@@ -528,7 +528,7 @@ struct IndexingPresentation: Equatable {
         return fractions.reduce(0, +) / Double(fractions.count)
     }
 
-    /// "24 documents to ingest · 880 embeddings to go · 300 documents to distill".
+    /// "24 documents to ingest · 880 embeddings to go · 300 documents to glean".
     var remainingLine: String? {
         var parts: [String] = []
         if let n = remaining.documentsToIngest, n > 0 {
@@ -538,19 +538,19 @@ struct IndexingPresentation: Equatable {
             parts.append("\(n.formatted()) \(Self.plural("embedding", n)) to go")
         }
         if let n = remaining.documentsToDistill, n > 0 {
-            parts.append("\(n.formatted()) \(Self.plural("document", n)) to distill")
+            parts.append("\(n.formatted()) \(Self.plural("document", n)) to glean")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// "1,234 documents in 3 sources · embedded under 2 models · facts distilled".
+    /// "1,234 documents in 3 sources · embedded under 2 models · facts gleaned".
     var corpusLine: String {
         var parts = ["\(stats.documentsCount.formatted()) \(Self.plural("document", stats.documentsCount)) in \(sourceCount.formatted()) \(Self.plural("source", sourceCount))"]
         if remaining.embeddingsToGo != nil {
             parts.append("embedded under \(modelCount.formatted()) \(Self.plural("model", modelCount))")
         }
         if remaining.documentsToDistill != nil {
-            parts.append("facts distilled")
+            parts.append("facts gleaned")
         }
         return parts.joined(separator: " · ")
     }
@@ -796,7 +796,7 @@ struct ServiceRowPresentation: Equatable, Identifiable {
         switch id {
         case "ingest-xpc": "Ingest"
         case "embed-xpc": "Embeddings"
-        case "llama-xpc": "Inference"
+        case "llama-xpc": "Built-in Engine"
         case "model-download-xpc": "Model Downloads"
         case "mcp-server-xpc": "MCP Server"
         case "garage-xpc": "Garage Backend"

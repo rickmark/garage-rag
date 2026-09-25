@@ -13,8 +13,8 @@ public struct LogsView: View {
         case ingest = "Ingest"
         case embed = "Embed"
         case mcp = "MCP Server"
-        case grpc = "gRPC Server"
-        case llama = "LLaMa"
+        case grpc = "Index Manager"
+        case llama = "Built-in Engine"
         case modelDownload = "Downloader"
 
         public var id: String { rawValue }

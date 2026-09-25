@@ -388,7 +388,7 @@ struct SourcesAttention: Equatable, Identifiable {
                     detail: access.tccHelpMessage ?? category.helpMessage,
                     primary: Command(title: "Grant Folder Access…", action: .grantFolder(slug: source.slug, path: source.root)),
                     secondary: [
-                        Command(title: "Ask macOS…", action: .tccPrompt(category, slug: source.slug, path: source.root)),
+                        Command(title: "Explain…", action: .tccPrompt(category, slug: source.slug, path: source.root)),
                         Command(title: "Open Privacy Settings…", action: .openPrivacySettings(category)),
                     ]
                 ))

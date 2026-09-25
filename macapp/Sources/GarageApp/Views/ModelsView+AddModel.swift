@@ -116,7 +116,7 @@ extension ModelsView {
 
     var customModelForm: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("A model models.json does not list. Ollama and LM Studio serve it from their own library; Llama XPC needs its GGUF file in the models folder under this slug.")
+            Text("A model models.json does not list. Ollama and LM Studio serve it from their own library; the built-in engine needs its GGUF file in the models folder under this slug.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
