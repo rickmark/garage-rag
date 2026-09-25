@@ -74,6 +74,7 @@ class GarageUITestCase: XCTestCase {
             // Off unless a test is about it: adding a source then starts a scan and ingest of every
             // source, which makes the source a test just added busy (not removable) until it ends.
             "-scheduledMaintenanceEnabled", automaticMaintenance ? "YES" : "NO",
+            "-scheduledMaintenanceRunsAtLaunch", "NO",
             // Start from a clean window each time rather than the last run's restored state.
             "-ApplePersistenceIgnoreState", "YES",
         ]
@@ -208,6 +209,20 @@ class GarageUITestCase: XCTestCase {
                 step = -step
             }
         }
+    }
+
+    /// Opens the Sources page's custom-source form, folded away behind "Custom Source…" until
+    /// asked for, and returns its name field. A no-op when the form is already open.
+    @discardableResult
+    func revealCustomSourceForm(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let slugField = element(identifier: "sources.form.slug")
+        if !slugField.exists {
+            let show = element(identifier: "sources.form.show")
+            XCTAssertTrue(show.waitForExistence(timeout: 15), "no Custom Source button", file: file, line: line)
+            click(show)
+        }
+        XCTAssertTrue(slugField.waitForExistence(timeout: 15), "no slug field", file: file, line: line)
+        return slugField
     }
 
     func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval = 30) -> Bool {

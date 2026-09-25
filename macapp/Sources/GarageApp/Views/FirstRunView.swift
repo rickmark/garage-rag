@@ -250,7 +250,7 @@ struct FirstRunView: View {
 
 // MARK: - Shared pieces
 
-private enum FirstRunStyle {
+enum FirstRunStyle {
     static let cardCorner: CGFloat = 10
 
     static func cardBackground(selected: Bool) -> some View {

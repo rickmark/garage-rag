@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     static weak var shared: AppState?
     private static let scheduledMaintenanceEnabledKey = "scheduledMaintenanceEnabled"
     private static let scheduledMaintenanceIntervalKey = "scheduledMaintenanceInterval"
+    private static let maintenanceRunsAtLaunchKey = "scheduledMaintenanceRunsAtLaunch"
 
     let postgres = PostgresService()
     /// General operations (sources, models, schema, settings), one at a time.
@@ -112,6 +113,16 @@ final class AppState: ObservableObject {
             configureScheduledMaintenance()
         }
     }
+    /// With automatic updates on, also run them once the database is up after launch, rather than
+    /// waiting a whole interval for the first run.
+    @Published var maintenanceRunsAtLaunch: Bool {
+        didSet {
+            UserDefaults.standard.set(maintenanceRunsAtLaunch, forKey: Self.maintenanceRunsAtLaunchKey)
+        }
+    }
+    /// Set at launch and cleared by the first `runMaintenanceAtLaunchIfEnabled()`, so a later
+    /// database restart does not count as a launch.
+    private var maintenanceAtLaunchPending = false
 
     private var commandInProgress = false
     /// True from the moment "Reset Database" starts stopping services until this instance quits.
@@ -168,6 +179,7 @@ final class AppState: ObservableObject {
             forKey: Self.scheduledMaintenanceIntervalKey
         )
         scheduledMaintenanceInterval = storedInterval > 0 ? storedInterval : 60 * 60
+        maintenanceRunsAtLaunch = UserDefaults.standard.bool(forKey: Self.maintenanceRunsAtLaunchKey)
 
         // Forward changes from child ObservableObjects to AppState observers
         downloadService.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
@@ -205,6 +217,7 @@ final class AppState: ObservableObject {
         hasLaunched = true
         let arguments = CommandLine.arguments
         guard arguments.contains(GarageAppLaunch.databaseResetArgument) else {
+            maintenanceAtLaunchPending = true
             launchServices(startsPostgres: autoStartPostgres)
             return
         }
@@ -279,6 +292,7 @@ final class AppState: ObservableObject {
             // applyMigrations() also starts MCP and gRPC and refreshes what the pages show.
             if postgres.status == .needsMigration {
                 await applyMigrations()
+                runMaintenanceAtLaunchIfEnabled()
                 return
             }
             if postgres.status == .running {
@@ -289,6 +303,7 @@ final class AppState: ObservableObject {
             await fetchRegisteredModels()
             await fetchRegisteredSources()
             await fetchCorpusStats()
+            runMaintenanceAtLaunchIfEnabled()
         } catch {
             // Status already reflects .failed(...); nothing else to do here.
         }
@@ -1347,6 +1362,17 @@ final class AppState: ObservableObject {
         let backfillSucceeded = await runBackfill()
         await fetchCorpusStats()
         lastCommandSucceeded = ingestSucceeded && backfillSucceeded
+    }
+
+    /// The "also run when Garage starts" option: once per launch, after the database is up and the
+    /// gRPC backend the scan goes through is listening. The setup assistant, when it is open, holds
+    /// the run until it closes (`runScheduledMaintenance`). Debounced, so a source the assistant or
+    /// garage.json registers right after start shares the run rather than starting its own.
+    func runMaintenanceAtLaunchIfEnabled() {
+        guard maintenanceAtLaunchPending, postgres.status == .running else { return }
+        maintenanceAtLaunchPending = false
+        guard scheduledMaintenanceEnabled, maintenanceRunsAtLaunch else { return }
+        scheduleDebouncedMaintenanceTrigger()
     }
 
     /// Kicks off ingest + embedding backfill for all sources when the user has enabled
