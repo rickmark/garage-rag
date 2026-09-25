@@ -5,8 +5,9 @@ low-contrast captures, dense UI, diagrams and handwriting; those images yield
 little or no text, and there is no fallback -- no image is ever sent to a cloud
 vision model.
 
-An image that yields no usable text is reported as a failure rather than
-indexed as an empty document, so the run report reflects reality.
+An image that yields no usable text raises :class:`NoTextFound`: it is not
+indexed as an empty document, and it is not an error either -- most images
+simply hold no text -- so the pipeline records it as rejected.
 
 Note on the corpus: most images in a source tree are UI assets -- icons, arrows,
 logos. Those have no recoverable text and should not consume OCR time at all, so
@@ -19,7 +20,7 @@ import logging
 from pathlib import Path
 
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, normalize_text
+from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, NoTextFound, normalize_text
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _tesseract(path: Path) -> tuple[str, float]:
     if width * height > MAX_OCR_PIXELS:
         raise ExtractionError(f"image too large to OCR ({width}x{height}): {path}")
     if width < MIN_OCR_WIDTH or height < MIN_OCR_HEIGHT:
-        raise ExtractionError(f"image too small to hold text ({width}x{height}): {path}")
+        raise NoTextFound(f"image too small to hold text ({width}x{height}): {path}")
 
     try:
         recognized = tesseract.recognize(image)
@@ -87,9 +88,9 @@ def extract_image(path: Path) -> ExtractResult:
 
     text, confidence = _tesseract(path)
     if len(text) < settings.ocr_min_chars:
-        # Reported as a failure, not indexed as an empty document: most images in
-        # a code tree are icons and genuinely contain nothing.
-        raise ExtractionError(f"no usable text in image (confidence {confidence:.0f}, {len(text)} chars): {path}")
+        # Not indexed as an empty document, and not an error: most images in a
+        # code tree are icons and genuinely contain nothing.
+        raise NoTextFound(f"no usable text in image (confidence {confidence:.0f}, {len(text)} chars): {path}")
 
     return ExtractResult(
         text=text,
