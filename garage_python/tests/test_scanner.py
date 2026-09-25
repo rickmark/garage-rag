@@ -180,6 +180,32 @@ def test_scan_git_counts_what_ingest_walks(tmp_path: Path) -> None:
     assert scan_git(tmp_path, source_slug="git-test").item_count == walked == 3
 
 
+def test_nothing_inside_a_git_directory_is_scanned_or_walked(tmp_path: Path) -> None:
+    """Git's internals stay out: .git by name, a bare clone under any name, and a
+    source rooted at or below a .git directory."""
+    from garage_rag.ingest.walker import walk
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    (repo / "README.md").write_text("# Readme", encoding="utf-8")
+    (repo / ".git" / "info" / "planted.md").write_text("# inside .git", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True, capture_output=True)
+
+    # A bare clone is a git directory without the dot: HEAD, objects/, refs/.
+    mirror = repo / "vendored-mirror"
+    subprocess.run(["git", "clone", "--bare", str(repo), str(mirror)], check=True, capture_output=True)
+    (mirror / "info" / "planted.md").write_text("# inside a bare repo", encoding="utf-8")
+
+    walked = [c.path for c in walk(repo)]
+    assert walked == [repo / "README.md"]
+    assert scan_git(repo, source_slug="git-test").item_count == 1
+
+    for root in (repo / ".git", repo / ".git" / "info", mirror):
+        assert list(walk(root)) == [], root
+        assert scan_filesystem(root, source_slug="git-internal").item_count == 0, root
+    assert scan_filesystem(repo / ".git" / "info" / "planted.md", source_slug="one-file").item_count == 0
+
+
 def test_scan_git_fallback_on_non_git_dir(tmp_path: Path) -> None:
     (tmp_path / "doc.md").write_text("# Doc", encoding="utf-8")
     res = scan_git(tmp_path, source_slug="non-git")
@@ -254,6 +280,30 @@ def test_scan_sqlite_apple_messages_counts_threads_not_messages(tmp_path: Path) 
     res = scan_sqlite(db_file, source_slug="apple-sms")
     assert res.item_count == 2  # threads (chats), not the 50 messages + 1 handle
     assert res.item_type == "threads"
+
+
+def test_scan_messages_folder_counts_only_threads(tmp_path: Path) -> None:
+    """The preset's root is ~/Library/Messages: caches beside chat.db must not add rows to the thread count."""
+    conn = sqlite3.connect(tmp_path / "chat.db")
+    conn.execute("CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT);")
+    conn.execute("CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT);")
+    conn.execute("CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);")
+    conn.executemany("INSERT INTO chat (guid) VALUES (?);", [("a",), ("b",), ("c",)])
+    conn.executemany("INSERT INTO message (text) VALUES (?);", [(f"m{i}",) for i in range(40)])
+    conn.commit()
+    conn.close()
+
+    (tmp_path / "NickNameCache").mkdir()
+    cache = sqlite3.connect(tmp_path / "NickNameCache" / "nicknames.db")
+    cache.execute("CREATE TABLE kv (k TEXT, v TEXT);")
+    cache.executemany("INSERT INTO kv VALUES (?, ?);", [(str(i), "x") for i in range(25)])
+    cache.commit()
+    cache.close()
+
+    res = scan_sqlite(tmp_path, source_slug="apple-sms")
+    assert res.item_count == 3
+    assert res.item_type == "threads"
+    assert res.details["databases_count"] == 2
 
 
 # ---------------------------------------------------------------------------

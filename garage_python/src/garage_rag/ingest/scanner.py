@@ -40,6 +40,8 @@ from garage_rag.ingest.walker import (
     is_dependency_dir,
     is_diagnostic_dir,
     is_diagnostic_file,
+    is_git_dir,
+    is_inside_git_dir,
 )
 
 log = logging.getLogger(__name__)
@@ -132,6 +134,18 @@ def scan_filesystem(
             error=f"path does not exist: {root}",
         )
 
+    if is_inside_git_dir(root):
+        # Mirrors walker.walk, which indexes nothing inside a git directory.
+        return SourceScanResult(
+            source_slug=source_slug,
+            kind="filesystem",
+            root=root,
+            item_count=0,
+            item_type="files",
+            details={"files": 0, "dirs": 0, "inside_git_dir": True},
+            duration_seconds=time.perf_counter() - start_time,
+        )
+
     if root.is_file():
         count = 0 if not is_indexable(root) or not include_code and is_code_path(root) else 1
         return SourceScanResult(
@@ -155,6 +169,10 @@ def scan_filesystem(
             parent = Path(parent_str)
             dir_count += 1
             tick(file_count)
+
+            if is_git_dir(dirnames, filenames):
+                dirnames[:] = []
+                continue
 
             # Prune excluded directories in-place
             dirnames[:] = [
@@ -351,22 +369,28 @@ def scan_sqlite(
                 if filename.lower().endswith((".db", ".sqlite", ".sqlite3")):
                     db_files.append(Path(parent_str) / filename)
 
-    total_records = 0
+    record_count = 0
+    thread_count = 0
     all_table_counts: dict[str, dict[str, int]] = {}
     any_thread_counted = False
     tick = _ProgressTicker(on_progress)
     for db_path in db_files:
-        tick(total_records)
+        tick(thread_count if any_thread_counted else record_count)
         rows, tbls, is_thread_count = _count_sqlite_database_rows(db_path)
-        total_records += rows
+        if is_thread_count:
+            thread_count += rows
+        else:
+            record_count += rows
         all_table_counts[db_path.name] = tbls
         any_thread_counted = any_thread_counted or is_thread_count
 
+    # ~/Library/Messages holds chat.db beside caches that are databases too; their
+    # rows are not conversations, so once a Messages database turns up, only threads count.
     return SourceScanResult(
         source_slug=source_slug,
         kind="sqlite",
         root=root,
-        item_count=total_records,
+        item_count=thread_count if any_thread_counted else record_count,
         item_type="threads" if any_thread_counted else "records",
         details={
             "databases_count": len(db_files),

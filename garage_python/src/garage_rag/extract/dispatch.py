@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, UnsupportedFile
+from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, NoTextFound, UnsupportedFile
 from garage_rag.extract.placeholder import PlaceholderFile, check_materialized
 
 log = logging.getLogger(__name__)
@@ -288,6 +288,7 @@ __all__ = [
     "ContentKind",
     "ExtractionError",
     "ExtractResult",
+    "NoTextFound",
     "PlaceholderFile",
     "UnsupportedFile",
     "extract",

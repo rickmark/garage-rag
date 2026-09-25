@@ -31,7 +31,7 @@ from pathlib import Path
 
 from garage_rag.attribute.resolver import SelfIdentity, resolve
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ExtractionError, ExtractResult, file_sha256, sha256_text
+from garage_rag.extract.base import ExtractionError, ExtractResult, NoTextFound, file_sha256, sha256_text
 from garage_rag.extract.dispatch import extract
 from garage_rag.extract.placeholder import PlaceholderFile
 from garage_rag.extract.quality import assess
@@ -128,6 +128,13 @@ def ingest_one(
         log.debug(
             "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
         )
+    except NoTextFound as exc:
+        # Read fine and holds no text (an icon, a photo): nothing to index, and
+        # nothing wrong. Rejecting also drops a document an older version left.
+        counters.rejected += 1
+        log.info("No text in %s: %s", candidate.path.name, exc)
+        gateway.record_rejected(source_ctx.run_id, source_ctx.slug, candidate.uri)
+        return
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
         log.warning("Extraction failed for %s: %s", candidate.uri, exc)

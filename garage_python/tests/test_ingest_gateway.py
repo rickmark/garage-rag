@@ -610,6 +610,41 @@ def test_no_chunks_file_is_recorded_as_seen(tmp_path: Path):
     record_seen.assert_called_once_with(3, "seen-src", str(tmp_path / "empty.txt"))
 
 
+def test_image_without_text_is_rejected_not_failed(tmp_path: Path):
+    """An image OCR finds no text in is an outcome, not an error: rejected, no error recorded."""
+    from garage_rag.extract.base import NoTextFound
+
+    (tmp_path / "photo.txt").write_text("stands in for an image", encoding="utf-8")
+    mock_source = _mock_source(tmp_path)
+
+    def fake_query(model, *cols):
+        q = MagicMock()
+        q.filter_by.return_value.one_or_none.return_value = mock_source if model is Source else None
+        return q
+
+    session = MagicMock()
+    session.query.side_effect = fake_query
+    session.__enter__.return_value = session
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: session)
+    fake_run = MagicMock()
+    fake_run.id = 5
+
+    with (
+        patch("garage_rag.attribute.resolver.ensure_self_author"),
+        patch("garage_rag.db.models.IngestRun", return_value=fake_run),
+        patch("garage_rag.ingest.pipeline.extract", side_effect=NoTextFound("no usable text in image")),
+        patch.object(gateway, "record_rejected") as record_rejected,
+        patch.object(gateway, "record_extract_failed") as record_extract_failed,
+    ):
+        counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
+
+    assert counters.rejected == 1
+    assert counters.failed == 0
+    assert counters.errors == []
+    record_rejected.assert_called_once_with(5, "seen-src", str(tmp_path / "photo.txt"))
+    record_extract_failed.assert_not_called()
+
+
 def test_unexpected_ingest_error_is_recorded_as_seen(tmp_path: Path):
     (tmp_path / "boom.txt").write_text("this one explodes", encoding="utf-8")
     mock_source = _mock_source(tmp_path)

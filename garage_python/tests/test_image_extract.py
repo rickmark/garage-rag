@@ -9,7 +9,7 @@ from PIL import Image
 
 from garage_rag.extract import image as image_extract
 from garage_rag.extract import tesseract
-from garage_rag.extract.base import ExtractionError
+from garage_rag.extract.base import ExtractionError, NoTextFound
 
 
 def _write(tmp_path: Path, name: str, size: tuple[int, int] = (400, 300)) -> Path:
@@ -43,7 +43,7 @@ def test_icons_are_rejected_before_ocr(monkeypatch, tmp_path):
         raise AssertionError("OCR must not run on an icon")
 
     monkeypatch.setattr(tesseract, "recognize", fail)
-    with pytest.raises(ExtractionError, match="too small"):
+    with pytest.raises(NoTextFound, match="too small"):
         image_extract._tesseract(_write(tmp_path, "icon.png", (64, 64)))
 
 
@@ -54,3 +54,19 @@ def test_library_failures_become_extraction_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(tesseract, "recognize", unavailable)
     with pytest.raises(ExtractionError, match="libtesseract not found"):
         image_extract._tesseract(_write(tmp_path, "shot.png"))
+
+
+def test_an_image_without_text_is_no_text_not_a_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(tesseract, "recognize", lambda image: [])
+    with pytest.raises(NoTextFound, match="no usable text"):
+        image_extract.extract_image(_write(tmp_path, "photo.png"))
+
+
+def test_library_failures_are_not_mistaken_for_no_text(monkeypatch, tmp_path):
+    def unavailable(image):
+        raise tesseract.TesseractUnavailable("libtesseract not found")
+
+    monkeypatch.setattr(tesseract, "recognize", unavailable)
+    with pytest.raises(ExtractionError) as info:
+        image_extract.extract_image(_write(tmp_path, "shot.png"))
+    assert not isinstance(info.value, NoTextFound)
