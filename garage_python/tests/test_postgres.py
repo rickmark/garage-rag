@@ -235,9 +235,9 @@ class TestMigrations:
         rows = db.execute(text("SELECT title, state::text, error FROM documents")).all()
         assert [tuple(row) for row in rows] == [("Evicted", "ok", None)]
 
-    def test_011_scopes_facts_by_prompt(self, db: Session) -> None:
-        """A pre-011 database: facts unique on (document_id, ord), no prompt columns,
-        no fact_runs. A fresh schema has all of 011, so it is taken back out by hand."""
+    def test_013_scopes_facts_by_prompt(self, db: Session) -> None:
+        """A pre-013 database: facts unique on (document_id, ord), no prompt columns,
+        no fact_runs. A fresh schema has all of 013, so it is taken back out by hand."""
         conn = db.connection()
         conn.exec_driver_sql("DROP TABLE fact_runs")
         conn.exec_driver_sql("ALTER TABLE facts DROP CONSTRAINT facts_prompt_ord_unique")
@@ -248,7 +248,7 @@ class TestMigrations:
             text("INSERT INTO facts (document_id, ord, fact) VALUES (:d, 0, 'Acme was founded in 1998.')"),
             {"d": document},
         )
-        migration = (sql_dir() / "011_fact_prompts.sql").read_text(encoding="utf-8")
+        migration = (sql_dir() / "013_fact_prompts.sql").read_text(encoding="utf-8")
         conn.exec_driver_sql(migration)
         conn.exec_driver_sql(migration)  # and again: idempotent
 

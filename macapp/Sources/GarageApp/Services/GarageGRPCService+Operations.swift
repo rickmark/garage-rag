@@ -149,14 +149,17 @@ extension GarageGRPCService {
 
     /// Distills documents into facts, handing each status to `onStatus`; returns the
     /// final `finished` status (nil if the stream ended without one).
+    /// `prompts` empty runs every enabled prompt that applies; otherwise exactly those.
     func enrichFacts(
         source: String = "*",
         documentID: Int64? = nil,
+        prompts: [String] = [],
         onStatus: @MainActor (Garage_EnrichFactsStatus) -> Void
     ) async throws -> Garage_EnrichFactsStatus? {
         var request = Garage_EnrichFactsRequest()
         request.source = source
         request.documentID = documentID ?? 0
+        request.prompts = prompts
         return try await call(timeout: nil) { client, options in
             var finished: Garage_EnrichFactsStatus?
             for try await status in client.enrichFacts(request, callOptions: options) {
@@ -167,6 +170,11 @@ extension GarageGRPCService {
             }
             return finished
         }
+    }
+
+    /// The effective fact prompts, and `facts.prompts` as configured (what `setSetting` takes back).
+    func listFactPrompts() async throws -> Garage_ListFactPromptsResponse {
+        try await call { try await $0.listFactPrompts(Garage_ListFactPromptsRequest(), callOptions: $1) }
     }
 
     // MARK: - Schema, stats & settings

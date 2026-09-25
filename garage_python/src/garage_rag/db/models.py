@@ -229,7 +229,7 @@ class Fact(Base):
     extractor: Mapped[str] = mapped_column(Text, default="langextract")
     extractor_model: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The facts.prompts entry that produced this fact, and the hash of its
-    # description and examples (011_fact_prompts.sql); NULL before 011.
+    # description and examples (013_fact_prompts.sql); NULL before 013.
     prompt_name: Mapped[str] = mapped_column(Text, default="default")
     prompt_sha256: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -250,7 +250,7 @@ class Fact(Base):
 
 
 class FactRun(Base):
-    """The last extraction of one prompt over one document (011_fact_prompts.sql).
+    """The last extraction of one prompt over one document (013_fact_prompts.sql).
 
     Kept even when the run found nothing, so ``enrich-facts --stale-only`` can
     tell an up-to-date document from one never extracted.
