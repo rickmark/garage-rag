@@ -156,67 +156,33 @@ struct MenuBarRowButtonStyle: ButtonStyle {
     }
 }
 
-/// A plain command row at the foot of the popover ("Open Garage", "Quit Garage"), drawn like an
-/// item of a native menu: full-width highlight in the accent color, shortcut in the margin.
-struct MenuBarCommandRow: View {
-    let title: String
-    /// The key that fires the row while the popover is open, shown as "⌘<key>" in the margin.
-    var key: KeyEquivalent? = nil
+/// A round icon button in the popover's header ("Open Garage", "Quit Garage"), in the style of the
+/// buttons at the top of Control Center's modules: no border until the pointer is over it.
+struct MenuBarHeaderButton: View {
+    let symbol: String
+    let help: String
+    /// The ⌘ shortcut that fires the button while the popover is open.
+    let key: KeyEquivalent
     let action: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
-        if let key {
-            button.keyboardShortcut(key)
-        } else {
-            button
-        }
-    }
-
-    private var button: some View {
         Button(action: action) {
-            HStack {
-                Text(title)
-                Spacer()
-                if let key {
-                    Text("⌘" + String(key.character).uppercased())
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(MenuBarCommandButtonStyle())
-    }
-}
-
-struct MenuBarCommandButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Row(configuration: configuration)
-    }
-
-    private struct Row: View {
-        let configuration: ButtonStyleConfiguration
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovering = false
-
-        var body: some View {
-            let highlighted = isEnabled && (isHovering || configuration.isPressed)
-            configuration.label
-                .font(.system(size: 13))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .foregroundStyle(foreground(highlighted: highlighted))
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 28)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(highlighted ? AnyShapeStyle(TintShapeStyle.tint) : AnyShapeStyle(Color.clear))
+                    Circle().fill(isHovering ? AnyShapeStyle(HierarchicalShapeStyle.quaternary) : AnyShapeStyle(Color.clear))
                 )
-                .onHover { isHovering = $0 }
+                .contentShape(Circle())
         }
-
-        private func foreground(highlighted: Bool) -> AnyShapeStyle {
-            if highlighted { return AnyShapeStyle(Color.white) }
-            return isEnabled ? AnyShapeStyle(HierarchicalShapeStyle.primary) : AnyShapeStyle(HierarchicalShapeStyle.tertiary)
-        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(key)
+        .foregroundStyle(.secondary)
+        .onHover { isHovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
