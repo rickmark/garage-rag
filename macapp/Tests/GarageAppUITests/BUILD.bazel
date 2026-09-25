@@ -21,6 +21,8 @@ macos_ui_test(
     bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
     bundle_name = "GarageAppUITests",
     minimum_os_version = "14.0",
+    # The made-up corpus the tests ingest, as Resources/corpus (GarageUITestCase.copyFixtureCorpus).
+    resources = ["//macapp/Tests/Fixtures:corpus_resources"],
     tags = [
         "exclusive",
         "local",
