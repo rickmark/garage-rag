@@ -60,6 +60,10 @@ Welcome to the comprehensive support guide for **Garage**. This guide covers sys
 
 The sidebar starts with **Status**, followed by three groups:
 
+- **Status** — the page to check first.
+  - **Health** reads "All systems go", or lists each problem (the database stopped or needing a schema update, the MCP server down, missing disk access, a source that can't be read, no sources or embedding model yet) with the button that fixes it and a link to its page.
+  - **Indexing** shows how much of your library is indexed, embedded and distilled, with **Update Everything** or **Stop**; while the pipeline runs it shows the current stage and the Scan › Ingest › Embed › Distill trail. Below it are the source, document, chunk, embedded and fact figures.
+  - **Index Manager** shows the background service that runs search and indexing jobs, and what it is doing. **Helper Services** lists every helper process (Inference is the built-in model engine) with **Test**, **Restart** and a chevron for its status report, self tests and crash report. **Service Output**, folded at the bottom, holds their log.
 - **Configuration**
   - **Sources** — one row per source with its state ("24 items to go", "Up to date", "Needs permission to read this folder") and **Scan & Ingest**, which turns into **Cancel** while the source is queued or running. Anything that cannot be read is listed at the top with the button that fixes it. New sources come from location cards, **Add Folder…** or **Custom Source…**.
   - **Models** — three tabs. **Overall** says whether search is ready and which distillation model is set. **Embedding** lists your embedding models and the presets you can add. **Distillation** picks the fact model and edits the fact prompts. The Providers box lists the models the built-in engine has loaded, each with **Unload**.
