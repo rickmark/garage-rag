@@ -221,14 +221,19 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   images/`image.py` via Tesseract only, in-process through libtesseract's C API (`extract/tesseract.py`
   over ctypes, fed pixels Pillow decoded; `PythonXPCService.framework` carries `//ext/tesseract` (over a
   codec-less `//ext/leptonica`) in its `Frameworks` folder with `tessdata` beside it and links it, as it does
-  libpq, so `garage_rag.native` finds the loaded copy; elsewhere the linker's search applies), code verbatim
-  via `text.py`).
+  libpq, so `garage_rag.native` finds the loaded copy; elsewhere the linker's search applies; HEIC/HEIF is
+  decoded by macOS ImageIO, `extract/imageio.py`), mail (`.eml`/`.emlx`, `extract/mail.py`, filed as
+  `communication`), code verbatim via `text.py`). Messages `chat.db` (`sqlite` sources) is not walked file
+  by file: `ingest/conversations.py` stores each thread as one document with one chunk per message.
 - **Quality gate** (`extract/quality.py`) — content-based backstop against non-prose text (repeated
   line shapes, timestamp prefixes, hex/base64 density) that path rules alone miss.
 - **Attribute** (`attribute/`) — precedence-ordered signals, each recording its `evidence`: git
   history (`git.py`, one `git log --name-only` pass per repo, not per file) → embedded document
   metadata (filtered through `looks_like_tool_name` so `python-pptx`/`openpyxl` don't self-attribute)
-  → path convention (`pathrules.py`, data-driven table) → source default. See `docs/attribution.md`.
+  → path convention (`pathrules.py`, data-driven table) → source default. A mail message is
+  attributed by its sender instead of by metadata (the owner's name or address → `authored`, anyone
+  else → `received`); a Messages thread records its handles as `sender`/`recipient`. See
+  `docs/attribution.md`.
 - **Store** — chunks are model-agnostic; see the schema section below.
 - **Distill facts** (`enrich/facts.py`, `garage enrich-facts`, `EnrichFacts` RPC) — optional
   post-ingest pass: LangExtract (only its local part, vendored as `enrich/langextract`), driven
@@ -260,11 +265,16 @@ sources ──▶ walker ──▶ [materialize] ──▶ extract ──▶ qua
   RPC are both thin presenters over one function), with a `_grpc_errors` decorator mapping
   `LookupError`/`ValueError`/`FileExistsError`/`PermissionError` onto gRPC status codes. Long jobs
   (`Backfill`, `EnrichFacts`) are server-streaming; cancelling the call stops the work at its next
-  progress step.
+  progress step. The server accepts requests up to 256 MiB (`MAX_REQUEST_BYTES`), since
+  `PersistDocument` carries a whole document's text and chunks.
 
 Two independent hashes drive idempotency: `source_sha256` (raw bytes — skip unopened) and
 `content_sha256` (extracted text — rebuild chunks when an extractor improves). One DB transaction
-per document.
+per document. An unchanged stat skips a file before it is read (`CheckDocumentStat` over the facade);
+a file with no text (empty, whitespace, a textless image) gets no document, and it and a failed
+extraction are remembered in `ingest_outcomes` (`012_ingest_outcomes.sql`) until the file or its
+extractor's `VERSION` changes. Replacing a document keeps every chunk whose `ord`, hash, text and
+chunker are unchanged, so its vectors survive and backfill re-embeds only what changed.
 
 Full detail: `docs/architecture.md`.
 
@@ -378,7 +388,12 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
 - `OperationRunner` runs app operations as gRPC calls (`GarageGRPCService+Operations.swift`) with a
   busy flag and rolling log; AppState keeps dedicated runners for `backfill`/`enrich-facts` so
   long-running jobs don't block ordinary operations. Ingest goes through `IngestService`, which
-  drives `GarageIngestXPCService` via `IngestClient`.
+  drives `GarageIngestXPCService` via `IngestClient`. An ingest of every source takes sources from
+  `AppState.ingestQueue`; `cancelAll()` empties the queue and stops the scan or ingest in progress,
+  plus the backfill of a maintenance run and the facts step of Update Everything, and `cancel(source:)` / `removeSource(slug:)` act on one source even while
+  it is busy. "Update Everything" on the Sources page (`AppState.updateEverything`) runs scan →
+  ingest → embed → glean facts (`EnrichFacts` with `stale_only`) through the same `runPipeline` as
+  scheduled maintenance, which stops after embed.
 - `garage` and `garage-mcp` are Swift launchers (`Sources/GarageLauncher`) for people at a
   terminal and for stdio MCP clients, packaged as helper app bundles in `Contents/Helpers`
   (`garage.app` = `me.rickmark.garage-rag.garage-cli`, `garage-mcp.app` =
@@ -400,6 +415,10 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
   health, test calls) and a llama-server-compatible HTTP API on `127.0.0.1:8790` for the Python
   `llama_xpc` provider (`backfill`, `enrich-facts` run in their own process). `MockLlamaServerEngine`
   in `macapp/Tests/LlamaTestSupport` is the only other `LlamaInferenceEngine` and is test-only.
+  The app loads the default `llama_xpc` embedding model once Postgres is up (and again when the
+  default changes), and loads the facts model only for a distillation run, unloading it afterwards
+  unless it is also the search model (`AppState+LlamaModels.swift`). Other models load on demand and
+  stay until the Models page's Unload.
 - `GarageUpdater` wraps Sparkle (`//ext/sparkle`) for Developer ID builds; App Store builds
   `select()` in an inert backend instead, since Apple rejects self-updating apps, and Sparkle
   never enters that dependency graph. The appcast lives at `docs/appcast.xml` on the Jekyll
@@ -409,6 +428,9 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
   services → pick template sources → pick embedding/distillation models → connect MCP clients. It
   goes through the same `AppState.addSource` / `registerModel` / `setFactsModel` operations and
   `GarageMCPService` registration as the Sources, Models and MCP pages.
+- The sidebar (`AppSection` / `SidebarGroup` in `Views/ContentView.swift`) puts Status on top, then
+  Configuration (Sources, Models, MCP Server), Data (Documents, Facts, Search) and Advanced
+  (Database, Logs); `AppSection`'s cases follow that order, and a unit test holds them together.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this
