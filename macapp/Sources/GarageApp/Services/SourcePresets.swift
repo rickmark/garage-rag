@@ -1,4 +1,5 @@
 import Foundation
+import PythonXPCService
 
 /// One source registration: exactly what the AddSource RPC (and `garage add-source`) takes.
 struct SourceSpec: Hashable, Sendable {
@@ -49,7 +50,7 @@ struct SourcePreset: Identifiable, Hashable, Sendable {
     /// once per launch, not on every render of the Status page.
     static let quickAdd: [SourcePreset] = {
         var presets = [documents, messages]
-        if FileManager.default.fileExists(atPath: (dropbox.spec.root as NSString).expandingTildeInPath) {
+        if FileManager.default.fileExists(atPath: GarageAppGroup.expandingTilde(in: dropbox.spec.root)) {
             presets.append(dropbox)
         }
         return presets

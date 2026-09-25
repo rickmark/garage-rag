@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "IngestEngine")
 
@@ -94,7 +95,7 @@ public final class IngestEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let resolvedPath = (path as NSString).expandingTildeInPath
+        let resolvedPath = GarageAppGroup.expandingTilde(in: path)
         logger.info("IngestEngine.setSourceBookmark for path '\(resolvedPath, privacy: .public)' (\(bookmarkData.count) bytes)")
         if let existing = activeSourceURLs[resolvedPath] {
             existing.stopAccessingSecurityScopedResource()
@@ -218,7 +219,7 @@ public final class IngestEngine: @unchecked Sendable {
         for source in request.sourcePaths {
             let rawPath = source.root
             let slug = source.slug
-            let resolvedPath = (rawPath as NSString).expandingTildeInPath
+            let resolvedPath = GarageAppGroup.expandingTilde(in: rawPath)
             var isDir: ObjCBool = false
             let exists = fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDir)
             let isReadable = fileManager.isReadableFile(atPath: resolvedPath)
@@ -358,7 +359,7 @@ public final class IngestEngine: @unchecked Sendable {
 
     private func detectTCCCategory(slug: String, path: String) -> String? {
         let lowerSlug = slug.lowercased()
-        let lowerPath = (path as NSString).expandingTildeInPath.lowercased()
+        let lowerPath = GarageAppGroup.expandingTilde(in: path).lowercased()
 
         if lowerSlug == "apple-sms" || lowerSlug == "sms" || lowerSlug == "messages" || lowerSlug == "imessage"
             || lowerPath.contains("/library/messages") || lowerPath.hasSuffix("/messages") {

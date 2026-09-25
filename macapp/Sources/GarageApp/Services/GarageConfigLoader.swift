@@ -1,4 +1,5 @@
 import Foundation
+import PythonXPCService
 import ModelDownloadClient
 
 /// Represents a source registered in the configuration file or the Postgres database.
@@ -47,7 +48,7 @@ public struct RegisteredSource: Identifiable, Hashable, Sendable, Codable {
 
     /// Expanded filesystem path, expanding '~' if present.
     public var expandedRootPath: String {
-        (root as NSString).expandingTildeInPath
+        GarageAppGroup.expandingTilde(in: root)
     }
 
     /// Expanded URL pointing to the source directory or file.

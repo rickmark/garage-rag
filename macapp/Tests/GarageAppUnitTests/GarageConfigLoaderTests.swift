@@ -1,6 +1,7 @@
 import XCTest
 import CryptoKit
 import ModelDownloadClient
+import PythonXPCService
 @testable import GarageApp
 
 final class GarageConfigLoaderTests: XCTestCase {
@@ -29,7 +30,7 @@ final class GarageConfigLoaderTests: XCTestCase {
         XCTAssertEqual(source.origin, .config)
         XCTAssertEqual(source.documentCount, 42)
         XCTAssertFalse(source.expandedRootPath.hasPrefix("~"))
-        XCTAssertEqual(source.expandedRootURL.path, (source.root as NSString).expandingTildeInPath)
+        XCTAssertEqual(source.expandedRootURL.path, GarageAppGroup.realHomeDirectory + "/Dropbox")
     }
 
     func testLoadSourcesFromConfigJSON() throws {
