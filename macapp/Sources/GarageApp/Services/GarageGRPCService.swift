@@ -251,7 +251,10 @@ final class GarageGRPCService: ObservableObject {
         }
         let group = PlatformSupport.makeEventLoopGroup(loopCount: 1)
         self.group = group
+        // GetDocument returns every chunk, and a long Messages thread passes grpc-swift's 4 MiB default;
+        // match the server's own 256 MiB request limit (MAX_REQUEST_BYTES in service/server.py).
         let connection = ClientConnection.insecure(group: group)
+            .withMaximumReceiveMessageLength(256 * 1024 * 1024)
             .connect(host: host, port: port)
         self.channel = connection
         return connection
