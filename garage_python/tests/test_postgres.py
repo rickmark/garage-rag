@@ -187,6 +187,33 @@ class TestMigrations:
         assert "allow_cloud_enrichment" not in set(columns)
         assert db.execute(text("SELECT slug FROM sources")).scalar_one() == "docs"
 
+    def test_011_drops_empty_placeholder_documents(self, db: Session) -> None:
+        """Older builds wrote an empty row for every placeholder, and flipped an indexed
+        row to 'placeholder' once its file was evicted; only the empty rows go."""
+        source_id = _source(db, "cloud")
+        db.execute(
+            text(
+                "INSERT INTO documents (source_id, uri, corpus_class, trust_tier, title, content_sha256, extractor, "
+                "state, error) VALUES (:s, '/stub.pdf', 'document', 'authored', 'stub', '', 'none', 'placeholder', "
+                "'not materialized')"
+            ),
+            {"s": source_id},
+        )
+        chunk_id = _chunk(db, source_id, "Evicted", "Indexed before the sync client evicted it")
+        db.execute(
+            text(
+                "UPDATE documents SET state = 'placeholder', error = 'not materialized' "
+                "WHERE id = (SELECT document_id FROM chunks WHERE id = :c)"
+            ),
+            {"c": chunk_id},
+        )
+        migration = (sql_dir() / "011_drop_placeholder_documents.sql").read_text(encoding="utf-8")
+        db.connection().exec_driver_sql(migration)
+        db.connection().exec_driver_sql(migration)  # and again: idempotent
+
+        rows = db.execute(text("SELECT title, state::text, error FROM documents")).all()
+        assert [tuple(row) for row in rows] == [("Evicted", "ok", None)]
+
     def test_009_defaults_and_checks_distance(self, db: Session) -> None:
         db.execute(
             text(

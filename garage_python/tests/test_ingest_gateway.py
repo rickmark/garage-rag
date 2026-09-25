@@ -10,17 +10,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from garage_rag.attribute.resolver import SelfIdentity
 from garage_rag.db.models import CorpusClass, Document, IngestState, Source, TrustTier
+from garage_rag.extract.base import file_sha256
+from garage_rag.extract.placeholder import PlaceholderFile
 from garage_rag.ingest import materialize as materialize_mod
 from garage_rag.ingest.gateway import (
     AuthorPayload,
     ChunkPayload,
+    ExistingDocStat,
     GrpcIngestStorageGateway,
+    SourceContext,
     SqlAlchemyIngestStorageGateway,
 )
 from garage_rag.ingest.materialize import MaterializationBudget, materialize
-from garage_rag.ingest.pipeline import ingest_source
+from garage_rag.ingest.pipeline import IngestCounters, ingest_one, ingest_source
 from garage_rag.ingest.scanner import SourceScanResult
+from garage_rag.ingest.walker import Candidate
 from garage_rag.proto.garage_pb2 import (
     BeginIngestSessionRequest,
     BeginIngestSessionResponse,
@@ -580,8 +586,8 @@ def test_stat_skipped_file_is_recorded_as_seen(tmp_path: Path):
         assert "ingest_seen" in statement
 
 
-def test_no_chunks_file_is_recorded_as_seen(tmp_path: Path):
-    """Extraction succeeds but the chunker yields nothing: still observed, still seen."""
+def test_no_chunks_file_is_rejected_without_a_document(tmp_path: Path):
+    """Extraction succeeds but the chunker yields nothing: no document, and not a failure."""
     (tmp_path / "empty.txt").write_text("Text that the (patched) chunker drops", encoding="utf-8")
     mock_source = _mock_source(tmp_path)
 
@@ -601,13 +607,177 @@ def test_no_chunks_file_is_recorded_as_seen(tmp_path: Path):
         patch("garage_rag.attribute.resolver.ensure_self_author"),
         patch("garage_rag.db.models.IngestRun", return_value=fake_run),
         patch("garage_rag.ingest.pipeline.chunk_text", return_value=[]),
-        patch.object(gateway, "record_seen") as record_seen,
+        patch.object(gateway, "record_rejected") as record_rejected,
+        patch.object(gateway, "replace_document") as replace_document,
     ):
         counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
 
-    assert counters.failed == 1
+    assert counters.failed == 0
+    assert counters.rejected == 1
     assert counters.indexed == 0
-    record_seen.assert_called_once_with(3, "seen-src", str(tmp_path / "empty.txt"))
+    record_rejected.assert_called_once_with(3, "seen-src", str(tmp_path / "empty.txt"))
+    replace_document.assert_not_called()
+
+
+# --- ingest_one against a mock gateway -------------------------------------------------
+
+
+def _ingest_one(tmp_path: Path, candidate: Candidate, existing: ExistingDocStat, **kwargs) -> tuple:
+    gateway = MagicMock()
+    gateway.check_stat.return_value = existing
+    ctx = SourceContext(
+        source_id=1,
+        slug="src",
+        root=tmp_path,
+        default_class=CorpusClass.DOCUMENT,
+        default_trust=TrustTier.AUTHORED,
+        run_id=9,
+    )
+    counters = IngestCounters()
+    ingest_one(
+        gateway,
+        ctx,
+        candidate,
+        self_identity=SelfIdentity("", []),
+        budget=MaterializationBudget(),
+        counters=counters,
+        **kwargs,
+    )
+    return gateway, counters
+
+
+def _candidate(path: Path, *, placeholder: bool = False, size: int | None = None, mtime: float | None = None):
+    st = path.stat()
+    return Candidate(
+        path=path,
+        size=st.st_size if size is None else size,
+        mtime=datetime.fromtimestamp(st.st_mtime if mtime is None else mtime, tz=UTC),
+        placeholder=placeholder,
+    )
+
+
+def test_whitespace_only_file_is_rejected_and_its_old_document_dropped(tmp_path: Path):
+    blank = tmp_path / "blank.txt"
+    blank.write_text("  \n\t\n", encoding="utf-8")
+    gateway, counters = _ingest_one(tmp_path, _candidate(blank), ExistingDocStat(exists=False))
+
+    assert counters.rejected == 1
+    assert counters.failed == 0
+    gateway.record_rejected.assert_called_once_with(9, "src", str(blank))
+    gateway.replace_document.assert_not_called()
+
+
+def test_unmaterialized_placeholder_writes_no_document(tmp_path: Path):
+    stub = tmp_path / "stub.pdf"
+    stub.write_bytes(b"")
+    with patch("garage_rag.ingest.pipeline.ensure_local", side_effect=PlaceholderFile(stub, "Dropbox")):
+        gateway, counters = _ingest_one(tmp_path, _candidate(stub, placeholder=True), ExistingDocStat(exists=False))
+
+    assert counters.placeholders == 1
+    gateway.record_placeholder.assert_called_once()
+    gateway.replace_document.assert_not_called()
+
+
+def test_sql_record_placeholder_only_records_the_file_as_seen(tmp_path: Path):
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.query.return_value.filter_by.return_value.one_or_none.return_value = _mock_source(tmp_path)
+    gateway = SqlAlchemyIngestStorageGateway(session_factory=lambda: session)
+
+    with patch.object(gateway, "record_seen") as record_seen:
+        gateway.record_placeholder(5, "seen-src", "/cloud/stub.pdf", 1.7e9, "stub")
+
+    session.add.assert_not_called()
+    record_seen.assert_called_once_with(5, "seen-src", "/cloud/stub.pdf")
+
+
+@pytest.mark.parametrize("state", ["ok", "placeholder"])
+def test_evicted_placeholder_with_unchanged_mtime_is_not_downloaded(tmp_path: Path, state: str):
+    """Dropbox evicted a file that was already indexed: skip it on mtime without opening it."""
+    stub = tmp_path / "report.pdf"
+    stub.write_bytes(b"")
+    candidate = _candidate(stub, placeholder=True)
+    existing = ExistingDocStat(
+        exists=True,
+        byte_size=48_213,
+        mtime=candidate.mtime.timestamp(),
+        content_sha256="ab" * 32,
+        state=state,
+    )
+    with patch("garage_rag.ingest.pipeline.ensure_local") as ensure_local:
+        gateway, counters = _ingest_one(tmp_path, candidate, existing)
+
+    ensure_local.assert_not_called()
+    assert counters.skipped == 1
+    gateway.record_seen.assert_called_once_with(9, "src", str(stub))
+
+
+def test_placeholder_changed_in_the_cloud_is_downloaded(tmp_path: Path):
+    stub = tmp_path / "report.pdf"
+    stub.write_bytes(b"")
+    candidate = _candidate(stub, placeholder=True)
+    existing = ExistingDocStat(
+        exists=True, byte_size=48_213, mtime=candidate.mtime.timestamp() - 3600, content_sha256="ab" * 32, state="ok"
+    )
+    with patch("garage_rag.ingest.pipeline.ensure_local", side_effect=PlaceholderFile(stub)) as ensure_local:
+        _, counters = _ingest_one(tmp_path, candidate, existing)
+
+    ensure_local.assert_called_once()
+    assert counters.placeholders == 1
+
+
+def test_file_placeholder_with_a_new_size_is_downloaded(tmp_path: Path):
+    """A File Provider stub reports its real size, so a size change counts even at the same mtime."""
+    stub = tmp_path / "report.pdf"
+    stub.write_bytes(b"")
+    candidate = _candidate(stub, placeholder=True, size=50_000)
+    existing = ExistingDocStat(
+        exists=True, byte_size=48_213, mtime=candidate.mtime.timestamp(), content_sha256="ab" * 32, state="ok"
+    )
+    with patch("garage_rag.ingest.pipeline.ensure_local", side_effect=PlaceholderFile(stub)) as ensure_local:
+        _ingest_one(tmp_path, candidate, existing)
+
+    ensure_local.assert_called_once()
+
+
+def test_touched_file_with_unchanged_bytes_skips_extraction(tmp_path: Path):
+    note = tmp_path / "note.txt"
+    note.write_text("Same bytes, new mtime", encoding="utf-8")
+    raw = file_sha256(note)
+    assert raw is not None
+    candidate = _candidate(note)
+    existing = ExistingDocStat(
+        exists=True,
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp() - 3600,
+        content_sha256="cd" * 32,
+        state="ok",
+        source_sha256=raw.hex(),
+    )
+    with patch("garage_rag.ingest.pipeline.extract") as extract:
+        gateway, counters = _ingest_one(tmp_path, candidate, existing)
+
+    extract.assert_not_called()
+    assert counters.skipped == 1
+    gateway.refresh_metadata.assert_called_once_with(
+        9, "src", str(note), candidate.size, candidate.mtime.timestamp(), raw.hex(), "", ""
+    )
+
+
+def test_force_reindexes_despite_an_unchanged_source_hash(tmp_path: Path):
+    note = tmp_path / "note.txt"
+    note.write_text("Same bytes, forced", encoding="utf-8")
+    raw = file_sha256(note)
+    assert raw is not None
+    candidate = _candidate(note)
+    existing = ExistingDocStat(
+        exists=True, byte_size=candidate.size, mtime=candidate.mtime.timestamp(), state="ok", source_sha256=raw.hex()
+    )
+    with patch("garage_rag.attribute.resolver.ensure_self_author"):
+        gateway, counters = _ingest_one(tmp_path, candidate, existing, force=True)
+
+    gateway.refresh_metadata.assert_not_called()
+    gateway.replace_document.assert_called_once()
 
 
 def test_unexpected_ingest_error_is_recorded_as_seen(tmp_path: Path):

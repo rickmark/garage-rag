@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, UnsupportedFile
+from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult, NoTextFound, UnsupportedFile
 from garage_rag.extract.placeholder import PlaceholderFile, check_materialized
 
 log = logging.getLogger(__name__)
@@ -273,14 +273,14 @@ def extract(path: Path) -> ExtractResult:
     check_materialized(path, size=size)
 
     if size == 0:
-        raise ExtractionError(f"empty file: {path}")
+        raise NoTextFound(f"empty file: {path}")
     if size > settings.max_file_bytes:
         raise ExtractionError(f"file exceeds max_file_bytes ({size:,} > {settings.max_file_bytes:,}): {path}")
 
     extractor = extractor_for(path)
     result = extractor(path)
     if result.is_empty:
-        raise ExtractionError(f"extractor {result.extractor} produced no text: {path}")
+        raise NoTextFound(f"extractor {result.extractor} produced no text: {path}")
     return result
 
 
@@ -288,6 +288,7 @@ __all__ = [
     "ContentKind",
     "ExtractionError",
     "ExtractResult",
+    "NoTextFound",
     "PlaceholderFile",
     "UnsupportedFile",
     "extract",
