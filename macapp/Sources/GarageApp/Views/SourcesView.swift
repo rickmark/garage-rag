@@ -299,7 +299,7 @@ struct SourcesView: View {
                 Button {
                     scanAndIngest(slug: "*")
                 } label: {
-                    Label("Scan & Ingest All", systemImage: "arrow.clockwise")
+                    Label("Scan & Ingest All", systemImage: "square.and.arrow.down.on.square")
                 }
                 .controlSize(.small)
                 .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
@@ -516,7 +516,7 @@ struct SourcesView: View {
                             Button {
                                 scanAndIngest(slug: source.slug, includeCode: source.includeCode)
                             } label: {
-                                Label("Scan & Ingest", systemImage: "arrow.clockwise")
+                                Label("Scan & Ingest", systemImage: "square.and.arrow.down.on.square")
                             }
                             .controlSize(.small)
                             .disabled(notReady || jobRunning)
@@ -589,8 +589,8 @@ struct SourcesView: View {
     /// editing, and removing.
     private func sourceMenu(for source: RegisteredSource, access: SourcePathAccessResult?, isRemoving: Bool) -> some View {
         Menu {
-            // Scan is the magnifying glass, ingest the document coming down, and the two together
-            // the update arrow, here and on the buttons.
+            // Scan is the magnifying glass, ingest the Import glyph, and the two together the stacked
+            // Import glyph, here and on the buttons.
             Button {
                 scanSource(slug: source.slug, includeCode: source.includeCode)
             } label: {
@@ -601,7 +601,7 @@ struct SourcesView: View {
             Button {
                 ingestSource(slug: source.slug, includeCode: true)
             } label: {
-                Label("Ingest Including Code", systemImage: "arrow.down.doc")
+                Label("Ingest Including Code", systemImage: "square.and.arrow.down")
             }
             .disabled(notReady || jobRunning)
 

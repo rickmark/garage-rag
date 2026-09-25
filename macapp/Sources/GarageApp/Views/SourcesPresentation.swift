@@ -558,7 +558,7 @@ struct SourcesActivityPresentation: Equatable {
         if isCancelling { title = "Stopping…" }
         return SourcesActivityPresentation(
             kind: .ingesting,
-            symbol: "arrow.down.doc",
+            symbol: "square.and.arrow.down",
             tint: .blue,
             title: title,
             detail: counts,
