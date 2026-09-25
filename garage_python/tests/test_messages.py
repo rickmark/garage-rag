@@ -137,6 +137,9 @@ class FakeGateway(IngestStorageGateway):
     def record_rejected(self, *args, **kwargs) -> None:
         raise AssertionError("conversations are never rejected")
 
+    def record_no_text(self, *args, **kwargs) -> None:
+        raise AssertionError("conversations without text are never read")
+
     def record_seen(self, run_id: int, source_slug: str, uri: str) -> None:
         self.seen.append(uri)
 
