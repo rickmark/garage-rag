@@ -391,24 +391,44 @@ class GarageUITestCase: XCTestCase {
     /// and only processes whose arguments name this test's folder (never by name: that could reach a
     /// real Garage), then deletes the folder, which holds the isolated cluster's password too
     /// (`GaragePostgresEndpoint.isolatedPasswordFile`).
+    /// Stops this test's Garage without its full quit path, which spends most of a test's time
+    /// (about 20 of 26 seconds on the M4) waiting on Postgres's shutdown and the service stops.
+    /// The data folder is thrown away, so nothing needs a clean shutdown: Postgres gets a fast
+    /// shutdown (SIGINT) first, so the app's own quit finds it stopped and only stops the XPC
+    /// services; anything still running a few seconds later is killed. DatabaseUITests covers the
+    /// real ⌘Q path.
     private func cleanUp() {
         guard let dataDirectory else { return }
         let ours: (pid_t) -> Bool = { Self.isAlive($0) && Self.arguments(of: $0).contains(dataDirectory.path) }
+
+        // `postgres -D <folder>/pgdata`: the argument names the folder too.
+        let postmaster = postmasterPID().flatMap { pid in
+            Self.isAlive(pid) && Self.arguments(of: pid).contains(where: { $0.hasPrefix(dataDirectory.path) }) ? pid : nil
+        }
+        if let postmaster {
+            kill(postmaster, SIGINT)
+        }
         for running in Self.runningGarageInstances() where ours(running.processIdentifier) {
             running.terminate()
         }
-        _ = waitUntil(timeout: 20) { !Self.runningGarageInstances().contains { ours($0.processIdentifier) } }
+        _ = waitUntil(timeout: 5) {
+            !Self.runningGarageInstances().contains { ours($0.processIdentifier) }
+                && !(postmaster.map(Self.isAlive) ?? false)
+        }
 
-        let postmaster = postmasterPID()
         for pid in launchedPIDs.union(Self.runningGarageInstances().map(\.processIdentifier)) where ours(pid) {
             kill(pid, SIGKILL)
         }
-        // `postgres -D <folder>/pgdata`: the argument names the folder too.
-        if let postmaster, Self.isAlive(postmaster),
-           Self.arguments(of: postmaster).contains(where: { $0.hasPrefix(dataDirectory.path) }) {
+        if let postmaster, Self.isAlive(postmaster) {
             kill(postmaster, SIGKILL)
         }
-        _ = waitUntil(timeout: 10) { !Self.isListening(on: Self.postgresPort) }
+        // The next test skips while any of these is taken, so a service left listening would
+        // quietly skip the rest of the suite: say so here instead.
+        let freed = waitUntil(timeout: 15) { !Self.servicePorts.contains(where: Self.isListening) }
+        if !freed {
+            let busy = Self.servicePorts.filter(Self.isListening).map { String($0) }.joined(separator: ", ")
+            XCTFail("Garage's services still listen on \(busy) after the test; later tests would skip")
+        }
         try? FileManager.default.removeItem(at: dataDirectory)
     }
 }
