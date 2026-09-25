@@ -6,6 +6,7 @@ py_library(
         "__init__.py",
         "chunking.py",
         "classify.py",
+        "conversations.py",
         "gateway.py",
         "materialize.py",
         "pipeline.py",

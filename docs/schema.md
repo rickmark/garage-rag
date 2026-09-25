@@ -164,6 +164,10 @@ Deleting that document (e.g. to force a rebuild) clears `document_id` back
 to null rather than deleting the raw messages, so re-synthesis has the full
 history to work from.
 
+These tables are not written yet. Messages ingest (`ingest/conversations.py`)
+reads `chat.db` directly on every run and stores each thread as one `documents`
+row with one chunk per message, keyed on `<chat.db path>#<chat GUID>`.
+
 ### `embedding_models` and the `emb_*` tables
 
 One table per model, because `vector(1024)` and `vector(2560)` cannot share a
