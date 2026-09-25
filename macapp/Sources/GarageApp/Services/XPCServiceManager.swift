@@ -415,7 +415,7 @@ public final class XPCServiceManager: ObservableObject {
         guard !lines.isEmpty else { return }
         logs.append(contentsOf: lines)
         if logs.count > maxLogLines {
-            logs.removeFirst(logs.count - maxLogLines)
+            logs.removeFirst(LogLine.trimCount(count: logs.count, limit: maxLogLines))
         }
     }
 
