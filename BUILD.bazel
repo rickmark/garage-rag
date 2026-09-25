@@ -7,6 +7,10 @@
 # tools/windows is run by .github/workflows/windows.yaml with the runner's Python, outside Bazel.
 # gazelle:exclude tools/windows
 
+# tools/llama regenerates //ext/nomic_embed:known_answers.json with the system Python, cmake and a
+# compiler (.github/workflows/known-answers.yaml), outside Bazel.
+# gazelle:exclude tools/llama
+
 exports_files(
     [
         "README.md",
