@@ -10,8 +10,8 @@ import yaml
 
 from garage_rag.extract.base import (
     ContentKind,
-    ExtractionError,
     ExtractResult,
+    NoTextFound,
     guess_title,
     normalize_text,
 )
@@ -151,7 +151,7 @@ def extract_code(path: Path) -> ExtractResult:
     raw, encoding = read_text_file(path)
     text = raw.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
     if not text.strip():
-        raise ExtractionError(f"empty source file: {path}")
+        raise NoTextFound(f"empty source file: {path}")
     return ExtractResult(
         text=text,
         kind=ContentKind.CODE,

@@ -114,8 +114,9 @@ def _has_indexed_content(existing: ExistingDocStat) -> bool:
 
 # Outcomes of a file that made no document, remembered (with its stat and hash) so an
 # unchanged file is not extracted again. The gateway reports one only while the file's
-# extractor is the version that produced it.
-_REMEMBERED_OUTCOMES = frozenset({"NO_TEXT", "EXTRACT_FAILED"})
+# extractor is the version that produced it. A document in state EXTRACT_FAILED with no
+# current outcome is not among them: it is retried.
+_REMEMBERED_OUTCOMES = frozenset({"NO_TEXT", "FAILED"})
 
 
 def _is_settled(existing: ExistingDocStat) -> bool:
@@ -203,7 +204,7 @@ def ingest_one(
                 source_sha256=raw_hash_hex,
             )
             return
-        if state == "EXTRACT_FAILED":
+        if state == "FAILED":
             # Its stored error stays; the next run hashes it again.
             gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
             return

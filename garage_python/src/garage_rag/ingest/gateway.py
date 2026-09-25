@@ -382,7 +382,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
                     session,
                     src.id,
                     uri,
-                    "extract_failed",
+                    "failed",
                     byte_size=byte_size,
                     mtime=mtime,
                     source_sha256=source_sha256,
