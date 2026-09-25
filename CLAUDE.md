@@ -431,6 +431,8 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
 - The sidebar (`AppSection` / `SidebarGroup` in `Views/ContentView.swift`) puts Status on top, then
   Configuration (Sources, Models, MCP Server), Data (Documents, Facts, Search) and Advanced
   (Database, Logs); `AppSection`'s cases follow that order, and a unit test holds them together.
+  Page wording is kept in plain presentation values beside each view (`StatusPagePresentation`,
+  `SourcesPresentation`, `DatabasePresentation`, `MCPServerPresentation`) with unit tests.
 - Each `*XPCService` (`GarageEmbedXPCService`, `GarageIngestXPCService`, `LlamaXPCService`,
   `ModelDownloadXPCService`, `PythonXPCService`, …) is a separate XPC service process paired with a
   `*Client` module (`IngestClient`, `LlamaClient`, `ModelDownloadClient`, `MCPServerClient`) — this
