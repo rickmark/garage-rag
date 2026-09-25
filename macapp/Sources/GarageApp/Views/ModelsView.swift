@@ -235,34 +235,23 @@ struct ModelsView: View {
 
     /// "2 models · 9,120 of 10,000 chunks embedded", or what is missing for that to be true.
     var embeddingSummary: String {
-        let count = unifiedModels.count
-        let stats = appState.corpusStats
-        if count == 0 {
-            return "Text embedding models turn each chunk into a vector for semantic search. Each keeps its own vector table; search uses the default one."
-        }
-        let models = "\(count) model\(count == 1 ? "" : "s")"
-        if stats.totalChunks == 0 {
-            return "\(models) · no chunks to embed until a source is ingested"
-        }
         let (required, missing) = embeddingsRequiredAndMissing
-        if missing == 0 {
-            return "\(models) · every chunk embedded"
-        }
-        let done = max(0, required - missing)
-        return "\(models) · \(done.formatted()) of \(required.formatted()) embeddings done"
+        return ModelsPresentation.embeddingSummary(
+            modelCount: unifiedModels.count,
+            totalChunks: appState.corpusStats.totalChunks,
+            required: required,
+            missing: missing
+        )
     }
 
     /// Embeddings the registered models need and how many are missing, counted over the models
     /// registered now rather than the stats' model list, which lags a registration until the next
     /// stats fetch.
     var embeddingsRequiredAndMissing: (required: Int, missing: Int) {
-        let stats = appState.corpusStats
-        let required = unifiedModels.count * stats.totalChunks
-        let missing = unifiedModels.reduce(0) { sum, item in
-            let embedded = stats.modelStats.first { $0.slug == item.slug }?.embeddedCount ?? 0
-            return sum + max(0, stats.totalChunks - embedded)
-        }
-        return (required, missing)
+        ModelsPresentation.embeddingsRequiredAndMissing(
+            modelSlugs: unifiedModels.map(\.slug),
+            stats: appState.corpusStats
+        )
     }
 
     func emptyState(symbol: String, title: String, detail: String?) -> some View {
@@ -437,17 +426,13 @@ struct ModelsView: View {
     func residentModelRow(alias: String) -> some View {
         let known = unifiedModels.first { $0.slug == alias || $0.effectiveFilename == alias }
             ?? distillationModelItems.first { $0.slug == alias || $0.effectiveFilename == alias }
-        var roles: [String] = []
-        if let known, known.registeredModel != nil {
-            roles.append(known.isDefault ? "default embedding model" : "embedding model")
-        }
-        if appState.factsModel == alias {
-            roles.append("facts model")
-        }
-        if llama.activeModelId == alias {
-            roles.append("answers requests that name no model")
-        }
-        let detail = roles.isEmpty ? "Loaded" : "Loaded · \(roles.joined(separator: " · "))"
+        let isEmbeddingModel = known?.registeredModel != nil
+        let detail = ModelsPresentation.residentModelDetail(
+            isEmbeddingModel: isEmbeddingModel,
+            isDefaultEmbeddingModel: isEmbeddingModel && known?.isDefault == true,
+            isFactsModel: appState.factsModel == alias,
+            answersUnnamedRequests: llama.activeModelId == alias
+        )
 
         return HStack(spacing: 8) {
             Circle()
@@ -487,15 +472,13 @@ struct ModelsView: View {
 
     /// "Running · 2 models loaded · 3 slots idle", from the service's own status line.
     var llamaDetail: String {
-        var parts: [String] = [llama.statusMessage]
-        if llama.isConnected {
-            let loaded = llama.loadedModelIds.count
-            parts.append(loaded == 0 ? "no model loaded" : "\(loaded) model\(loaded == 1 ? "" : "s") loaded")
-            if let health = llama.health, let idle = health.slotsIdle, let proc = health.slotsProcessing {
-                parts.append("\(idle) slot\(idle == 1 ? "" : "s") idle, \(proc) processing")
-            }
-        }
-        return parts.joined(separator: " · ")
+        ModelsPresentation.llamaDetail(
+            statusMessage: llama.statusMessage,
+            isConnected: llama.isConnected,
+            loadedCount: llama.loadedModelIds.count,
+            slotsIdle: llama.health?.slotsIdle,
+            slotsProcessing: llama.health?.slotsProcessing
+        )
     }
 
     var lmStudioProviderRow: some View {
@@ -723,9 +706,7 @@ struct ModelsView: View {
 
     /// Whether the running backfill, if any, embeds under `slug`.
     func isEmbedding(slug: String) -> Bool {
-        guard appState.backfill.isRunning else { return false }
-        guard let target = backfillTarget else { return true }
-        return target == "*" || target == slug
+        ModelsPresentation.isEmbedding(slug: slug, backfillRunning: appState.backfill.isRunning, target: backfillTarget)
     }
 
     func enrichAllFacts() {
