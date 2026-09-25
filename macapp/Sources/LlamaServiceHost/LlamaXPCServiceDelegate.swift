@@ -240,6 +240,12 @@ public final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServic
         }
     }
 
+    public func getListenerEndpoint(with reply: @escaping (NSXPCListenerEndpoint?, Error?) -> Void) {
+        let endpoint = anonymousListenerEndpoint()
+        logger.info("Handing out the anonymous listener endpoint")
+        reply(endpoint, nil)
+    }
+
     public func unloadModel(with reply: @escaping (Bool, Error?) -> Void) {
         logger.info("Unloading all models")
         DispatchQueue.global(qos: .userInitiated).async { [engine] in

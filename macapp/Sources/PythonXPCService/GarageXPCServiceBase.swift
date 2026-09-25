@@ -18,7 +18,7 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickm
 /// Subclasses override `additionalSelfTests()`, `registerManagedServices(in:)`, `exportedInterface`
 /// and implement their service specific protocol methods, wrapping Python calls in
 /// `GaragePythonRuntime.shared.withGIL { ... }`.
-open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXPCServiceProtocol {
+open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXPCServiceProtocol, GarageLlamaEndpointReceiverProtocol {
     public enum Lifecycle: String, Sendable {
         case bootstrapping
         case ready
@@ -44,6 +44,8 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
     private var _bootstrapError: String?
     private var _isRunningTests = false
     private var _servicesRegistered = false
+    /// The anonymous listener behind `anonymousListenerEndpoint()`, kept for the life of the process.
+    private var _anonymousListener: NSXPCListener?
 
     public init(
         serviceName: String,
@@ -123,6 +125,24 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         logger.info("\(self.serviceName, privacy: .public): resuming NSXPCListener")
         listener.resume()
         dispatchMain()
+    }
+
+    /// The endpoint of an anonymous listener that serves exactly like the service listener: its
+    /// connections go through `listener(_:shouldAcceptNewConnection:)`, so they export
+    /// `exportedInterface` and this object. The app hands it to sibling XPC services, which cannot
+    /// look this service up by name. The listener is made once and lives as long as the process.
+    public func anonymousListenerEndpoint() -> NSXPCListenerEndpoint {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        if let listener = _anonymousListener {
+            return listener.endpoint
+        }
+        let listener = NSXPCListener.anonymous()
+        listener.delegate = self
+        listener.resume()
+        _anonymousListener = listener
+        logger.info("\(self.serviceName, privacy: .public): anonymous NSXPCListener resumed")
+        return listener.endpoint
     }
 
     private func bootstrapOnHostThread() {
@@ -312,6 +332,37 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         return results
     }
 
+    /// Runs the named tests of the suite again and replaces their earlier results (for a test whose
+    /// precondition has just changed, such as the LlamaXPCService endpoint arriving). Does nothing
+    /// before the suite's first run, which will run them itself; waits and tries again while the
+    /// whole suite is running, so its older result cannot overwrite the new one.
+    public func rerunSelfTests(named names: Set<String>) {
+        host.perform { [self] in
+            stateLock.lock()
+            let hasResults = !_lastTestResults.isEmpty
+            let suiteRunning = _isRunningTests
+            stateLock.unlock()
+            guard hasResults else { return }
+            guard !suiteRunning else {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self] in
+                    self?.rerunSelfTests(named: names)
+                }
+                return
+            }
+            let tests = selfTests().filter { names.contains($0.name) && (!$0.requiresPython || runtime.isReady) }
+            guard !tests.isEmpty else { return }
+            let fresh = GarageXPCSelfTestRunner.run(tests, runtime: runtime)
+            stateLock.lock()
+            for result in fresh {
+                if let index = _lastTestResults.firstIndex(where: { $0.name == result.name }) {
+                    _lastTestResults[index] = result
+                }
+            }
+            stateLock.unlock()
+            recomputeLifecycle()
+        }
+    }
+
     public var lastTestResults: [GarageXPCTestResult] {
         stateLock.lock(); defer { stateLock.unlock() }
         return _lastTestResults
@@ -483,6 +534,19 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         GarageXPCOutputCapture.shared.addConnection(connection)
         logger.info("\(self.serviceName, privacy: .public): pid \(connection.processIdentifier, privacy: .public) subscribed to log streaming")
         reply(true)
+    }
+
+    // MARK: - GarageLlamaEndpointReceiverProtocol
+
+    /// Keeps the LlamaXPCService endpoint the app handed over for this process's llama clients
+    /// (`LlamaModelLoader`), then re-runs the self test that needs it. Services whose exported
+    /// protocol does not adopt `GarageLlamaEndpointReceiverProtocol` never receive this call.
+    public func setLlamaEndpoint(_ endpoint: NSXPCListenerEndpoint, with reply: @escaping (Bool, String?) -> Void) {
+        GarageLlamaEndpointStore.shared.set(endpoint)
+        logger.info("\(self.serviceName, privacy: .public): received the LlamaXPCService endpoint")
+        GarageXPCOutputCapture.shared.log(message: "Received the LlamaXPCService endpoint from the app")
+        reply(true, "LlamaXPCService endpoint received by \(serviceName)")
+        rerunSelfTests(named: [GarageLlamaEndpointStore.dependentSelfTestName])
     }
 
     // MARK: - Helpers for subclasses

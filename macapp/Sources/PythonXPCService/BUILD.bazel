@@ -11,6 +11,7 @@ swift_library(
     srcs = [
         "GarageAppGroup.swift",
         "GarageCommonXPCProtocol.swift",
+        "GarageLlamaEndpoint.swift",
         "GaragePostgresEndpoint.swift",
     ],
     module_name = "PythonXPCService_protocol",

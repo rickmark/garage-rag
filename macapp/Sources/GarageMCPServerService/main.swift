@@ -133,8 +133,8 @@ final class GarageMCPServerServiceDelegate: GarageXPCServiceBase, GarageMCPServe
         ]
     }
 
-    /// rag_search / rag_ask load their llama_xpc models on demand through this process's NSXPC
-    /// connection to LlamaXPCService.
+    /// rag_search / rag_ask load their llama_xpc models on demand over NSXPC, through the
+    /// LlamaXPCService endpoint the app hands this process (`setLlamaEndpoint`).
     override func pythonDidBecomeReady(_ environment: GaragePythonEnvironment) {
         LlamaModelLoaderBridge.install()
     }

@@ -53,6 +53,9 @@ public enum LlamaModelLoaderError: LocalizedError, Equatable {
     /// LlamaXPCService could not load the file, or could not be reached.
     case loadFailed(alias: String, message: String)
     case timedOut(alias: String, seconds: Int)
+    /// This XPC service has not been handed LlamaXPCService's endpoint by the app yet (a sibling
+    /// service cannot look LlamaXPCService up by name).
+    case endpointNotHandedOver
 
     public var errorDescription: String? {
         switch self {
@@ -67,6 +70,10 @@ public enum LlamaModelLoaderError: LocalizedError, Equatable {
             return "LlamaXPCService could not load the model \(alias): \(message)"
         case .timedOut(let alias, let seconds):
             return "Loading the model \(alias) did not finish within \(seconds) seconds."
+        case .endpointNotHandedOver:
+            return "LlamaXPCService endpoint not handed over yet: this helper reaches LlamaXPCService only "
+                + "through a connection the Garage app hands it after launch. Wait for the app to finish "
+                + "starting its helpers, or quit and reopen Garage."
         }
     }
 }
