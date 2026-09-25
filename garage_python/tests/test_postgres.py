@@ -32,7 +32,7 @@ from garage_rag.db.engine import reset_engine, session_scope
 from garage_rag.db.migrate import _connect, apply_migrations, pending_migrations, sql_dir, to_psycopg_conninfo
 from garage_rag.db.registry import ModelSpec
 from garage_rag.embed.ollama import count_pending
-from garage_rag.ingest.gateway import SqlAlchemyIngestStorageGateway
+from garage_rag.ingest.gateway import ChunkPayload, SqlAlchemyIngestStorageGateway
 from garage_rag.ops.facts import EXCERPT_CONTEXT, list_facts
 from garage_rag.search import SearchMode
 from garage_rag.search.hybrid import search
@@ -359,6 +359,81 @@ class TestIngestOutcomes:
 
         assert db.execute(text("SELECT count(*) FROM ingest_outcomes")).scalar_one() == 0
         assert gateway.check_stat("outcomes", "/notes/a.md").state.upper() == "OK"
+
+
+class TestReplaceDocument:
+    """Replacing a document keeps the chunks that did not change, and so their vectors."""
+
+    @staticmethod
+    def _chunks(*texts: str) -> list[ChunkPayload]:
+        return [
+            ChunkPayload(ord=i, text=t, chunk_sha256=hashlib.sha256(t.encode()).hexdigest(), chunker="test")
+            for i, t in enumerate(texts)
+        ]
+
+    @staticmethod
+    def _replace(gateway: SqlAlchemyIngestStorageGateway, chunks: list[ChunkPayload]) -> None:
+        content = "\n".join(c.text for c in chunks)
+        with patch("garage_rag.attribute.resolver.ensure_self_author"):
+            gateway.replace_document(
+                0,
+                "replace",
+                "/notes/a.md",
+                title="a",
+                lang=None,
+                byte_size=len(content),
+                mtime=1.8e9,
+                source_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                content_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                extractor="markdown",
+                extractor_version="1",
+                chunker="test",
+                content=content,
+                meta={},
+                corpus_class="document",
+                trust_tier="authored",
+                authors=[],
+                chunks=chunks,
+            )
+
+    def _rows(self, db: Session) -> dict[int, tuple[int, str]]:
+        db.expire_all()
+        return {
+            row.ord: (row.id, row.text) for row in db.execute(text("SELECT id, ord, text FROM chunks ORDER BY ord"))
+        }
+
+    def test_unchanged_chunks_keep_their_rows_and_vectors(self, db: Session) -> None:
+        model = register_model(db, ModelSpec(slug="small", model_ref="small", dims=8))
+        _source(db, "replace")
+        db.commit()
+        gateway = SqlAlchemyIngestStorageGateway(session_factory=session_scope)
+
+        self._replace(gateway, self._chunks("first", "second", "third"))
+        before = self._rows(db)
+        for chunk_id, _ in before.values():
+            _embed(db, model.table_name, chunk_id, _halves(8, 1.0))
+        db.commit()
+
+        self._replace(gateway, self._chunks("first", "changed", "third", "fourth"))
+        after = self._rows(db)
+
+        assert [t for _, t in after.values()] == ["first", "changed", "third", "fourth"]
+        assert after[0][0] == before[0][0]
+        assert after[2][0] == before[2][0]
+        assert after[1][0] != before[1][0]
+        embedded = set(db.execute(text(f"SELECT chunk_id FROM {model.table_name}")).scalars())
+        assert embedded == {before[0][0], before[2][0]}
+
+    def test_a_shorter_document_drops_the_chunks_past_its_end(self, db: Session) -> None:
+        _source(db, "replace")
+        db.commit()
+        gateway = SqlAlchemyIngestStorageGateway(session_factory=session_scope)
+
+        self._replace(gateway, self._chunks("first", "second"))
+        first = self._rows(db)[0][0]
+        self._replace(gateway, self._chunks("first"))
+
+        assert self._rows(db) == {0: (first, "first")}
 
 
 class TestModelTables:
