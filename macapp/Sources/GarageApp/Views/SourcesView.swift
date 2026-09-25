@@ -26,6 +26,8 @@ struct SourcesView: View {
     @State private var templates: [FirstRunSourceTemplate] = []
     @State private var addingTemplateID: String? = nil
     @State private var addFolderError: String? = nil
+    /// Why the last Remove Source failed; shown above the list until the next removal.
+    @State private var removeError: String? = nil
     /// The custom-source form is folded away until "Custom Source…" or a row's "Edit…" opens it.
     @State private var showCustomForm = false
     /// The last name the form filled in by itself. While the field still holds it (or nothing),
@@ -274,6 +276,15 @@ struct SourcesView: View {
             VStack(alignment: .leading, spacing: 0) {
                 sourcesToolbar
                     .padding(.bottom, 12)
+
+                if let removeError {
+                    Text(removeError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 10)
+                        .accessibilityIdentifier("sources.removeError")
+                }
 
                 if appState.registeredSources.isEmpty {
                     emptyState
@@ -1214,8 +1225,13 @@ struct SourcesView: View {
     /// this source's row needs to show it (REMOVING).
     private func removeSource(slug toRemove: String) {
         let trimmed = toRemove.trimmingCharacters(in: .whitespacesAndNewlines)
+        removeError = nil
         Task {
-            await appState.removeSource(slug: trimmed)
+            let removed = await appState.removeSource(slug: trimmed)
+            if !removed {
+                let reason = appState.lastCommandOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                removeError = "Could not remove \(trimmed)" + (reason.isEmpty ? "." : ": \(reason)")
+            }
             await appState.fetchRegisteredSources()
             await appState.fetchCorpusStats()
             _ = appState.testVolumeAccess()

@@ -376,6 +376,17 @@ py_test(
 )
 
 py_test(
+    name = "test_sources_ops",
+    srcs = ["test_sources_ops.py"],
+    deps = [
+        ":conftest",
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/ops",
+        "@pypi//pytest",
+    ],
+)
+
+py_test(
     name = "test_materialize",
     srcs = ["test_materialize.py"],
     deps = [
@@ -463,6 +474,7 @@ test_suite(
         ":test_postgres",
         ":test_registry_dims",
         ":test_scanner",
+        ":test_sources_ops",
     ],
 )
 
