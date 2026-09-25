@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PythonXPCService
 
 // MARK: - Constants
 
@@ -39,23 +40,42 @@ extension Notification.Name {
 /// `CFBundleShortVersionString` / `CFBundleVersion` values are injected at
 /// build time by the `macapp_version` Bazel rule.
 struct AppVersionInfo: Equatable {
+    /// Which build is running. Both are signed from the same sources; the App Store one is the
+    /// sandboxed one, so the app's own sandbox entitlement tells them apart.
+    enum Distribution: String, Equatable {
+        case appStore = "App Store"
+        case developerID = "Developer ID"
+
+        static var current: Distribution {
+            GarageAppGroup.isSandboxed ? .appStore : .developerID
+        }
+    }
+
     let shortVersion: String?
     let build: String?
+    let distribution: Distribution?
 
-    init(shortVersion: String?, build: String?) {
+    init(shortVersion: String?, build: String?, distribution: Distribution? = nil) {
         self.shortVersion = Self.clean(shortVersion)
         self.build = Self.clean(build)
+        self.distribution = distribution
     }
 
     init(bundle: Bundle = .main) {
         self.init(
             shortVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
-            build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            distribution: .current
         )
     }
 
-    /// e.g. "Version 0.9 (build 42)", "Version 0.9", or "Development build".
+    /// e.g. "Version 0.9 (build 42) · Developer ID", "Version 0.9", or "Development build".
     var displayString: String {
+        guard let distribution else { return versionString }
+        return "\(versionString) · \(distribution.rawValue)"
+    }
+
+    private var versionString: String {
         switch (shortVersion, build) {
         case let (version?, build?) where build != version:
             return "Version \(version) (build \(build))"
