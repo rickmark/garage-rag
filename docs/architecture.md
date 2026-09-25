@@ -68,7 +68,13 @@ pay for `pdfplumber` and `openpyxl` in every worker.
 | PDF | `pdf.py` | `pypdf` first, escalating to `pdfplumber` **per page** when a page yields little text or holds tables |
 | Office | `office.py` | `python-docx` / `python-pptx` / `openpyxl`; headings preserved as Markdown |
 | Images | `image.py` | Tesseract, on this machine; no cloud fallback. HEIC/HEIF is decoded by macOS ImageIO (`imageio.py`), not a bundled codec |
+| Mail | `mail.py` | `.eml` and Apple Mail's `.emlx`: a header block (subject, from, to, cc, date) and the body, plain part preferred, HTML stripped otherwise; attachments listed by name, never extracted. Filed as `communication` |
 | Code | `text.py` | Verbatim — indentation is meaningful |
+
+A Messages `chat.db` (a `sqlite` source) is not walked file by file:
+`ingest/conversations.py` reads every chat and stores each thread as one
+`communication` document, keyed on `<chat.db path>#<chat GUID>`, with one chunk
+per message, so a thread that gains a message re-embeds one chunk.
 
 ### 4. Quality gate (`extract/quality.py`)
 
@@ -97,6 +103,9 @@ Signals in precedence order, each recording its evidence:
    fallback rather than the lead.
 4. **Source default.**
 
+A mail message skips the metadata rule: its sender decides, `authored` when it is
+the owner and `received` otherwise. See [`attribution.md`](attribution.md).
+
 > **Why one `git log` per repository:** `git log --follow` per file would mean
 > 18k git invocations. One `--name-only` pass per repo builds a path→authors map
 > in memory: 60 repos, 29 seconds total, versus an afternoon.
@@ -109,7 +118,8 @@ owns a table keyed on `chunk_id` with `ON DELETE CASCADE`.
 ### 7. Distill facts (`enrich/facts.py`)
 
 An optional pass over stored documents, run as `garage enrich-facts` or the
-`EnrichFacts` streaming RPC (the app's Enrich Facts action), not part of ingest
+`EnrichFacts` streaming RPC (the app's Glean Facts action, and the last step of
+Update Everything on the Sources page, which passes `stale_only`), not part of ingest
 itself. [LangExtract](https://github.com/google/langextract) is pointed at the
 local model named by `facts.model` on `facts.provider` (default: the app's
 `gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` and `lmstudio`
@@ -208,6 +218,13 @@ Two hashes, deliberately not redundant:
 
 One transaction per document, so a crash leaves earlier documents committed.
 
+Replacing a document does not throw its chunks away. Each existing chunk whose
+`ord`, text hash, text and chunker match the new set is kept (its offsets and
+heading are updated in place), the rest are deleted and only new ones inserted.
+A kept chunk keeps its row id, and so its vectors in every `emb_*` table: an edit
+near the end of a file, or a Messages thread that gained a message, re-embeds
+only what changed. Fact chunks are always dropped with the old content.
+
 Each document also records a chunker signature (`chunks.chunker`, e.g.
 `recursive:1000/100` or `code:python:1500/150`); a different signature means the
 chunks are rebuilt on the next ingest even when neither hash changed. The
@@ -259,10 +276,43 @@ it and retries once:
   page, and a model that is not downloaded is named with where to download it.
 
 `ensureModel` checks and loads under the engine lock, so callers in different
-processes never load the same model twice. Nothing unloads automatically: the
-embedding model and the facts model stay resident side by side until the
-Models page unloads them, and a load waits for any running inference (they
-share the engine lock).
+processes never load the same model twice, and a load waits for any running
+inference (they share the engine lock). Python never unloads. The app decides
+residency (`AppState+LlamaModels.swift`): it loads the default `llama_xpc`
+embedding model once Postgres is up, and again when the default changes, so a
+search finds it resident; it loads the facts model before a distillation run
+and unloads it when the run ends, unless it is also the search model. Anything
+loaded on demand stays until the Models page's Unload, which the Providers box
+offers for every model Llama XPC holds.
+
+## gRPC bridge (`service/server.py`)
+
+`GarageService` (`proto/garage.proto`) listens on loopback port 50051, hosted in
+the app's `GarageXPCService` helper, or run by hand with `garage serve`. Each handler is a thin
+presenter over the same function the CLI command calls (`ops/`), and a
+`_grpc_errors` decorator maps `LookupError`, `ValueError`, `FileExistsError` and
+`PermissionError` onto gRPC status codes. The RPCs fall in three groups:
+
+- **Corpus reads** for the app's views: `Search`, `ListDocuments`,
+  `GetDocument`, `ListFacts`, `ListSources`, `ListModels`, `GetStats`,
+  `GetStatus`, `GetVersion`, `Ping`.
+- **Operations**: `AddSource`, `RemoveSource`, `Scan` (streaming),
+  `SyncSources`, `ImportSourcesToConfig`, `Reconcile`, `RegisterModel`,
+  `SetDefaultModel`, `DropModel`, `Backfill` and `EnrichFacts` (both streaming;
+  cancelling the call stops the work at its next progress step),
+  `ListFactPrompts`, `InitDb`, `GetSetting` / `SetSetting`, `McpInstall` /
+  `McpUninstall` / `McpStatus`, and `EnsureLlamaModel` for processes that cannot
+  reach `LlamaXPCService` over NSXPC themselves.
+- **The database facade** the ingest and embed XPC workers persist through
+  (`GrpcIngestStorageGateway`): `BeginIngestSession`, `PersistScan`,
+  `CheckDocumentStat` (the stat and hashes the skip decisions need),
+  `PersistDocument`, `FinalizeIngestSession`, `GetEmbeddingBatches` and
+  `UpdateEmbeddings`. The server side is the same
+  `SqlAlchemyIngestStorageGateway` the in-process pipeline uses.
+
+The server accepts requests up to 256 MiB, since `PersistDocument` carries a
+document's whole text and chunks and a long Messages thread outgrows gRPC's
+4 MiB default.
 
 ## Local inference client
 
