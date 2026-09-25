@@ -149,7 +149,7 @@ final class IngestService: ObservableObject {
         // (e.g. Dropbox source scans) drains hundreds or thousands of lines into one appendLogs call.
         logs.append(contentsOf: accepted)
         if logs.count > maxLogLines {
-            logs.removeFirst(logs.count - maxLogLines)
+            logs.removeFirst(LogLine.trimCount(count: logs.count, limit: maxLogLines))
         }
     }
 

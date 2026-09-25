@@ -99,4 +99,23 @@ final class OperationRunnerTests: XCTestCase {
         XCTAssertFalse(runner.isRunning)
         XCTAssertTrue(runner.logs.contains { $0.text == "Cancelling test..." })
     }
+
+    @MainActor
+    func testFullLogDropsAQuarterAtOnceRatherThanALinePerAppend() {
+        let runner = OperationRunner(label: "test")
+
+        for index in 0..<4000 {
+            runner.appendLog("line \(index)")
+        }
+        XCTAssertEqual(runner.logs.count, 4000)
+
+        runner.appendLog("line 4000")
+        XCTAssertEqual(runner.logs.count, 3000)
+        XCTAssertEqual(runner.logs.first?.text, "line 1001")
+
+        // The next appends only add rows at the end; the oldest line on screen stays put.
+        runner.appendLog("line 4001")
+        XCTAssertEqual(runner.logs.count, 3001)
+        XCTAssertEqual(runner.logs.first?.text, "line 1001")
+    }
 }

@@ -681,7 +681,7 @@ final class GarageMCPService: ObservableObject {
     private func appendLog(_ line: LogLine) {
         logs.append(line)
         if logs.count > maxLogLines {
-            logs.removeFirst(logs.count - maxLogLines)
+            logs.removeFirst(LogLine.trimCount(count: logs.count, limit: maxLogLines))
         }
     }
 

@@ -77,7 +77,7 @@ final class ModelDownloadService: ObservableObject {
     func appendLog(_ text: String, stream: LogLine.Stream = .stdout) {
         logs.append(LogLine(stream: stream, text: text, source: "model-download-xpc"))
         if logs.count > maxLogLines {
-            logs.removeFirst(logs.count - maxLogLines)
+            logs.removeFirst(LogLine.trimCount(count: logs.count, limit: maxLogLines))
         }
     }
 

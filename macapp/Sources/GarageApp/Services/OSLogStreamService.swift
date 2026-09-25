@@ -332,7 +332,7 @@ public final class OSLogStreamService: ObservableObject {
             var current = serviceLogs[target] ?? []
             current.append(contentsOf: accepted)
             if current.count > maxLogLinesPerService {
-                current.removeFirst(current.count - maxLogLinesPerService)
+                current.removeFirst(LogLine.trimCount(count: current.count, limit: maxLogLinesPerService))
             }
             serviceLogs[target] = current
         }

@@ -157,6 +157,14 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertEqual(genericStdout.level, .info)
     }
 
+    func testLogBufferTrimsToThreeQuartersOnlyOncePastItsLimit() {
+        XCTAssertEqual(LogLine.trimCount(count: 3999, limit: 4000), 0)
+        XCTAssertEqual(LogLine.trimCount(count: 4000, limit: 4000), 0)
+        XCTAssertEqual(LogLine.trimCount(count: 4001, limit: 4000), 1001)
+        XCTAssertEqual(LogLine.trimCount(count: 4600, limit: 4000), 1600)
+        XCTAssertEqual(LogLine.trimCount(count: 2001, limit: 2000), 501)
+    }
+
     func testProcessRunnerRunSyncSuccess() {
         let result = ProcessRunner.runSync(
             executable: URL(fileURLWithPath: "/bin/echo"),

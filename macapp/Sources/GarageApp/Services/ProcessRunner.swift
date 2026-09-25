@@ -177,6 +177,20 @@ public struct LogLine: Identifiable, Hashable, Sendable {
     }
 }
 
+extension LogLine {
+    /// How many of the oldest lines to drop from a log buffer of `count` lines capped at `limit`: once it passes
+    /// `limit`, enough to bring it down to three quarters of `limit`, not just back to `limit`.
+    ///
+    /// Log tables list the oldest line first. Trimming only the overflow dropped a few lines on every flush once a
+    /// buffer was full, so every flush removed the rows on screen; during a fast ingest (a Mail source logs a line per
+    /// message) tearing down those rows' hosting views held the main thread for over a second, every second.
+    /// Trimming a quarter at a time removes the rows on screen once per `limit / 4` lines instead.
+    static func trimCount(count: Int, limit: Int) -> Int {
+        guard count > limit else { return 0 }
+        return count - (limit - limit / 4)
+    }
+}
+
 /// Thin wrapper around Process that streams stdout/stderr line-by-line to a
 /// callback and reports exit status. Used for both the long-running Postgres
 /// server process and one-shot `garage` CLI invocations.
