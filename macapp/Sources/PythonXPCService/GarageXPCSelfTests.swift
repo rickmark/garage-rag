@@ -316,8 +316,10 @@ public enum GarageXPCStandardSelfTests {
         }
     }
 
-    /// Verifies a gRPC channel to the backend becomes ready within a timeout.
-    public static func grpcConnection(hostProvider: @escaping @Sendable () -> (host: String, port: Int)?, timeoutSeconds: Double = 5) -> GarageXPCSelfTest {
+    /// Verifies a gRPC channel to the backend becomes ready within a timeout. The backend is a
+    /// separate process the app starts alongside the helpers, so at launch it can take well over a
+    /// few seconds (Python start-up, then the database) before it accepts a channel.
+    public static func grpcConnection(hostProvider: @escaping @Sendable () -> (host: String, port: Int)?, timeoutSeconds: Double = 30) -> GarageXPCSelfTest {
         GarageXPCSelfTest(name: "gRPC Connection", description: "Opens an insecure grpc channel to the Garage backend and waits for it to become ready.") {
             guard let target = hostProvider() else {
                 throw GarageXPCSelfTestSkipped("GARAGE_GRPC_HOST / GARAGE_GRPC_PORT are not configured")
