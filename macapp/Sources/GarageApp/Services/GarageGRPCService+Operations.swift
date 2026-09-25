@@ -48,7 +48,9 @@ extension GarageGRPCService {
     func removeSource(slug: String) async throws -> Garage_RemoveSourceResponse {
         var request = Garage_RemoveSourceRequest()
         request.slug = slug
-        return try await call { try await $0.removeSource(request, callOptions: $1) }
+        // The delete cascades through every document, chunk and vector of the source, which on a
+        // large source takes far longer than the default two minutes.
+        return try await call(timeout: .minutes(30)) { try await $0.removeSource(request, callOptions: $1) }
     }
 
     /// Counts items per source, handing each status (the running count while a source is
