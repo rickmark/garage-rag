@@ -129,6 +129,9 @@ struct StatusView: View {
             .accessibilityLabel("Open \(problem.section.rawValue)")
             .accessibilityIdentifier("status.health.\(problem.id).open")
         }
+        // A container of its own: an identifier on a plain HStack is handed down to every child,
+        // replacing the fix and Open buttons' own identifiers.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("status.health.\(problem.id)")
     }
 
