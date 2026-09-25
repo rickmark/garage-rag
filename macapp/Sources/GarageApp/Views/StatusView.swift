@@ -28,6 +28,7 @@ struct StatusView: View {
             VStack(alignment: .leading, spacing: 20) {
                 healthSection
                 indexingSection
+                indexManagerSection
                 servicesSection
                 serviceOutputSection
             }

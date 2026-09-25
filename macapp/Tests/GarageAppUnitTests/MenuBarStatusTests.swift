@@ -131,7 +131,7 @@ final class MenuBarStatusTests: XCTestCase {
     }
 
     func testStageTrailAddsDistillationOnlyWhileItRuns() {
-        XCTAssertEqual(MenuBarStatus(database: .running, activity: .embedding).stageTrail, [.scan, .ingest, .embed])
+        XCTAssertEqual(MenuBarStatus(database: .running, activity: .embedding).stageTrail, [.scan, .ingest, .embed, .distill])
         XCTAssertEqual(MenuBarStatus(database: .running, activity: .distilling).stageTrail, [.scan, .ingest, .embed, .distill])
         XCTAssertNil(MenuBarStatus(database: .running).stage)
     }
