@@ -92,7 +92,9 @@ struct ModelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            // The segmented control sits centered, as a view switcher does in a macOS toolbar;
+            // Refresh keeps to the trailing edge.
+            ZStack {
                 Picker("Page", selection: $selectedTab) {
                     ForEach(Page.allCases) { tab in
                         Text(tab.rawValue).tag(tab)
@@ -100,24 +102,25 @@ struct ModelsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 360)
+                .frame(width: 360)
                 .accessibilityIdentifier("models.tab")
 
-                Spacer()
-
-                if appState.isFetchingModels || busy {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: 8) {
+                    Spacer()
+                    if appState.isFetchingModels || busy {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button {
+                        refreshAll()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh models")
+                    .accessibilityLabel("Refresh models")
+                    .accessibilityIdentifier("models.refresh")
+                    .disabled(busy || appState.isFetchingModels)
                 }
-                Button {
-                    refreshAll()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("Refresh models")
-                .accessibilityLabel("Refresh models")
-                .accessibilityIdentifier("models.refresh")
-                .disabled(busy || appState.isFetchingModels)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
