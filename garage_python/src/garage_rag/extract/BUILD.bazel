@@ -8,6 +8,7 @@ py_library(
         "dispatch.py",
         "image.py",
         "imageio.py",
+        "mail.py",
         "messages.py",
         "office.py",
         "pdf.py",
