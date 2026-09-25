@@ -5,7 +5,7 @@ final class NavigationUITests: GarageUITestCase {
 
     /// Each `AppSection` case name, in sidebar order, with a piece of text only that page shows.
     private static let pages: [(section: String, marker: String)] = [
-        ("status", "Corpus & Pipeline Overview"),
+        ("status", "Helper Services"),
         // Configuration
         ("sources", "Add a Source"),
         ("models", "Embed All"),
@@ -37,6 +37,6 @@ final class NavigationUITests: GarageUITestCase {
         XCTAssertTrue(element(identifier: "sidebar.status").waitForExistence(timeout: 15), "no sidebar")
         XCTAssertFalse(app.buttons["splash.continue"].exists, "the splash showed although it was turned off")
         XCTAssertFalse(element(identifier: "firstRun.root").exists, "the setup assistant showed although setup was complete")
-        XCTAssertTrue(element(text: "Corpus & Pipeline Overview").waitForExistence(timeout: 15), "the window did not open on Status")
+        XCTAssertTrue(element(text: "Helper Services").waitForExistence(timeout: 15), "the window did not open on Status")
     }
 }

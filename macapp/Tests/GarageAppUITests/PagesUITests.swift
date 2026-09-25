@@ -9,15 +9,21 @@ final class PagesUITests: GarageUITestCase {
         waitForBackend()
         open(section: "status")
 
-        for heading in ["Corpus & Pipeline Overview", "Ingestion Status", "Chunk Embedding"] {
+        for heading in ["Health", "Indexing", "Helper Services"] {
             XCTAssertTrue(element(text: heading).waitForExistence(timeout: 15), "Status does not show \"\(heading)\"")
         }
-        XCTAssertTrue(element(text: "No documents indexed yet").waitForExistence(timeout: 30), "a new corpus does not say it has no documents")
+        XCTAssertTrue(element(text: "Nothing to index yet").waitForExistence(timeout: 30), "a new corpus does not say there is nothing to index")
+        XCTAssertTrue(element(identifier: "status.addSource").exists, "an empty corpus does not offer Add a Source")
+        XCTAssertTrue(element(text: "No sources yet").exists, "Health does not list the missing sources")
 
         // Each XPC helper row offers Test and Restart; the separate Ping button is gone.
-        XCTAssertTrue(button(label: "Restart").waitForExistence(timeout: 30), "no XPC service row with Restart")
-        XCTAssertTrue(button(label: "Test").exists, "no XPC service row with Test")
+        XCTAssertTrue(element(identifier: "status.service.ingest-xpc.restart").waitForExistence(timeout: 30), "no XPC service row with Restart")
+        XCTAssertTrue(element(identifier: "status.service.ingest-xpc.test").exists, "no XPC service row with Test")
+        XCTAssertTrue(element(identifier: "status.service.grpc.test").exists, "no gRPC row with Test")
         XCTAssertFalse(button(label: "Ping").exists, "the Status page still has a Ping button")
+        for retired in ["Run All Tests", "Query Services", "Expand All"] {
+            XCTAssertFalse(button(label: retired).exists, "the retired \"\(retired)\" button is back")
+        }
     }
 
     func testModelsToolbarOnAnEmptyRegistry() throws {

@@ -5,12 +5,6 @@ import ModelDownloadClient
 
 final class StatusViewTests: XCTestCase {
 
-    func testPageStatusSeverityOrdering() {
-        XCTAssertLessThan(PageStatusSeverity.critical, PageStatusSeverity.warning)
-        XCTAssertLessThan(PageStatusSeverity.warning, PageStatusSeverity.info)
-        XCTAssertLessThan(PageStatusSeverity.info, PageStatusSeverity.healthy)
-    }
-
     @MainActor
     func testStatusViewInitializesAndRenders() {
         let appState = AppState()
@@ -25,16 +19,6 @@ final class StatusViewTests: XCTestCase {
 
         let controller = NSHostingController(rootView: statusView)
         XCTAssertNotNil(controller.view)
-    }
-
-    func testScanCountReadsSoFar() {
-        XCTAssertEqual(StatusView.soFarText(0), "0 so far")
-        XCTAssertEqual(StatusView.soFarText(42), "42 so far")
-    }
-
-    func testWaitingHeadlines() {
-        XCTAssertEqual(StatusView.waitingOnScan, "Waiting on scan")
-        XCTAssertEqual(StatusView.waitingForIngest, "Waiting for ingest")
     }
 
     @MainActor
@@ -56,49 +40,6 @@ final class StatusViewTests: XCTestCase {
 
         let controller = NSHostingController(rootView: statusView)
         XCTAssertNotNil(controller.view)
-    }
-
-    @MainActor
-    func testStatusViewSortingPlacesFailingItemsAtTop() {
-        let appState = AppState()
-        let statusView = StatusView()
-            .environmentObject(appState)
-
-        let controller = NSHostingController(rootView: statusView)
-        XCTAssertNotNil(controller.view)
-    }
-
-    @MainActor
-    func testModelsStatusItemShowsEmbeddingInProgressWhenBackfillRunning() {
-        let appState = AppState()
-        appState.backfill.isRunning = true
-
-        let item = PageStatus.modelsStatusItem(for: appState)
-        XCTAssertEqual(item.section, AppSection.models)
-        XCTAssertEqual(item.severity, PageStatusSeverity.info)
-        XCTAssertEqual(item.statusHeadline, "Embedding in Progress")
-        XCTAssertEqual(item.statusDetails, "Embedder is processing document chunks.")
-        XCTAssertNil(item.quickAction)
-    }
-
-    @MainActor
-    func testModelsStatusItemWhenBackfillNotRunning() {
-        let appState = AppState()
-        appState.backfill.isRunning = false
-
-        let item = PageStatus.modelsStatusItem(for: appState)
-        XCTAssertNotEqual(item.statusHeadline, "Embedding in Progress")
-    }
-
-    @MainActor
-    func testStatusItemsIncludeModelsItem() {
-        let appState = AppState()
-        appState.backfill.isRunning = true
-
-        let items = PageStatus.statusItems(for: appState)
-        let modelItem = items.first { $0.section == .models }
-        XCTAssertNotNil(modelItem)
-        XCTAssertEqual(modelItem?.statusHeadline, "Embedding in Progress")
     }
 
     func testCorpusStatsFractions() {
@@ -141,6 +82,13 @@ final class StatusViewTests: XCTestCase {
         ]
         XCTAssertEqual(stats.embeddingProgressFraction, 1.0)
         XCTAssertEqual(stats.unembeddedChunks, 0)
+    }
+
+    func testCorpusStatsCarryFactsCounts() {
+        let stats = CorpusStats(documentsCount: 10, factsCount: 42, documentsDistilledCount: 7)
+        XCTAssertEqual(stats.factsCount, 42)
+        XCTAssertEqual(stats.documentsDistilledCount, 7)
+        XCTAssertEqual(CorpusStats().factsCount, 0)
     }
 
     func testCorpusStatsUningestedElementsAndUnembeddedChunks() {
@@ -199,16 +147,8 @@ final class StatusViewTests: XCTestCase {
     }
 
     @MainActor
-    func testSourcesStatusItemDetailsWithDocumentCount() {
-        let mockStore = MockVolumeBookmarkStore()
-        let mockFS = MockFileSystemAccessor()
-        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", "/Users/test/Documents", "/Users/test/Notes"]
-        mockFS.directoryContents = [URL(fileURLWithPath: "/Users/test/Documents")]
-
-        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
-        _ = volumeService.restoreAndVerifyAccess()
-        let appState = AppState(llama: LlamaService(), volumeAccess: volumeService)
-
+    func testStatusViewRendersWithProblemsAndAnIdleCorpus() {
+        let appState = AppState()
         appState.setRegisteredSourcesForTesting([
             RegisteredSource(slug: "docs", root: "~/Documents", documentCount: 15),
             RegisteredSource(slug: "notes", root: "~/Notes", documentCount: 5)
@@ -221,83 +161,14 @@ final class StatusViewTests: XCTestCase {
             totalChunks: 100,
             embeddedChunks: 100,
             totalSeenFiles: 25,
-            totalIndexedFiles: 20
+            totalIndexedFiles: 20,
+            lastUpdated: Date()
         ))
 
-        let item = PageStatus.sourcesStatusItem(for: appState)
-        XCTAssertEqual(item.section, .sources)
-        XCTAssertEqual(item.severity, .healthy)
-        XCTAssertTrue(item.statusDetails.contains("2 source(s) active"))
-        XCTAssertTrue(item.statusDetails.contains("5 uningested element(s)"))
-    }
-
-    @MainActor
-    func testSourcesStatusItemDetailsWithTotalExpectedElements() {
-        let mockStore = MockVolumeBookmarkStore()
-        let mockFS = MockFileSystemAccessor()
-        mockFS.readablePaths = ["/", "/System", "/Library", "/Applications", "/Users", "/Volumes", "/Users/test/Documents"]
-        mockFS.directoryContents = [URL(fileURLWithPath: "/Users/test/Documents")]
-
-        let volumeService = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
-        _ = volumeService.restoreAndVerifyAccess()
-        let appState = AppState(llama: LlamaService(), volumeAccess: volumeService)
-
-        appState.setRegisteredSourcesForTesting([
-            RegisteredSource(slug: "docs", root: "~/Documents", documentCount: 30, expectedElements: 50)
-        ])
-        appState.setCorpusStatsForTesting(CorpusStats(
-            sourcesCount: 1,
-            documentsCount: 30,
-            documentsOkCount: 30,
-            documentsFailedCount: 0,
-            totalChunks: 100,
-            embeddedChunks: 100,
-            totalSeenFiles: 0,
-            totalIndexedFiles: 0,
-            totalExpectedElements: 50
-        ))
-
-        let item = PageStatus.sourcesStatusItem(for: appState)
-        XCTAssertEqual(item.section, .sources)
-        XCTAssertEqual(item.severity, .healthy)
-        XCTAssertTrue(item.statusDetails.contains("1 source(s) active"))
-        XCTAssertTrue(item.statusDetails.contains("20 uningested element(s)"))
-        XCTAssertTrue(item.statusDetails.contains("30 ingested"))
-    }
-
-    @MainActor
-    func testModelsStatusItemWithUnembeddedChunks() {
-        let appState = AppState()
-        appState.setRegisteredModelsForTesting([
-            RegisteredModel(
-                slug: "bge-m3",
-                provider: "local",
-                modelRef: "bge-m3",
-                dims: 1024,
-                storedDims: 1024,
-                storageKind: "halfvec",
-                indexKind: "hnsw",
-                tableName: "emb_bge_m3",
-                isDefault: true,
-                modelId: "test"
-            )
-        ])
-        appState.setCorpusStatsForTesting(CorpusStats(
-            sourcesCount: 1,
-            documentsCount: 10,
-            documentsOkCount: 10,
-            documentsFailedCount: 0,
-            totalChunks: 50,
-            embeddedChunks: 30,
-            modelStats: [
-                CorpusStats.ModelEmbeddingStats(slug: "bge-m3", tableName: "emb_bge_m3", isDefault: true, embeddedCount: 30)
-            ]
-        ))
-
-        let item = PageStatus.modelsStatusItem(for: appState)
-        XCTAssertEqual(item.section, .models)
-        XCTAssertEqual(item.severity, .healthy)
-        XCTAssertTrue(item.statusDetails.contains("20 chunk(s) remaining to embed across models"))
+        let controller = NSHostingController(rootView: StatusView().environmentObject(appState))
+        XCTAssertNotNil(controller.view)
+        XCTAssertFalse(StatusHealth(appState: appState).isHealthy, "a stopped database is a problem")
+        XCTAssertEqual(IndexingPresentation(appState: appState).headline.title, "Database stopped")
     }
 
     // MARK: - Service Beyond-Ping Functional Tests

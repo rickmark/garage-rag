@@ -232,9 +232,10 @@ final class StoreMailMessagesUITests: StoreUITestCase {
             line: line
         )
         open(section: "status", file: file, line: line)
+        let documents = element(identifier: "status.figure.documents")
         XCTAssertTrue(
-            element(textBeginningWith: "All \(expected) docs ingested").waitForExistence(timeout: 240),
-            "the Status page never reported the \(expected) fixture items ingested",
+            waitUntil(timeout: 240) { documents.exists && documents.label == "\(expected)" },
+            "the Status page never counted the \(expected) fixture items",
             file: file,
             line: line
         )

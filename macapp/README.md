@@ -456,7 +456,7 @@ or the menu bar item, and skipped from any page.
 page 1 also creates the new, empty database and registers the sources in `~/.garage.json` again
 (`AppState.finishDatabaseReset`) before offering the rest. Skipping before page 1 gets that far
 finishes the reset in the background, so the main window comes up on the new database, unconfigured,
-with the Status page's quick-add cards.
+with the Status page listing the missing sources and model under Health.
 
 ## App architecture
 

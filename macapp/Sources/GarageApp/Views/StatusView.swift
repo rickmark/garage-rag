@@ -3,6 +3,10 @@ import AppKit
 import Combine
 import PythonXPCService
 
+// The Status page: is anything wrong and what fixes it, what the pipeline is doing and how much of
+// the corpus is indexed, and whether each helper process is alive. The helpers' output is folded
+// away at the bottom. The wording of every row is in StatusPagePresentation.swift.
+
 @MainActor
 struct StatusView: View {
     @EnvironmentObject var appState: AppState
@@ -12,44 +16,20 @@ struct StatusView: View {
         self._selection = selection
     }
 
-
     @State var refreshTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     @State var expandedServiceIds: Set<String> = []
-    @State var isGrpcExpanded: Bool = false
     @State var grpcTestResult: (isSuccess: Bool, summary: String, details: String, durationMs: Double)? = nil
     @State var isTestingGrpc: Bool = false
     @State var copiedServiceId: String? = nil
-    @State var quickAddingModelSlug: String? = nil
-    @State var quickAddingSourceSlug: String? = nil
-    @State var isAddingAllSources: Bool = false
-    @State var isAddingAllModels: Bool = false
+    @AppStorage("garage.status.showServiceOutput") private var showServiceOutput = false
 
     var body: some View {
-        // Evaluate the six page checks once per render; the header and the cards share them.
-        let items = PageStatus.statusItems(for: appState)
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                systemHealthHeader(PageStatus.HealthSummary(items: items))
-
-                if showDefaultSourcesQuickAdd {
-                    defaultSourcesQuickAddSection
-                }
-
-                if showFeaturedModelsQuickAdd {
-                    featuredModelsQuickAddSection
-                }
-
-                corpusOverviewSection
-
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(PageStatus.sorted(items)) { item in
-                        pageStatusCard(for: item)
-                    }
-                }
-
-                xpcServicesSection
-
-                LastCommandOutputBox(text: appState.lastCommandOutput)
+                healthSection
+                indexingSection
+                servicesSection
+                serviceOutputSection
             }
             .padding(20)
         }
@@ -72,445 +52,277 @@ struct StatusView: View {
         }
     }
 
-    // MARK: - Corpus & Progress Overview
+    // MARK: - Health
 
-    var corpusOverviewSection: some View {
-        GroupBox("Corpus & Pipeline Overview") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 16) {
-                    sourcesMetricCard
-                    Divider()
-                    ingestionMetricCard
-                    Divider()
-                    chunkEmbeddingMetricCard
-                }
-                .padding(.vertical, 4)
-
-                if !appState.registeredSources.isEmpty {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Source Ingest Breakdown")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        ForEach(appState.registeredSources) { src in
-                            HStack {
-                                Image(systemName: "folder")
-                                    .font(.caption2)
-                                    .foregroundStyle(.blue)
-                                Text(src.slug)
-                                    .font(.caption.bold())
-                                Spacer()
-                                if let scan = appState.scanProgress, scan.source == src.slug {
-                                    Text("Scanning: \(Self.soFarText(scan.sourceItems))")
-                                        .font(.caption)
-                                        .foregroundStyle(.blue)
-                                } else if src.expectedElements > 0 {
-                                    let uningested = max(0, src.expectedElements - src.documentCount)
-                                    Text("\(uningested) uningested (\(src.documentCount) of \(src.expectedElements) docs)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("\(src.documentCount) doc\(src.documentCount == 1 ? "" : "s") ingested")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+    private var healthSection: some View {
+        let health = StatusHealth(appState: appState)
+        return GroupBox("Health") {
+            VStack(alignment: .leading, spacing: 10) {
+                if health.isHealthy {
+                    let summary = health.summary
+                    HStack(alignment: .center, spacing: 10) {
+                        MenuBarSymbolCircle(symbol: summary.symbol, tint: summary.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(summary.title)
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(summary.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        if health.database == .starting || health.database == .stopping {
+                            ProgressView().controlSize(.small)
                         }
                     }
-                    .padding(.top, 2)
-                }
-
-                HStack {
-                    if let lastUpdated = appState.corpusStats.lastUpdated {
-                        Text("Updated \(lastUpdated, style: .time)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Button {
-                        Task { await appState.scanSources() }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.caption2)
-                            Text("Refresh")
-                                .font(.caption2)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("status.health.summary")
+                } else {
+                    ForEach(Array(health.problems.enumerated()), id: \.element.id) { index, problem in
+                        if index > 0 {
+                            Divider()
                         }
+                        problemRow(problem)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .disabled(appState.isFetchingStats || appState.isIngesting || appState.isScanning)
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    var effectiveSourcesCount: Int {
-        max(appState.registeredSources.count, appState.corpusStats.sourcesCount)
-    }
-
-    var sourcesMetricCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "folder.badge.gear")
-                    .foregroundStyle(.blue)
-                Text("Sources")
-                    .font(.subheadline.bold())
-                if appState.scanProgress != nil {
-                    ProgressView().controlSize(.small)
-                }
-            }
-
-            Text("\(effectiveSourcesCount)")
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-
-            if let scan = appState.scanProgress {
-                Text("Scanning: \(Self.soFarText(scan.totalItems))")
-                    .font(.caption.bold())
-                    .foregroundStyle(.blue)
-                    .accessibilityIdentifier("status.sources.scanProgress")
-            }
-
-            if effectiveSourcesCount == 0 {
-                Text("No sources configured")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                let totalDocs = appState.corpusStats.documentsCount
-                Text("\(effectiveSourcesCount) source\(effectiveSourcesCount == 1 ? "" : "s") (\(totalDocs) doc\(totalDocs == 1 ? "" : "s") ingested)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                selection = .sources
-            } label: {
-                Text("Manage Sources")
-                    .font(.caption)
-            }
-            .buttonStyle(.link)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    var ingestionMetricCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text.fill")
-                    .foregroundStyle(.green)
-                Text("Ingestion Status")
-                    .font(.subheadline.bold())
-                if appState.isIngesting {
-                    ProgressView().controlSize(.small)
-                }
-            }
-
-            let stats = appState.corpusStats
-            if appState.ingestService.isRunning, let progress = appState.ingestService.latestProgress {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Ingesting…")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(.blue)
-                    Spacer()
-                    Text(appState.combinedIngestProgressPercent)
-                        .font(.system(size: 16, weight: .bold).monospaced())
-                        .foregroundStyle(.blue)
-                }
-
-                ProgressView(value: appState.combinedIngestProgressFraction)
-                    .progressViewStyle(.linear)
-
-                if let cur = progress.currentItem, !cur.isEmpty {
-                    Text(cur)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
-
-                Text(appState.combinedIngestStatusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            } else {
-                // The headline is what's in the corpus; what's still pending goes in the caption.
-                // Nothing indexed yet (a first run): the scan comes first.
-                if stats.documentsCount == 0 {
-                    Text(Self.waitingOnScan)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(stats.documentsCount)")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                }
-
-                ProgressView(value: stats.ingestionProgressFraction)
-                    .progressViewStyle(.linear)
-
-                if stats.uningestedElements > 0 {
-                    let total = max(stats.totalExpectedElements, stats.totalSeenFiles)
-                    if total > 0 {
-                        Text("\(stats.documentsCount) of \(total) files ingested (\(stats.uningestedElements) pending)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("\(stats.documentsCount) ingested (\(stats.uningestedElements) pending)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if stats.documentsCount > 0 {
-                    Text("All \(stats.documentsCount) doc\(stats.documentsCount == 1 ? "" : "s") ingested\(stats.documentsFailedCount > 0 ? " (\(stats.documentsFailedCount) failed)" : "")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("No documents indexed yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            HStack {
-                Button {
-                    selection = .sources
-                } label: {
-                    Text("View Ingest")
-                        .font(.caption)
-                }
-                .buttonStyle(.link)
-
-                Spacer()
-
-                if appState.isIngesting {
-                    Button(appState.isCancellingAll ? "Cancelling…" : "Cancel Ingest") {
-                        appState.cancelAll()
-                    }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(appState.isCancellingAll)
-                } else if appState.isScanning {
-                    Button("Cancel Scan") {
-                        appState.cancelScan()
-                    }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    var chunkEmbeddingMetricCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "cpu.fill")
-                    .foregroundStyle(.purple)
-                Text("Chunk Embedding")
-                    .font(.subheadline.bold())
-                if appState.backfill.isRunning {
-                    ProgressView().controlSize(.small)
-                }
-            }
-
-            let stats = appState.corpusStats
-            if appState.backfill.isRunning {
-                Text("Embedding…")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.blue)
-            } else if stats.totalChunks == 0 {
-                Text(Self.waitingForIngest)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-            } else if stats.unembeddedChunks == 0 {
-                Text("Complete")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.green)
-            } else {
-                Text("\(stats.unembeddedChunks)")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-            }
-
-            ProgressView(value: stats.embeddingProgressFraction)
-                .progressViewStyle(.linear)
-
-            if stats.unembeddedChunks > 0 {
-                let modelCount = max(1, stats.modelStats.count)
-                let totalEmbedded = stats.totalEmbeddedAcrossAllModels
-                let totalReq = stats.totalRequiredEmbeddingsAcrossAllModels
-                if totalReq > 0 {
-                    Text("\(stats.unembeddedChunks) not embedded (\(totalEmbedded) of \(totalReq) across \(modelCount) model\(modelCount == 1 ? "" : "s"))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(stats.unembeddedChunks) chunks not yet embedded")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if stats.totalChunks > 0 {
-                let modelCount = max(1, stats.modelStats.count)
-                Text("All \(stats.totalChunks) chunks embedded across \(modelCount) model\(modelCount == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No chunks generated yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                selection = .models
-            } label: {
-                Text("View Models")
-                    .font(.caption)
-            }
-            .buttonStyle(.link)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// The Ingestion card's headline while nothing is indexed yet, e.g. on a first run.
-    static let waitingOnScan = "Waiting on scan"
-    /// The Chunk Embedding card's headline while there are no chunks to embed.
-    static let waitingForIngest = "Waiting for ingest"
-
-    /// "12,345 so far": how a running scan's count reads.
-    nonisolated static func soFarText(_ count: Int) -> String {
-        "\(count.formatted()) so far"
-    }
-
-    // MARK: - System Health Header
-
-    func systemHealthHeader(_ health: PageStatus.HealthSummary) -> some View {
-        GroupBox {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: health.symbol)
-                    .font(.system(size: 28))
-                    .foregroundStyle(health.color)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(health.title)
-                        .font(.headline)
-                    Text(health.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                if appState.postgres.status != .running {
-                    Button("Start All Services") {
-                        Task { await appState.startPostgres() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(appState.postgres.status == .starting)
-                } else if appState.mcp.status != .running {
-                    Button("Start MCP Server") {
-                        Task { try? await appState.mcp.start() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(appState.mcp.status == .starting)
                 }
             }
             .padding(10)
         }
     }
 
-    // MARK: - Page Status Card
-
-    func pageStatusCard(for item: PageStatusItem) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 12) {
-                    // Status Icon
-                    Image(systemName: severityIcon(for: item.severity))
-                        .font(.title3)
-                        .foregroundStyle(severityColor(for: item.severity))
-                        .frame(width: 24)
-
-                    // Page Symbol and Title
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Image(systemName: item.section.symbol)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text(item.title)
-                                .font(.headline)
-                        }
-
-                        Text(item.statusHeadline)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(item.severity == .critical ? Color.red : Color.primary)
-                    }
-
-                    Spacer()
-
-                    // Quick in-place action if available
-                    if let quickAction = item.quickAction {
-                        Button(quickAction.label) {
-                            quickAction.action()
-                        }
-                        .controlSize(.small)
-                    }
-
-                    // Direct link to the individual page
-                    Button {
-                        selection = item.section
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(linkButtonText(for: item))
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                if !item.statusDetails.isEmpty {
-                    Text(item.statusDetails)
+    private func problemRow(_ problem: StatusHealth.Problem) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            MenuBarSymbolCircle(symbol: "exclamationmark", tint: problem.severity == .critical ? .red : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(problem.title)
+                    .font(.system(size: 13, weight: .semibold))
+                if let detail = problem.detail, !detail.isEmpty {
+                    Text(detail)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 36)
+                        .foregroundStyle(problem.detailIsError ? AnyShapeStyle(Color.red) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
             }
-            .padding(8)
+            Spacer(minLength: 8)
+
+            if let fix = problem.fix {
+                Button(problem.fixLabel ?? fix.label) {
+                    perform(fix)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isFixRunning(fix))
+                .accessibilityIdentifier("status.health.\(problem.id).fix")
+            }
+            Button {
+                selection = problem.section
+            } label: {
+                HStack(spacing: 4) {
+                    Text(problem.section.rawValue)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("Open \(problem.section.rawValue)")
+            .accessibilityIdentifier("status.health.\(problem.id).open")
+        }
+        .accessibilityIdentifier("status.health.\(problem.id)")
+    }
+
+    private func isFixRunning(_ fix: StatusHealth.Fix) -> Bool {
+        switch fix {
+        case .startDatabase: appState.postgres.status == .starting
+        case .applyMigrations: appState.isApplyingMigrations
+        case .startMCP: appState.mcp.status == .starting
+        case .testMCP: false
+        case .chooseDisk, .grantFolder, .openPrivacySettings, .checkSourceAccess: false
+        case .refreshLlama: appState.llama.isBusy
         }
     }
 
-    // MARK: - Severity Helpers
-
-    func severityIcon(for severity: PageStatusSeverity) -> String {
-        switch severity {
-        case .critical: return "exclamationmark.triangle.fill"
-        case .warning: return "exclamationmark.circle.fill"
-        case .info: return "arrow.clockwise.circle.fill"
-        case .healthy: return "checkmark.circle.fill"
+    private func perform(_ fix: StatusHealth.Fix) {
+        switch fix {
+        case .startDatabase:
+            Task { await appState.startPostgres() }
+        case .applyMigrations:
+            Task { await appState.applyMigrations() }
+        case .startMCP:
+            Task { try? await appState.mcp.start() }
+        case .testMCP:
+            Task { await appState.mcp.testServerConnection() }
+        case .chooseDisk:
+            _ = appState.promptAndSelectRootVolume()
+        case .grantFolder(let slug, let path):
+            _ = appState.promptAndSelectSourceDirectory(slug: slug, suggestedPath: path)
+        case .openPrivacySettings:
+            appState.openPrivacySettings(for: .fullDiskAccess)
+        case .checkSourceAccess:
+            _ = appState.testVolumeAccess()
+        case .refreshLlama:
+            Task { await appState.llama.refreshStatus() }
         }
     }
 
-    func severityColor(for severity: PageStatusSeverity) -> Color {
-        switch severity {
-        case .critical: return .red
-        case .warning: return .orange
-        case .info: return .blue
-        case .healthy: return .green
+    // MARK: - Indexing
+
+    private var indexingSection: some View {
+        let indexing = IndexingPresentation(appState: appState)
+        let headline = indexing.headline
+        return GroupBox("Indexing") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    MenuBarSymbolCircle(symbol: headline.symbol, tint: headline.tint, isActive: headline.isActive)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(headline.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .accessibilityIdentifier("status.indexing.title")
+                            if let percent = headline.percent {
+                                Text(percent)
+                                    .font(.system(size: 13))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if headline.isIndeterminate {
+                            ProgressView()
+                                .progressViewStyle(.linear)
+                                .controlSize(.small)
+                        } else if let progress = headline.progress {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.linear)
+                                .controlSize(.small)
+                        }
+                        if let detail = headline.detail {
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(headline.detailIsError ? AnyShapeStyle(Color.red) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                                .monospacedDigit()
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("status.indexing.detail")
+                        }
+                        if let item = headline.currentItem {
+                            Text(item)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        if indexing.isRunning, let stage = headline.stage {
+                            MenuBarStageTrail(stages: indexing.stageTrail, current: stage)
+                                .padding(.top, 2)
+                        }
+                    }
+
+                    Spacer(minLength: 12)
+
+                    HStack(spacing: 8) {
+                        if indexing.isRunning || appState.isFetchingStats {
+                            ProgressView().controlSize(.small)
+                        }
+                        indexingAction(indexing.action)
+                    }
+                }
+
+                if appState.postgres.status == .running, appState.corpusStats.lastUpdated != nil {
+                    Divider()
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(indexing.figures) { figure in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(figure.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(figure.value)
+                                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                                    .monospacedDigit()
+                                    .accessibilityIdentifier("status.figure.\(figure.label.lowercased())")
+                                if let note = figure.note {
+                                    Text(note)
+                                        .font(.caption2)
+                                        .foregroundStyle(figure.noteIsWarning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.leading, 36)
+                }
+            }
+            .padding(10)
         }
     }
 
-    func linkButtonText(for item: PageStatusItem) -> String {
-        switch item.severity {
-        case .critical, .warning:
-            return "Go to \(item.title)"
-        case .info, .healthy:
-            return "Open \(item.title)"
+    @ViewBuilder
+    private func indexingAction(_ action: IndexingPresentation.Action) -> some View {
+        switch action {
+        case .addSource:
+            Button("Add a Source…") {
+                selection = .sources
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier("status.addSource")
+        case .updateEverything(let enabled):
+            Button("Update Everything") {
+                Task { await appState.updateEverything() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!enabled)
+            .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from the new documents")
+            .accessibilityIdentifier("status.updateEverything")
+        case .stop(let isStopping):
+            Button(isStopping ? "Stopping…" : "Stop") {
+                // cancelAll stops a backfill or distillation only when a whole-pipeline run started
+                // it; one started from Models has its own runner to cancel.
+                appState.cancelAll()
+                appState.backfill.cancel()
+                appState.enrichFacts.cancel()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .disabled(isStopping)
+            .accessibilityIdentifier("status.stop")
+        }
+    }
+
+    // MARK: - Service output
+
+    /// The XPC manager's log, folded away: it is for looking into a helper that stopped answering,
+    /// not for glancing at.
+    @ViewBuilder
+    private var serviceOutputSection: some View {
+        let lines = appState.xpcServices.logs
+        if !lines.isEmpty {
+            GroupBox {
+                if showServiceOutput {
+                    LogTableView(lines: lines, sourceName: "XPC Services") {
+                        appState.clearLogs(for: "XPC Services")
+                    }
+                    .frame(minHeight: 200, maxHeight: 350)
+                }
+            } label: {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showServiceOutput.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        DisclosureChevron(isExpanded: showServiceOutput)
+                        Text("Service Output")
+                        Text("\(lines.count.formatted()) \(IndexingPresentation.plural("line", lines.count))")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("status.serviceOutput.toggle")
+            }
         }
     }
 }
