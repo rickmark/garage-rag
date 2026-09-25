@@ -140,6 +140,8 @@ final class AppState: ObservableObject {
     private(set) var isMaintenanceDeferredForFirstRun = false
     /// Scheduled maintenance is between or inside its scan, ingest and backfill steps.
     private(set) var isMaintenanceRunning = false
+    /// "Update Everything" is between or inside its scan, ingest, embed and glean-facts steps.
+    @Published private(set) var isUpdatingEverything = false
 
     convenience init() {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
@@ -1007,12 +1009,13 @@ final class AppState: ObservableObject {
     }
 
     /// Distills documents into facts ("glean facts") on the enrich-facts runner: every
-    /// document of `source`, or just `documentID` when given.
+    /// document of `source`, or just `documentID` when given. `staleOnly` skips a document a prompt
+    /// already distilled with the same prompt text, content and model.
     @discardableResult
-    func runEnrichFacts(source: String = "*", documentID: Int64? = nil, prompts: [String] = []) async -> Bool {
+    func runEnrichFacts(source: String = "*", documentID: Int64? = nil, prompts: [String] = [], staleOnly: Bool = false) async -> Bool {
         let grpc = self.grpc
         let result = await enrichFacts.run { runner in
-            let finished = try await grpc.enrichFacts(source: source, documentID: documentID, prompts: prompts) { status in
+            let finished = try await grpc.enrichFacts(source: source, documentID: documentID, prompts: prompts, staleOnly: staleOnly) { status in
                 // The summary is logged once, as the operation's result.
                 if status.phase != "finished", !status.message.isEmpty {
                     runner.appendLog(status.message, stream: status.error.isEmpty ? .stdout : .stderr)
@@ -1252,6 +1255,9 @@ final class AppState: ObservableObject {
         if isMaintenanceRunning || queuedSourceScanTask != nil {
             backfill.cancel()
         }
+        if isUpdatingEverything {
+            enrichFacts.cancel()
+        }
         if ingestService.isRunning {
             let service = ingestService
             Task { _ = await service.cancel() }
@@ -1354,14 +1360,38 @@ final class AppState: ObservableObject {
               !isMaintenanceRunning else { return }
         isMaintenanceRunning = true
         defer { isMaintenanceRunning = false }
+        await runPipeline(gleansFacts: false)
+    }
 
+    /// The whole pipeline once, now, whatever the automatic-updates setting: scan, ingest, embed with
+    /// every model, then glean facts from the documents no enabled prompt has distilled yet. The
+    /// Sources page's "Update Everything" button. Stop (`cancelAll`) ends it at the current step.
+    func updateEverything() async {
+        guard postgres.status == .running, !hasCancellableWork, !backfill.isRunning, !enrichFacts.isRunning,
+              !isUpdatingEverything else { return }
+        isUpdatingEverything = true
+        isMaintenanceRunning = true
+        defer {
+            isMaintenanceRunning = false
+            isUpdatingEverything = false
+        }
+        await runPipeline(gleansFacts: true)
+    }
+
+    /// Scan, then ingest every source, then embed, then (for "Update Everything") glean facts, each
+    /// step skipped once Stop was pressed. `lastCommandSucceeded` reports the run as a whole.
+    private func runPipeline(gleansFacts: Bool) async {
         _ = await scanSources(followedByIngest: true)
         guard !isCancellingAll else { return }
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
         guard !isCancellingAll else { return }
         let backfillSucceeded = await runBackfill()
+        var factsSucceeded = true
+        if gleansFacts, !isCancellingAll {
+            factsSucceeded = await runEnrichFacts(staleOnly: true)
+        }
         await fetchCorpusStats()
-        lastCommandSucceeded = ingestSucceeded && backfillSucceeded
+        lastCommandSucceeded = ingestSucceeded && backfillSucceeded && factsSucceeded
     }
 
     /// The "also run when Garage starts" option: once per launch, after the database is up and the

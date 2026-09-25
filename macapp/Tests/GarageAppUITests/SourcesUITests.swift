@@ -42,6 +42,9 @@ final class SourcesUITests: GarageUITestCase {
         let scanIngestAll = element(identifier: "sources.scanIngestAll")
         XCTAssertTrue(scanIngestAll.exists, "no Scan & Ingest All button")
         XCTAssertFalse(scanIngestAll.isEnabled, "Scan & Ingest All is enabled with no sources")
+        let updateEverything = element(identifier: "sources.updateEverything")
+        XCTAssertTrue(updateEverything.exists, "no Update Everything button")
+        XCTAssertFalse(updateEverything.isEnabled, "Update Everything is enabled with no sources")
         XCTAssertTrue(element(identifier: "sources.sync").exists, "no sync button")
         XCTAssertTrue(element(identifier: "sources.diskAccess.refresh").exists, "no disk access refresh button")
 

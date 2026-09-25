@@ -429,6 +429,7 @@ struct SourcesActivityPresentation: Equatable {
         case scanning
         case ingesting
         case embedding
+        case distilling
         case waiting
         case finished
         case cancelled
@@ -450,8 +451,19 @@ struct SourcesActivityPresentation: Equatable {
 
     var isRunning: Bool {
         switch kind {
-        case .scanning, .ingesting, .embedding, .waiting: true
+        case .scanning, .ingesting, .embedding, .distilling, .waiting: true
         case .finished, .cancelled, .failed: false
+        }
+    }
+
+    /// Where a whole-pipeline run is, for the "Scan › Ingest › Embed › Distill" trail.
+    var stage: MenuBarStatus.Stage? {
+        switch kind {
+        case .scanning: .scan
+        case .ingesting: .ingest
+        case .embedding: .embed
+        case .distilling: .distill
+        case .waiting, .finished, .cancelled, .failed: nil
         }
     }
 
@@ -478,6 +490,21 @@ struct SourcesActivityPresentation: Equatable {
             tint: .blue,
             title: "Embedding new chunks…",
             detail: "The Models page shows each model's progress.",
+            currentItem: nil,
+            error: nil,
+            progress: nil,
+            isIndeterminate: true,
+            percent: nil
+        )
+    }
+
+    static func distilling() -> SourcesActivityPresentation {
+        SourcesActivityPresentation(
+            kind: .distilling,
+            symbol: "sparkles",
+            tint: .blue,
+            title: "Gleaning facts…",
+            detail: "Documents no prompt has distilled yet. The Models page shows the run's log.",
             currentItem: nil,
             error: nil,
             progress: nil,

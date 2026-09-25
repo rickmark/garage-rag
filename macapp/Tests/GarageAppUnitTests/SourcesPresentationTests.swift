@@ -353,6 +353,17 @@ final class SourcesPresentationTests: XCTestCase {
         XCTAssertEqual(failed.error, "disk full")
     }
 
+    func testEachRunningStepNamesItsStageOnTheTrail() {
+        XCTAssertEqual(SourcesActivityPresentation.scanning(source: "*", itemsSoFar: 0).stage, .scan)
+        XCTAssertEqual(SourcesActivityPresentation.embedding().stage, .embed)
+        let distilling = SourcesActivityPresentation.distilling()
+        XCTAssertEqual(distilling.stage, .distill)
+        XCTAssertTrue(distilling.isRunning)
+        XCTAssertTrue(distilling.isIndeterminate)
+        XCTAssertNil(SourcesActivityPresentation.waiting(queued: ["notes"]).stage)
+        XCTAssertNil(SourcesActivityPresentation.ended(subject: nil, counts: "", wasCancelled: false, error: nil).stage)
+    }
+
     func testWaitingListsTheFirstFewQueuedSources() {
         let few = SourcesActivityPresentation.waiting(queued: ["notes", "mail"])
         XCTAssertEqual(few.title, "Waiting to scan notes, mail")
