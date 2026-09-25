@@ -265,9 +265,15 @@ struct SourcesView: View {
 
     // MARK: - Sources
 
+    /// Titled with the summary line, with the list's buttons on the box's first row rather than in a
+    /// custom label: on macOS a GroupBox's custom label is not in the accessibility tree, so Update
+    /// Everything, Scan & Ingest All and Sync could not be reached there.
     private var sourcesSection: some View {
-        GroupBox {
+        GroupBox(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount)) {
             VStack(alignment: .leading, spacing: 0) {
+                sourcesToolbar
+                    .padding(.bottom, 12)
+
                 if appState.registeredSources.isEmpty {
                     emptyState
                 } else {
@@ -281,45 +287,45 @@ struct SourcesView: View {
                 diskAccessFooter
             }
             .padding(.horizontal, 12)
-            .padding(.top, 16)
+            .padding(.top, 10)
             .padding(.bottom, 12)
-        } label: {
-            HStack(spacing: 8) {
-                Text(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount))
-                Spacer()
+        }
+    }
 
-                Button("Update Everything") {
-                    Task { await appState.updateEverything() }
-                }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-                .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork
-                          || appState.backfill.isRunning || appState.enrichFacts.isRunning)
-                .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from what has not been distilled yet.")
-                .accessibilityIdentifier("sources.updateEverything")
+    private var sourcesToolbar: some View {
+        HStack(spacing: 8) {
+            Spacer()
 
-                Button {
-                    scanAndIngest(slug: "*")
-                } label: {
-                    Label("Scan & Ingest All", systemImage: "square.and.arrow.down.on.square")
-                }
-                .controlSize(.small)
-                .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
-                .help("Count what every source holds, then index what is new or changed. Embedding and facts wait for the next automatic update.")
-                .accessibilityIdentifier("sources.scanIngestAll")
-
-                Button {
-                    syncSources()
-                } label: {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .controlSize(.small)
-                .help("Keep garage.json and the database listing the same sources: sources added here are written to the file, and sources declared in the file are applied.")
-                .accessibilityLabel("Sync sources")
-                .accessibilityIdentifier("sources.sync")
-                .disabled(notReady)
+            Button("Update Everything") {
+                Task { await appState.updateEverything() }
             }
-            .padding(.bottom, 6)
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork
+                      || appState.backfill.isRunning || appState.enrichFacts.isRunning)
+            .help("Scan and ingest every source, embed the new chunks with every model, then glean facts from what has not been distilled yet.")
+            .accessibilityIdentifier("sources.updateEverything")
+
+            Button {
+                scanAndIngest(slug: "*")
+            } label: {
+                Label("Scan & Ingest All", systemImage: "square.and.arrow.down.on.square")
+            }
+            .controlSize(.small)
+            .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
+            .help("Count what every source holds, then index what is new or changed. Embedding and facts wait for the next automatic update.")
+            .accessibilityIdentifier("sources.scanIngestAll")
+
+            Button {
+                syncSources()
+            } label: {
+                Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .controlSize(.small)
+            .help("Keep garage.json and the database listing the same sources: sources added here are written to the file, and sources declared in the file are applied.")
+            .accessibilityLabel("Sync sources")
+            .accessibilityIdentifier("sources.sync")
+            .disabled(notReady)
         }
     }
 
