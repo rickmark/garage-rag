@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import LlamaClient
 import ModelDownloadClient
@@ -259,6 +260,12 @@ extension ModelsView {
 
                 Button("Test an Embedding…") {
                     selectForTesting(item: item)
+                }
+            }
+
+            if let modelCard = item.presetEntry?.modelCardURL {
+                Button("Model Card and License") {
+                    NSWorkspace.shared.open(modelCard)
                 }
             }
 
