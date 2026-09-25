@@ -12,6 +12,10 @@ simply hold no text -- so the pipeline records it as rejected.
 Note on the corpus: most images in a source tree are UI assets -- icons, arrows,
 logos. Those have no recoverable text and should not consume OCR time at all, so
 tiny images are rejected before Tesseract runs.
+
+HEIC/HEIF (every iPhone photo and screenshot since iOS 11) is decoded by macOS
+ImageIO (:mod:`garage_rag.extract.imageio`) rather than Pillow, which cannot read
+it without libheif and its GPL/LGPL HEVC codecs.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from garage_rag.extract.base import ContentKind, ExtractionError, ExtractResult,
 
 log = logging.getLogger(__name__)
 
-VERSION = "1"
+VERSION = "2"
 
 # Below this, an image is an icon or a spacer, not a document. Screenshots and
 # scans are comfortably larger in both dimensions.
@@ -33,8 +37,16 @@ MIN_OCR_HEIGHT = 200
 # Guard against decompression bombs and multi-hundred-megapixel scans.
 MAX_OCR_PIXELS = 40_000_000
 
+# HEVC-coded HEIF. AVIF (AV1 in the same container) Pillow reads itself.
+IMAGEIO_SUFFIXES = frozenset({".heic", ".heif", ".hif"})
+
 
 def _open_image(path: Path):
+    if path.suffix.lower() in IMAGEIO_SUFFIXES:
+        from garage_rag.extract import imageio
+
+        return imageio.open_image(path, max_pixels=MAX_OCR_PIXELS)
+
     from PIL import Image
 
     try:
