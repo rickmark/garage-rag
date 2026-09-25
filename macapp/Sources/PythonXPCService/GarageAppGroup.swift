@@ -154,6 +154,14 @@ public enum GarageAppGroup {
         return NSHomeDirectory()
     }
 
+    /// `path` with a leading `~` expanded against the account's home folder. `expandingTildeInPath`
+    /// uses `NSHomeDirectory()`, which in the sandbox is the app's container, so `~/Library/Mail`
+    /// would name the container's empty copy instead of the user's Mail.
+    public static func expandingTilde(in path: String) -> String {
+        guard path == "~" || path.hasPrefix("~/") else { return path }
+        return realHomeDirectory + path.dropFirst()
+    }
+
     /// Path components after resolving links in the longest existing prefix, so a folder that does
     /// not exist yet still compares correctly against one that does.
     private static func resolvedComponents(_ url: URL) -> [String] {

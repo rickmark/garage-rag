@@ -111,7 +111,7 @@ public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
     /// Detects the relevant TCC permission category based on the slug or path.
     public static func detect(slug: String, path: String) -> TCCPermissionCategory? {
         let lowerSlug = slug.lowercased()
-        let lowerPath = (path as NSString).expandingTildeInPath.lowercased()
+        let lowerPath = GarageAppGroup.expandingTilde(in: path).lowercased()
 
         if lowerSlug == "apple-sms" || lowerSlug == "sms" || lowerSlug == "messages" || lowerSlug == "imessage"
             || lowerPath.contains("/library/messages") || lowerPath.hasSuffix("/messages") {
@@ -476,11 +476,11 @@ open class MockFileSystemAccessor: FileSystemAccessing, @unchecked Sendable {
     }
 
     open func isReadableFile(atPath path: String) -> Bool {
-        readablePaths.contains(path) || readablePaths.contains((path as NSString).expandingTildeInPath) || path.hasPrefix("/tmp") || path.hasPrefix("/var/folders")
+        readablePaths.contains(path) || readablePaths.contains(GarageAppGroup.expandingTilde(in: path)) || path.hasPrefix("/tmp") || path.hasPrefix("/var/folders")
     }
 
     open func openFile(atPath path: String) -> Bool {
-        if unopenablePaths.contains(path) || unopenablePaths.contains((path as NSString).expandingTildeInPath) {
+        if unopenablePaths.contains(path) || unopenablePaths.contains(GarageAppGroup.expandingTilde(in: path)) {
             return false
         }
         if isReadableFile(atPath: path) {
@@ -714,7 +714,7 @@ public final class VolumeAccessService: ObservableObject {
 
     /// Displays an NSOpenPanel configured to select a specific source directory such as Messages or Mail.
     public func promptForSourceDirectoryAccess(slug: String? = nil, suggestedPath: String) -> URL? {
-        let resolvedPath = (suggestedPath as NSString).expandingTildeInPath
+        let resolvedPath = GarageAppGroup.expandingTilde(in: suggestedPath)
         if isRunningInTestEnvironment {
             let defaultURL = URL(fileURLWithPath: resolvedPath)
             try? grantSourceAccess(for: defaultURL, forSourcePath: suggestedPath)
@@ -750,7 +750,7 @@ public final class VolumeAccessService: ObservableObject {
     /// Grants access for a specific source path and persists its security-scoped bookmark.
     public func grantSourceAccess(for url: URL, forSourcePath path: String) throws {
         _ = url.startAccessingSecurityScopedResource()
-        let resolvedPath = (path as NSString).expandingTildeInPath
+        let resolvedPath = GarageAppGroup.expandingTilde(in: path)
         activeSourceURLs[resolvedPath] = url
 
         #if os(macOS)
@@ -976,7 +976,7 @@ public final class VolumeAccessService: ObservableObject {
         for source in sourcePaths {
             let rawPath = source.root
             let slug = source.slug
-            let resolvedPath = (rawPath as NSString).expandingTildeInPath
+            let resolvedPath = GarageAppGroup.expandingTilde(in: rawPath)
             var isDir: ObjCBool = false
             let exists = fileSystem.fileExists(atPath: resolvedPath, isDirectory: &isDir)
             let isReadable = fileSystem.isReadableFile(atPath: resolvedPath)
