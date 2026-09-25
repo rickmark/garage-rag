@@ -61,7 +61,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         super.init()
         // Seed configuration from the process environment (launchd passes the app's environment through).
         let env = ProcessInfo.processInfo.environment
-        for key in [GarageXPCConfigurationKey.databaseURL, GarageXPCConfigurationKey.grpcHost, GarageXPCConfigurationKey.grpcPort, GarageXPCConfigurationKey.logLevel] {
+        for key in [GarageXPCConfigurationKey.databaseURL, GarageXPCConfigurationKey.grpcHost, GarageXPCConfigurationKey.grpcPort, GarageXPCConfigurationKey.grpcSocket, GarageXPCConfigurationKey.logLevel] {
             if let value = env[key], !value.isEmpty {
                 _configuration[key] = value
             }
@@ -216,11 +216,15 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         configurationValue(GarageXPCConfigurationKey.databaseURL).map { XPCSitePathSetup.ensurePsycopgDatabaseURL($0) }
     }
 
-    public var grpcTarget: (host: String, port: Int)? {
+    /// The gRPC server's address as grpc names it: `unix:<path>` when a socket is configured, else `host:port`.
+    public var grpcTarget: String? {
+        if let socket = configurationValue(GarageXPCConfigurationKey.grpcSocket), !socket.isEmpty {
+            return "unix:\(socket)"
+        }
         guard let portText = configurationValue(GarageXPCConfigurationKey.grpcPort), let port = Int(portText), port > 0 else {
             return nil
         }
-        return (configurationValue(GarageXPCConfigurationKey.grpcHost) ?? "127.0.0.1", port)
+        return "\(configurationValue(GarageXPCConfigurationKey.grpcHost) ?? "127.0.0.1"):\(port)"
     }
 
     /// Merges options into the configuration and mirrors well-known keys into `os.environ` for Python code.
@@ -258,7 +262,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
             tests.append(GarageXPCStandardSelfTests.tlsTrust(runtime: runtime))
             tests.append(GarageXPCStandardSelfTests.libtesseract())
             tests.append(GarageXPCStandardSelfTests.database(urlProvider: { [weak self] in self?.databaseURL }))
-            tests.append(GarageXPCStandardSelfTests.grpcConnection(hostProvider: { [weak self] in self?.grpcTarget }))
+            tests.append(GarageXPCStandardSelfTests.grpcConnection(addressProvider: { [weak self] in self?.grpcTarget }))
         }
         tests.append(contentsOf: additionalSelfTests())
         return tests
