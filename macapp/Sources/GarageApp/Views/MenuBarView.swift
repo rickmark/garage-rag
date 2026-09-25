@@ -10,7 +10,7 @@ struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
-    static let width: CGFloat = 360
+    static let width: CGFloat = 540
 
     var body: some View {
         let status = MenuBarStatus(appState: appState)

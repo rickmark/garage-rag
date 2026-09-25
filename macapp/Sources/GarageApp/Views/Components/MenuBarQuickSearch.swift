@@ -16,6 +16,10 @@ struct MenuBarQuickSearch: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var searchTask: Task<Void, Never>?
+    @FocusState private var isFieldFocused: Bool
+    /// The popover's window, so the field can take focus each time it opens: the menu bar extra
+    /// keeps its view alive between openings, so `onAppear` alone only fires the first time.
+    @State private var popoverWindow: NSWindow?
 
     static let resultLimit = 5
     static let debounce: Duration = .milliseconds(250)
@@ -53,7 +57,22 @@ struct MenuBarQuickSearch: View {
             schedule()
         }
         .onChange(of: isEnabled) { _, enabled in
-            if !enabled { clear() }
+            if enabled { focusField() } else { clear() }
+        }
+        .background(WindowReader { popoverWindow = $0 })
+        .onAppear(perform: focusField)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow, window === popoverWindow else { return }
+            focusField()
+        }
+    }
+
+    /// Puts the cursor in the field, so typing right after clicking the menu bar item searches.
+    private func focusField() {
+        guard isEnabled else { return }
+        // The window has to be key before a field in it can take focus.
+        DispatchQueue.main.async {
+            isFieldFocused = true
         }
     }
 
@@ -65,6 +84,7 @@ struct MenuBarQuickSearch: View {
             TextField(isEnabled ? "Search your corpus" : "Search needs the database", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
+                .focused($isFieldFocused)
                 .onSubmit(showAll)
                 .disabled(!isEnabled)
                 .accessibilityIdentifier("menubar.search.field")
