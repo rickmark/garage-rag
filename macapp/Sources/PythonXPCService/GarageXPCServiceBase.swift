@@ -129,20 +129,22 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         if usesPython {
             ensurePythonReady()
         }
-        let results = performSelfTests()
         registerServicesIfNeeded()
+        // The self tests run once the managed services have started: some of them check those
+        // services (llama's HTTP listener), which would otherwise always fail at launch.
         host.startAll { [self] states in
             let failed = states.filter { if case .failed = $0.value { return true } else { return false } }
             if !failed.isEmpty {
                 GarageXPCOutputCapture.shared.log(level: "ERROR", message: "\(failed.count) managed service(s) failed to start: \(failed.keys.sorted().joined(separator: ", "))")
             }
+            let results = performSelfTests()
+            let failures = results.filter { $0.status == .failed }
+            if failures.isEmpty {
+                GarageXPCOutputCapture.shared.log(message: "\(serviceName) self tests passed (\(results.count) tests)")
+            } else {
+                GarageXPCOutputCapture.shared.log(level: "ERROR", message: "\(serviceName) self tests: \(failures.count) failed - \(failures.map { "\($0.name): \($0.summary)" }.joined(separator: "; "))")
+            }
             recomputeLifecycle()
-        }
-        let failures = results.filter { $0.status == .failed }
-        if failures.isEmpty {
-            GarageXPCOutputCapture.shared.log(message: "\(serviceName) self tests passed (\(results.count) tests)")
-        } else {
-            GarageXPCOutputCapture.shared.log(level: "ERROR", message: "\(serviceName) self tests: \(failures.count) failed - \(failures.map { "\($0.name): \($0.summary)" }.joined(separator: "; "))")
         }
         recomputeLifecycle()
     }
