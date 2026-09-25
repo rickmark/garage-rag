@@ -92,10 +92,11 @@ extension ModelsView {
                 if isRegistering {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("Add")
+                    Image(systemName: "plus")
                 }
             }
             .controlSize(.small)
+            .accessibilityLabel("Add \(preset.slug)")
             .disabled(registeringPresetSlug != nil || notReady)
             .help("Register \(preset.slug) in the database; the first embedding model becomes the default")
             .accessibilityIdentifier("models.add.\(preset.slug)")
