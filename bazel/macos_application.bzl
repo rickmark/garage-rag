@@ -9,7 +9,7 @@ load(
 
 def _appstore_transition_impl(settings, attr):
     return {
-        "//command_line_option:platforms": ["//bazel:universal_store"],
+        "//command_line_option:platforms": ["//bazel:store"],
         "//command_line_option:macos_cpus": ["arm64"],
     }
 
@@ -24,7 +24,7 @@ _appstore_transition = transition(
 
 def _developer_id_transition_impl(settings, attr):
     return {
-        "//command_line_option:platforms": ["//bazel:universal_developer_id"],
+        "//command_line_option:platforms": ["//bazel:developer_id"],
         "//command_line_option:macos_cpus": ["arm64"],
     }
 

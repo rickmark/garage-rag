@@ -141,56 +141,28 @@ alias(
     actual = ":local_adhoc",
 )
 
-# 2. Platform for universal binary with Developer ID
+# 2. Platform for the Developer ID build (Apple Silicon only, like every build)
 platform(
-    name = "universal_developer_id",
-    constraint_values = [
-        "@platforms//os:macos",
-        "@platforms//cpu:aarch64",
-        ":distribution_developer_id",
-    ],
-    flags = [
-        "--apple_platform_type=macos",
-        "--@rules_apple//apple/build_settings:signing_certificate_name=" + DEVELOPER_ID_IDENTITY,
-    ],
-)
-
-platform(
-    name = "arm_developer_id",
-    constraint_values = [
-        "@platforms//os:macos",
-        "@platforms//cpu:aarch64",
-        ":distribution_developer_id",
-    ],
-    flags = [
-        "--apple_platform_type=macos",
-        "--@rules_apple//apple/build_settings:signing_certificate_name=" + DEVELOPER_ID_IDENTITY,
-    ],
-)
-
-alias(
     name = "developer_id",
-    actual = ":universal_developer_id",
-)
-
-alias(
-    name = "universal",
-    actual = ":universal_developer_id",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+        ":distribution_developer_id",
+    ],
+    flags = [
+        "--apple_platform_type=macos",
+        "--@rules_apple//apple/build_settings:signing_certificate_name=" + DEVELOPER_ID_IDENTITY,
+    ],
 )
 
 alias(
     name = "macos_developer_id",
-    actual = ":universal_developer_id",
-)
-
-alias(
-    name = "macos_universal",
-    actual = ":universal_developer_id",
+    actual = ":developer_id",
 )
 
 # 3. Platform for distributing via App Store
 platform(
-    name = "universal_store",
+    name = "store",
     constraint_values = [
         "@platforms//os:macos",
         "@platforms//cpu:aarch64",
@@ -204,22 +176,17 @@ platform(
 
 alias(
     name = "appstore",
-    actual = ":universal_store",
-)
-
-alias(
-    name = "store",
-    actual = ":universal_store",
+    actual = ":store",
 )
 
 alias(
     name = "macos_appstore",
-    actual = ":universal_store",
+    actual = ":store",
 )
 
 alias(
     name = "distribute_appstore",
-    actual = ":universal_store",
+    actual = ":store",
 )
 
 # rules_apple's tree-artifact bundling, which rules_xcodeproj always turns on

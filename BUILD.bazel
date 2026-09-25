@@ -46,32 +46,14 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-# 2. Universal binary with Developer ID
-alias(
-    name = "universal_developer_id",
-    actual = "//bazel:universal_developer_id",
-    visibility = ["//visibility:public"],
-)
-
+# 2. Developer ID
 alias(
     name = "developer_id",
     actual = "//bazel:developer_id",
     visibility = ["//visibility:public"],
 )
 
-alias(
-    name = "universal",
-    actual = "//bazel:universal",
-    visibility = ["//visibility:public"],
-)
-
 # 3. Distribute via App Store
-alias(
-    name = "universal_store",
-    actual = "//bazel:universal_store",
-    visibility = ["//visibility:public"],
-)
-
 alias(
     name = "appstore",
     actual = "//bazel:appstore",
