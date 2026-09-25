@@ -7,6 +7,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case database = "Database"
     case sources = "Sources"
     case documents = "Documents"
+    case facts = "Facts"
     case models = "Models"
     case mcp = "MCP Server"
     case search = "Search"
@@ -20,6 +21,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .database: "cylinder.split.1x2"
         case .sources: "tray.and.arrow.down"
         case .documents: "doc.text.magnifyingglass"
+        case .facts: "lightbulb"
         case .models: "cpu"
         case .mcp: "server.rack"
         case .search: "magnifyingglass"
@@ -46,6 +48,8 @@ struct ContentView: View {
 
     @EnvironmentObject private var appState: AppState
     @State private var selection: AppSection? = .status
+    /// A document another page asked the Documents page to show.
+    @State private var documentFocus: DocumentFocus?
     @State private var activeSheet: ActiveSheet?
     @State private var pendingPresentation: Task<Void, Never>?
     @AppStorage(SplashPreferences.showAtLaunchKey) private var showSplashAtLaunch = true
@@ -123,7 +127,12 @@ struct ContentView: View {
             case .status: StatusView(selection: $selection)
             case .database: DatabaseView()
             case .sources: SourcesView()
-            case .documents: DocumentsView()
+            case .documents: DocumentsView(focus: $documentFocus)
+            case .facts:
+                FactsView(openDocument: { focus in
+                    documentFocus = focus
+                    selection = .documents
+                })
             case .models: ModelsView()
             case .mcp: MCPServerView()
             case .search: SearchView()

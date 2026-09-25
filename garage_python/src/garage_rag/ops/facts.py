@@ -1,9 +1,14 @@
-"""Fact distillation over a set of documents, reported per document."""
+"""Fact distillation over a set of documents, reported per document, and the
+listing the app's Facts page browses them through."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from garage_rag.db.engine import session_scope
 from garage_rag.db.models import Document, Source
@@ -97,3 +102,133 @@ def enrich_facts(
             facts=total_facts,
             failed=failed,
         )
+
+
+# Characters of documents.content shown either side of a fact's grounded span.
+EXCERPT_CONTEXT = 200
+
+
+@dataclass
+class FactRow:
+    """One fact with the document it was distilled from."""
+
+    id: int
+    document_id: int
+    ord: int
+    fact: str
+    fact_class: str
+    attributes: dict
+    char_start: int | None
+    char_end: int | None
+    extractor: str
+    extractor_model: str | None
+    created_at: datetime | None
+    document_title: str | None
+    document_uri: str
+    source_slug: str
+    corpus_class: str
+    # The grounded span with EXCERPT_CONTEXT characters either side, and where it
+    # starts in documents.content; None when the fact has no span or the
+    # document keeps no content.
+    excerpt: str | None = None
+    excerpt_start: int = 0
+
+
+@dataclass
+class FactPage:
+    facts: list[FactRow]
+    total: int
+    # Every fact class under the other filters, with its count, so a picker can
+    # offer the classes the current search would find.
+    classes: list[tuple[str, int]] = field(default_factory=list)
+
+
+def _like_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def list_facts(
+    session: Session,
+    *,
+    query: str = "",
+    source: str = "",
+    fact_class: str = "",
+    corpus_class: str = "",
+    document_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> FactPage:
+    """Facts matching the filters, newest first, or best match first given ``query``.
+
+    ``query`` matches a fact's words (Postgres full-text search, stemmed) or any
+    substring of it, so a partial word still finds something. Empty filters
+    match everything.
+    """
+    query = query.strip()
+    params: dict[str, object] = {"ctx": EXCERPT_CONTEXT}
+    base: list[str] = []
+    if query:
+        base.append("(f.tsv @@ websearch_to_tsquery('english', :q) OR f.fact ILIKE :like)")
+        params["q"] = query
+        params["like"] = _like_pattern(query)
+    if source:
+        base.append("s.slug = :source")
+        params["source"] = source
+    if corpus_class:
+        base.append("d.corpus_class = CAST(:corpus_class AS corpus_class)")
+        params["corpus_class"] = corpus_class
+    if document_id:
+        base.append("f.document_id = :document_id")
+        params["document_id"] = document_id
+    filtered = [*base]
+    if fact_class:
+        filtered.append("f.fact_class = :fact_class")
+        params["fact_class"] = fact_class
+
+    joins = "FROM facts f JOIN documents d ON d.id = f.document_id JOIN sources s ON s.id = d.source_id"
+
+    def where(clauses: list[str]) -> str:
+        return ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    order = (
+        "ts_rank(f.tsv, websearch_to_tsquery('english', :q)) DESC, f.id DESC"
+        if query
+        else "f.created_at DESC, f.document_id DESC, f.ord ASC"
+    )
+    params["limit"] = max(limit, 1)
+    params["offset"] = max(offset, 0)
+
+    rows = session.execute(
+        text(
+            f"""
+            SELECT f.id, f.document_id, f.ord, f.fact, f.fact_class, f.attributes,
+                   f.char_start, f.char_end, f.extractor, f.extractor_model, f.created_at,
+                   d.title AS document_title, d.uri AS document_uri, s.slug AS source_slug,
+                   d.corpus_class::text AS corpus_class,
+                   CASE WHEN f.char_start IS NOT NULL AND f.char_end IS NOT NULL AND d.content IS NOT NULL
+                        THEN substr(d.content, GREATEST(f.char_start - :ctx, 0) + 1,
+                                    f.char_end - GREATEST(f.char_start - :ctx, 0) + :ctx)
+                   END AS excerpt,
+                   GREATEST(COALESCE(f.char_start, 0) - :ctx, 0) AS excerpt_start
+            {joins}
+            {where(filtered)}
+            ORDER BY {order}
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        params,
+    ).mappings()
+    facts = [
+        FactRow(**{**row, "attributes": row["attributes"] or {}, "extractor": row["extractor"] or ""}) for row in rows
+    ]
+
+    total = session.execute(text(f"SELECT count(*) {joins} {where(filtered)}"), params).scalar_one()
+    classes = [
+        (name, count)
+        for name, count in session.execute(
+            text(f"SELECT f.fact_class, count(*) {joins} {where(base)} GROUP BY f.fact_class ORDER BY 2 DESC, 1"),
+            params,
+        ).all()
+    ]
+    return FactPage(facts=facts, total=int(total), classes=classes)

@@ -1,8 +1,21 @@
 import SwiftUI
 import AppKit
 
+/// A document another page asks the Documents page to open.
+public struct DocumentFocus: Equatable, Sendable {
+    public let id: Int64
+    public let uri: String
+
+    public init(id: Int64, uri: String) {
+        self.id = id
+        self.uri = uri
+    }
+}
+
 public struct DocumentsView: View {
     @EnvironmentObject var appState: AppState
+    /// Consumed on appear: the list is filtered down to this document and it is selected.
+    @Binding private var focus: DocumentFocus?
 
     @State private var documents: [DocumentListItem] = []
     @State private var totalCount = 0
@@ -24,7 +37,9 @@ public struct DocumentsView: View {
     private let corpusClasses = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.corpusClasses)
     private let trustTiers = CorpusTaxonomy.withAllSentinel(CorpusTaxonomy.trustTiers)
 
-    public init() {}
+    public init(focus: Binding<DocumentFocus?> = .constant(nil)) {
+        self._focus = focus
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -34,11 +49,30 @@ public struct DocumentsView: View {
         }
         .navigationTitle("Documents")
         .onAppear {
-            if !hasLoaded {
+            if let focus {
+                show(focus)
+            } else if !hasLoaded {
                 hasLoaded = true
                 refreshDocuments()
             }
         }
+        .onChange(of: focus) { _, newValue in
+            if let newValue { show(newValue) }
+        }
+    }
+
+    /// Filters the list by the document's URI, which finds it however far down
+    /// the unfiltered list it sits, and selects it.
+    private func show(_ target: DocumentFocus) {
+        focus = nil
+        hasLoaded = true
+        searchText = target.uri
+        selectedSource = "all"
+        selectedCorpusClass = "all"
+        selectedTrustTier = "all"
+        selectedDocumentID = target.id
+        loadDetail(documentID: target.id)
+        refreshDocuments()
     }
 
     // MARK: - Filter Header

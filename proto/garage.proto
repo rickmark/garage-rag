@@ -25,6 +25,9 @@ service GarageService {
     rpc ListDocuments (ListDocumentsRequest) returns (ListDocumentsResponse);
     rpc GetDocument (GetDocumentRequest) returns (GetDocumentResponse);
 
+    // --- Facts ---
+    rpc ListFacts (ListFactsRequest) returns (ListFactsResponse);
+
     // --- Sources ---
     rpc ListSources (ListSourcesRequest) returns (ListSourcesResponse);
     rpc AddSource (AddSourceRequest) returns (AddSourceResponse);
@@ -223,6 +226,57 @@ message GetDocumentResponse {
     repeated DocumentChunkInfo chunks = 2;
     string formatted_output = 3;
     repeated DocumentFactInfo facts = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Facts
+// ---------------------------------------------------------------------------
+
+message FactSummary {
+    int64 id = 1;
+    int64 document_id = 2;
+    int32 ord = 3;
+    string fact = 4;
+    string fact_class = 5;
+    string attributes_json = 6;
+    // Span of documents.content the fact was grounded to.
+    optional int32 char_start = 7;
+    optional int32 char_end = 8;
+    string extractor = 9;
+    string extractor_model = 10;
+    string created_at = 11;
+    string document_title = 12;
+    string document_uri = 13;
+    string source_slug = 14;
+    string corpus_class = 15;
+    // The grounded span with some of the document either side; empty when the
+    // fact has no span or the document keeps no content.
+    string excerpt = 16;
+    // Where the excerpt starts in documents.content, to place the span in it.
+    int32 excerpt_start = 17;
+}
+
+message FactClassCount {
+    string fact_class = 1;
+    int64 count = 2;
+}
+
+message ListFactsRequest {
+    string query = 1; // full-text or substring match on the fact; empty = all
+    string source = 2; // source slug filter; empty = all sources
+    string fact_class = 3; // filter; empty = all
+    string corpus_class = 4; // filter; empty = all
+    int64 document_id = 5; // one document's facts; 0 = all
+    int32 limit = 6;
+    int32 offset = 7;
+}
+
+message ListFactsResponse {
+    repeated FactSummary facts = 1;
+    int64 total_count = 2;
+    // Fact classes under every filter but fact_class, most common first.
+    repeated FactClassCount classes = 3;
+    string formatted_output = 4;
 }
 
 // ---------------------------------------------------------------------------
