@@ -109,8 +109,25 @@ class IngestStorageGateway(ABC):
         source_slug: str,
         uri: str,
         error: str,
+        *,
+        byte_size: int = 0,
+        mtime: float = 0.0,
+        source_sha256: str = "",
     ) -> None:
-        """Record extraction failure."""
+        """Record extraction failure, and remember the file's stat so an unchanged file is not retried."""
+
+    @abstractmethod
+    def record_no_text(
+        self,
+        run_id: int,
+        source_slug: str,
+        uri: str,
+        *,
+        byte_size: int,
+        mtime: float,
+        source_sha256: str,
+    ) -> None:
+        """Record a file that holds no text: drop any document for it, and remember its stat."""
 
     @abstractmethod
     def record_rejected(
@@ -236,14 +253,73 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             persist_scan_result(session, scan_result)
             session.commit()
 
+    @staticmethod
+    def _remembered_outcome(session: Any, source_id: int, uri: str) -> ExistingDocStat | None:
+        """The stored no-text or failed outcome for ``uri``, if its extractor is unchanged since."""
+        from garage_rag.db.models import IngestOutcome
+        from garage_rag.extract.dispatch import extractor_revision
+
+        row = session.query(IngestOutcome).filter_by(source_id=source_id, uri=uri).one_or_none()
+        if row is None or row.extractor_revision != extractor_revision(Path(uri)):
+            return None
+        return ExistingDocStat(
+            exists=True,
+            byte_size=row.byte_size or 0,
+            mtime=row.mtime.timestamp() if row.mtime is not None else 0.0,
+            state=row.outcome,
+            source_sha256=row.source_sha256.hex() if row.source_sha256 else "",
+        )
+
+    @staticmethod
+    def _remember_outcome(
+        session: Any,
+        source_id: int,
+        uri: str,
+        outcome: str,
+        *,
+        byte_size: int,
+        mtime: float,
+        source_sha256: str,
+        error: str | None = None,
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from garage_rag.db.models import IngestOutcome
+        from garage_rag.extract.dispatch import extractor_revision
+
+        values = {
+            "outcome": outcome,
+            "byte_size": byte_size or None,
+            "mtime": datetime.fromtimestamp(mtime, tz=UTC) if mtime else None,
+            "source_sha256": bytes.fromhex(source_sha256) if source_sha256 else None,
+            "extractor_revision": extractor_revision(Path(uri)),
+            "error": error,
+            "recorded_at": datetime.now(tz=UTC),
+        }
+        session.execute(
+            pg_insert(IngestOutcome)
+            .values(source_id=source_id, uri=uri, **values)
+            .on_conflict_do_update(index_elements=["source_id", "uri"], set_=values)
+        )
+
+    @staticmethod
+    def _forget_outcome(session: Any, source_id: int, uri: str) -> None:
+        from garage_rag.db.models import IngestOutcome
+
+        session.query(IngestOutcome).filter_by(source_id=source_id, uri=uri).delete(synchronize_session=False)
+
     def check_stat(self, source_slug: str, uri: str) -> ExistingDocStat:
-        from garage_rag.db.models import Document, Source
+        from garage_rag.db.models import Document, IngestState, Source
 
         with self.factory() as session:
             src = session.query(Source).filter_by(slug=source_slug).one_or_none()
             if src is None:
                 raise LookupError(f"No such source: {source_slug}")
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
+            if doc is None or doc.state != IngestState.OK:
+                remembered = self._remembered_outcome(session, src.id, uri)
+                if remembered is not None:
+                    return remembered
             if doc is None:
                 return ExistingDocStat(exists=False)
 
@@ -284,6 +360,10 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         source_slug: str,
         uri: str,
         error: str,
+        *,
+        byte_size: int = 0,
+        mtime: float = 0.0,
+        source_sha256: str = "",
     ) -> None:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -297,6 +377,17 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             if doc is not None:
                 doc.state = IngestState.EXTRACT_FAILED
                 doc.error = error[:2000]
+            if mtime or source_sha256:
+                self._remember_outcome(
+                    session,
+                    src.id,
+                    uri,
+                    "extract_failed",
+                    byte_size=byte_size,
+                    mtime=mtime,
+                    source_sha256=source_sha256,
+                    error=error[:2000],
+                )
 
             if run_id:
                 session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
@@ -319,6 +410,36 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
             if doc is not None:
                 session.delete(doc)
+            self._forget_outcome(session, src.id, uri)
+
+            if run_id:
+                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
+            session.commit()
+
+    def record_no_text(
+        self,
+        run_id: int,
+        source_slug: str,
+        uri: str,
+        *,
+        byte_size: int,
+        mtime: float,
+        source_sha256: str,
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from garage_rag.db.models import Document, IngestSeen, Source
+
+        with self.factory() as session:
+            src = session.query(Source).filter_by(slug=source_slug).one_or_none()
+            if src is None:
+                raise LookupError(f"No such source: {source_slug}")
+            doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
+            if doc is not None:
+                session.delete(doc)
+            self._remember_outcome(
+                session, src.id, uri, "no_text", byte_size=byte_size, mtime=mtime, source_sha256=source_sha256
+            )
 
             if run_id:
                 session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
@@ -450,6 +571,7 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
             doc.error = None
             doc.ingested_at = datetime.now(tz=UTC)
             session.flush()
+            self._forget_outcome(session, src.id, uri)
 
             # Replace authors
             session.query(DocumentAuthor).filter_by(document_id=doc.id).delete()
@@ -621,6 +743,10 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
         source_slug: str,
         uri: str,
         error: str,
+        *,
+        byte_size: int = 0,
+        mtime: float = 0.0,
+        source_sha256: str = "",
     ) -> None:
         from garage_rag.proto.garage_pb2 import PersistDocumentRequest
 
@@ -630,6 +756,32 @@ class GrpcIngestStorageGateway(IngestStorageGateway):
             uri=uri,
             action="extract_failed",
             error=error,
+            byte_size=byte_size,
+            mtime=mtime,
+            source_sha256=source_sha256,
+        )
+        self.client.persist_document(req)
+
+    def record_no_text(
+        self,
+        run_id: int,
+        source_slug: str,
+        uri: str,
+        *,
+        byte_size: int,
+        mtime: float,
+        source_sha256: str,
+    ) -> None:
+        from garage_rag.proto.garage_pb2 import PersistDocumentRequest
+
+        req = PersistDocumentRequest(
+            run_id=run_id,
+            source_slug=source_slug,
+            uri=uri,
+            action="no_text",
+            byte_size=byte_size,
+            mtime=mtime,
+            source_sha256=source_sha256,
         )
         self.client.persist_document(req)
 

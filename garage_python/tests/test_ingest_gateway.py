@@ -12,7 +12,7 @@ import pytest
 
 from garage_rag.attribute.resolver import SelfIdentity
 from garage_rag.db.models import CorpusClass, Document, IngestState, Source, TrustTier
-from garage_rag.extract.base import file_sha256
+from garage_rag.extract.base import ExtractionError, file_sha256
 from garage_rag.extract.placeholder import PlaceholderFile
 from garage_rag.ingest import materialize as materialize_mod
 from garage_rag.ingest.gateway import (
@@ -663,8 +663,84 @@ def test_whitespace_only_file_is_rejected_and_its_old_document_dropped(tmp_path:
 
     assert counters.rejected == 1
     assert counters.failed == 0
-    gateway.record_rejected.assert_called_once_with(9, "src", str(blank))
+    candidate = _candidate(blank)
+    gateway.record_no_text.assert_called_once_with(
+        9,
+        "src",
+        str(blank),
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp(),
+        source_sha256=file_sha256(blank).hex(),
+    )
     gateway.replace_document.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["no_text", "extract_failed"])
+def test_remembered_outcome_with_unchanged_stat_is_not_read_again(tmp_path: Path, state: str):
+    """A textless image is not OCR'd, and a failed file not retried, while its stat is unchanged."""
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"not really a png")
+    candidate = _candidate(photo)
+    existing = ExistingDocStat(
+        exists=True, byte_size=candidate.size, mtime=candidate.mtime.timestamp(), state=state, source_sha256="ab" * 32
+    )
+    with patch("garage_rag.ingest.pipeline.extract") as extract:
+        gateway, counters = _ingest_one(tmp_path, candidate, existing)
+
+    extract.assert_not_called()
+    assert counters.skipped == 1
+    assert counters.failed == 0
+    gateway.record_seen.assert_called_once_with(9, "src", str(photo))
+
+
+def test_remembered_no_text_with_unchanged_bytes_refreshes_its_stat(tmp_path: Path):
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"not really a png")
+    raw = file_sha256(photo)
+    assert raw is not None
+    candidate = _candidate(photo)
+    existing = ExistingDocStat(
+        exists=True,
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp() - 60,
+        state="no_text",
+        source_sha256=raw.hex(),
+    )
+    with patch("garage_rag.ingest.pipeline.extract") as extract:
+        gateway, counters = _ingest_one(tmp_path, candidate, existing)
+
+    extract.assert_not_called()
+    assert counters.skipped == 1
+    gateway.record_no_text.assert_called_once_with(
+        9, "src", str(photo), byte_size=candidate.size, mtime=candidate.mtime.timestamp(), source_sha256=raw.hex()
+    )
+
+
+def test_remembered_failure_is_retried_when_the_bytes_change(tmp_path: Path):
+    doc = tmp_path / "broken.pdf"
+    doc.write_bytes(b"%PDF-1.4 changed")
+    candidate = _candidate(doc)
+    existing = ExistingDocStat(
+        exists=True,
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp() - 60,
+        state="extract_failed",
+        source_sha256="ab" * 32,
+    )
+    with patch("garage_rag.ingest.pipeline.extract", side_effect=ExtractionError("still broken")) as extract:
+        gateway, counters = _ingest_one(tmp_path, candidate, existing)
+
+    extract.assert_called_once()
+    assert counters.failed == 1
+    gateway.record_extract_failed.assert_called_once_with(
+        9,
+        "src",
+        str(doc),
+        "still broken",
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp(),
+        source_sha256=file_sha256(doc).hex(),
+    )
 
 
 def test_unmaterialized_placeholder_writes_no_document(tmp_path: Path):
@@ -803,7 +879,7 @@ def test_image_without_text_is_rejected_not_failed(tmp_path: Path):
         patch("garage_rag.attribute.resolver.ensure_self_author"),
         patch("garage_rag.db.models.IngestRun", return_value=fake_run),
         patch("garage_rag.ingest.pipeline.extract", side_effect=NoTextFound("no usable text in image")),
-        patch.object(gateway, "record_rejected") as record_rejected,
+        patch.object(gateway, "record_no_text") as record_no_text,
         patch.object(gateway, "record_extract_failed") as record_extract_failed,
     ):
         counters, _, _ = ingest_source(gateway=gateway, source_slug="seen-src")
@@ -811,7 +887,8 @@ def test_image_without_text_is_rejected_not_failed(tmp_path: Path):
     assert counters.rejected == 1
     assert counters.failed == 0
     assert counters.errors == []
-    record_rejected.assert_called_once_with(5, "seen-src", str(tmp_path / "photo.txt"))
+    record_no_text.assert_called_once()
+    assert record_no_text.call_args.args == (5, "seen-src", str(tmp_path / "photo.txt"))
     record_extract_failed.assert_not_called()
 
 

@@ -7,6 +7,7 @@ up front for a run that never meets a PDF or a spreadsheet is pure startup cost.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -249,6 +250,34 @@ def extractor_for(path: Path) -> Extractor:
     raise UnsupportedFile(f"no extractor for {suffix or name!r}")
 
 
+# Each extractor's name, and the module whose VERSION it reports.
+_EXTRACTOR_MODULES: dict[Extractor, tuple[str, str]] = {
+    _markdown: ("markdown", "text"),
+    _plaintext: ("plaintext", "text"),
+    _code: ("code", "text"),
+    _pdf: ("pdf", "pdf"),
+    _docx: ("docx", "office"),
+    _pptx: ("pptx", "office"),
+    _xlsx: ("xlsx", "office"),
+    _image: ("image", "image"),
+}
+
+
+def extractor_revision(path: Path) -> str:
+    """The extractor for ``path`` and its version, such as ``"pdf:1"``; empty when there is none.
+
+    A remembered no-text or failed outcome counts only while this is unchanged, so
+    bumping an extractor's ``VERSION`` retries every file it gave up on.
+    """
+    try:
+        extractor = extractor_for(path)
+    except UnsupportedFile:
+        return ""
+    name, module_name = _EXTRACTOR_MODULES[extractor]
+    module = importlib.import_module(f"garage_rag.extract.{module_name}")
+    return f"{name}:{module.VERSION}"
+
+
 def is_indexable(path: Path) -> bool:
     """Cheap pre-filter for the walker, before any file is opened."""
     suffix = path.suffix.lower()
@@ -293,5 +322,6 @@ __all__ = [
     "UnsupportedFile",
     "extract",
     "extractor_for",
+    "extractor_revision",
     "is_indexable",
 ]

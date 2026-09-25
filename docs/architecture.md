@@ -51,8 +51,11 @@ an older row for it keeps its chunks.
 
 Two more skips come before extraction. A file whose stat changed but whose raw
 bytes did not (`source_sha256`) has its stat refreshed and is not re-extracted.
-A file with no text, empty or all whitespace, gets no document either: it is
-counted as rejected and any older row for it is dropped.
+A file with no text (empty, all whitespace, an icon or a photo) gets no document
+either: it is counted as rejected and any older row for it is dropped. It and a
+file whose extraction failed are remembered in `ingest_outcomes` with their stat
+and hash, so they are not read again until they change or their extractor's
+version does.
 
 ### 3. Extract (`extract/`)
 
