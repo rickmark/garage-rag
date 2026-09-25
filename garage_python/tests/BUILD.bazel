@@ -392,6 +392,7 @@ py_test(
         "//garage_python/src/garage_rag/config",
         "//garage_python/src/garage_rag/db",
         "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/ingest",
         "//garage_python/src/garage_rag/search",
         "@pypi//pytest",
         "@pypi//sqlalchemy",

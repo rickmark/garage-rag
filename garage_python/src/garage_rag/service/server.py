@@ -1089,7 +1089,24 @@ class GarageRpcServicer(GarageServiceServicer):
             case "placeholder":
                 gw.record_placeholder(run_id, slug, uri, request.mtime, request.title, request.error)
             case "extract_failed":
-                gw.record_extract_failed(run_id, slug, uri, request.error or "extraction failed")
+                gw.record_extract_failed(
+                    run_id,
+                    slug,
+                    uri,
+                    request.error or "extraction failed",
+                    byte_size=request.byte_size,
+                    mtime=request.mtime,
+                    source_sha256=request.source_sha256,
+                )
+            case "no_text":
+                gw.record_no_text(
+                    run_id,
+                    slug,
+                    uri,
+                    byte_size=request.byte_size,
+                    mtime=request.mtime,
+                    source_sha256=request.source_sha256,
+                )
             case "rejected":
                 gw.record_rejected(run_id, slug, uri)
             case "seen":

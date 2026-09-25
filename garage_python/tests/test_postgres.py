@@ -31,6 +31,7 @@ from garage_rag.db.engine import reset_engine, session_scope
 from garage_rag.db.migrate import _connect, apply_migrations, pending_migrations, sql_dir, to_psycopg_conninfo
 from garage_rag.db.registry import ModelSpec
 from garage_rag.embed.ollama import count_pending
+from garage_rag.ingest.gateway import SqlAlchemyIngestStorageGateway
 from garage_rag.search import SearchMode
 from garage_rag.search.hybrid import search
 
@@ -224,6 +225,76 @@ class TestMigrations:
         assert db.execute(text("SELECT distance FROM embedding_models")).scalar_one() == "cosine"
         with pytest.raises(Exception, match="embedding_models_distance_check"):
             db.execute(text("UPDATE embedding_models SET distance = 'manhattan'"))
+
+
+class TestIngestOutcomes:
+    """The no-text and failed outcomes the pipeline remembers, through the SQL gateway."""
+
+    def _gateway(self, db: Session) -> SqlAlchemyIngestStorageGateway:
+        _source(db, "outcomes")
+        db.commit()
+        return SqlAlchemyIngestStorageGateway(session_factory=session_scope)
+
+    def test_no_text_is_remembered_and_updated_in_place(self, db: Session) -> None:
+        gateway = self._gateway(db)
+        gateway.record_no_text(0, "outcomes", "/pics/photo.png", byte_size=10, mtime=1.7e9, source_sha256="ab" * 32)
+        gateway.record_no_text(0, "outcomes", "/pics/photo.png", byte_size=12, mtime=1.8e9, source_sha256="cd" * 32)
+
+        stat = gateway.check_stat("outcomes", "/pics/photo.png")
+        assert (stat.exists, stat.state, stat.byte_size, stat.mtime, stat.source_sha256) == (
+            True,
+            "no_text",
+            12,
+            1.8e9,
+            "cd" * 32,
+        )
+        assert db.execute(text("SELECT count(*) FROM ingest_outcomes")).scalar_one() == 1
+
+    def test_failure_is_remembered_with_its_error(self, db: Session) -> None:
+        gateway = self._gateway(db)
+        gateway.record_extract_failed(
+            0, "outcomes", "/docs/broken.pdf", "bad xref", byte_size=5, mtime=1.7e9, source_sha256="ef" * 32
+        )
+
+        assert gateway.check_stat("outcomes", "/docs/broken.pdf").state == "extract_failed"
+        row = db.execute(text("SELECT outcome, error, extractor_revision FROM ingest_outcomes")).one()
+        assert tuple(row) == ("extract_failed", "bad xref", "pdf:1")
+
+    def test_an_outcome_from_another_extractor_version_is_ignored(self, db: Session) -> None:
+        gateway = self._gateway(db)
+        gateway.record_no_text(0, "outcomes", "/pics/photo.png", byte_size=10, mtime=1.7e9, source_sha256="ab" * 32)
+        db.execute(text("UPDATE ingest_outcomes SET extractor_revision = 'image:0'"))
+        db.commit()
+
+        assert gateway.check_stat("outcomes", "/pics/photo.png").exists is False
+
+    def test_indexing_the_file_forgets_its_outcome(self, db: Session) -> None:
+        gateway = self._gateway(db)
+        gateway.record_no_text(0, "outcomes", "/notes/a.md", byte_size=1, mtime=1.7e9, source_sha256="ab" * 32)
+        with patch("garage_rag.attribute.resolver.ensure_self_author"):
+            gateway.replace_document(
+                0,
+                "outcomes",
+                "/notes/a.md",
+                title="a",
+                lang=None,
+                byte_size=4,
+                mtime=1.8e9,
+                source_sha256="cd" * 32,
+                content_sha256="ef" * 32,
+                extractor="markdown",
+                extractor_version="1",
+                chunker=None,
+                content="text",
+                meta={},
+                corpus_class="document",
+                trust_tier="authored",
+                authors=[],
+                chunks=[],
+            )
+
+        assert db.execute(text("SELECT count(*) FROM ingest_outcomes")).scalar_one() == 0
+        assert gateway.check_stat("outcomes", "/notes/a.md").state.upper() == "OK"
 
 
 class TestModelTables:
