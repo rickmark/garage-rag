@@ -77,7 +77,9 @@ struct SourceRowPresentation: Equatable {
     let badges: [Badge]
     let status: String
     let statusTone: SourceTone
-    /// Nil hides the bar; `isIndeterminate` shows a moving one instead of a fraction.
+    /// The bar's fraction: 1 when there is nothing left to index, so an up-to-date row keeps its
+    /// full bar and the rows stay the same height. Nil only while a moving bar (`isIndeterminate`)
+    /// stands in for it.
     let progress: Double?
     let isIndeterminate: Bool
     /// The counts at the right of the status line, in monospace.
@@ -208,6 +210,10 @@ struct SourceRowPresentation: Equatable {
                     status = "Last ingest was cancelled"
                     tone = .neutral
                 }
+            }
+            // A row with nothing to count still draws a bar: full when it has documents, empty when not.
+            if progress == nil {
+                progress = source.documentCount > 0 ? 1 : 0
             }
         }
 
