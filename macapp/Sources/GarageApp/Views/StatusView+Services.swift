@@ -123,7 +123,7 @@ extension StatusView {
                         isTestingGrpc = true
                         grpcTestResult = await appState.grpc.testServiceQuery()
                         isTestingGrpc = false
-                        withAnimation { expandedServiceIds.insert("grpc") }
+                        _ = withAnimation { expandedServiceIds.insert("grpc") }
                     }
                 } label: {
                     if isTestingGrpc {
@@ -169,7 +169,7 @@ extension StatusView {
                 Button {
                     Task {
                         _ = await appState.xpcServices.runDiagnosticTest(for: service.id)
-                        withAnimation { expandedServiceIds.insert(service.id) }
+                        _ = withAnimation { expandedServiceIds.insert(service.id) }
                     }
                 } label: {
                     if isTesting {
