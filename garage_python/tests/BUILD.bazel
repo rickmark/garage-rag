@@ -441,6 +441,7 @@ test_suite(
         ":test_embed_egress",
         ":test_embed_xpc",
         ":test_facts",
+        ":test_fixture_corpus",
         ":test_generation",
         ":test_grpc_documents",
         ":test_grpc_operations",
@@ -569,5 +570,19 @@ py_test(
         "//garage_python/src/garage_rag/search",
         "@pypi//pytest",
         "@pypi//typer",
+    ],
+)
+
+py_test(
+    name = "test_fixture_corpus",
+    srcs = ["test_fixture_corpus.py"],
+    # The UI tests' corpus, ingested here through the real extractors.
+    data = ["//macapp/Tests/Fixtures:corpus"],  # keep
+    deps = [
+        ":conftest",
+        "//garage_python/src/garage_rag/config",
+        "//garage_python/src/garage_rag/db",
+        "//garage_python/src/garage_rag/ingest",
+        "@pypi//pytest",
     ],
 )
