@@ -144,7 +144,8 @@ struct MenuBarStatus: Equatable {
 
         let ingest = appState.ingestService
         let activity: Activity
-        if ingest.isRunning {
+        // An ingest of every source is still running between two sources, while IngestService is idle.
+        if ingest.isRunning || appState.isIngestingAll {
             let latest = ingest.latestProgress
             let current = ingest.currentSource ?? ""
             activity = .ingesting(IngestProgress(
@@ -172,7 +173,7 @@ struct MenuBarStatus: Equatable {
             lastIngestError: appState.lastIngestAllFailure ?? ingest.lastError,
             sourceCount: appState.registeredSources.count,
             documentCount: appState.corpusStats.documentsCount,
-            isCancellingIngest: ingest.isCancelling
+            isCancellingIngest: appState.isCancellingAll
         )
     }
 
