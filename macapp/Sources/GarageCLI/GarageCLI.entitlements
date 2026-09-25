@@ -32,7 +32,5 @@
 	<array>
 		<string>DWVXMLB45Y.group.me.rickmark.garage-rag</string>
 	</array>
-	<key>com.apple.security.cs.disable-library-validation</key>
-	<true/>
 </dict>
 </plist>

@@ -19,9 +19,10 @@ codesign_validation_test = _codesign_validation_test
 #
 # Hardened runtime is only *required* for notarization, so enable it for the
 # signed distribution configs and leave it off for the local ones. The
-# distribution configs sign everything with one Team ID, so validation passes
-# there; the App Store build additionally ships
-# com.apple.security.cs.disable-library-validation in its entitlements.
+# distribution configs sign everything with one Team ID, every extension module
+# in site-python included, so validation passes there and neither ships
+# com.apple.security.cs.disable-library-validation.
+# tools/macos/trace_loaded_images.sh checks that at run time.
 HARDENED_RUNTIME_CODESIGNOPTS = select({
     "//bazel:is_developer_id": ["--options=runtime"],
     "//bazel:is_store": ["--options=runtime"],
