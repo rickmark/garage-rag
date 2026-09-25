@@ -167,7 +167,7 @@ refusing to bind 0.0.0.0: this server has no authentication and exposes your
 entire corpus, including anything indexed from private communications.
 ```
 
-**DNS-rebinding protection, always on.** Without it, a page you visit could
+**DNS-rebinding protection, on by default.** Without it, a page you visit could
 resolve its own hostname to `127.0.0.1` and POST to your loopback server from
 your browser — reading your corpus without ever touching the network perimeter.
 The `Host` allowlist blocks it:
@@ -179,6 +179,9 @@ $ curl -H 'Host: 127.0.0.1:8787'   http://127.0.0.1:8787/mcp   # 200
 
 Browser clients additionally need their origin allowed explicitly, with
 `--allow-origin https://example.com`.
+
+The check stays on for loopback. Under `--allow-remote` the server cannot know which
+host names reach it, so the check is off unless you list them with `--allow-host`.
 
 **No transport-level encryption.** Plain HTTP. Fine over loopback; if you expose
 it, terminate TLS and authenticate at a reverse proxy. Do not put this on a
