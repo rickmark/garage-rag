@@ -134,8 +134,8 @@ confusingly on every one. The pipeline detects this and reports it as a
 permissions problem rather than a parse failure.
 
 To grant: **System Settings → Privacy & Security → Full Disk Access**, and add
-your terminal (or whichever process runs `garage`). Then re-run — idempotency
-means nothing already indexed is re-done.
+Garage (for the app's ingest) or your terminal (for `garage` run from it). Then
+re-run — idempotency means nothing already indexed is re-done.
 
 If you would rather not grant blanket access, copy `chat.db` (plus `-wal` and
 `-shm`) to a working directory via Finder and register that copy as the source.
@@ -148,7 +148,9 @@ download it** — a naive walk would have quietly pulled ~230 GB.
 
 `placeholders.materialize` controls this, and even when enabled, downloads are
 capped per run by `placeholders.limit` and `placeholders.max_bytes`. Every run reports what it fetched and what it
-deferred; nothing is silently truncated.
+deferred; nothing is silently truncated. A stub that is not downloaded gets no
+document (the run counts it as a placeholder), and a file indexed before the sync
+client evicted it is skipped without a download while its stat still matches.
 
 ## Serving over HTTP
 
@@ -186,12 +188,12 @@ network you do not control.
 
 The MCP server answers whichever client you connect: Claude Desktop, Claude
 Code, Cursor, or anything else you register. An agent receives the excerpts its
-searches return (`rag_search`, `get_document`, and the answers from `rag_ask` /
+searches return (`rag_search`, `rag_get_document`, and the answers from `rag_ask` /
 `rag_generate`), only those, not the whole index. Most agents run their model in
 the cloud, so they send those excerpts, with your conversation, to their model
 provider. That includes excerpts from Messages and Mail if you have indexed
 them: the MCP tools serve communications like any other content, and the egress
-guard above governs Garage's own cloud calls, not a client's.
+guard above governs what Garage itself sends, not what a client does next.
 
 What happens to an excerpt after an agent receives it is governed by that
 agent's terms and privacy policy, not Garage's. If an indexed source should not
@@ -200,7 +202,8 @@ out of the index.
 
 ## What is stored, and where
 
-Everything stays in your local Postgres `rag` database: extracted text in
+Everything stays in your local Postgres database (`garage-rag` in the app's
+bundled cluster, in its data folder): extracted text in
 `documents.content`, chunk text in `chunks.text`, vectors in `emb_*`. No content
 leaves the machine except to the model servers you configure (communications
 never do), or through an MCP client or `--allow-remote`, described above.

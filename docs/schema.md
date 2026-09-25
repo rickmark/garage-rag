@@ -14,6 +14,12 @@ Migrations are idempotent — `IF NOT EXISTS` plus `duplicate_object` guards for
 enum types — so applying them repeatedly *is* the migration story. Sufficient for
 a single-user local corpus, and it avoids a migration framework.
 
+The files run in order, `001_extensions.sql` through `013_fact_prompts.sql`.
+`001` creates `vector` and `pg_trgm`, and Apache AGE (`age`, graph queries in
+openCypher) only where the server has it installed: the app's bundled Postgres
+always does, Homebrew's and the CI image usually do not, and nothing in the
+schema depends on it yet.
+
 ## The two axes
 
 The design decision worth understanding: **what a thing is** and **how trusted it
@@ -117,6 +123,12 @@ from its first line to its last. They are NULL when the chunk cannot be found
 in the content, and on chunks built before offsets were recorded; those gain
 them the next time the document is re-chunked.
 
+Re-chunking a document keeps every row whose `ord`, `chunk_sha256`, text and
+`chunker` are unchanged, updating only its offsets and heading, and replaces the
+rest. A kept row keeps its `id`, so its vectors in the `emb_*` tables survive and
+backfill embeds only the chunks that actually changed. Fact chunks are always
+replaced.
+
 `chunks.fact_id` (`007_chunk_fact_link.sql`) is a nullable
 `REFERENCES facts(id) ON DELETE CASCADE` column with a partial unique index
 (`WHERE fact_id IS NOT NULL`), so a fact has at most one chunk. It marks a
@@ -143,8 +155,8 @@ leaves every other prompt's alone.
 | `attributes` | `jsonb` extractor attributes, default `'{}'` |
 | `char_start` / `char_end` | span of `documents.content` the fact was grounded to; an ungrounded fact is dropped by the extractor rather than stored |
 | `extractor` / `extractor_model` | provenance, default `'langextract'` and the model id |
-| `prompt_name` | the `facts.prompts` entry that produced the fact; `'default'` (the built-in prompt) for facts from before 012 |
-| `prompt_sha256` | SHA-256 of that prompt's description and examples when it ran; NULL before 012 |
+| `prompt_name` | the `facts.prompts` entry that produced the fact; `'default'` (the built-in prompt) for facts from before 013 |
+| `prompt_sha256` | SHA-256 of that prompt's description and examples when it ran; NULL before 013 |
 | `tsv` | generated `to_tsvector('english', fact)`, GIN-indexed — the keyword half of hybrid search over facts |
 
 ### `fact_runs`

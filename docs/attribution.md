@@ -113,21 +113,26 @@ somebody else, and your own work is filed as `reference`.
 
 ## Communications
 
-The schema reserves three roles for messages and mail alongside `author` and
-`committer` (`AuthorRole` in `db/models.py`): `sender`, `recipient`, `cc`. The
-intended mapping is:
+The schema has three roles for messages and mail alongside `author` and
+`committer` (`AuthorRole` in `db/models.py`): `sender`, `recipient`, `cc`.
 
-- Outbound → you are `sender`, the handles are `recipient`
-- Inbound → the handle is `sender`, you are `recipient`
-- Mail `Cc:` → `cc`
+**Mail** (`.eml`, `.emlx`) replaces the metadata signal with the sender. For an
+extracted message the resolver reads the `From:` addresses
+(`_sender_attribution` in `attribute/resolver.py`): your name or address makes
+the message `authored` (`message-sender:self`), anyone else's makes it
+`received` (`message-sender:third-party`). A byline on a paper means you
+collected it; a name on a message means it was sent to you, so the
+document-metadata rule, which would call it `reference`, does not apply. The
+senders are recorded with role `author`. Git history still comes first, so a
+message file tracked in a repository is attributed from its commits.
 
-with trust `authored` for what you sent and `received` for what you did not.
+**Messages** threads (`ingest/conversations.py`) record every handle in the
+thread: those who wrote in it as `sender`, those who only read it as
+`recipient` (evidence `imessage-handle`), and you as `sender` when you wrote and
+`identity.name` is set (`imessage-is-from-me`). The thread's trust is the
+source's default (`received` for the app's Messages preset).
 
-**Not yet populated.** Nothing in `attribute/` assigns these roles today: the
-resolver only ever emits `author` and `committer`, and communication sources are
-attributed through the same git → metadata → path → source-default chain as
-everything else. The roles exist so the schema does not need a migration when a
-conversation-aware attributor lands.
+`cc` is not assigned yet.
 
 ## Corpus class
 
