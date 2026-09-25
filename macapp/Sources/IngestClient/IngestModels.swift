@@ -110,6 +110,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
     public let grpcPort: Int?
     public let databaseUrl: String?
     public let lmStudioApiToken: String?
+    /// The app's per-launch gRPC token (`GARAGE_GRPC_TOKEN`), for an ingest that persists over gRPC.
+    public let grpcToken: String?
 
     public init(
         includeCode: Bool = false,
@@ -118,7 +120,8 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         grpcHost: String? = nil,
         grpcPort: Int? = nil,
         databaseUrl: String? = nil,
-        lmStudioApiToken: String? = nil
+        lmStudioApiToken: String? = nil,
+        grpcToken: String? = nil
     ) {
         self.includeCode = includeCode
         self.limit = limit
@@ -127,6 +130,7 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.grpcPort = grpcPort
         self.databaseUrl = databaseUrl
         self.lmStudioApiToken = lmStudioApiToken
+        self.grpcToken = grpcToken
     }
 
     public static let `default` = IngestOptions()
@@ -139,6 +143,7 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         case grpcPort = "grpc_port"
         case databaseUrl = "database_url"
         case lmStudioApiToken = "lmstudio_api_token"
+        case grpcToken = "grpc_token"
     }
 
     public init(from decoder: Decoder) throws {
@@ -150,6 +155,7 @@ public struct IngestOptions: Codable, Sendable, Equatable {
         self.grpcPort = try container.decodeIfPresent(Int.self, forKey: .grpcPort)
         self.databaseUrl = try container.decodeIfPresent(String.self, forKey: .databaseUrl)
         self.lmStudioApiToken = try container.decodeIfPresent(String.self, forKey: .lmStudioApiToken)
+        self.grpcToken = try container.decodeIfPresent(String.self, forKey: .grpcToken)
     }
 }
 

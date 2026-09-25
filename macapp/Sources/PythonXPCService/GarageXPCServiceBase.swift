@@ -61,7 +61,7 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         super.init()
         // Seed configuration from the process environment (launchd passes the app's environment through).
         let env = ProcessInfo.processInfo.environment
-        for key in [GarageXPCConfigurationKey.databaseURL, GarageXPCConfigurationKey.grpcHost, GarageXPCConfigurationKey.grpcPort, GarageXPCConfigurationKey.logLevel] {
+        for key in [GarageXPCConfigurationKey.databaseURL, GarageXPCConfigurationKey.grpcHost, GarageXPCConfigurationKey.grpcPort, GarageXPCConfigurationKey.grpcToken, GarageXPCConfigurationKey.logLevel] {
             if let value = env[key], !value.isEmpty {
                 _configuration[key] = value
             }
