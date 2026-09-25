@@ -83,6 +83,11 @@ final class AppState: ObservableObject {
     @Published private(set) var factPromptsConfiguredJSON: String = "[]"
     @Published private(set) var factPromptsError: String?
     @Published private(set) var registeredModels: [RegisteredModel] = []
+    /// The llama_xpc alias of the default embedding model this launch already loaded, so a later
+    /// refresh does not load it again after the Models page unloaded it. See `AppState+LlamaModels`.
+    var preloadedEmbeddingModel: String?
+    /// The facts model the running `enrich-facts` loaded and unloads when it ends.
+    var factsModelHeldForDistilling: String?
     @Published private(set) var isFetchingModels = false
     @Published var registeredSources: [RegisteredSource] = []
     @Published private(set) var isFetchingSources = false
@@ -371,6 +376,8 @@ final class AppState: ObservableObject {
         } catch {
             // Silently ignore or leave models as-is if table not yet migrated
         }
+        // At launch, and whenever the default changes, so a search finds its model resident.
+        Task { await preloadDefaultEmbeddingModel() }
     }
 
     func fetchRegisteredSources() async {
@@ -1029,6 +1036,8 @@ final class AppState: ObservableObject {
     func runEnrichFacts(source: String = "*", documentID: Int64? = nil, prompts: [String] = [], staleOnly: Bool = false) async -> Bool {
         let grpc = self.grpc
         let result = await enrichFacts.run { runner in
+            // Inside the runner, so a run refused as "already running" never loads or unloads.
+            await self.loadFactsModelForDistilling(runner)
             let finished = try await grpc.enrichFacts(source: source, documentID: documentID, prompts: prompts, staleOnly: staleOnly) { status in
                 // The summary is logged once, as the operation's result.
                 if status.phase != "finished", !status.message.isEmpty {
@@ -1037,6 +1046,7 @@ final class AppState: ObservableObject {
             }
             return finished?.message ?? ""
         }
+        await unloadFactsModelAfterDistilling()
         return result.succeeded
     }
 
