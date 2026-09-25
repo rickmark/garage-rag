@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from garage_rag.extract.messages import (
     is_messages_database,
     read_conversations,
 )
-from garage_rag.ingest.conversations import SIGNATURE, conversation_uri, render
+from garage_rag.ingest.conversations import conversation_uri, render, signature
 from garage_rag.ingest.gateway import ExistingDocStat, IngestStorageGateway, SourceContext
 from garage_rag.ingest.pipeline import ingest_source
 
@@ -62,7 +63,7 @@ def write_chat_db(path: Path) -> None:
             (2, 'iMessage;+;chat42', 43, 'chat42', 'iMessage', 'Climbing crew'),
             (3, 'SMS;-;+15559876543', 45, '+15559876543', 'SMS', ''),
             (4, 'iMessage;-;friend@example.com', 45, 'friend@example.com', 'iMessage', '');
-        INSERT INTO chat_handle_join VALUES (1, 1), (2, 1), (2, 2), (3, 3), (4, 2);
+        INSERT INTO chat_handle_join VALUES (1, 1), (2, 1), (2, 2), (2, 3), (3, 3), (4, 2);
         """
     )
     rows: list[tuple[Any, ...]] = [
@@ -201,7 +202,7 @@ def test_reads_conversations_with_text_only(messages_dir: Path) -> None:
     group = conversations["iMessage;+;chat42"]
     assert group.title == "Climbing crew"
     assert group.is_group
-    assert group.participants == ["+15551234567", "friend@example.com"]
+    assert group.participants == ["+15551234567", "friend@example.com", "+15559876543"]
     assert [(m.sender, m.text) for m in group.messages] == [
         ("+15551234567", "Saturday at the gym?"),
         ("friend@example.com", "I'm in"),
@@ -214,6 +215,7 @@ def test_render_gives_one_chunk_per_message_with_exact_spans(messages_dir: Path)
     direct = next(read_conversations(messages_dir / "chat.db"))
     text, chunks = render(direct)
     assert text == (
+        "+15551234567\nParticipants: +15551234567\nService: iMessage\n\n"
         "[2026-09-24 12:00 UTC] +15551234567: running late\n\n[2026-09-24 12:01 UTC] Me: no worries, see you at 7"
     )
     assert [c.ord for c in chunks] == [0, 1]
@@ -241,16 +243,18 @@ def test_ingest_source_indexes_each_conversation_once(messages_dir: Path) -> Non
     assert doc["title"] == "Climbing crew"
     assert doc["corpus_class"] == "communication"
     assert doc["trust_tier"] == "received"
-    assert doc["chunker"] == SIGNATURE
+    assert doc["chunker"] == signature(1000)
     assert doc["meta"]["is_group"] is True
     assert [c.text for c in doc["chunks"]] == [
         "[2026-09-24 12:04 UTC] +15551234567: Saturday at the gym?",
         "[2026-09-24 12:05 UTC] friend@example.com: I'm in",
     ]
-    assert {(a.name, a.identities.get("phone") or a.identities.get("email")) for a in doc["authors"]} == {
-        ("+15551234567", "+15551234567"),
-        ("friend@example.com", "friend@example.com"),
+    assert {(a.name, a.role) for a in doc["authors"]} == {
+        ("+15551234567", "sender"),
+        ("friend@example.com", "sender"),
+        ("+15559876543", "recipient"),  # a member who never wrote
     }
+    assert {a.name: a.identities for a in doc["authors"]}["friend@example.com"] == {"email": "friend@example.com"}
 
     direct = gateway.docs[f"{db}#iMessage;-;+15551234567"]
     owner = [a for a in direct["authors"] if a.is_self]
@@ -309,3 +313,46 @@ def test_the_file_walk_is_not_used_for_messages(messages_dir: Path) -> None:
     gateway = FakeGateway(messages_dir)
     ingest_source(gateway=gateway, source_slug="apple-sms")
     assert all("#" in uri for uri in gateway.docs)
+
+
+def test_long_messages_are_split_but_never_merged(messages_dir: Path) -> None:
+    long_one = next(c for c in read_conversations(messages_dir / "chat.db") if c.guid.endswith("friend@example.com"))
+    long_one.messages[0] = replace(long_one.messages[0], text=". ".join(["a sentence of text"] * 30))
+    text, chunks = render(long_one, size=120)
+    assert len(chunks) > 1
+    assert all(len(c.text) <= 120 for c in chunks)
+    for chunk in chunks:
+        assert text[chunk.char_start : chunk.char_end] == chunk.text
+    assert chunks[0].text.startswith("[2026-09-24 12:08 UTC] friend@example.com: ")
+
+
+def test_a_renamed_group_is_rebuilt(messages_dir: Path) -> None:
+    gateway = FakeGateway(messages_dir)
+    ingest_source(gateway=gateway, source_slug="apple-sms")
+
+    conn = sqlite3.connect(messages_dir / "chat.db")
+    conn.execute("UPDATE chat SET display_name = 'Crag crew' WHERE ROWID = 2")
+    conn.commit()
+    conn.close()
+
+    counters, _, _ = ingest_source(gateway=gateway, source_slug="apple-sms")
+    assert counters.indexed == 1
+    assert gateway.docs[f"{messages_dir / 'chat.db'}#iMessage;+;chat42"]["title"] == "Crag crew"
+
+
+def test_an_unreadable_database_does_not_count_as_full_coverage(messages_dir: Path) -> None:
+    """Without Full Disk Access chat.db is listed but cannot be opened; reconcile must not retire its threads."""
+    gateway = FakeGateway(messages_dir)
+    with patch("garage_rag.extract.messages.Path.open", side_effect=PermissionError("Operation not permitted")):
+        counters, _, _ = ingest_source(gateway=gateway, source_slug="apple-sms")
+    assert gateway.finalized["completed"] is False
+    assert any("chat.db" in error and "Full Disk Access" in error for error in counters.errors)
+    assert not gateway.docs
+
+
+def test_a_folder_with_no_messages_database_is_not_full_coverage(tmp_path: Path) -> None:
+    """An unlistable ~/Library/Messages looks empty, which must not read as "every thread is gone"."""
+    gateway = FakeGateway(tmp_path)
+    counters, _, _ = ingest_source(gateway=gateway, source_slug="apple-sms")
+    assert gateway.finalized["completed"] is False
+    assert counters.errors == [f"{tmp_path}: no readable Messages database found"]
