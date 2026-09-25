@@ -165,7 +165,7 @@ public enum GaragePostgresEndpoint {
     public static func connectionURL(
         password: String,
         scheme: String = "postgresql+psycopg",
-        socketDirectory: String? = socketDirectory
+        socketDirectory: String? = GaragePostgresEndpoint.socketDirectory
     ) throws -> String {
         guard let user = percentEncode(username), let secret = percentEncode(password) else {
             throw EndpointError.encoding
@@ -180,7 +180,7 @@ public enum GaragePostgresEndpoint {
     }
 
     /// The `-h` and `-p` arguments of the bundled Postgres command-line tools.
-    public static func clientArguments(socketDirectory: String? = socketDirectory) -> [String] {
+    public static func clientArguments(socketDirectory: String? = GaragePostgresEndpoint.socketDirectory) -> [String] {
         ["-h", socketDirectory ?? "localhost", "-p", String(port)]
     }
 
