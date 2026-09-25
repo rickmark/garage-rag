@@ -334,40 +334,39 @@ struct DatabaseView: View {
 
     // MARK: - Contents
 
+    /// Titled with `GroupBox("Contents")`, with Refresh beside the figures rather than in a custom
+    /// label: on macOS a GroupBox's custom label is not in the accessibility tree, so neither the
+    /// title nor the button could be reached there.
     private var contentsSection: some View {
         let contents = DatabaseContentsPresentation(stats: appState.corpusStats, sizeBytes: serverDetails?.databaseSizeBytes)
-        return GroupBox {
-            if appState.postgres.status != .running {
-                Text("Shown once the database is running.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            } else {
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(contents.figures) { figure in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(figure.label)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(figure.value)
-                                .font(.system(.title3, design: .rounded).weight(.semibold))
-                                .monospacedDigit()
-                            if let note = figure.note {
-                                Text(note)
-                                    .font(.caption2)
-                                    .foregroundStyle(figure.noteIsWarning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
-                            }
-                        }
+        return GroupBox("Contents") {
+            HStack(alignment: .top, spacing: 8) {
+                if appState.postgres.status != .running {
+                    Text("Shown once the database is running.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(contents.figures) { figure in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(figure.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(figure.value)
+                                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                                    .monospacedDigit()
+                                if let note = figure.note {
+                                    Text(note)
+                                        .font(.caption2)
+                                        .foregroundStyle(figure.noteIsWarning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
-                .padding(10)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text("Contents")
-                Spacer()
+
                 if appState.isFetchingStats {
                     ProgressView().controlSize(.mini)
                 }
@@ -383,11 +382,8 @@ struct DatabaseView: View {
                 .accessibilityLabel("Refresh Contents")
                 .accessibilityIdentifier("database.contents.refresh")
             }
+            .padding(10)
         }
-        // A GroupBox with a custom label exposes no title, unlike GroupBox("Postgres") and the other
-        // boxes, so name the box itself; its figures and Refresh button stay reachable inside it.
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Contents")
     }
 
     // MARK: - Backups
