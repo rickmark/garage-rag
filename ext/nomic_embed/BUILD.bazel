@@ -8,11 +8,9 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-filegroup(
-    name = "known_answers",
-    srcs = ["known_answers.json"],
-    visibility = ["//visibility:public"],
-)
+# known_answers.json is not committed yet (the known-answers workflow produces it), so there is no
+# filegroup over it: one naming a missing file fails every `aspect test //...` on a clean checkout.
+# Add `filegroup(name = "known_answers", srcs = ["known_answers.json"])` back with the file.
 
 # The pins, read by garage_python/tests/test_llama_known_answers.py to check the known answers
 # name this model and llama.cpp.
