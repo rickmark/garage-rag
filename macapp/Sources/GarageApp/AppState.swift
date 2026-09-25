@@ -148,6 +148,9 @@ final class AppState: ObservableObject {
     private var commandInProgress = false
     /// True from the moment "Reset Database" starts stopping services until this instance quits.
     @Published private(set) var isResettingDatabase = false
+    /// How the second half of a reset went (`finishDatabaseReset`), for the Database page. Kept apart
+    /// from `lastCommandOutput`, which the next operation overwrites and no page shows any more.
+    @Published private(set) var databaseResetOutcome: (succeeded: Bool, message: String)?
     private var hasLaunched = false
     private var hasTerminated = false
     /// Set once "Reset Database" has asked a new instance to start. From then on this instance's
@@ -621,6 +624,7 @@ final class AppState: ObservableObject {
             lastCommandSucceeded = false
             lastCommandOutput = "Database reset: the new database could not be set up: \(error.localizedDescription)"
         }
+        databaseResetOutcome = (lastCommandSucceeded == true, lastCommandOutput)
     }
 
     nonisolated static func databaseResetMessage(registeredSourceCount: Int) -> String {
