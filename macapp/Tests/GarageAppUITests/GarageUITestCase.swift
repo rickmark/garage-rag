@@ -19,6 +19,9 @@ class GarageUITestCase: XCTestCase {
     static let postgresPort: UInt16 = 14824
     static let grpcPort: UInt16 = 50051
     static let servicePorts: [UInt16] = [14824, 8787, 8790, 50051]
+    /// Every test's data folder is named with this, which is how leftovers from an earlier test are
+    /// told apart from a Garage (or the real corpus's Postgres) someone is using.
+    static let dataDirectoryPrefix = "GarageUITest-"
 
     private(set) var dataDirectory: URL!
     private(set) var app: XCUIApplication!
@@ -28,6 +31,11 @@ class GarageUITestCase: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+
+        // An earlier test that died before its teardown could stop them (its launch failed, or the
+        // runner was killed) can leave its Garage or its Postgres on 14824; every later test would
+        // then skip. Those carry a GarageUITest- folder in their arguments, so they are safe to stop.
+        Self.stopLeftoverTestProcesses(matching: Self.dataDirectoryPrefix)
 
         let running = Self.runningGarageInstances()
         try XCTSkipUnless(
@@ -39,7 +47,7 @@ class GarageUITestCase: XCTestCase {
         }
 
         dataDirectory = try makeDataDirectoryParent()
-            .appendingPathComponent("GarageUITest-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(Self.dataDirectoryPrefix)\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         // The app and its gRPC server look for ./garage.json in the data folder before ~/.garage.json,
         // and write sources to the file they found. An empty config here keeps a test from reading or
@@ -279,6 +287,40 @@ class GarageUITestCase: XCTestCase {
         waitUntilValue(timeout: timeout) { self.appPID }
     }
 
+    /// Every process of this user whose arguments mention `marker`.
+    static func processes(withArgumentContaining marker: String) -> [pid_t] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_UID, Int32(bitPattern: getuid())]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        // Room for processes started between the two calls.
+        size += 16 * MemoryLayout<kinfo_proc>.stride
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return [] }
+        let me = getpid()
+        return procs.prefix(size / MemoryLayout<kinfo_proc>.stride)
+            .map(\.kp_proc.p_pid)
+            .filter { $0 > 0 && $0 != me && arguments(of: $0).contains { $0.contains(marker) } }
+    }
+
+    /// Stops what an earlier or current test left running under a folder matching `marker`:
+    /// Postgres gets a fast shutdown, everything else is killed, and anything still alive after a
+    /// few seconds is killed too.
+    static func stopLeftoverTestProcesses(matching marker: String) {
+        let leftovers = processes(withArgumentContaining: marker)
+        guard !leftovers.isEmpty else { return }
+        for pid in leftovers {
+            let isPostgres = arguments(of: pid).first.map { ($0 as NSString).lastPathComponent == "postgres" } ?? false
+            kill(pid, isPostgres ? SIGINT : SIGKILL)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, leftovers.contains(where: isAlive) {
+            usleep(100_000)
+        }
+        for pid in leftovers where isAlive(pid) {
+            kill(pid, SIGKILL)
+        }
+    }
+
     static func isAlive(_ pid: pid_t) -> Bool {
         kill(pid, 0) == 0 || errno == EPERM
     }
@@ -402,8 +444,11 @@ class GarageUITestCase: XCTestCase {
         let ours: (pid_t) -> Bool = { Self.isAlive($0) && Self.arguments(of: $0).contains(dataDirectory.path) }
 
         // `postgres -D <folder>/pgdata`: the argument names the folder too.
+        // Matched by the folder's name rather than its path: Postgres may have been handed the path
+        // with /var resolved to /private/var.
+        let folderName = dataDirectory.lastPathComponent
         let postmaster = postmasterPID().flatMap { pid in
-            Self.isAlive(pid) && Self.arguments(of: pid).contains(where: { $0.hasPrefix(dataDirectory.path) }) ? pid : nil
+            Self.isAlive(pid) && Self.arguments(of: pid).contains(where: { $0.contains(folderName) }) ? pid : nil
         }
         if let postmaster {
             kill(postmaster, SIGINT)
@@ -422,6 +467,9 @@ class GarageUITestCase: XCTestCase {
         if let postmaster, Self.isAlive(postmaster) {
             kill(postmaster, SIGKILL)
         }
+        // Anything else this test started that is still running, such as a postmaster whose pid
+        // file was not written yet or a Garage that never became the single instance.
+        Self.stopLeftoverTestProcesses(matching: folderName)
         // The next test skips while any of these is taken, so a service left listening would
         // quietly skip the rest of the suite: say so here instead.
         let freed = waitUntil(timeout: 15) { !Self.servicePorts.contains(where: Self.isListening) }
