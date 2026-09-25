@@ -14,6 +14,7 @@ from garage_rag.extract.base import (
     ContentKind,
     ExtractionError,
     ExtractResult,
+    NoTextFound,
     clean_author_hints,
     normalize_text,
 )
@@ -96,7 +97,7 @@ def extract_docx(path: Path) -> ExtractResult:
 
     text = normalize_text("\n\n".join(parts))
     if not text:
-        raise ExtractionError(f"no text extracted from {path}")
+        raise NoTextFound(f"no text extracted from {path}")
 
     return ExtractResult(
         text=text,
@@ -149,7 +150,7 @@ def extract_pptx(path: Path) -> ExtractResult:
 
     text = normalize_text("\n\n".join(parts))
     if not text:
-        raise ExtractionError(f"no text extracted from {path}")
+        raise NoTextFound(f"no text extracted from {path}")
 
     meta["slide_count"] = len(presentation.slides)
     return ExtractResult(
@@ -194,7 +195,7 @@ def extract_xlsx(path: Path) -> ExtractResult:
 
     text = normalize_text("\n\n".join(parts))
     if not text:
-        raise ExtractionError(f"no text extracted from {path}")
+        raise NoTextFound(f"no text extracted from {path}")
 
     if truncated:
         meta["truncated_sheets"] = truncated

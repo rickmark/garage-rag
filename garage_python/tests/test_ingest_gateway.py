@@ -675,7 +675,25 @@ def test_whitespace_only_file_is_rejected_and_its_old_document_dropped(tmp_path:
     gateway.replace_document.assert_not_called()
 
 
-@pytest.mark.parametrize("state", ["no_text", "extract_failed"])
+@pytest.mark.parametrize("name", ["blank.py", "blank.docx"])
+def test_extractor_that_finds_no_text_is_no_text_not_a_failure(tmp_path: Path, name: str):
+    """The code and Office extractors report a file without text as NoTextFound too."""
+    path = tmp_path / name
+    if path.suffix == ".docx":
+        import docx
+
+        docx.Document().save(str(path))
+    else:
+        path.write_text("   \n\n\t\n", encoding="utf-8")
+    gateway, counters = _ingest_one(tmp_path, _candidate(path), ExistingDocStat(exists=False))
+
+    assert counters.rejected == 1
+    assert counters.failed == 0
+    gateway.record_no_text.assert_called_once()
+    gateway.record_extract_failed.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["no_text", "failed"])
 def test_remembered_outcome_with_unchanged_stat_is_not_read_again(tmp_path: Path, state: str):
     """A textless image is not OCR'd, and a failed file not retried, while its stat is unchanged."""
     photo = tmp_path / "photo.png"
@@ -716,6 +734,27 @@ def test_remembered_no_text_with_unchanged_bytes_refreshes_its_stat(tmp_path: Pa
     )
 
 
+def test_failed_document_without_a_current_outcome_is_retried(tmp_path: Path):
+    """A document left in EXTRACT_FAILED is retried when no outcome for the current
+    extractor version says to skip it, even with an unchanged stat and hash."""
+    doc = tmp_path / "broken.pdf"
+    doc.write_bytes(b"%PDF-1.4 unchanged")
+    candidate = _candidate(doc)
+    existing = ExistingDocStat(
+        exists=True,
+        byte_size=candidate.size,
+        mtime=candidate.mtime.timestamp(),
+        content_sha256="cd" * 32,
+        state="extract_failed",
+        source_sha256=file_sha256(doc).hex(),
+    )
+    with patch("garage_rag.ingest.pipeline.extract", side_effect=ExtractionError("still broken")) as extract:
+        _, counters = _ingest_one(tmp_path, candidate, existing)
+
+    extract.assert_called_once()
+    assert counters.failed == 1
+
+
 def test_remembered_failure_is_retried_when_the_bytes_change(tmp_path: Path):
     doc = tmp_path / "broken.pdf"
     doc.write_bytes(b"%PDF-1.4 changed")
@@ -724,7 +763,7 @@ def test_remembered_failure_is_retried_when_the_bytes_change(tmp_path: Path):
         exists=True,
         byte_size=candidate.size,
         mtime=candidate.mtime.timestamp() - 60,
-        state="extract_failed",
+        state="failed",
         source_sha256="ab" * 32,
     )
     with patch("garage_rag.ingest.pipeline.extract", side_effect=ExtractionError("still broken")) as extract:
