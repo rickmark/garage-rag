@@ -133,7 +133,9 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
-IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif"})
+IMAGE_EXTENSIONS = frozenset(
+    {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp", ".heic", ".heif", ".hif", ".avif"}
+)
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 DOCX_EXTENSIONS = frozenset({".docx", ".docm"})
