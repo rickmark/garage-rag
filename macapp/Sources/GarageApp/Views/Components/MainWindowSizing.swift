@@ -40,7 +40,7 @@ enum MainWindowSizing {
 
     @MainActor
     static func growAfterFirstRun(_ window: NSWindow) {
-        guard !window.styleMask.contains(.fullScreen), !window.isZoomed,
+        guard !window.styleMask.contains(.fullScreen),
               let visible = (window.screen ?? NSScreen.main)?.visibleFrame,
               let frame = frameAfterFirstRun(current: window.frame, visible: visible)
         else { return }

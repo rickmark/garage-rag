@@ -44,7 +44,7 @@ struct FirstRunView: View {
 
                 footer
                     .padding(.horizontal, 32)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 20)
             }
             .background(Color(nsColor: .controlBackgroundColor))
         }
