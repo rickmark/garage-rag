@@ -291,7 +291,8 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
             }
         }
         if let normalized = normalizedDB {
-            logger.info("Successfully configured GARAGE_DATABASE_URL in XPC service: \(normalized, privacy: .public)")
+            // The URL carries the Postgres password: log only that it was set.
+            logger.info("Successfully configured GARAGE_DATABASE_URL in XPC service (\(normalized.count) characters)")
         }
         if token != nil {
             logger.info("Successfully configured GARAGE_LMSTUDIO_API_TOKEN in XPC service")
@@ -393,7 +394,8 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
     }
 
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void) {
-        logger.info("Received ingestSource request for slug: '\(slug, privacy: .public)', optionsJson: '\(optionsJson, privacy: .public)'")
+        // The options carry the database URL and the LM Studio token, so they stay out of the log.
+        logger.info("Received ingestSource request for slug: '\(slug, privacy: .public)' (\(optionsJson.utf8.count)-byte options)")
         guard ensurePythonReady() else {
             let errorMsg = "Python initialization error: \(runtime.statusSnapshot().error ?? "unavailable")"
             logger.error("\(errorMsg, privacy: .public)")
