@@ -127,7 +127,7 @@ wheels = [
 
 [[package]]
 name = "garage-rag"
-version = "0.1.0"
+version = "1.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
