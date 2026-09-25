@@ -280,7 +280,9 @@ struct SourcesView: View {
                 Divider().padding(.top, 14).padding(.bottom, 8)
                 diskAccessFooter
             }
-            .padding(12)
+            .padding(.horizontal, 12)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
         } label: {
             HStack(spacing: 8) {
                 Text(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount))
@@ -317,6 +319,7 @@ struct SourcesView: View {
                 .accessibilityIdentifier("sources.sync")
                 .disabled(notReady)
             }
+            .padding(.bottom, 6)
         }
     }
 
