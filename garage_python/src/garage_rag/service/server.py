@@ -48,6 +48,7 @@ from garage_rag.proto.garage_pb2 import (
     EnsureLlamaModelRequest,
     EnsureLlamaModelResponse,
     FactClassCount,
+    FactPrompt,
     FactSummary,
     FinalizeIngestSessionRequest,
     FinalizeIngestSessionResponse,
@@ -63,6 +64,8 @@ from garage_rag.proto.garage_pb2 import (
     InitDbResponse,
     ListDocumentsRequest,
     ListDocumentsResponse,
+    ListFactPromptsRequest,
+    ListFactPromptsResponse,
     ListFactsRequest,
     ListFactsResponse,
     ListModelsRequest,
@@ -941,9 +944,17 @@ class GarageRpcServicer(GarageServiceServicer):
                         document_uri=event.uri,
                         facts=event.facts,
                         error=event.error or "",
+                        skipped=int(event.skipped),
+                        prompts=event.prompts,
                         message=(
                             f"{event.index}/{event.total}: {event.uri or event.document_id}"
-                            + (f": {event.error}" if event.error else f": {event.facts} facts")
+                            + (
+                                f": {event.error}"
+                                if event.error
+                                else ": skipped"
+                                if event.skipped
+                                else f": {event.facts} facts"
+                            )
                         ),
                     )
                 )
@@ -953,6 +964,8 @@ class GarageRpcServicer(GarageServiceServicer):
                 document_id=request.document_id or None,
                 model=request.model or None,
                 provider=request.provider or None,
+                prompts=list(request.prompts) or None,
+                stale_only=request.stale_only,
                 on_start=on_start,
                 on_event=on_event,
             )
@@ -965,12 +978,40 @@ class GarageRpcServicer(GarageServiceServicer):
                     provider=summary.provider,
                     enriched=summary.enriched,
                     failed=summary.failed,
+                    skipped=summary.skipped,
+                    prompts=summary.prompts,
                     message=summary.message,
                 )
             )
             return summary
 
         yield from _stream_events(run, context)
+
+    @_grpc_errors
+    def ListFactPrompts(
+        self, request: ListFactPromptsRequest, context: grpc.ServicerContext
+    ) -> ListFactPromptsResponse:
+        """The effective fact prompts, and facts.prompts as configured (what SetSetting takes back)."""
+        from garage_rag.ops.facts import list_fact_prompts
+        from garage_rag.ops.settings import get_setting
+
+        prompts = [
+            FactPrompt(
+                name=prompt.name,
+                description=prompt.description,
+                examples_json=json.dumps(prompt.to_config()["examples"], ensure_ascii=False),
+                corpus_classes=list(prompt.corpus_classes),
+                sources=list(prompt.sources),
+                enabled=prompt.enabled,
+                builtin=prompt.builtin,
+                customized=prompt.customized,
+                sha256=prompt.sha256.hex(),
+            )
+            for prompt in list_fact_prompts()
+        ]
+        return ListFactPromptsResponse(
+            prompts=prompts, configured_json=json.dumps(get_setting("facts.prompts"), ensure_ascii=False)
+        )
 
     # -----------------------------------------------------------------------
     # Schema & settings

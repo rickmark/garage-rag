@@ -228,6 +228,10 @@ class Fact(Base):
     char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extractor: Mapped[str] = mapped_column(Text, default="langextract")
     extractor_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The facts.prompts entry that produced this fact, and the hash of its
+    # description and examples (011_fact_prompts.sql); NULL before 011.
+    prompt_name: Mapped[str] = mapped_column(Text, default="default")
+    prompt_sha256: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # `tsv` is a generated column; read-only from the ORM's perspective and
     # intentionally not mapped.
@@ -240,9 +244,29 @@ class Fact(Base):
     chunk: Mapped[Chunk | None] = relationship(back_populates="fact", uselist=False, passive_deletes=True)
 
     __table_args__ = (
-        UniqueConstraint("document_id", "ord", name="facts_ord_unique"),
+        UniqueConstraint("document_id", "prompt_name", "ord", name="facts_prompt_ord_unique"),
         Index("facts_document", "document_id"),
     )
+
+
+class FactRun(Base):
+    """The last extraction of one prompt over one document (011_fact_prompts.sql).
+
+    Kept even when the run found nothing, so ``enrich-facts --stale-only`` can
+    tell an up-to-date document from one never extracted.
+    """
+
+    __tablename__ = "fact_runs"
+
+    document_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    prompt_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    prompt_sha256: Mapped[bytes] = mapped_column(LargeBinary)
+    content_sha256: Mapped[bytes] = mapped_column(LargeBinary)
+    extractor_model: Mapped[str] = mapped_column(Text)
+    facts: Mapped[int] = mapped_column(Integer, default=0)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Conversation(Base):

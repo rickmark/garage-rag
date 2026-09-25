@@ -114,9 +114,26 @@ itself. [LangExtract](https://github.com/google/langextract) is pointed at the
 local model named by `facts.model` on `facts.provider` (default: the app's
 `gemma2-2b` alias on `llama_xpc`; `ollama` with e.g. `gemma2:2b` and `lmstudio`
 with e.g. `google/gemma-3-4b` are the others, and `--model`/`--provider`
-override both) with a deliberately generic prompt — the module has no notion of
-what kind of document it is given — and asks for every standalone claim in the
-document's own wording. Only the local part of LangExtract is used, vendored as
+override both). What it asks for comes from the prompts in `facts.prompts`
+(`config/fact_prompts.py`), each a name, a description (the instructions),
+few-shot examples in LangExtract's shape (text plus the expected extractions,
+each with a class, the quoted text and optional attributes), an optional scope
+(`corpus_classes`, `sources`) and an `enabled` flag. The built-in `default`
+prompt is deliberately generic — it has no notion of what kind of document it is
+given — and asks for every standalone claim in the document's own wording.
+
+Configured prompts are **merged by name** with the built-ins: an entry named
+`default` overrides it field by field (so `{"name": "default", "enabled": false}`
+turns it off, and a description or examples left out keep the built-in's), and
+any other entry is added after it, so adding a prompt never silently drops the
+default. `enrich-facts` runs every enabled prompt that applies to a document, or
+only those named with `--prompt` (repeatable; the `EnrichFacts` RPC's `prompts`),
+which also runs a disabled one. `garage facts prompts list` and
+`garage facts prompts show NAME` print the effective prompts, and the app's
+Models page lists and edits them (the `ListFactPrompts` RPC reads them;
+`SetSetting facts.prompts` writes the list back).
+
+Only the local part of LangExtract is used, vendored as
 `enrich/langextract` (prompting, chunking, parsing and alignment). Upstream's
 provider registry, which routes `gemini*`/`gpt-*` model ids to Google and
 OpenAI, is not vendored, and a cloud model id is refused with an error. The
@@ -130,7 +147,11 @@ sent (GPT-OSS models get a JSON-only system instruction instead); LM Studio and
 
 Each fact lands in `facts` grounded to the exact span of `documents.content`
 it came from; a fact the extractor cannot locate is dropped rather than stored.
-Facts for a document are replaced wholesale on re-extraction.
+Each fact records its prompt (`prompt_name`) and a hash of that prompt's
+description and examples (`prompt_sha256`); re-extracting a document with a
+prompt replaces that prompt's facts only. `fact_runs` records what each prompt
+last ran with (prompt hash, the document's `content_sha256`, model), and
+`enrich-facts --stale-only` skips a prompt whose run is still current.
 
 Every fact also gets a `chunks` row of its own (`chunks.fact_id`,
 `chunker = 'facts:langextract:<model>'`). That is the entire embedding story: a

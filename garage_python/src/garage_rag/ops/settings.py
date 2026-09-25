@@ -11,6 +11,7 @@ from garage_rag.config import (
     load_config,
     resolve_setting,
     set_settings,
+    setting_value,
     update_config,
 )
 
@@ -18,7 +19,7 @@ from garage_rag.config import (
 def get_setting(name: str) -> Any:
     """The effective value of SECTION.KEY (after --config and environment overrides)."""
     _section, _key, field = resolve_setting(name)
-    return getattr(get_settings(), field)
+    return setting_value(get_settings(), field)
 
 
 def set_setting(name: str, value: str, *, path: Path | None = None) -> tuple[Path, Any]:

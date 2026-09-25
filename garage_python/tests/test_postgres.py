@@ -18,6 +18,7 @@ import json
 import os
 import uuid
 from collections.abc import Iterator
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -102,6 +103,24 @@ def _chunk(session: Session, source_id: int, title: str, body: str, *, corpus_cl
             "VALUES (:doc, 0, :body, :sha, 'test') RETURNING id"
         ),
         {"doc": document_id, "body": body, "sha": digest},
+    ).scalar_one()
+
+
+def _document(session: Session, source_id: int, title: str, content: str, *, corpus_class: str = "document") -> int:
+    return session.execute(
+        text(
+            "INSERT INTO documents (source_id, uri, corpus_class, trust_tier, title, content, content_sha256, "
+            "extractor) VALUES (:source, :uri, CAST(:cc AS corpus_class), 'authored', :title, :content, :sha, 'test') "
+            "RETURNING id"
+        ),
+        {
+            "source": source_id,
+            "uri": f"test://{title}",
+            "cc": corpus_class,
+            "title": title,
+            "content": content,
+            "sha": hashlib.sha256(content.encode()).digest(),
+        },
     ).scalar_one()
 
 
@@ -215,6 +234,50 @@ class TestMigrations:
 
         rows = db.execute(text("SELECT title, state::text, error FROM documents")).all()
         assert [tuple(row) for row in rows] == [("Evicted", "ok", None)]
+
+    def test_011_scopes_facts_by_prompt(self, db: Session) -> None:
+        """A pre-011 database: facts unique on (document_id, ord), no prompt columns,
+        no fact_runs. A fresh schema has all of 011, so it is taken back out by hand."""
+        conn = db.connection()
+        conn.exec_driver_sql("DROP TABLE fact_runs")
+        conn.exec_driver_sql("ALTER TABLE facts DROP CONSTRAINT facts_prompt_ord_unique")
+        conn.exec_driver_sql("ALTER TABLE facts DROP COLUMN prompt_name, DROP COLUMN prompt_sha256")
+        conn.exec_driver_sql("ALTER TABLE facts ADD CONSTRAINT facts_ord_unique UNIQUE (document_id, ord)")
+        document = _document(db, _source(db, "docs"), "memo", "Acme was founded in 1998.")
+        db.execute(
+            text("INSERT INTO facts (document_id, ord, fact) VALUES (:d, 0, 'Acme was founded in 1998.')"),
+            {"d": document},
+        )
+        migration = (sql_dir() / "011_fact_prompts.sql").read_text(encoding="utf-8")
+        conn.exec_driver_sql(migration)
+        conn.exec_driver_sql(migration)  # and again: idempotent
+
+        # The old facts came from the one built-in prompt; their hash is unknown.
+        assert tuple(db.execute(text("SELECT prompt_name, prompt_sha256 FROM facts")).one()) == ("default", None)
+        constraints = set(
+            db.execute(text("SELECT conname FROM pg_constraint WHERE conrelid = 'facts'::regclass")).scalars()
+        )
+        assert "facts_prompt_ord_unique" in constraints and "facts_ord_unique" not in constraints
+        assert db.execute(text("SELECT to_regclass('fact_runs') IS NOT NULL")).scalar_one()
+        # ord now counts within a prompt: another prompt's fact 0 fits beside it.
+        db.execute(
+            text("INSERT INTO facts (document_id, ord, fact, prompt_name) VALUES (:d, 0, 'Acme.', 'people')"),
+            {"d": document},
+        )
+        with pytest.raises(Exception, match="facts_prompt_ord_unique"):
+            db.execute(text("INSERT INTO facts (document_id, ord, fact) VALUES (:d, 0, 'dup')"), {"d": document})
+
+    def test_fact_runs_go_with_their_document(self, db: Session) -> None:
+        document = _document(db, _source(db, "docs"), "memo", "Acme was founded in 1998.")
+        db.execute(
+            text(
+                "INSERT INTO fact_runs (document_id, prompt_name, prompt_sha256, content_sha256, extractor_model) "
+                "VALUES (:d, 'default', :h, :h, 'm')"
+            ),
+            {"d": document, "h": b"\x00"},
+        )
+        db.execute(text("DELETE FROM documents WHERE id = :d"), {"d": document})
+        assert db.execute(text("SELECT count(*) FROM fact_runs")).scalar_one() == 0
 
     def test_009_defaults_and_checks_distance(self, db: Session) -> None:
         db.execute(
@@ -470,6 +533,136 @@ class TestFacts:
         assert first.total == rest.total == 3
         assert len(first.facts) == 2 and len(rest.facts) == 1
         assert {f.id for f in first.facts}.isdisjoint(f.id for f in rest.facts)
+
+
+class TestFactPrompts:
+    """enrich-facts with more than one prompt: per-prompt replacement and stale detection, in real SQL.
+
+    The model is faked (``extract_facts``); everything else -- the egress check,
+    the deletes, ``fact_runs`` and the fact chunks -- runs against the server.
+    """
+
+    PEOPLE: ClassVar[dict] = {
+        "name": "people",
+        "description": "List every person named.",
+        "corpus_classes": ["document"],
+        "examples": [{"text": "Jane met Bob.", "extractions": [{"class": "person", "text": "Jane"}]}],
+    }
+
+    @pytest.fixture
+    def enrich(self, database_url: str, monkeypatch) -> Iterator:
+        from garage_rag.enrich import langextract as lx
+        from garage_rag.ops.facts import enrich_facts
+
+        calls: list[str] = []
+
+        def fake_extract_facts(text_: str, *, prompt, **kwargs):
+            calls.append(prompt.name)
+            word = text_.split()[0]
+            return [
+                lx.data.Extraction(
+                    extraction_class="person" if prompt.name == "people" else "fact",
+                    extraction_text=f"{prompt.name}:{word}:{len(calls)}",
+                    char_interval=lx.data.CharInterval(start_pos=0, end_pos=len(word)),
+                )
+            ]
+
+        monkeypatch.setattr("garage_rag.enrich.facts.extract_facts", fake_extract_facts)
+
+        def run(prompts_config: list[dict], *, model: str = "gemma2:2b", **kwargs):
+            set_settings(
+                Settings(
+                    database_url=database_url,
+                    fact_provider="ollama",
+                    ollama_host="http://127.0.0.1:11434",
+                    fact_prompts=prompts_config,
+                )
+            )
+            calls.clear()
+            summary = enrich_facts(model=model, **kwargs)
+            return summary, list(calls)
+
+        try:
+            yield run
+        finally:
+            set_settings(Settings(database_url=database_url))
+
+    def _facts(self, db: Session) -> list[tuple]:
+        db.expire_all()
+        return [
+            tuple(row)
+            for row in db.execute(
+                text(
+                    "SELECT d.title, f.prompt_name, f.ord, f.fact, f.prompt_sha256 IS NOT NULL, c.id IS NOT NULL "
+                    "FROM facts f JOIN documents d ON d.id = f.document_id LEFT JOIN chunks c ON c.fact_id = f.id "
+                    "ORDER BY d.title, f.prompt_name, f.ord"
+                )
+            )
+        ]
+
+    def test_prompts_run_per_scope_and_replace_only_their_own_facts(self, db: Session, enrich) -> None:
+        source = _source(db, "docs")
+        _document(db, source, "memo", "Acme was founded in 1998.")
+        _document(db, source, "text", "Hi from Jane.", corpus_class="communication")
+        db.commit()
+
+        summary, ran = enrich([self.PEOPLE])
+        assert summary.prompts == ["default", "people"]
+        assert (summary.total, summary.enriched, summary.facts, summary.failed) == (2, 2, 3, 0)
+        # people is scoped to documents, so the communication gets only the default prompt.
+        assert ran == ["default", "people", "default"]
+        before = self._facts(db)
+        assert [row[:3] for row in before] == [("memo", "default", 0), ("memo", "people", 0), ("text", "default", 0)]
+        assert all(row[4] and row[5] for row in before)  # hashed, and queued for embedding
+
+        # One prompt again: its facts are replaced, the other prompt's are untouched.
+        summary, ran = enrich([self.PEOPLE], prompts=["people"], source="docs")
+        assert ran == ["people"]
+        assert summary.skipped == 1  # the communication: people does not apply to it
+        after = self._facts(db)
+        assert after[0] == before[0] and after[2] == before[2]
+        assert after[1][3] != before[1][3]
+        runs = db.execute(text("SELECT prompt_name, facts FROM fact_runs ORDER BY document_id, prompt_name"))
+        assert [tuple(row) for row in runs] == [("default", 1), ("people", 1), ("default", 1)]
+
+    def test_stale_only_redoes_what_changed(self, db: Session, enrich) -> None:
+        source = _source(db, "docs")
+        memo = _document(db, source, "memo", "Acme was founded in 1998.")
+        _document(db, source, "note", "Bob likes tea.")
+        db.commit()
+
+        enrich([self.PEOPLE])
+        summary, ran = enrich([self.PEOPLE], stale_only=True)
+        assert ran == [] and summary.skipped == 2 and summary.enriched == 0
+
+        # A reworded prompt is stale everywhere it applies; the default is not.
+        reworded = {**self.PEOPLE, "description": "List every person mentioned by name."}
+        _, ran = enrich([reworded], stale_only=True)
+        assert ran == ["people", "people"]
+
+        # Changed content makes every prompt stale for that one document.
+        db.execute(
+            text("UPDATE documents SET content = 'Acme moved.', content_sha256 = :h WHERE id = :d"),
+            {"d": memo, "h": b"\x01"},
+        )
+        db.commit()
+        _, ran = enrich([reworded], stale_only=True)
+        assert ran == ["default", "people"]
+
+        # And so does another model.
+        _, ran = enrich([reworded], stale_only=True, prompts=["default"], model="qwen2.5:7b")
+        assert ran == ["default", "default"]
+
+    def test_a_disabled_default_runs_only_when_named(self, db: Session, enrich) -> None:
+        _document(db, _source(db, "docs"), "memo", "Acme was founded in 1998.")
+        db.commit()
+        disabled = [{"name": "default", "enabled": False}, self.PEOPLE]
+        _, ran = enrich(disabled)
+        assert ran == ["people"]
+        _, ran = enrich(disabled, prompts=["default"])
+        assert ran == ["default"]
+        with pytest.raises(LookupError, match="unknown fact prompt"):
+            enrich(disabled, prompts=["nope"])
 
 
 class TestAge:

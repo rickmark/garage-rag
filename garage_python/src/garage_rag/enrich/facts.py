@@ -34,9 +34,13 @@ runs the document's class through
 :func:`~garage_rag.net.egress.check_destination` before it touches the stored
 facts, so a communication is never posted to a host that is not loopback.
 
-The prompt is deliberately generic: this module has no notion of what kind of
-document it is given (notes, mail, code comments, a paper, ...), so it asks
-for "facts" in the abstract rather than anything domain-specific.
+The prompts come from ``facts.prompts`` (:mod:`garage_rag.config.fact_prompts`):
+the built-in ``default`` prompt is deliberately generic -- it has no notion of
+what kind of document it is given (notes, mail, code comments, a paper, ...),
+so it asks for "facts" in the abstract -- and users may override it or add
+their own. Each prompt's facts are stored, and replaced, separately
+(``facts.prompt_name``), and ``fact_runs`` remembers what each prompt last ran
+with, so a changed prompt, document or model is detectable (:func:`is_stale`).
 
 Each stored fact is also, optionally, given a ``chunks`` row of its own
 (``chunks.fact_id``). That is the entire embedding story: a chunk is a chunk
@@ -51,13 +55,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import textwrap
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from garage_rag.config import get_settings
-from garage_rag.db.models import Chunk, CorpusClass, Document, Fact
+from garage_rag.config.fact_prompts import EffectivePrompt, effective_prompts
+from garage_rag.db.models import Chunk, CorpusClass, Document, Fact, FactRun
 from garage_rag.enrich import langextract as lx
 from garage_rag.enrich.local_provider import LocalLanguageModel
 from garage_rag.inference import Backend, BackendKind, InferenceClient
@@ -121,38 +125,32 @@ def refuse_cloud_model_id(model_id: str) -> None:
         )
 
 
-PROMPT = textwrap.dedent("""\
-    Extract every standalone fact stated in this document.
+def default_prompt() -> EffectivePrompt:
+    """The built-in ``default`` prompt, unmodified by any configuration."""
+    return effective_prompts([])[0]
 
-    A fact is a single, self-contained claim or piece of information that
-    would still be true and meaningful if read on its own, out of context.
-    Use the exact wording from the document for each fact -- do not
-    paraphrase, summarize, or combine multiple facts into one. Do not invent
-    or infer anything that is not explicitly stated. List facts in the order
-    they appear.""")
 
-EXAMPLES = [
-    lx.data.ExampleData(
-        text=(
-            "Acme Corp was founded in 1998 by Jane Doe. The company is "
-            "headquartered in Austin, Texas, and has 42 employees."
-        ),
-        extractions=[
-            lx.data.Extraction(
-                extraction_class="fact",
-                extraction_text="Acme Corp was founded in 1998 by Jane Doe.",
-            ),
-            lx.data.Extraction(
-                extraction_class="fact",
-                extraction_text="The company is headquartered in Austin, Texas.",
-            ),
-            lx.data.Extraction(
-                extraction_class="fact",
-                extraction_text="The company has 42 employees.",
-            ),
-        ],
-    )
-]
+def configured_prompts() -> list[EffectivePrompt]:
+    """Every prompt ``facts.prompts`` yields, built-ins included, enabled or not."""
+    return effective_prompts(get_settings().fact_prompts)
+
+
+def langextract_examples(prompt: EffectivePrompt) -> list[lx.data.ExampleData]:
+    """``prompt``'s few-shot examples in LangExtract's own types."""
+    return [
+        lx.data.ExampleData(
+            text=example.text,
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class=extraction.extraction_class,
+                    extraction_text=extraction.text,
+                    attributes=dict(extraction.attributes) or None,
+                )
+                for extraction in example.extractions
+            ],
+        )
+        for example in prompt.examples
+    ]
 
 
 # What LangExtract's own Ollama provider sent (``format: "json"`` and its
@@ -222,8 +220,11 @@ def extract_facts(
     model_url: str | None = None,
     provider: str = DEFAULT_PROVIDER,
     corpus_class: CorpusClass | None = None,
+    prompt: EffectivePrompt | None = None,
 ) -> list[lx.data.Extraction]:
-    """Run LangExtract over ``text``, returning only grounded extractions.
+    """Run LangExtract over ``text`` with ``prompt``, returning only grounded extractions.
+
+    ``prompt`` defaults to the built-in ``default`` prompt.
 
     An ungrounded extraction (``char_interval is None``) is the model quoting
     its own few-shot example rather than the input document; it is filtered
@@ -240,10 +241,11 @@ def extract_facts(
         raise ValueError(f"unknown fact-distil provider {provider!r}; expected one of {FACT_DISTIL_PROVIDERS}")
     refuse_cloud_model_id(model_id)
 
+    prompt = prompt or default_prompt()
     result = lx.extract(
         text_or_documents=text,
-        prompt_description=PROMPT,
-        examples=EXAMPLES,
+        prompt_description=prompt.description,
+        examples=langextract_examples(prompt),
         model=facts_language_model(provider, model_id, model_url, corpus_class=corpus_class),
     )
     return [e for e in result.extractions if e.char_interval is not None]
@@ -254,8 +256,10 @@ def facts_from_extractions(
     extractions: list[lx.data.Extraction],
     *,
     model_id: str = DEFAULT_MODEL_ID,
+    prompt: EffectivePrompt | None = None,
 ) -> list[Fact]:
-    """Map LangExtract extractions onto ``facts`` rows, in appearance order."""
+    """Map LangExtract extractions onto ``facts`` rows, in appearance order, tagged with ``prompt``."""
+    prompt = prompt or default_prompt()
     facts: list[Fact] = []
     for ord_, extraction in enumerate(extractions):
         interval = extraction.char_interval
@@ -270,6 +274,8 @@ def facts_from_extractions(
                 char_end=interval.end_pos if interval else None,
                 extractor="langextract",
                 extractor_model=model_id,
+                prompt_name=prompt.name,
+                prompt_sha256=prompt.sha256,
             )
         )
     return facts
@@ -293,24 +299,43 @@ def chunk_for_fact(fact: Fact, *, ord: int, model_id: str = DEFAULT_MODEL_ID) ->
     )
 
 
+def is_stale(run: FactRun | None, document: Document, prompt: EffectivePrompt, model_id: str) -> bool:
+    """Whether ``prompt``'s facts for ``document`` need extracting (again).
+
+    True when the prompt never ran on the document, or when what it ran with --
+    the prompt's description and examples, the document's text, the model --
+    has changed since.
+    """
+    return (
+        run is None
+        or bytes(run.prompt_sha256) != prompt.sha256
+        or bytes(run.content_sha256) != bytes(document.content_sha256 or b"")
+        or run.extractor_model != model_id
+    )
+
+
 def extract_and_store_facts(
     session: Session,
     document: Document,
     *,
+    prompt: EffectivePrompt | None = None,
     model_id: str = DEFAULT_MODEL_ID,
     model_url: str | None = None,
     provider: str = DEFAULT_PROVIDER,
     queue_for_embedding: bool = True,
 ) -> list[Fact]:
-    """Extract facts for ``document`` and replace its ``facts`` rows.
+    """Extract ``prompt``'s facts for ``document``, replacing that prompt's earlier ones.
 
-    Re-extraction is idempotent: existing facts for the document are deleted
-    before the new ones are inserted, the same replace-on-rebuild pattern
-    ``ingest`` uses when a document's chunks are rebuilt. Deleting a fact
-    cascades (``chunks.fact_id`` is ``ON DELETE CASCADE``) into its chunk and,
-    from there, into every per-model embedding table, so a re-extraction never
+    ``prompt`` defaults to the built-in ``default`` prompt. Re-extraction is
+    idempotent per prompt: the document's existing facts *from this prompt*
+    are deleted before the new ones are inserted, the same replace-on-rebuild
+    pattern ``ingest`` uses when a document's chunks are rebuilt, and other
+    prompts' facts are left alone. Deleting a fact cascades
+    (``chunks.fact_id`` is ``ON DELETE CASCADE``) into its chunk and, from
+    there, into every per-model embedding table, so a re-extraction never
     leaves a stale fact vector behind -- including when the document has since
-    become empty, which clears its facts rather than keeping the old ones.
+    become empty, which clears the prompt's facts rather than keeping the old
+    ones. The run itself is recorded in ``fact_runs`` (see :func:`is_stale`).
 
     When ``queue_for_embedding`` is true (the default), each new fact also
     gets a ``chunks`` row appended after the document's existing chunks, ready
@@ -320,6 +345,7 @@ def extract_and_store_facts(
     deleted: a server that is not approved, or a communication for a server
     that is not loopback, raises :class:`~garage_rag.net.egress.EgressBlocked`.
     """
+    prompt = prompt or default_prompt()
     backend = fact_backend(provider, model_url)
     egress.check_destination(
         backend.base_url,
@@ -328,21 +354,32 @@ def extract_and_store_facts(
         loopback_only=backend.kind is BackendKind.LLAMA_XPC,
     )
 
-    session.query(Fact).filter(Fact.document_id == document.id).delete()
-    if not document.content:
-        return []
+    session.query(Fact).filter(Fact.document_id == document.id, Fact.prompt_name == prompt.name).delete()
+    facts: list[Fact] = []
+    if document.content:
+        log.info("extracting facts for document %s with prompt %s via %s", document.id, prompt.name, provider)
+        extractions = extract_facts(
+            document.content,
+            model_id=model_id,
+            model_url=model_url,
+            provider=provider,
+            corpus_class=document.corpus_class,
+            prompt=prompt,
+        )
+        facts = facts_from_extractions(document.id, extractions, model_id=model_id, prompt=prompt)
+        session.add_all(facts)
 
-    log.info("extracting facts for document %s via %s", document.id, provider)
-    extractions = extract_facts(
-        document.content,
-        model_id=model_id,
-        model_url=model_url,
-        provider=provider,
-        corpus_class=document.corpus_class,
+    session.merge(
+        FactRun(
+            document_id=document.id,
+            prompt_name=prompt.name,
+            prompt_sha256=prompt.sha256,
+            content_sha256=document.content_sha256 or b"",
+            extractor_model=model_id,
+            facts=len(facts),
+            extracted_at=func.now(),
+        )
     )
-
-    facts = facts_from_extractions(document.id, extractions, model_id=model_id)
-    session.add_all(facts)
 
     if queue_for_embedding and facts:
         # Facts need ids before a chunk can reference one via fact_id.

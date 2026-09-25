@@ -4,6 +4,7 @@ py_library(
     name = "config",
     srcs = [
         "__init__.py",
+        "fact_prompts.py",
     ],
     imports = ["../.."],
     visibility = ["//visibility:public"],

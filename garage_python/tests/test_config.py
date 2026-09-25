@@ -500,6 +500,122 @@ class TestFactsSection:
         assert entry["default"] == "llama_xpc"
 
 
+PEOPLE_PROMPT = {
+    "name": "people",
+    "description": "List every person named.",
+    "corpus_classes": ["document"],
+    "examples": [
+        {
+            "text": "Jane met Bob.",
+            "extractions": [
+                {"class": "person", "text": "Jane"},
+                {"class": "person", "text": "Bob", "attributes": {"role": "guest"}},
+            ],
+        }
+    ],
+}
+
+
+class TestFactPrompts:
+    def _load(self, tmp_path: Path, prompts: list) -> Settings:
+        cfg = tmp_path / CONFIG_FILENAME
+        cfg.write_text(json.dumps({"facts": {"prompts": prompts}}))
+        return load_config(cfg)
+
+    def test_with_nothing_configured_the_built_in_default_runs(self) -> None:
+        from garage_rag.config.fact_prompts import DEFAULT_DESCRIPTION, effective_prompts
+
+        (default,) = effective_prompts(Settings().fact_prompts)
+        assert (default.name, default.enabled, default.builtin, default.customized) == ("default", True, True, False)
+        assert default.description == DEFAULT_DESCRIPTION
+        assert default.examples[0].extractions[0].extraction_class == "fact"
+
+    def test_a_new_prompt_is_added_beside_the_default(self, tmp_path: Path) -> None:
+        from garage_rag.config.fact_prompts import effective_prompts
+
+        settings = self._load(tmp_path, [PEOPLE_PROMPT])
+        prompts = effective_prompts(settings.fact_prompts)
+        assert [(p.name, p.builtin) for p in prompts] == [("default", True), ("people", False)]
+        people = prompts[1]
+        assert people.corpus_classes == ("document",)
+        assert people.examples[0].extractions[1].attributes == {"role": "guest"}
+        assert people.applies_to("document", "notes") and not people.applies_to("communication", "notes")
+
+    def test_an_entry_named_default_overrides_it_field_by_field(self, tmp_path: Path) -> None:
+        from garage_rag.config.fact_prompts import effective_prompts
+
+        builtin = effective_prompts([])[0]
+        disabled = effective_prompts(self._load(tmp_path, [{"name": "default", "enabled": False}]).fact_prompts)[0]
+        assert not disabled.enabled and disabled.customized
+        # Only what the model sees is hashed, so turning it off does not make its facts stale.
+        assert disabled.description == builtin.description and disabled.sha256 == builtin.sha256
+
+        reworded = effective_prompts(self._load(tmp_path, [{"name": "default", "description": "Other."}]).fact_prompts)
+        assert reworded[0].description == "Other." and reworded[0].examples == builtin.examples
+        assert reworded[0].sha256 != builtin.sha256
+
+    @pytest.mark.parametrize(
+        ("prompts", "match"),
+        [
+            ([{"name": "x", "description": "d"}], "needs examples"),
+            ([{"name": "x", "examples": PEOPLE_PROMPT["examples"]}], "needs description"),
+            ([PEOPLE_PROMPT, PEOPLE_PROMPT], "used twice"),
+            ([{**PEOPLE_PROMPT, "examples": []}], "must not be empty"),
+            ([{**PEOPLE_PROMPT, "name": "has space"}], "pattern"),
+            ([{**PEOPLE_PROMPT, "corpus_classes": ["mail"]}], "corpus_classes"),
+            ([{**PEOPLE_PROMPT, "model": "gpt-4o"}], "model"),
+            ([{**PEOPLE_PROMPT, "examples": [{"text": "t", "extractions": [{"text": "t", "kind": "k"}]}]}], "kind"),
+        ],
+    )
+    def test_invalid_prompts_are_config_errors(self, tmp_path: Path, prompts: list, match: str) -> None:
+        with pytest.raises(ConfigError, match=match):
+            self._load(tmp_path, prompts)
+
+    def test_select_prompts(self) -> None:
+        from garage_rag.config.fact_prompts import FactPrompt, effective_prompts, select_prompts
+
+        prompts = effective_prompts([FactPrompt(name="default", enabled=False), FactPrompt(**PEOPLE_PROMPT)])
+        assert [p.name for p in select_prompts(prompts)] == ["people"]
+        assert [p.name for p in select_prompts(prompts, ["default", "default"])] == ["default"]
+        with pytest.raises(LookupError, match="nope"):
+            select_prompts(prompts, ["nope"])
+
+    def test_round_trips_through_the_file_and_empty_is_left_out(self, tmp_path: Path) -> None:
+        settings = self._load(tmp_path, [PEOPLE_PROMPT])
+        written = nest(settings)["facts"]["prompts"]
+        assert written[0]["examples"][0]["extractions"][0] == {"class": "person", "text": "Jane", "attributes": {}}
+        assert (
+            "description"
+            not in nest(self._load(tmp_path, [{"name": "default", "enabled": False}]))["facts"]["prompts"][0]
+        )
+        assert "prompts" not in nest(Settings())["facts"]
+
+    def test_config_set_takes_a_json_array(self, tmp_path: Path) -> None:
+        from garage_rag.config import update_config
+
+        target = tmp_path / CONFIG_FILENAME
+        settings, stored = update_config(target, "facts.prompts", json.dumps([PEOPLE_PROMPT]))
+        assert [p.name for p in settings.fact_prompts] == ["people"]
+        assert stored[0]["name"] == "people"
+        json.dumps(stored)  # plain JSON, as GetSetting/SetSetting return it
+        assert json.loads(target.read_text())["facts"]["prompts"][0]["description"] == "List every person named."
+        with pytest.raises(ConfigError, match="JSON"):
+            update_config(target, "facts.prompts", "people")
+
+    def test_schema_describes_the_prompt_shape(self) -> None:
+        schema = json_schema()
+        entry = schema["properties"]["facts"]["properties"]["prompts"]
+        assert entry["type"] == "array" and entry["default"] == []
+        item = entry["items"]
+        assert item["additionalProperties"] is False and item["required"] == ["name"]
+        assert all(spec.get("description") for spec in item["properties"].values())
+        for name in ("FactExample", "FactExtractionExample"):
+            definition = schema["$defs"][name]
+            assert definition["additionalProperties"] is False
+            assert all(spec.get("description") for spec in definition["properties"].values()), name
+        assert "class" in schema["$defs"]["FactExtractionExample"]["properties"]
+
+
 class TestSetGetHelpers:
     def test_resolve_setting(self) -> None:
         from garage_rag.config import resolve_setting, setting_names

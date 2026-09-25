@@ -42,6 +42,8 @@ from garage_rag.proto.garage_pb2 import (
     InitDbResponse,
     ListDocumentsRequest,
     ListDocumentsResponse,
+    ListFactPromptsRequest,
+    ListFactPromptsResponse,
     ListModelsRequest,
     ListModelsResponse,
     ListSourcesRequest,
@@ -259,6 +261,9 @@ class GarageClient:
 
     def enrich_facts(self, request: EnrichFactsRequest) -> Iterator[EnrichFactsStatus]:
         return self._invoke_stream("EnrichFacts", request, EnrichFactsStatus)
+
+    def list_fact_prompts(self) -> ListFactPromptsResponse:
+        return self._invoke_unary("ListFactPrompts", ListFactPromptsRequest(), ListFactPromptsResponse)
 
     def init_db(self, schema_dir: str = "") -> InitDbResponse:
         return self._invoke_unary("InitDb", InitDbRequest(schema_dir=schema_dir), InitDbResponse)
