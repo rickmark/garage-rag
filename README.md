@@ -16,7 +16,7 @@ a Model Context Protocol (MCP) 2.0 server, accompanied by a native macOS compani
 - **Model-Agnostic Vector Storage**: Chunks are decoupled from embedding tables (`emb_<slug>`), allowing seamless multi-model backfilling and re-indexing across the app's built-in llama.cpp engine, Ollama and LM Studio.
 - **Fact Distillation**: An optional pass distills documents into atomic, span-grounded facts with a local model (a vendored, local-only subset of LangExtract, with configurable prompts); every fact is embedded and searchable like a chunk.
 - **Model Context Protocol (MCP) 2.0**: Exposes indexed knowledge to LLMs (such as Claude Desktop and Claude Code) over standard stdio or local HTTP with DNS-rebinding protection.
-- **Native macOS Application (`GarageApp`)**: Menu bar and window application in Swift/SwiftUI (Apple Silicon, macOS 14+) embedding a self-contained, relocatable PostgreSQL 18 + pgvector (+ Apache AGE) instance, llama.cpp for local embeddings and distillation, and the `garage` / `garage-mcp` command-line launchers. The current version is 1.5, in alpha.
+- **Native macOS Application (`GarageApp`)**: Menu bar and window application in Swift/SwiftUI (Apple Silicon, macOS 14+) embedding a self-contained, relocatable PostgreSQL 18 + pgvector (+ Apache AGE) instance, llama.cpp for local embeddings and distillation, and the `garage` / `garage-mcp` command-line launchers. The current version is 1.5.
 
 ---
 

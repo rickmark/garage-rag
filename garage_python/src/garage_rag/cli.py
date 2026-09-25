@@ -1590,7 +1590,7 @@ def extract_cmd(
 def get_version() -> str:
     import garage_rag
 
-    return getattr(garage_rag, "__version__", "0.1.0")
+    return getattr(garage_rag, "__version__", "1.5.0")
 
 
 @app.command("version")

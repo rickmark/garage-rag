@@ -36,3 +36,5 @@ exclude:
   - vendor
   - BUILD.bazel
   - BUILD
+  # Design notes and research, kept in the repo but not published
+  - plans
