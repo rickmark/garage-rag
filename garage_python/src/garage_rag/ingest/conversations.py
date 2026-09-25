@@ -6,15 +6,23 @@ is stored like any other document through the same
 :class:`~garage_rag.ingest.gateway.IngestStorageGateway`, so the in-process
 pipeline and the ingest XPC worker behave alike.
 
-The document's text is the whole thread, one message per paragraph::
+The document's text is a header naming the thread and its members, then the
+whole thread, one message per paragraph::
+
+    Climbing crew
+    Participants: +15551234567, friend@example.com
+    Service: iMessage
 
     [2026-09-24 18:02 UTC] Me: running late
+
     [2026-09-24 18:03 UTC] +15551234567: no worries
 
-and each message is its own chunk, spanning exactly its paragraph, so a search
-hit is one message with its sender and time rather than a window that starts
-mid-thread. Times are UTC so the text, and with it the content hash, does not
-change with the machine's time zone.
+Each message is its own chunk, spanning exactly its paragraph, so a search hit
+is one message with its sender and time rather than a window that starts
+mid-thread. A message longer than the configured chunk size is split into
+several chunks, never merged with its neighbours. The header is part of the
+content hash, so a renamed group or a new member rebuilds the document. Times
+are UTC so the text does not change with the machine's time zone.
 
 Conversations are always ``communication``, which keeps them on this machine
 (see ``docs/privacy.md``). The per-document chunk cap does not apply: it guards
@@ -31,6 +39,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from garage_rag.attribute.resolver import SelfIdentity
+from garage_rag.config import get_settings
 from garage_rag.db.models import CorpusClass
 from garage_rag.extract.base import ContentKind, sha256_text
 from garage_rag.extract.messages import (
@@ -39,17 +48,21 @@ from garage_rag.extract.messages import (
     ChatMessage,
     Conversation,
     find_databases,
-    is_messages_database,
+    messages_database_status,
     read_conversations,
 )
-from garage_rag.ingest.chunking import TextChunk
+from garage_rag.ingest.chunking import TextChunk, chunk_prose
 from garage_rag.ingest.gateway import AuthorPayload, ChunkPayload, IngestStorageGateway, SourceContext
 
 log = logging.getLogger(__name__)
 
 CHUNKER = "message"
-SIGNATURE = f"{ContentKind.CONVERSATION}:{CHUNKER}"
 SELF_LABEL = "Me"
+
+
+def signature(size: int) -> str:
+    """The document's chunker signature; a new chunk size rebuilds every thread."""
+    return f"{ContentKind.CONVERSATION}:{CHUNKER}:{size}"
 
 
 def conversation_uri(db_path: Path, conversation: Conversation) -> str:
@@ -63,26 +76,51 @@ def _sender_label(message: ChatMessage) -> str:
     return message.sender or "Unknown"
 
 
-def render(conversation: Conversation) -> tuple[str, list[TextChunk]]:
-    """The document text and its chunks, one per message, with exact character spans."""
-    parts: list[str] = []
+def _header(conversation: Conversation) -> str:
+    """The thread's name and members, so a rename or a new member changes the text (and its hash)."""
+    lines = [conversation.title]
+    if conversation.participants:
+        lines.append("Participants: " + ", ".join(conversation.participants))
+    if conversation.service:
+        lines.append("Service: " + conversation.service)
+    return "\n".join(lines)
+
+
+def render(conversation: Conversation, *, size: int | None = None) -> tuple[str, list[TextChunk]]:
+    """The document text and its chunks, with exact character spans.
+
+    Each message is one chunk. A message longer than ``size`` (the configured
+    chunk size) is split at paragraph, line and sentence boundaries into
+    several chunks, so no chunk can exceed what the embedders accept; a chunk
+    never spans two messages. The header naming the thread is not a chunk.
+    """
+    size = size or get_settings().chunk_size
+    parts = [_header(conversation)]
+    offset = len(parts[0])
     chunks: list[TextChunk] = []
-    offset = 0
-    for ordinal, message in enumerate(conversation.messages):
+    for message in conversation.messages:
         stamp = message.sent_at.strftime("%Y-%m-%d %H:%M UTC")
         paragraph = f"[{stamp}] {_sender_label(message)}: {message.text}"
-        if parts:
-            offset += 2  # the blank line between messages
-        chunks.append(
-            TextChunk(
-                ord=ordinal,
-                text=paragraph,
-                chunker=CHUNKER,
-                heading_path=conversation.title,
-                char_start=offset,
-                char_end=offset + len(paragraph),
-            )
+        offset += 2  # the blank line between paragraphs
+        pieces = (
+            [paragraph] if len(paragraph) <= size else [c.text for c in chunk_prose(paragraph, size=size, overlap=0)]
         )
+        cursor = 0
+        for piece in pieces:
+            start = paragraph.find(piece, cursor)
+            if start < 0:  # pragma: no cover - the splitter only drops whitespace
+                start = cursor
+            cursor = start + len(piece)
+            chunks.append(
+                TextChunk(
+                    ord=len(chunks),
+                    text=piece,
+                    chunker=CHUNKER,
+                    heading_path=conversation.title,
+                    char_start=offset + start,
+                    char_end=offset + start + len(piece),
+                )
+            )
         parts.append(paragraph)
         offset += len(paragraph)
     return "\n\n".join(parts), chunks
@@ -93,15 +131,20 @@ def _identity_kind(handle: str) -> str:
 
 
 def conversation_authors(conversation: Conversation, self_identity: SelfIdentity) -> list[AuthorPayload]:
-    """Everyone who wrote in the thread: each other participant, then the owner if they wrote."""
+    """Senders are the handles that wrote in the thread; members who only read it are recipients.
+
+    The owner is added as a sender when they wrote and their name is configured.
+    """
+    senders = {message.sender for message in conversation.messages if message.sender}
+    handles = list(dict.fromkeys([*conversation.participants, *sorted(senders)]))
     authors: list[AuthorPayload] = []
-    for handle in conversation.participants:
+    for handle in handles:
         if self_identity.matches(email=handle):
             continue
         authors.append(
             AuthorPayload(
                 name=handle,
-                role="sender",
+                role="sender" if handle in senders else "recipient",
                 confidence=1.0,
                 evidence="imessage-handle",
                 identities={_identity_kind(handle): handle},
@@ -131,7 +174,8 @@ def ingest_conversation(
 ) -> int | None:
     """Store one conversation. Returns the chunks written, or None when it was unchanged."""
     uri = conversation_uri(db_path, conversation)
-    text, chunks = render(conversation)
+    size = get_settings().chunk_size
+    text, chunks = render(conversation, size=size)
     content_hash = sha256_text(text).hex()
 
     existing = gateway.check_stat(source_ctx.slug, uri)
@@ -139,7 +183,7 @@ def ingest_conversation(
         existing.exists
         and not force
         and existing.content_sha256 == content_hash
-        and existing.chunker == SIGNATURE
+        and existing.chunker == signature(size)
         and existing.state.upper() == "OK"
     ):
         gateway.record_seen(source_ctx.run_id, source_ctx.slug, uri)
@@ -169,7 +213,7 @@ def ingest_conversation(
         content_sha256=content_hash,
         extractor=EXTRACTOR_NAME,
         extractor_version=EXTRACTOR_VERSION,
-        chunker=SIGNATURE,
+        chunker=signature(size),
         content=text,
         meta=meta,
         corpus_class=CorpusClass.COMMUNICATION.value,
@@ -215,10 +259,19 @@ def ingest_messages_source(
         return False
 
     complete = True
+    found = 0
     for db_path in find_databases(root):
-        if not is_messages_database(db_path):
+        status = messages_database_status(db_path)
+        if status is None:
+            # Most often Full Disk Access is missing. Its threads must not be retired.
+            counters.note_error(f"{db_path.name}: cannot be read (does Garage have Full Disk Access?)")
+            log.warning("Could not open %s", db_path)
+            complete = False
+            continue
+        if not status:
             log.info("Skipping %s: not a Messages database", db_path)
             continue
+        found += 1
         log.info("Reading conversations from %s", db_path)
         try:
             for conversation in read_conversations(db_path):
@@ -252,14 +305,18 @@ def ingest_messages_source(
             counters.note_error(f"{db_path.name}: {exc}")
             log.warning("Could not read %s: %s", db_path, exc)
             complete = False
+    if not found and complete:
+        # An unlistable folder looks empty; an empty run would retire every thread.
+        counters.note_error(f"{root}: no readable Messages database found")
+        return False
     return complete
 
 
 __all__ = [
-    "SIGNATURE",
     "conversation_authors",
     "conversation_uri",
     "ingest_conversation",
     "ingest_messages_source",
     "render",
+    "signature",
 ]

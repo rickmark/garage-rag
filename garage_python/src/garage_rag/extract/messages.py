@@ -51,6 +51,8 @@ _APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 # since 2001 stay below this for millennia, nanoseconds pass it within a minute.
 _NANOSECOND_THRESHOLD = 10**11
 
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
 
 @dataclass(frozen=True)
 class ChatMessage:
@@ -181,18 +183,36 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')}
 
 
-def is_messages_database(path: Path) -> bool:
-    """Whether ``path`` is a Messages ``chat.db`` (by its tables, not its name)."""
+def messages_database_status(path: Path) -> bool | None:
+    """True for a Messages ``chat.db`` (by its tables, not its name), False for
+    any other file, and None when it could not be read at all.
+
+    Unreadable is not the same as "not Messages": without Full Disk Access
+    ``chat.db`` is still listed but cannot be opened, and treating it as some
+    other database would let reconcile retire every conversation it holds.
+    """
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(len(_SQLITE_HEADER))
+    except OSError:
+        return None
+    if header != _SQLITE_HEADER:
+        return False
     try:
         conn = _connect(path)
     except sqlite3.Error:
-        return False
+        return None
     try:
         return _tables(conn) >= SIGNATURE_TABLES
     except sqlite3.Error:
-        return False
+        return None
     finally:
         conn.close()
+
+
+def is_messages_database(path: Path) -> bool:
+    """Whether ``path`` is a readable Messages ``chat.db``."""
+    return messages_database_status(path) is True
 
 
 def read_conversations(path: Path) -> Iterator[Conversation]:
@@ -295,5 +315,6 @@ __all__ = [
     "decode_attributed_body",
     "find_databases",
     "is_messages_database",
+    "messages_database_status",
     "read_conversations",
 ]
