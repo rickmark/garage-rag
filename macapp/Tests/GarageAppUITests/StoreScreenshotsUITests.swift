@@ -6,15 +6,21 @@ import XCTest
 /// over the made-up fixture corpus (`macapp/Tests/Fixtures`) rather than anyone's real files.
 ///
 /// Opt-in, because it downloads an embedding model and takes several minutes. Set
-/// `GARAGE_STORE_SCREENSHOTS` to a folder (with `xcodebuild test`, `TEST_RUNNER_GARAGE_STORE_SCREENSHOTS`):
+/// `GARAGE_STORE_SCREENSHOTS` (with `xcodebuild test`, `TEST_RUNNER_GARAGE_STORE_SCREENSHOTS`) to `1`
+/// or to a folder:
 ///
-///     TEST_RUNNER_GARAGE_STORE_SCREENSHOTS=$HOME/Desktop/store-screenshots \
+///     TEST_RUNNER_GARAGE_STORE_SCREENSHOTS=1 \
 ///       xcodebuild test -project macapp/Garage.xcodeproj -scheme GarageAppUITests \
 ///       -only-testing:GarageAppUITests/StoreScreenshotsUITests
 ///
-/// Each page is written there as `<nn>-<page>-<appearance>.png` and also kept as an attachment in
-/// the result bundle. The display needs room for a 1440 × 900 window below the menu bar. Hide the
-/// Dock or other windows if they would show behind a page; only the window is captured.
+/// Each page is written as `<nn>-<page>-<appearance>.png` and also kept as an attachment in the
+/// result bundle. The test runner is sandboxed, so it cannot write to the Desktop or most of the home
+/// folder: with `1`, or a folder it cannot write, the files go to `store-screenshots` in the runner's
+/// own temporary folder,
+/// `~/Library/Containers/me.rickmark.garage-rag.GarageAppUITests.xctrunner/Data/tmp/store-screenshots`,
+/// and the log names it. The app opens its window at 1440 × 900 points (`--window-size`), so the
+/// display needs room for that below the menu bar. Hide the Dock or other windows if they would show
+/// behind a page; only the window is captured.
 final class StoreScreenshotsUITests: GarageUITestCase {
     static let outputVariable = "GARAGE_STORE_SCREENSHOTS"
     static let windowSize = CGSize(width: 1440, height: 900)
@@ -25,13 +31,19 @@ final class StoreScreenshotsUITests: GarageUITestCase {
     private var appearance = "light"
     private var outputFolder: URL!
 
-    override var additionalLaunchArguments: [String] { ["--appearance", appearance] }
+    override var additionalLaunchArguments: [String] {
+        [
+            "--appearance", appearance,
+            "--window-size", "\(Int(Self.windowSize.width))x\(Int(Self.windowSize.height))",
+        ]
+    }
 
     override func setUpWithError() throws {
         let path = ProcessInfo.processInfo.environment[Self.outputVariable] ?? ""
-        try XCTSkipIf(path.isEmpty, "Set \(Self.outputVariable) to a folder to take the App Store screenshots.")
-        outputFolder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        try FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+        try XCTSkipIf(path.isEmpty, "Set \(Self.outputVariable) to 1 or a folder to take the App Store screenshots.")
+        outputFolder = Self.writableFolder(for: path)
+        XCTContext.runActivity(named: "Screenshots go to \(outputFolder.path)") { _ in }
+        NSLog("StoreScreenshotsUITests: writing to %@", outputFolder.path)
         try super.setUpWithError()
         // One page that fails to load should not cost the rest of the set.
         continueAfterFailure = true
@@ -45,6 +57,28 @@ final class StoreScreenshotsUITests: GarageUITestCase {
     func testDarkScreenshots() throws {
         appearance = "dark"
         try takeScreenshots()
+    }
+
+    /// The folder named by `path`, or `store-screenshots` in the runner's temporary folder when
+    /// `path` is `1` or names a folder the sandboxed runner cannot create or write.
+    static func writableFolder(for path: String) -> URL {
+        let fallback = FileManager.default.temporaryDirectory.appendingPathComponent("store-screenshots", isDirectory: true)
+        var candidates = [fallback]
+        if path != "1" {
+            candidates.insert(URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true), at: 0)
+        }
+        for folder in candidates {
+            let probe = folder.appendingPathComponent(".write-probe")
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try Data().write(to: probe)
+                try? FileManager.default.removeItem(at: probe)
+                return folder
+            } catch {
+                NSLog("StoreScreenshotsUITests: cannot write to %@: %@", folder.path, "\(error)")
+            }
+        }
+        return fallback
     }
 
     // MARK: - The run
@@ -118,25 +152,39 @@ final class StoreScreenshotsUITests: GarageUITestCase {
     }
 
     /// Runs the query and waits for ranked results. The shot is still taken when none come, so
-    /// the run shows what the page said instead.
+    /// the run shows what the page said instead, and the failure quotes it.
     private func runSearch() {
         let field = element(identifier: "search.query")
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no search field")
         // The plain-style field only takes focus when the click lands on its text area.
         field.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).click()
         app.typeText(Self.query + "\n")
-        let found = element(text: "#1").waitForExistence(timeout: 120)
-        XCTAssertTrue(found, "the query returned no ranked results")
+
+        // The table's rank column is not reliably exposed as text; the first result's title and the
+        // inspector (which opens on the first result) carry identifiers.
+        let firstTitle = element(identifier: "search.result.1.title")
+        let detail = element(identifier: "search.detail.title")
+        let failed = element(identifier: "search.error")
+        let empty = element(text: "No Results Found")
+        _ = waitUntil(timeout: 120) { firstTitle.exists || detail.exists || failed.exists || empty.exists }
+        if failed.exists {
+            XCTFail("the search failed: \(shownText(of: failed))")
+        } else if empty.exists {
+            XCTFail("the query returned no results: \"\(Self.query)\"")
+        } else {
+            XCTAssertTrue(firstTitle.exists || detail.exists, "the search did not finish")
+        }
         settle()
     }
 
     // MARK: - Window and capture
 
-    /// Moves the main window to the top left of its screen and resizes it to exactly
-    /// `windowSize` points by dragging its title bar and its bottom-right corner.
+    /// Checks the main window opened at exactly `windowSize` points (`--window-size`). If it did not,
+    /// falls back to moving it to the top left of its screen and dragging its bottom-right corner.
     private func sizeWindow(file: StaticString = #filePath, line: UInt = #line) throws {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 30), "no main window", file: file, line: line)
+        if waitUntil(timeout: 5, { window.frame.size == Self.windowSize }) { return }
 
         // Title bar to just below the menu bar, near the left edge.
         let frame = window.frame
