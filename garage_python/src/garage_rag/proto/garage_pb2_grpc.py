@@ -138,6 +138,11 @@ class GarageServiceStub:
                 request_serializer=garage__pb2.BackfillRequest.SerializeToString,
                 response_deserializer=garage__pb2.BackfillStatus.FromString,
                 _registered_method=True)
+        self.EnsureLlamaModel = channel.unary_unary(
+                '/garage.GarageService/EnsureLlamaModel',
+                request_serializer=garage__pb2.EnsureLlamaModelRequest.SerializeToString,
+                response_deserializer=garage__pb2.EnsureLlamaModelResponse.FromString,
+                _registered_method=True)
         self.EnrichFacts = channel.unary_stream(
                 '/garage.GarageService/EnrichFacts',
                 request_serializer=garage__pb2.EnrichFactsRequest.SerializeToString,
@@ -346,6 +351,14 @@ class GarageServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EnsureLlamaModel(self, request, context):
+        """Has LlamaXPCService load a llama_xpc model (over NSXPC) unless it is already resident. For
+        processes outside the app's XPC services (the stdio launchers), which cannot reach it themselves.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def EnrichFacts(self, request, context):
         """--- Facts ---
         """
@@ -537,6 +550,11 @@ def add_GarageServiceServicer_to_server(servicer, server):
                     servicer.Backfill,
                     request_deserializer=garage__pb2.BackfillRequest.FromString,
                     response_serializer=garage__pb2.BackfillStatus.SerializeToString,
+            ),
+            'EnsureLlamaModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.EnsureLlamaModel,
+                    request_deserializer=garage__pb2.EnsureLlamaModelRequest.FromString,
+                    response_serializer=garage__pb2.EnsureLlamaModelResponse.SerializeToString,
             ),
             'EnrichFacts': grpc.unary_stream_rpc_method_handler(
                     servicer.EnrichFacts,
@@ -1133,6 +1151,33 @@ class GarageService:
             '/garage.GarageService/Backfill',
             garage__pb2.BackfillRequest.SerializeToString,
             garage__pb2.BackfillStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnsureLlamaModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/garage.GarageService/EnsureLlamaModel',
+            garage__pb2.EnsureLlamaModelRequest.SerializeToString,
+            garage__pb2.EnsureLlamaModelResponse.FromString,
             options,
             channel_credentials,
             insecure,

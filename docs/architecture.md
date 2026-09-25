@@ -205,8 +205,29 @@ Embedding is a single batching producer at 64 chunks per request: Ollama
 serializes model execution, so client fan-out buys contention, not throughput.
 The `llama_xpc` provider (embeddings and, with `--provider llama_xpc`, facts)
 talks to the app's `LlamaXPCService` over loopback HTTP (`llama_host`, a
-llama-server-compatible API); the app loads and unloads models over XPC, so
-the Python side is a plain client with no model lifecycle of its own.
+llama-server-compatible API). Models are loaded over NSXPC only, never over
+HTTP. When a request finds its model not resident (503 `no model loaded`, 404
+`model X is not loaded`), `LlamaXPCClient` asks `garage_rag.xpc.host` to load
+it and retries once:
+
+- inside the app's XPC services that embed Python (`GarageXPCService` for
+  search, backfill and enrich-facts, `GarageMCPServerService` for `rag_search`
+  and `rag_ask`, the embed worker) the Swift host installed a loader at start-up
+  (`LlamaModelLoaderBridge`, a C function Python calls through ctypes, which
+  releases the GIL); it resolves the slug to the downloaded GGUF and the Models
+  page's load settings (`LlamaModelResolver`) and calls `ensureModel` on
+  `LlamaXPCService` over NSXPC;
+- elsewhere (the `garage`/`garage-mcp` launchers, or a venv while the app runs)
+  it asks the app's `EnsureLlamaModel` RPC, which uses `GarageXPCService`'s
+  loader;
+- with neither, the error says to open Garage or load the model on its Models
+  page, and a model that is not downloaded is named with where to download it.
+
+`ensureModel` checks and loads under the engine lock, so callers in different
+processes never load the same model twice. Nothing unloads automatically: the
+embedding model and the facts model stay resident side by side until the
+Models page unloads them, and a load waits for any running inference (they
+share the engine lock).
 
 ## Local inference client
 

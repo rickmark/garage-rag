@@ -152,6 +152,8 @@ CALLERS = {
     "mcp_server/server.py": "egress.check_destination",
     "xpc/llama_xpc.py": "class LlamaXPCClient(InferenceClient)",
     "service/client.py": "egress.check_destination",
+    # Sends only a model name, to the app's loopback gRPC service, through the facade's client.
+    "xpc/host.py": "GarageClient(",
     "cli.py": "egress.url_opener",
 }
 

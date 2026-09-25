@@ -31,6 +31,7 @@ open macapp/Garage.xcodeproj
 # Unit tests
 aspect test //macapp/Tests/GarageAppUnitTests:GarageAppUnitTests
 aspect test //macapp/Tests/LlamaClientTests:LlamaClientTests
+aspect test //macapp/Tests/LlamaModelLoaderTests:LlamaModelLoaderTests
 
 # XCUITests (manual: quit Garage first; needs UI automation permission). Each test runs the
 # real app on a throwaway --data-directory; see macapp/Tests/GarageAppUITests.

@@ -9,6 +9,7 @@ swift_library(
     visibility = ["//visibility:private"],
     deps = [
         "//macapp/Sources/IngestClient",
+        "//macapp/Sources/LlamaModelLoader",
         "//macapp/Sources/PythonXPCService",
     ],
 )

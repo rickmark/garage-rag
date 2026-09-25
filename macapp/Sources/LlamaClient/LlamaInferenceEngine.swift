@@ -14,6 +14,10 @@ public protocol LlamaInferenceEngine: AnyObject, Sendable {
     var currentModelPath: String? { get }
 
     func loadModel(path: String, alias: String?, configJson: String?) -> (success: Bool, message: String)
+    /// Loads `path` under `alias` unless that alias is already resident, in which case nothing
+    /// changes. Unlike `loadModel`, which replaces a resident alias, this is safe to call before
+    /// every request. Engines that hold several models do the check and the load atomically.
+    func ensureModel(path: String, alias: String, configJson: String?) -> (success: Bool, message: String)
     /// Unloads every resident model.
     func unloadModel() -> Bool
     /// `POST /models/load` body `{"path"|"model": ..., "alias"?: ..., "config"?: {...}}`: loads one more
@@ -80,6 +84,16 @@ public enum LlamaJSON {
 }
 
 public extension LlamaInferenceEngine {
+    /// Default for engines without their own: checks the `/v1/models` list, then loads. Not atomic;
+    /// `LlamaCppEngine` overrides it with a check-and-load under its engine lock.
+    func ensureModel(path: String, alias: String, configJson: String?) -> (success: Bool, message: String) {
+        let resident = (handleModels()["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        if resident.contains(alias) {
+            return (true, "\(alias) is already loaded")
+        }
+        return loadModel(path: path, alias: alias, configJson: configJson)
+    }
+
     func serializeJson(_ obj: [String: Any]) -> String {
         LlamaJSON.serialize(obj)
     }

@@ -520,3 +520,17 @@ py_test(
         "@pypi//pytest",
     ],
 )
+
+py_test(
+    name = "test_llama_on_demand",
+    srcs = ["test_llama_on_demand.py"],
+    deps = [
+        ":conftest",
+        "//garage_python/src/garage_rag/embed",
+        "//garage_python/src/garage_rag/inference",
+        "//garage_python/src/garage_rag/proto",
+        "//garage_python/src/garage_rag/service",
+        "//garage_python/src/garage_rag/xpc",
+        "@pypi//pytest",
+    ],
+)

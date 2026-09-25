@@ -602,6 +602,38 @@ public final class LlamaClient: @unchecked Sendable {
         }
     }
 
+    /// Loads `path` under `alias` unless the service already has that alias resident (NSXPC
+    /// `ensureModel`). Returns the service's message.
+    public func ensureModel(path: String, alias: String, config: [String: Any]? = nil) async throws -> String {
+        var configJson: String? = nil
+        if let config = config {
+            let data = try JSONSerialization.data(withJSONObject: config)
+            configJson = String(data: data, encoding: .utf8)
+        }
+
+        if let engine = inProcessEngine {
+            let res = engine.ensureModel(path: path, alias: alias, configJson: configJson)
+            if res.success {
+                return res.message
+            }
+            throw LlamaClientError.serverError(statusCode: 500, message: res.message)
+        }
+
+        return try await performRemoteCall { proxy, relay in
+            proxy.ensureModel(modelPath: path, alias: alias, configJson: configJson) { success, msg, error in
+                if let error = error {
+                    relay.resume(throwing: error)
+                    return
+                }
+                if success {
+                    relay.resume(returning: msg ?? "Model loaded")
+                } else {
+                    relay.resume(throwing: LlamaClientError.serverError(statusCode: 500, message: msg ?? "Failed to load model"))
+                }
+            }
+        }
+    }
+
     public func unloadModel() async throws -> Bool {
         if let engine = inProcessEngine {
             return engine.unloadModel()

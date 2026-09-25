@@ -46,6 +46,11 @@ public protocol LlamaXPCServiceProtocol: GarageCommonXPCServiceProtocol {
     /// Load / configure a model in the XPC service
     func loadModel(modelPath: String, alias: String?, configJson: String?, with reply: @escaping (Bool, String?, Error?) -> Void)
 
+    /// Loads a model under `alias` unless that alias is already resident (then it replies success at
+    /// once). The on-demand path: `LlamaModelLoader` calls it before a request needs the model, so
+    /// concurrent callers in different processes never load the same model twice.
+    func ensureModel(modelPath: String, alias: String, configJson: String?, with reply: @escaping (Bool, String?, Error?) -> Void)
+
     /// Unload current model
     func unloadModel(with reply: @escaping (Bool, Error?) -> Void)
 }

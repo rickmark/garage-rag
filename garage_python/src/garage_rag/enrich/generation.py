@@ -54,7 +54,7 @@ _PROVIDER_LABEL = {
 }
 
 _HINTS = {
-    "llama_xpc": "load it on the app's Models page (Fact distillation)",
+    "llama_xpc": "download it on the app's Models page (Fact distillation); Garage loads it when needed",
     "ollama": "pull it with 'ollama pull {model}'",
     "lmstudio": "download it in LM Studio (or 'lms get {model}')",
 }
