@@ -234,7 +234,7 @@ final class StoreMailMessagesUITests: StoreUITestCase {
         open(section: "status", file: file, line: line)
         let documents = element(identifier: "status.figure.documents")
         XCTAssertTrue(
-            waitUntil(timeout: 240) { documents.exists && documents.label == "\(expected)" },
+            waitUntil(timeout: 240) { documents.exists && self.shownText(of: documents) == "\(expected)" },
             "the Status page never counted the \(expected) fixture items",
             file: file,
             line: line

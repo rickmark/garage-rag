@@ -123,7 +123,7 @@ final class SourcesUITests: GarageUITestCase {
         open(section: "status")
         let documents = element(identifier: "status.figure.documents")
         XCTAssertTrue(
-            waitUntil(timeout: 240) { documents.exists && documents.label == "2" },
+            waitUntil(timeout: 240) { documents.exists && self.shownText(of: documents) == "2" },
             "the Status page never counted both notes"
         )
 

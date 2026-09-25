@@ -22,7 +22,14 @@ final class ModelsUITests: GarageUITestCase {
             XCTAssertTrue(element(text: heading).waitForExistence(timeout: 15), "Overall does not show \"\(heading)\"")
         }
         XCTAssertTrue(element(text: "No embedding model").waitForExistence(timeout: 30), "an empty registry does not say there is no embedding model")
-        XCTAssertTrue(element(text: "No distillation model").exists, "no facts model does not say so")
+        // An empty garage.json still names a facts model, the default gemma2-2b preset, whose file a new
+        // data folder does not have: the card names the model and says it is not downloaded.
+        XCTAssertTrue(element(text: "Gemma 2 2B Instruct").exists, "the Fact Distillation card does not name the default facts model")
+        XCTAssertTrue(
+            element(text: "Not downloaded · via Llama XPC.").exists,
+            "the Fact Distillation card does not say the default facts model is not downloaded"
+        )
+        XCTAssertFalse(element(text: "No distillation model").exists, "the card says there is no facts model although one is named")
         XCTAssertTrue(element(text: "Llama XPC").exists, "Providers does not list Llama XPC")
         XCTAssertTrue(element(identifier: "models.overall.manageEmbedding").exists, "the Embedding card has no Manage button")
         XCTAssertTrue(element(identifier: "models.overall.manageDistillation").exists, "the Fact Distillation card has no Manage button")

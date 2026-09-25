@@ -156,6 +156,15 @@ class GarageUITestCase: XCTestCase {
         ).firstMatch
     }
 
+    /// The text `element` shows. A static text carries it in its value, with an empty label unless the
+    /// view sets one; a button, or an element that combines its children, carries it in its label.
+    func shownText(of element: XCUIElement) -> String {
+        if let value = element.value as? String, !value.isEmpty {
+            return value
+        }
+        return element.label
+    }
+
     func button(label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
     }
