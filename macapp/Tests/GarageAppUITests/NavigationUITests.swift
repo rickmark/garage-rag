@@ -3,16 +3,19 @@ import XCTest
 /// The sidebar reaches every page, and each page renders its own content.
 final class NavigationUITests: GarageUITestCase {
 
-    /// Each `AppSection` case name, with a piece of text only that page shows.
+    /// Each `AppSection` case name, in sidebar order, with a piece of text only that page shows.
     private static let pages: [(section: String, marker: String)] = [
         ("status", "Corpus & Pipeline Overview"),
-        ("database", "Backups"),
+        // Configuration
         ("sources", "Add a Source"),
-        ("documents", "Filter by title or URI…"),
-        ("facts", "Search facts…"),
         ("models", "Embed All"),
         ("mcp", "Connected Assistants"),
+        // Data
+        ("documents", "Filter by title or URI…"),
+        ("facts", "Search facts…"),
         ("search", "Search corpus (e.g., 'system architecture', 'API design')…"),
+        // Advanced
+        ("database", "Backups"),
         ("logs", "Log Source"),
     ]
 
