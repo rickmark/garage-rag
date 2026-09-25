@@ -57,10 +57,16 @@ struct SourcePreset: Identifiable, Hashable, Sendable {
 }
 
 extension AppState {
-    /// Registers a source; a new source schedules maintenance so it gets indexed.
+    /// Registers a source; a new source schedules maintenance so it gets indexed. Added while a scan
+    /// or ingest runs, it is queued for its own scan once that run ends instead.
     @discardableResult
     func addSource(_ spec: SourceSpec) async -> Bool {
-        await runOperation(triggersMaintenance: true) { try await $0.addSource(spec).message }
+        let jobRunning = isScanning || isIngesting || isMaintenanceRunning
+        let added = await runOperation(triggersMaintenance: !jobRunning) { try await $0.addSource(spec).message }
+        if added, jobRunning {
+            queueSourceScan(spec.slug)
+        }
+        return added
     }
 
     /// Registers a preset model (dims from the preset, else the known-model table),

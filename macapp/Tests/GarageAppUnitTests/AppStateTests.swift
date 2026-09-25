@@ -658,4 +658,55 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.isBusy(source: "notes"))
         XCTAssertTrue(state.isBusy(source: "documents"))
     }
+
+    @MainActor
+    func testAScanOfAllLeavesANewSourceFree() {
+        let state = AppState()
+        state.setScanningForTesting(source: "*", slugs: ["notes", "documents"])
+        defer { state.setScanningForTesting(source: nil) }
+
+        XCTAssertTrue(state.isBusy(source: "notes"))
+        XCTAssertTrue(state.isBusy(source: "documents"))
+        XCTAssertFalse(state.isBusy(source: "photos"))
+    }
+
+    @MainActor
+    func testAnIngestOfAllLeavesANewSourceFree() {
+        let state = AppState()
+        state.setIngestingForTesting(true)
+        state.ingestService.setPendingSources(["notes", "documents"])
+        defer {
+            state.ingestService.clearPendingSources()
+            state.setIngestingForTesting(false)
+        }
+
+        XCTAssertTrue(state.isBusy(source: "notes"))
+        XCTAssertFalse(state.isBusy(source: "photos"))
+    }
+
+    @MainActor
+    func testASourceAddedDuringARunIsQueuedOnce() {
+        let state = AppState()
+        let wasEnabled = state.scheduledMaintenanceEnabled
+        state.scheduledMaintenanceEnabled = true
+        defer { state.scheduledMaintenanceEnabled = wasEnabled }
+
+        state.queueSourceScan("photos")
+        state.queueSourceScan("photos")
+        state.queueSourceScan("mail")
+
+        XCTAssertEqual(state.sourcesAwaitingScan, ["photos", "mail"])
+    }
+
+    @MainActor
+    func testNothingIsQueuedWithoutAutomaticMaintenance() {
+        let state = AppState()
+        let wasEnabled = state.scheduledMaintenanceEnabled
+        state.scheduledMaintenanceEnabled = false
+        defer { state.scheduledMaintenanceEnabled = wasEnabled }
+
+        state.queueSourceScan("photos")
+
+        XCTAssertTrue(state.sourcesAwaitingScan.isEmpty)
+    }
 }

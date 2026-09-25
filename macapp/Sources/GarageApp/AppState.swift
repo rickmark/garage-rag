@@ -27,6 +27,11 @@ final class AppState: ObservableObject {
     let scanner: OperationRunner
     /// The slug a running scan covers ("*" for all sources), or nil when no scan runs.
     @Published private(set) var scanningSource: String?
+    /// The sources registered when a "*" scan started. The scan never walks a source added while it
+    /// runs, so that source is not busy: it can be added, and gets its own scan once the scan ends.
+    @Published private(set) var scanningSlugs: Set<String> = []
+    /// Sources added while a scan or ingest ran, waiting for their own scan and ingest once it ends.
+    @Published private(set) var sourcesAwaitingScan: [String] = []
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -93,8 +98,11 @@ final class AppState: ObservableObject {
     private(set) var hasHandedOffToRelaunch = false
     private var scheduledMaintenanceTask: Task<Void, Never>?
     private var pendingMaintenanceTask: Task<Void, Never>?
+    private var queuedSourceScanTask: Task<Void, Never>?
     /// Maintenance came due while the setup assistant was open; run it when it closes.
     private(set) var isMaintenanceDeferredForFirstRun = false
+    /// Scheduled maintenance is between or inside its scan, ingest and backfill steps.
+    private(set) var isMaintenanceRunning = false
 
     convenience init() {
         self.init(llama: LlamaService(), volumeAccess: VolumeAccessService(), modelDownload: ModelDownloadService())
@@ -388,6 +396,8 @@ final class AppState: ObservableObject {
         scheduledMaintenanceTask = nil
         pendingMaintenanceTask?.cancel()
         pendingMaintenanceTask = nil
+        queuedSourceScanTask?.cancel()
+        queuedSourceScanTask = nil
         mcp.terminateImmediately()
         grpc.terminateImmediately()
         // postgres.terminateImmediately() already runs PostgresService.stopAnyRunningInstance().
@@ -412,6 +422,8 @@ final class AppState: ObservableObject {
         scheduledMaintenanceTask = nil
         pendingMaintenanceTask?.cancel()
         pendingMaintenanceTask = nil
+        queuedSourceScanTask?.cancel()
+        queuedSourceScanTask = nil
         garage.cancel()
         backfill.cancel()
         enrichFacts.cancel()
@@ -711,6 +723,11 @@ final class AppState: ObservableObject {
     func setIngestingForTesting(_ isIngesting: Bool) {
         self.ingestService.setRunningForTesting(isIngesting)
     }
+
+    func setScanningForTesting(source: String?, slugs: Set<String> = []) {
+        self.scanningSource = source
+        self.scanningSlugs = slugs
+    }
     #endif
 
     /// Items a running scan has found: `sourceItems` in `source`, the one being walked, and
@@ -730,7 +747,7 @@ final class AppState: ObservableObject {
             logger.info("Scan skipped because ingestion is in progress.")
             return false
         }
-        guard !isScanning else {
+        guard !isScanning, scanningSource == nil else {
             lastCommandSucceeded = false
             lastCommandOutput = "A scan is already running."
             return false
@@ -740,7 +757,12 @@ final class AppState: ObservableObject {
         scanProgress = ScanProgress(source: source, sourceItems: 0, totalItems: 0)
         defer {
             scanningSource = nil
+            scanningSlugs = []
             scanProgress = nil
+        }
+        if source == "*" {
+            await fetchRegisteredSources()
+            scanningSlugs = Set(registeredSources.map(\.slug))
         }
         let grpc = self.grpc
         let result = await scanner.run { [weak self] _ in
@@ -1006,11 +1028,71 @@ final class AppState: ObservableObject {
     }
 
     /// True while a scan or ingest covers `slug`: it cannot be removed or reconciled until that ends.
+    /// A run over every source covers only the sources registered when it started, so a new source
+    /// can be added meanwhile (`queueSourceScan` then scans it once the run ends).
     func isBusy(source slug: String) -> Bool {
-        let scanning = scanningSource.map { $0 == "*" || $0 == slug } ?? false
-        let current = ingestService.currentSource
-        let ingesting = ingestService.isRunning && (current == nil || current == "*" || current == slug)
+        let scanning = scanningSource.map { $0 == slug || ($0 == "*" && scanningSlugs.contains(slug)) } ?? false
+        let ingesting: Bool
+        if !ingestService.isRunning {
+            ingesting = false
+        } else if !ingestService.runSources.isEmpty {
+            ingesting = ingestService.runSources.contains(slug)
+        } else {
+            let current = ingestService.currentSource
+            ingesting = current == nil || current == "*" || current == slug
+        }
         return scanning || ingesting
+    }
+
+    /// Queues a scan and ingest of `slug`, added while a scan or ingest ran: that run never walks it,
+    /// so it gets its own once the run ends, followed by a backfill, as automatic maintenance would.
+    func queueSourceScan(_ slug: String) {
+        guard scheduledMaintenanceEnabled else { return }
+        if firstRun.isActive {
+            isMaintenanceDeferredForFirstRun = true
+            return
+        }
+        if !sourcesAwaitingScan.contains(slug) {
+            sourcesAwaitingScan.append(slug)
+        }
+        guard queuedSourceScanTask == nil else { return }
+        queuedSourceScanTask = Task { [weak self] in
+            await self?.runQueuedSourceScans()
+        }
+    }
+
+    /// No scan, ingest or backfill runs, nor maintenance between its steps.
+    private var isIdleForQueuedScans: Bool {
+        !isScanning && scanningSource == nil && !isIngesting && !backfill.isRunning && !isMaintenanceRunning
+    }
+
+    private func runQueuedSourceScans() async {
+        defer { queuedSourceScanTask = nil }
+        var ingestedAny = false
+        while !sourcesAwaitingScan.isEmpty {
+            // Wait until the running job has been over for a second on two looks in a row: a scan
+            // started from the Sources page is followed at once by its ingest, and starting in that
+            // gap would turn the ingest away.
+            var idleLooks = 0
+            while idleLooks < 2 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                idleLooks = isIdleForQueuedScans ? idleLooks + 1 : 0
+            }
+            guard postgres.status == .running else { break }
+            let slug = sourcesAwaitingScan.removeFirst()
+            let includeCode = registeredSources.first(where: { $0.slug == slug })?.includeCode ?? false
+            if await scanSources(source: slug, includeCode: includeCode) {
+                let options = IngestOptions(includeCode: includeCode)
+                if await ingestSource(slug: slug, options: options, mode: .xpcService) {
+                    ingestedAny = true
+                }
+            }
+        }
+        if ingestedAny, !Task.isCancelled {
+            _ = await runBackfill()
+            await fetchCorpusStats()
+        }
     }
 
     func cancelIngest() async {
@@ -1029,7 +1111,12 @@ final class AppState: ObservableObject {
             isMaintenanceDeferredForFirstRun = true
             return
         }
-        guard postgres.status == .running, !ingestService.isRunning, !backfill.isRunning else { return }
+        // A running scan would turn this one away and leave the ingest below racing the ingest that
+        // follows it; a source added meanwhile waits in `sourcesAwaitingScan` instead.
+        guard postgres.status == .running, !isScanning, !ingestService.isRunning, !backfill.isRunning,
+              !isMaintenanceRunning else { return }
+        isMaintenanceRunning = true
+        defer { isMaintenanceRunning = false }
 
         _ = await scanSources()
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
