@@ -54,9 +54,11 @@ class UnsupportedFile(ExtractionError):
 
 
 class NoTextFound(ExtractionError):
-    """The file was read but holds no text: an empty file, or one whose text is all whitespace.
+    """The file was read without trouble and holds no text: an empty file, one whose text
+    is all whitespace, an icon or a photo.
 
-    Not a failure: there is nothing to index, so the pipeline records it as rejected.
+    An outcome, not a failure: the pipeline records the file as rejected rather
+    than as an extraction error.
     """
 
 

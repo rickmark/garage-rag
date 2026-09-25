@@ -1435,7 +1435,7 @@ def extract_cmd(
     full: Annotated[bool, typer.Option("--full", help="Print whole chunks.")] = False,
 ) -> None:
     """Extract and chunk a single file without touching the database."""
-    from garage_rag.extract.base import ExtractionError
+    from garage_rag.extract.base import ExtractionError, NoTextFound
     from garage_rag.extract.dispatch import extract as run_extract
     from garage_rag.extract.placeholder import PlaceholderFile
     from garage_rag.ingest.chunking import chunk_text
@@ -1448,6 +1448,9 @@ def extract_cmd(
         console.print(f"[yellow]placeholder[/yellow] ({exc.provider}): {target}")
         console.print("  no local content; make it available offline, then re-run")
         raise typer.Exit(code=2) from None
+    except NoTextFound as exc:
+        console.print(f"[yellow]no text[/yellow]: {exc}")
+        raise typer.Exit(code=0) from None
     except ExtractionError as exc:
         console.print(f"[red]extraction failed[/red]: {exc}")
         raise typer.Exit(code=1) from None
