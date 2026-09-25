@@ -30,4 +30,17 @@ final class AppSectionTests: XCTestCase {
         XCTAssertEqual(AppSection.search.symbol, "magnifyingglass")
         XCTAssertEqual(AppSection.logs.symbol, "terminal")
     }
+
+    func testSidebarGroups() {
+        XCTAssertEqual(SidebarGroup.configuration.sections, [.sources, .models, .mcp])
+        XCTAssertEqual(SidebarGroup.data.sections, [.documents, .facts, .search])
+        XCTAssertEqual(SidebarGroup.advanced.sections, [.database, .logs])
+        XCTAssertNil(AppSection.status.group)
+    }
+
+    /// Every page is in the sidebar exactly once, and `allCases` follows the sidebar's order.
+    func testSidebarListsEveryPageOnceInOrder() {
+        let sidebar = [AppSection.status] + SidebarGroup.allCases.flatMap(\.sections)
+        XCTAssertEqual(sidebar, AppSection.allCases)
+    }
 }

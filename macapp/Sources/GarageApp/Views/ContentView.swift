@@ -2,15 +2,16 @@ import SwiftUI
 import AppKit
 import PythonXPCService
 
+/// The pages, in sidebar order: Status on its own at the top, then each `SidebarGroup`'s pages.
 enum AppSection: String, CaseIterable, Identifiable {
     case status = "Status"
-    case database = "Database"
     case sources = "Sources"
-    case documents = "Documents"
-    case facts = "Facts"
     case models = "Models"
     case mcp = "MCP Server"
+    case documents = "Documents"
+    case facts = "Facts"
     case search = "Search"
+    case database = "Database"
     case logs = "Logs"
 
     var id: String { rawValue }
@@ -26,6 +27,30 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .mcp: "server.rack"
         case .search: "magnifyingglass"
         case .logs: "terminal"
+        }
+    }
+
+    /// The sidebar section the page sits in; Status sits above them all, in none.
+    var group: SidebarGroup? {
+        SidebarGroup.allCases.first { $0.sections.contains(self) }
+    }
+}
+
+/// The headed sections of the sidebar, below Status.
+enum SidebarGroup: String, CaseIterable, Identifiable {
+    /// What Garage reads, which models it runs, and who it serves.
+    case configuration = "Configuration"
+    /// The corpus itself.
+    case data = "Data"
+    case advanced = "Advanced"
+
+    var id: String { rawValue }
+
+    var sections: [AppSection] {
+        switch self {
+        case .configuration: [.sources, .models, .mcp]
+        case .data: [.documents, .facts, .search]
+        case .advanced: [.database, .logs]
         }
     }
 }
@@ -132,11 +157,30 @@ struct ContentView: View {
 
     private var mainWindow: some View {
         NavigationSplitView {
-            List(AppSection.allCases, selection: $selection) { section in
-                Label(section.rawValue, systemImage: section.symbol)
-                    .tag(section)
-                    .accessibilityIdentifier("sidebar.\(section)")
+            List(selection: $selection) {
+                // Status is the home page, so it leads the list on a larger row of its own.
+                Label {
+                    Text(AppSection.status.rawValue)
+                        .font(.title3.weight(.semibold))
+                } icon: {
+                    Image(systemName: AppSection.status.symbol)
+                        .font(.title2)
+                }
+                .padding(.vertical, 6)
+                .tag(AppSection.status)
+                .accessibilityIdentifier("sidebar.\(AppSection.status)")
+
+                ForEach(SidebarGroup.allCases) { group in
+                    Section(group.rawValue) {
+                        ForEach(group.sections) { section in
+                            Label(section.rawValue, systemImage: section.symbol)
+                                .tag(section)
+                                .accessibilityIdentifier("sidebar.\(section)")
+                        }
+                    }
+                }
             }
+            .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(190)
         } detail: {
             switch selection ?? .status {
