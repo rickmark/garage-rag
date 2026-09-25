@@ -75,7 +75,7 @@ Like any server, garagerag.app (hosted on GitHub Pages) and Hugging Face receive
 ## 6. Security & Access Control
 
 - **Keychain Security**: Database superuser passwords and optional API tokens (e.g., LM Studio API keys) are stored securely in the native **macOS Keychain**.
-- **Loopback Isolation**: The embedded HTTP MCP server binds exclusively to `127.0.0.1` with DNS-rebinding guards and origin validation, preventing web pages and remote networks from accessing your corpus.
+- **Loopback by default**: By default the embedded HTTP MCP server binds only to `127.0.0.1` and refuses remote clients, and it checks the Host and Origin headers so web pages cannot reach your corpus. Serving other computers takes an explicit opt-in for power users, `--allow-remote`; with it, and with no `--allow-host`, the Host check is off.
 - **macOS Sandboxing & TCC**: Access to protected directories (Documents, Downloads, Desktop, Messages, Mail) requires explicit macOS user authorization under System Settings.
 
 ---

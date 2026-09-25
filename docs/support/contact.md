@@ -57,7 +57,7 @@ write log files, in `~/Library/Logs/Garage/` for the direct-download build:
 - **Ingestion Pipeline**: `ingest-xpc.log`
 - **Embedding**: `embed-xpc.log`
 - **MCP HTTP Server**: `mcp-server-xpc.log`
-- **gRPC Server** (search, backfill, facts): `garage-xpc.log`
+- **Index Manager** (search, embedding, facts): `garage-xpc.log`
 - **Built-in Model Engine**: `llama-xpc.log`
 
 If you file through **Help → Report a Bug…**, the steps below are already applied to anything the

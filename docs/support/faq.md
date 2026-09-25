@@ -57,7 +57,7 @@ redirect_from:
 <details>
   <summary>Can websites or malicious browser tabs access my MCP server?</summary>
   <div class="faq-content">
-    <p>No. The local HTTP MCP server on <code>127.0.0.1:8787</code> includes always-on DNS rebinding protection and Host validation. Any request originating from an unauthorized Host or browser cross-origin without explicit permission is rejected with <code>HTTP 421 Misdirected Request</code>.</p>
+    <p>No. By default the local HTTP MCP server binds only to <code>127.0.0.1:8787</code>, refuses remote clients, and includes DNS rebinding protection and Host validation. (Serving other computers is an explicit opt-in for power users, <code>--allow-remote</code>; with it, and with no <code>--allow-host</code>, the Host check is off. See <a href="{{ '/support/troubleshooting.html#mcp-dns-rebinding' | relative_url }}">Troubleshooting</a>.) Any request originating from an unauthorized Host or browser cross-origin without explicit permission is rejected with <code>HTTP 421 Misdirected Request</code>.</p>
   </div>
 </details>
 
