@@ -251,6 +251,50 @@ struct MenuBarStatus: Equatable {
         }
     }
 
+    /// The popover's one services row: "All systems go", or the worst problem in a few words. It
+    /// never carries a control of its own; clicking it opens the Status page, where the fixes are.
+    struct Summary: Equatable {
+        var symbol: String
+        var title: String
+        var detail: String
+        var tint: Color
+    }
+
+    var summary: Summary {
+        let fix = "Open Status to fix it."
+        switch database {
+        case .failed(let message):
+            return Summary(symbol: "exclamationmark", title: "Database failed to start", detail: Self.firstLine(message) ?? fix, tint: .red)
+        case .needsMigration:
+            return Summary(symbol: "exclamationmark", title: "Database needs a migration", detail: "Open Status to apply it.", tint: .orange)
+        case .stopped:
+            return Summary(symbol: "pause.fill", title: "Database stopped", detail: "Open Status to start it.", tint: .gray)
+        case .starting:
+            return Summary(symbol: "ellipsis", title: "Starting up…", detail: "Database, MCP and search come up together.", tint: .yellow)
+        case .stopping:
+            return Summary(symbol: "ellipsis", title: "Shutting down…", detail: "Waiting for connections to close.", tint: .yellow)
+        case .running:
+            break
+        }
+        switch mcp {
+        case .running:
+            return Summary(symbol: "checkmark", title: "All systems go", detail: allSystemsGoDetail, tint: .green)
+        case .failed(let message):
+            return Summary(symbol: "exclamationmark", title: "MCP server failed", detail: Self.firstLine(message) ?? fix, tint: .red)
+        case .stopped:
+            return Summary(symbol: "exclamationmark", title: "MCP server not running", detail: "Claude can't reach your corpus. \(fix)", tint: .orange)
+        case .starting, .stopping:
+            return Summary(symbol: "ellipsis", title: "MCP server restarting…", detail: "Database is running.", tint: .yellow)
+        }
+    }
+
+    /// An error's first line, trimmed, or nil when there is nothing to show.
+    static func firstLine(_ message: String) -> String? {
+        let line = message.split(whereSeparator: \.isNewline).first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        return line.isEmpty ? nil : line
+    }
+
     /// Whether the activity module's title carries a status dot. Idle on a running database is the
     /// "All systems go" row's news already, so the module then leads with the corpus instead.
     var showsActivityDot: Bool {
