@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import IngestClient
+import PythonXPCService
 
 /// Represents categories of TCC (Transparency, Consent, and Control) permissions in macOS.
 public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
@@ -62,9 +63,9 @@ public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
     public var helpMessage: String {
         switch self {
         case .messages:
-            return "macOS protects Messages databases (~/Library/Messages). Turn on Full Disk Access for Garage in System Settings to index SMS and iMessage history. The App Store version also needs you to select your startup disk or the Messages folder so Garage can open it."
+            return fullDiskAccessSteps(sandboxed: GarageAppGroup.isSandboxed)
         case .mail:
-            return "macOS protects Mail storage (~/Library/Mail). Turn on Full Disk Access for Garage in System Settings to index email archives. The App Store version also needs you to select your startup disk or the Mail folder so Garage can open it."
+            return fullDiskAccessSteps(sandboxed: GarageAppGroup.isSandboxed)
         case .documents:
             return "Permission to access your Documents directory is required to index local documents."
         case .downloads:
@@ -76,6 +77,35 @@ public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
         case .filesAndFolders:
             return "File access permission is required to index files in this location."
         }
+    }
+
+    /// Mail and Messages sit behind Full Disk Access. macOS refuses them to an app without it, and
+    /// choosing the folder in an open panel does not get around that (the panel greys out
+    /// `~/Library/Messages` and a Mail folder chosen there still cannot be read).
+    public var needsFullDiskAccess: Bool {
+        self == .messages || self == .mail
+    }
+
+    /// The folder macOS protects for a Full Disk Access category.
+    public var protectedFolder: String? {
+        switch self {
+        case .messages: return "~/Library/Messages"
+        case .mail: return "~/Library/Mail"
+        default: return nil
+        }
+    }
+
+    /// What someone does, in order, to let Garage index Mail or Messages, and what is missing until
+    /// they do. `sandboxed` (the App Store build) adds the folder grant the sandbox also needs.
+    public func fullDiskAccessSteps(sandboxed: Bool) -> String {
+        let folder = protectedFolder ?? "the folder"
+        let what = self == .messages ? "SMS and iMessage history" : "email"
+        var text = "macOS keeps \(displayName) (\(folder)) behind Full Disk Access, so Garage can't index your \(what) without it, even if you choose the folder. "
+            + "Turn on Garage in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Garage."
+        if sandboxed {
+            text += " Then grant access to \(folder), or select your startup disk, so the App Store version can open it."
+        }
+        return text
     }
 
     /// Detects the relevant TCC permission category based on the slug or path.
@@ -632,6 +662,56 @@ public final class VolumeAccessService: ObservableObject {
         }
     }
 
+    /// Asks for the account's home folder: one grant that covers Documents, Desktop, Downloads,
+    /// iCloud Drive, cloud folders, Mail and Messages. The startup disk also works, for sources on
+    /// other folders; either one becomes the root grant every source is read through.
+    public func promptForHomeFolderSelection() -> URL? {
+        let home = URL(fileURLWithPath: GarageAppGroup.realHomeDirectory, isDirectory: true)
+        if isRunningInTestEnvironment {
+            try? grantAccess(for: home)
+            return home
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Select Your Home Folder"
+        panel.message = "Select your home folder (\(home.lastPathComponent)) and click Grant Access. It covers Documents, Desktop, Downloads, iCloud Drive, Mail and Messages. To index other disks too, select your startup disk instead."
+        panel.prompt = "Grant Access"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.showsHiddenFiles = false
+        panel.directoryURL = home
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return nil
+        }
+
+        do {
+            try grantAccess(for: selectedURL)
+            return selectedURL
+        } catch {
+            status = .accessDenied(reason: "Failed to create security-scoped bookmark: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Whether this process has Full Disk Access, by opening the account's own TCC database, which
+    /// only Full Disk Access unlocks. In the sandbox the home folder or startup disk must be granted
+    /// first, so until then this reports false whatever System Settings says.
+    public func hasFullDiskAccess() -> Bool {
+        if isRunningInTestEnvironment {
+            return true
+        }
+        let probe = URL(fileURLWithPath: GarageAppGroup.realHomeDirectory, isDirectory: true)
+            .appendingPathComponent("Library/Application Support/com.apple.TCC/TCC.db")
+        guard let handle = try? FileHandle(forReadingFrom: probe) else {
+            return false
+        }
+        try? handle.close()
+        return true
+    }
+
     /// Displays an NSOpenPanel configured to select a specific source directory such as Messages or Mail.
     public func promptForSourceDirectoryAccess(slug: String? = nil, suggestedPath: String) -> URL? {
         let resolvedPath = (suggestedPath as NSString).expandingTildeInPath
@@ -726,17 +806,30 @@ public final class VolumeAccessService: ObservableObject {
         }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Garage needs permission to read \(category.displayName)"
-        alert.informativeText = "\(category.helpMessage)\n\nSelect the folder, or turn on Full Disk Access in System Settings."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Select Folder Directly…")
-        alert.addButton(withTitle: "Cancel")
+        if category.needsFullDiskAccess {
+            // Choosing the folder does nothing until Full Disk Access is on, so settings come first
+            // and the folder is offered only where the sandbox also needs it.
+            alert.messageText = "\(category.displayName) needs Full Disk Access"
+            alert.informativeText = category.helpMessage
+            alert.addButton(withTitle: "Open System Settings")
+            if GarageAppGroup.isSandboxed {
+                alert.addButton(withTitle: "Select Folder…")
+            }
+            alert.addButton(withTitle: "Cancel")
+        } else {
+            alert.messageText = "Garage needs permission to read \(category.displayName)"
+            alert.informativeText = "\(category.helpMessage)\n\nSelect the folder, or turn on Full Disk Access in System Settings."
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Select Folder Directly…")
+            alert.addButton(withTitle: "Cancel")
+        }
 
+        let offersFolder = !category.needsFullDiskAccess || GarageAppGroup.isSandboxed
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             openPrivacySettings(for: category)
             return true
-        } else if response == .alertSecondButtonReturn {
+        } else if response == .alertSecondButtonReturn, offersFolder {
             if let path = sourcePath ?? sourceSlug {
                 _ = promptForSourceDirectoryAccess(slug: sourceSlug, suggestedPath: path)
                 return true

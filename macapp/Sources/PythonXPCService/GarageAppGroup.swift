@@ -147,7 +147,7 @@ public enum GarageAppGroup {
     }
 
     /// The account's home folder, also in the sandbox (where `NSHomeDirectory()` is the container).
-    private static var realHomeDirectory: String {
+    public static var realHomeDirectory: String {
         if let entry = getpwuid(getuid()), let dir = entry.pointee.pw_dir {
             return String(cString: dir)
         }

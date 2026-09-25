@@ -86,6 +86,8 @@ struct StatusHealth: Equatable {
         var name: String
         var path: String
         var needsPermission: Bool
+        /// Mail or Messages, which only Full Disk Access opens.
+        var needsFullDiskAccess: Bool = false
     }
 
     enum DiskAccess: Equatable {
@@ -157,7 +159,8 @@ struct StatusHealth: Equatable {
                     slug: result.slug,
                     name: result.tccCategory?.displayName ?? result.slug,
                     path: result.rawPath,
-                    needsPermission: protected
+                    needsPermission: protected,
+                    needsFullDiskAccess: result.tccCategory?.needsFullDiskAccess ?? false
                 ))
             }
             if sourceAccess.isEmpty {
@@ -262,7 +265,13 @@ struct StatusHealth: Equatable {
         }
 
         for source in sourceAccess {
-            if source.needsPermission {
+            if source.needsFullDiskAccess {
+                list.append(Problem(
+                    id: "source.\(source.slug)", severity: .warning, title: "\(source.name) needs Full Disk Access",
+                    detail: "Garage can't index \(source.name) until it has Full Disk Access. Turn it on in Privacy & Security, then quit and reopen Garage.",
+                    section: .sources, fix: .openPrivacySettings
+                ))
+            } else if source.needsPermission {
                 list.append(Problem(
                     id: "source.\(source.slug)", severity: .warning, title: "\(source.name) needs permission",
                     detail: "macOS protects \(MenuBarStatus.abbreviatedPath(source.path)). Grant Garage access to index it.",
