@@ -61,10 +61,10 @@ struct MenuBarView: View {
                 .background(Color.blue.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                Button(appState.ingestService.isCancelling ? "Cancelling ingest…" : "Cancel ingestion") {
-                    Task { await appState.cancelIngest() }
+                Button(appState.isCancellingAll ? "Cancelling ingest…" : "Cancel ingestion") {
+                    appState.cancelAll()
                 }
-                .disabled(appState.ingestService.isCancelling)
+                .disabled(appState.isCancellingAll)
             } else if appState.isScanning {
                 Button("Cancel scan") {
                     appState.cancelScan()

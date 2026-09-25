@@ -285,13 +285,13 @@ struct StatusView: View {
                 Spacer()
 
                 if appState.isIngesting {
-                    Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
-                        Task { await appState.cancelIngest() }
+                    Button(appState.isCancellingAll ? "Cancelling…" : "Cancel Ingest") {
+                        appState.cancelAll()
                     }
                     .font(.caption)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
-                    .disabled(appState.ingestService.isCancelling)
+                    .disabled(appState.isCancellingAll)
                 } else if appState.isScanning {
                     Button("Cancel Scan") {
                         appState.cancelScan()

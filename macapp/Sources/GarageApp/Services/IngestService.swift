@@ -196,6 +196,21 @@ final class IngestService: ObservableObject {
         self.currentSource = slug
     }
 
+    /// The run was cancelled: the sources it had yet to reach will not start.
+    func dropPendingSources() {
+        self.runSources.subtract(self.pendingSources)
+        self.pendingSources.removeAll()
+    }
+
+    /// `slug` was cancelled or is being removed: it leaves the run, unless it is the source being
+    /// ingested now, which stays until its cancelled ingest ends.
+    func dropSource(_ slug: String) {
+        self.pendingSources.remove(slug)
+        if currentSource != slug {
+            self.runSources.remove(slug)
+        }
+    }
+
     func clearPendingSources() {
         self.pendingSources.removeAll()
         self.runSources.removeAll()

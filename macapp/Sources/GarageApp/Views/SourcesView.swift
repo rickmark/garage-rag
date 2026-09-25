@@ -188,11 +188,12 @@ struct SourcesView: View {
                                     .foregroundStyle(.primary)
 
                                 if appState.ingestService.isRunning {
-                                    Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
-                                        Task { await appState.cancelIngest() }
+                                    Button(appState.isCancellingAll ? "Cancelling…" : "Cancel All") {
+                                        appState.cancelAll()
                                     }
                                     .controlSize(.small)
-                                    .disabled(appState.ingestService.isCancelling)
+                                    .disabled(appState.isCancellingAll)
+                                    .help("Stop this ingest and every source still queued after it.")
                                 }
                             }
 
@@ -270,15 +271,13 @@ struct SourcesView: View {
                     }
                     Spacer()
 
-                    if appState.isScanning {
-                        Button("Cancel Scan") {
-                            appState.cancelScan()
+                    if appState.hasCancellableWork {
+                        Button(appState.isCancellingAll ? "Cancelling…" : "Cancel All") {
+                            appState.cancelAll()
                         }
-                    } else if appState.isIngesting {
-                        Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel Ingest") {
-                            Task { await appState.cancelIngest() }
-                        }
-                        .disabled(appState.ingestService.isCancelling)
+                        .disabled(appState.isCancellingAll)
+                        .help("Stop the scan or ingest in progress and clear every source queued after it.")
+                        .accessibilityIdentifier("sources.cancelAll")
                     } else {
                         Button("Scan & Ingest All") {
                             scanAndIngest(slug: "*")
@@ -332,6 +331,7 @@ struct SourcesView: View {
             $0.slug == source.slug || $0.rawPath == source.root
         }
         let isCurrentIngest = appState.ingestService.isRunning && appState.ingestService.currentSource == source.slug
+        let isRemoving = appState.sourcesBeingRemoved.contains(source.slug)
 
         return VStack(alignment: .leading, spacing: 8) {
             // Header Row: Slug and Per-Source Ingest/Scan Actions
@@ -343,14 +343,17 @@ struct SourcesView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    if isCurrentIngest {
-                        Button(appState.ingestService.isCancelling ? "Cancelling…" : "Cancel") {
-                            Task { await appState.cancelIngest() }
+                    if appState.isPending(source: source.slug) || isRemoving {
+                        // Cancels this source alone: out of the queue, or its scan or ingest stopped, while a
+                        // run over every source goes on with the next one.
+                        Button(isRemoving || (isCurrentIngest && appState.ingestService.isCancelling) ? "Cancelling…" : "Cancel") {
+                            Task { await appState.cancel(source: source.slug) }
                         }
                         .controlSize(.small)
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
-                        .disabled(appState.ingestService.isCancelling)
+                        .disabled(isRemoving || appState.isCancellingAll || (isCurrentIngest && appState.ingestService.isCancelling))
+                        .accessibilityIdentifier("sources.row.\(source.slug).cancel")
                     } else {
                         Button("Scan & Ingest") {
                             scanAndIngest(slug: source.slug, includeCode: source.includeCode)
@@ -416,10 +419,11 @@ struct SourcesView: View {
 
                         Divider()
 
+                        // Allowed while the source is queued, scanned or ingested: removing cancels that first.
                         Button("Remove Source", role: .destructive) {
                             removeSource(slug: source.slug)
                         }
-                        .disabled(notReady || appState.isBusy(source: source.slug))
+                        .disabled(notReady || isRemoving)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -434,8 +438,12 @@ struct SourcesView: View {
             WrappingHStack {
                 originBadge(for: source.origin)
 
-                if isCurrentIngest {
+                if isRemoving {
+                    StatusBadge("REMOVING", tint: .red)
+                } else if isCurrentIngest {
                     StatusBadge("INGESTING", tint: .blue)
+                } else if appState.isQueued(source: source.slug) {
+                    StatusBadge("QUEUED", tint: .secondary)
                 }
 
                 if source.expectedElements > 0 {
@@ -789,7 +797,7 @@ struct SourcesView: View {
                     Button("Remove Source", role: .destructive) {
                         removeSource(slug: slug)
                     }
-                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBusy)
+                    .disabled(slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || notReady || formSourceIsBeingRemoved)
                     .accessibilityIdentifier("sources.form.remove")
 
                     Button("Clear Form") {
@@ -863,9 +871,14 @@ struct SourcesView: View {
         appState.isIngesting || appState.isScanning
     }
 
-    /// The form's source is being scanned or ingested, so it cannot be updated or removed yet.
+    /// The form's source is being scanned or ingested, so it cannot be updated yet. It can be removed:
+    /// that cancels the scan or ingest first.
     private var formSourceIsBusy: Bool {
         appState.isBusy(source: slug.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private var formSourceIsBeingRemoved: Bool {
+        appState.sourcesBeingRemoved.contains(slug.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func chooseRoot() {
@@ -958,14 +971,14 @@ struct SourcesView: View {
         }
     }
 
+    /// Leaves `busy` alone: waiting for a cancelled scan or ingest to stop can take a while, and only
+    /// this source's row needs to show it (REMOVING).
     private func removeSource(slug toRemove: String) {
-        busy = true
         let trimmed = toRemove.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            await appState.runOperation { try await $0.removeSource(slug: trimmed).message }
+            await appState.removeSource(slug: trimmed)
             await appState.fetchRegisteredSources()
             _ = appState.testVolumeAccess()
-            busy = false
         }
     }
 
