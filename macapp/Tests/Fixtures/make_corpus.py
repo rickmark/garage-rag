@@ -101,7 +101,9 @@ ZIP_TIME = (2025, 1, 1, 0, 0, 0)
 
 
 def _pdf_string(text: str) -> str:
-    return "(" + text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") + ")"
+    return (
+        "(" + text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") + ")"
+    )
 
 
 def make_pdf() -> bytes:
@@ -115,10 +117,16 @@ def make_pdf() -> bytes:
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"endstream",
+        b"<< /Length "
+        + str(len(content)).encode()
+        + b" >>\nstream\n"
+        + content
+        + b"endstream",
         f"<< /Title {_pdf_string(PDF_TITLE)} /Author (Nell Oduya) >>".encode("latin-1"),
     ]
     out = io.BytesIO()
@@ -132,7 +140,9 @@ def make_pdf() -> bytes:
     out.write(b"0000000000 65535 f \n")
     for offset in offsets:
         out.write(f"{offset:010d} 00000 n \n".encode())
-    out.write(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Info 6 0 R >>\n".encode())
+    out.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Info 6 0 R >>\n".encode()
+    )
     out.write(f"startxref\n{xref}\n%%EOF\n".encode())
     return out.getvalue()
 
@@ -158,7 +168,10 @@ def make_docx() -> bytes:
     # Rewrite the zip with fixed entry times, keeping the entry order ([Content_Types].xml first).
     # (Deflate output can differ between zlib builds; any rebuild still extracts to the same text.)
     fixed = io.BytesIO()
-    with zipfile.ZipFile(raw) as source, zipfile.ZipFile(fixed, "w", zipfile.ZIP_DEFLATED) as target:
+    with (
+        zipfile.ZipFile(raw) as source,
+        zipfile.ZipFile(fixed, "w", zipfile.ZIP_DEFLATED) as target,
+    ):
         for info in source.infolist():
             entry = zipfile.ZipInfo(info.filename, date_time=ZIP_TIME)
             entry.compress_type = zipfile.ZIP_DEFLATED
@@ -184,7 +197,10 @@ def main() -> int:
         print(f"wrote {CORPUS / name}")
     stray = sorted(p.name for p in CORPUS.iterdir() if p.name not in FILES)
     if stray:
-        print(f"not made by this script (delete them or add them here): {', '.join(stray)}", file=sys.stderr)
+        print(
+            f"not made by this script (delete them or add them here): {', '.join(stray)}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
