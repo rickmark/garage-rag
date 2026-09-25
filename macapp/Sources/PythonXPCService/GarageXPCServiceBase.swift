@@ -102,6 +102,10 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         GarageXPCCrashHandler.install(serviceName: serviceName)
         GarageXPCOutputCapture.shared.configure(serviceName: serviceName, logFileName: logFileName)
         GarageXPCOutputCapture.shared.startCapturing()
+        if usesPython {
+            // Before Python starts, so `os.environ` has it: the llama_xpc provider's socket.
+            GarageSockets.exportLlamaSocket()
+        }
 
         let info = ProcessInfo.processInfo
         logger.info("\(self.serviceName, privacy: .public) starting (pid \(info.processIdentifier, privacy: .public), bundle \(Bundle.main.bundleIdentifier ?? "?", privacy: .public), macOS \(info.operatingSystemVersionString, privacy: .public))")

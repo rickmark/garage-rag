@@ -66,6 +66,7 @@ public enum Launcher {
         exportMCPLauncherPath(appBundle: appBundle, executable: executable)
         exportModelManifest(in: appBundle)
         exportGRPCSocket()
+        GarageSockets.exportLlamaSocket()
 
         if entry.needsDatabase(CommandLine.arguments) {
             do {

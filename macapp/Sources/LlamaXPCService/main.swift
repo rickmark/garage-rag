@@ -38,9 +38,10 @@ final class LlamaEngineManagedService: GarageManagedService {
     }
 }
 
-/// The loopback HTTP listener as a managed service: up for the lifetime of the helper, independent
+/// The llama-server HTTP listener as a managed service: up for the lifetime of the helper, independent
 /// of whether a model is loaded (so `/health` can say "no_model_loaded"). The Python `llama_xpc`
-/// provider talks to this port; the app keeps using XPC.
+/// provider talks to it, on its socket in the App Group folder (`GarageSockets`) or, failing that,
+/// on loopback; the app keeps using XPC.
 final class LlamaHTTPManagedService: GarageManagedService {
     let name = "llama-http"
     let server: LlamaHTTPServer
@@ -73,7 +74,11 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
 
     init() {
         let engine = LlamaCppEngine()
-        let server = LlamaHTTPServer(engine: engine, port: LlamaXPCServiceDelegate.configuredHTTPPort())
+        let server = LlamaHTTPServer(
+            engine: engine,
+            port: LlamaXPCServiceDelegate.configuredHTTPPort() ?? LlamaXPCConstants.defaultHTTPPort,
+            socketPath: LlamaXPCServiceDelegate.configuredSocketPath()
+        )
         engine.httpURL = server.url
         self.engine = engine
         self.engineService = LlamaEngineManagedService(engine: engine)
@@ -85,12 +90,19 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
         )
     }
 
-    /// `GARAGE_LLAMA_HTTP_PORT` overrides the default so two builds can coexist on one machine.
-    private static func configuredHTTPPort() -> UInt16 {
+    /// `GARAGE_LLAMA_HTTP_PORT` puts the listener on that loopback port instead of the socket, for
+    /// tools that cannot use a socket, or so two builds can coexist on one machine.
+    private static func configuredHTTPPort() -> UInt16? {
         if let raw = ProcessInfo.processInfo.environment["GARAGE_LLAMA_HTTP_PORT"], let port = UInt16(raw), port > 0 {
             return port
         }
-        return LlamaXPCConstants.defaultHTTPPort
+        return nil
+    }
+
+    /// The socket the Python side finds through `GARAGE_LLAMA_SOCKET` (`GarageSockets`), unless a port
+    /// was asked for or the path is too long to bind.
+    private static func configuredSocketPath() -> String? {
+        configuredHTTPPort() == nil ? GarageSockets.path(for: GarageSockets.llamaName) : nil
     }
 
     override var exportedInterface: NSXPCInterface {
@@ -122,7 +134,7 @@ final class LlamaXPCServiceDelegate: GarageXPCServiceBase, LlamaXPCServiceProtoc
                 let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
                 return "Model: \(path)\nSize: \(size) bytes"
             },
-            GarageXPCSelfTest(name: "HTTP API", description: "Reports whether the loopback llama-server API is listening.", requiresPython: false) {
+            GarageXPCSelfTest(name: "HTTP API", description: "Reports whether the llama-server API is listening on its socket (or loopback port).", requiresPython: false) {
                 guard server.isListening else {
                     throw GarageXPCSelfTestFailure("llama HTTP API is not listening on \(server.url)")
                 }

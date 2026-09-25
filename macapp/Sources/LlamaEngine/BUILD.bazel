@@ -33,5 +33,6 @@ swift_library(
     deps = [
         ":LlamaCAPI",
         "//macapp/Sources/LlamaClient",
+        "//macapp/Sources/PythonXPCService:PythonXPCService_protocol",
     ],
 )
