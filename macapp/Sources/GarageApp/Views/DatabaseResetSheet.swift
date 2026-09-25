@@ -99,6 +99,7 @@ struct DatabaseResetSheet: View {
         Task {
             do {
                 try await appState.postgres.backupDatabase(to: destination)
+                DatabaseBackupRecord.record(destination)
                 backup = .saved(destination)
             } catch {
                 backup = .failed(error.localizedDescription)

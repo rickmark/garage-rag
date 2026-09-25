@@ -236,6 +236,40 @@ struct PostgresCommandRunner: Sendable {
     }
 }
 
+/// The running server as the Database page describes it. Built from `fetchServerDetails`' rows:
+/// one `server` row (version, database size in bytes) and one `extension` row per extension.
+struct DatabaseServerDetails: Equatable, Sendable {
+    struct Extension: Equatable, Sendable {
+        let name: String
+        let version: String
+    }
+
+    var serverVersion: String = ""
+    var databaseSizeBytes: Int64?
+    var extensions: [Extension] = []
+
+    init(serverVersion: String = "", databaseSizeBytes: Int64? = nil, extensions: [Extension] = []) {
+        self.serverVersion = serverVersion
+        self.databaseSizeBytes = databaseSizeBytes
+        self.extensions = extensions
+    }
+
+    init(rows: [[String]]) {
+        for row in rows {
+            switch row.first ?? "" {
+            case "server":
+                if row.count > 1 { serverVersion = row[1] }
+                if row.count > 2 { databaseSizeBytes = Int64(row[2]) }
+            case "extension" where row.count > 1:
+                extensions.append(Extension(name: row[1], version: row.count > 2 ? row[2] : ""))
+            default:
+                continue
+            }
+        }
+        extensions.sort { $0.name < $1.name }
+    }
+}
+
 enum PostgresStatus: Equatable {
     case stopped
     case starting
@@ -622,6 +656,21 @@ final class PostgresService: ObservableObject {
             throw PostgresError.other("pg_restore failed: \(output)")
         }
         appendLog(LogLine(stream: .stdout, text: "restored database from \(source.path)", source: "pg_restore"))
+    }
+
+    /// What the Database page's details show about the running server: its version, how much disk
+    /// the database takes, and the extensions installed in it. One psql call for all three.
+    func fetchServerDetails() async throws -> DatabaseServerDetails {
+        try requireRunning()
+        let rows = try await commandRunner().query(
+            """
+            SELECT 'server', current_setting('server_version'), pg_database_size(current_database())::text
+            UNION ALL
+            SELECT 'extension', extname, extversion FROM pg_extension WHERE extname <> 'plpgsql'
+            """,
+            failureMessage: "could not read the server's details"
+        )
+        return DatabaseServerDetails(rows: rows)
     }
 
     /// `url` for display: the password, when there is one, replaced by bullets. Copy and the
