@@ -106,6 +106,11 @@ struct ContentView: View {
             pendingPresentation = nil
             activeSheet = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: .garageShowSection)) { notification in
+            // The menu bar popover asks for a page; the assistant, when it is up, keeps the window.
+            guard let section = notification.object as? AppSection else { return }
+            selection = section
+        }
         .onReceive(NotificationCenter.default.publisher(for: .garageShowFirstRun)) { _ in
             // The sender starts the assistant on `appState`; this window only
             // gets its sheets out of the way.
