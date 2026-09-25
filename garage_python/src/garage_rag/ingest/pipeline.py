@@ -4,18 +4,23 @@ Idempotency contract, per document, each in its own transaction so a crash
 leaves earlier documents committed and the current one untouched:
 
 1. **stat only.** If a row exists whose ``mtime`` and ``byte_size`` match and
-   whose state is OK, skip -- without opening or parsing the file, and
-   crucially without materializing a cloud placeholder.
-2. **extract**, then hash the extracted text.
-3. If ``content_sha256`` is unchanged *and* the chunker signature is unchanged,
+   whose state is OK, skip -- without opening or parsing the file. A cloud
+   placeholder whose row still holds content is judged by ``mtime`` alone when
+   the stub reports no size, and is skipped without being materialized: it was
+   indexed before the sync client evicted it, and nothing has changed since.
+2. **raw hash.** If the stat changed but ``source_sha256`` did not (a touch, a
+   copy that kept the bytes), refresh the stat fields and skip extraction.
+3. **extract**, then hash the extracted text. A file with no text makes no
+   document: any older row for it is dropped and it is counted as rejected.
+4. If ``content_sha256`` is unchanged *and* the chunker signature is unchanged,
    the chunks are still valid: refresh the stat fields, done. (Embeddings are
    not touched here; ``garage backfill`` fills in missing model vectors.)
-4. Otherwise replace: upsert the document, delete its chunks (which cascades
+5. Otherwise replace: upsert the document, delete its chunks (which cascades
    into every per-model embedding table), re-chunk, insert.
 
 The two hashes are not redundant. ``source_sha256`` is over raw bytes and is
 refreshed whenever a file is opened. ``content_sha256`` is over extracted text
-and drives step 3, so upgrading an extractor correctly rebuilds chunks even
+and drives step 4, so upgrading an extractor correctly rebuilds chunks even
 though the file on disk never changed.
 
 Every candidate the walk yields -- indexed, skipped, failed, or placeholder --
@@ -31,7 +36,7 @@ from pathlib import Path
 
 from garage_rag.attribute.resolver import SelfIdentity, resolve
 from garage_rag.config import get_settings
-from garage_rag.extract.base import ExtractionError, ExtractResult, file_sha256, sha256_text
+from garage_rag.extract.base import ExtractionError, ExtractResult, NoTextFound, file_sha256, sha256_text
 from garage_rag.extract.dispatch import extract
 from garage_rag.extract.placeholder import PlaceholderFile
 from garage_rag.extract.quality import assess
@@ -40,6 +45,7 @@ from garage_rag.ingest.classify import classify
 from garage_rag.ingest.gateway import (
     AuthorPayload,
     ChunkPayload,
+    ExistingDocStat,
     IngestStorageGateway,
     SourceContext,
     get_storage_gateway,
@@ -80,6 +86,41 @@ def _chunker_signature(result: ExtractResult, chunks: list[TextChunk]) -> str:
     return f"{result.kind}:{label}"
 
 
+def _stat_matches(existing: ExistingDocStat, candidate: Candidate) -> bool:
+    """Whether ``candidate`` looks unchanged since ``existing`` was indexed, from its stat alone.
+
+    A placeholder is compared on ``mtime`` only when it reports no size: older Dropbox
+    stubs are zero bytes on disk, while File Provider stubs report the real size.
+    """
+    same_mtime = existing.mtime > 0 and abs(existing.mtime - candidate.mtime.timestamp()) < 1.0
+    if not same_mtime:
+        return False
+    if candidate.placeholder and candidate.size == 0:
+        return True
+    return existing.byte_size == candidate.size
+
+
+def _has_indexed_content(existing: ExistingDocStat) -> bool:
+    """An OK row, or one an older build marked as a placeholder after indexing it."""
+    state = existing.state.upper()
+    if state == "OK":
+        return True
+    return state == "PLACEHOLDER" and bool(existing.content_sha256)
+
+
+def _reject_empty(
+    gateway: IngestStorageGateway,
+    source_ctx: SourceContext,
+    candidate: Candidate,
+    counters: IngestCounters,
+    reason: str,
+) -> None:
+    """Nothing to index: no document for it, and any older one is dropped."""
+    log.info("Rejected %s: %s", candidate.uri, reason)
+    counters.rejected += 1
+    gateway.record_rejected(source_ctx.run_id, source_ctx.slug, candidate.uri)
+
+
 def ingest_one(
     gateway: IngestStorageGateway,
     source_ctx: SourceContext,
@@ -96,20 +137,29 @@ def ingest_one(
     existing_stat = gateway.check_stat(source_ctx.slug, candidate.uri)
 
     # --- step 1: skip on unchanged stat, without opening the file -----------
-    if existing_stat.exists and not force and not candidate.placeholder:
-        same_size = existing_stat.byte_size == candidate.size
-        same_mtime = existing_stat.mtime > 0 and abs(existing_stat.mtime - candidate.mtime.timestamp()) < 1.0
-        if same_size and same_mtime and existing_stat.state.upper() == "OK":
-            log.debug("Skipped %s: stat matches existing document in DB", candidate.uri)
-            counters.skipped += 1
-            gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
-            return
+    # For a placeholder this is what avoids a download: opening it is what fetches it.
+    if (
+        existing_stat.exists
+        and not force
+        and _has_indexed_content(existing_stat)
+        and _stat_matches(existing_stat, candidate)
+    ):
+        log.debug(
+            "Skipped %s: stat matches existing document in DB%s",
+            candidate.uri,
+            " (placeholder left in the cloud)" if candidate.placeholder else "",
+        )
+        counters.skipped += 1
+        gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
+        return
 
     # --- materialize if this is a cloud stub --------------------------------
     try:
         ensure_local(candidate.path, budget)
     except PlaceholderFile:
-        log.info("Placeholder file detected for %s: recording as PLACEHOLDER in DB", candidate.uri)
+        # No document for a file with no local content; an older row, if any, keeps
+        # its chunks until the file is downloaded again.
+        log.info("Placeholder file %s not materialized; no document written", candidate.uri)
         counters.placeholders += 1
         gateway.record_placeholder(
             source_ctx.run_id,
@@ -121,13 +171,45 @@ def ingest_one(
         )
         return
 
-    # --- step 2: extract ----------------------------------------------------
+    # --- step 2: skip on unchanged bytes ---------------------------------------
+    try:
+        raw_hash_bytes = file_sha256(candidate.path)
+        raw_hash_hex = raw_hash_bytes.hex() if raw_hash_bytes else None
+    except OSError:
+        raw_hash_hex = None
+
+    if (
+        existing_stat.exists
+        and not force
+        and raw_hash_hex
+        and existing_stat.source_sha256 == raw_hash_hex
+        and _has_indexed_content(existing_stat)
+    ):
+        log.debug("Skipped %s: source hash %s unchanged, refreshing stat", candidate.uri, raw_hash_hex[:8])
+        # Empty class and trust leave the row's own values in place.
+        gateway.refresh_metadata(
+            source_ctx.run_id,
+            source_ctx.slug,
+            candidate.uri,
+            candidate.size,
+            candidate.mtime.timestamp(),
+            raw_hash_hex,
+            "",
+            "",
+        )
+        counters.skipped += 1
+        return
+
+    # --- step 3: extract ----------------------------------------------------
     log.debug("Extracting %s", candidate.uri)
     try:
         result = extract(candidate.path)
         log.debug(
             "Extraction succeeded for %s (%s, %d characters)", candidate.path.name, result.extractor, len(result.text)
         )
+    except NoTextFound:
+        _reject_empty(gateway, source_ctx, candidate, counters, "no text")
+        return
     except (ExtractionError, OSError) as exc:
         counters.note_error(f"{candidate.path.name}: {exc}")
         log.warning("Extraction failed for %s: %s", candidate.uri, exc)
@@ -156,17 +238,10 @@ def ingest_one(
 
     content_hash_bytes = sha256_text(result.text)
     content_hash_hex = content_hash_bytes.hex()
-    try:
-        raw_hash_bytes = file_sha256(candidate.path)
-        raw_hash_hex = raw_hash_bytes.hex() if raw_hash_bytes else None
-    except OSError:
-        raw_hash_hex = None
 
     chunks = chunk_text(result.text, result.kind, extension=candidate.path.suffix.lower())
     if not chunks:
-        log.warning("%s produced 0 chunks from %d characters", candidate.path.name, len(result.text))
-        counters.note_error(f"{candidate.path.name}: produced no chunks")
-        gateway.record_seen(source_ctx.run_id, source_ctx.slug, candidate.uri)
+        _reject_empty(gateway, source_ctx, candidate, counters, f"0 chunks from {len(result.text)} characters")
         return
 
     # Final safety net: no single document may dominate the index.
@@ -191,7 +266,7 @@ def ingest_one(
         self_identity=self_identity,
     )
 
-    # --- step 3: content unchanged -> keep chunks, refresh metadata ---------
+    # --- step 4: content unchanged -> keep chunks, refresh metadata ---------
     if (
         existing_stat.exists
         and not force
@@ -213,7 +288,7 @@ def ingest_one(
         counters.skipped += 1
         return
 
-    # --- step 4: replace ----------------------------------------------------
+    # --- step 5: replace ----------------------------------------------------
     meta = {
         **result.meta,
         **attribution.meta,

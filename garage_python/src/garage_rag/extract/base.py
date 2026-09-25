@@ -53,6 +53,13 @@ class UnsupportedFile(ExtractionError):
     """The file type has no registered extractor."""
 
 
+class NoTextFound(ExtractionError):
+    """The file was read but holds no text: an empty file, or one whose text is all whitespace.
+
+    Not a failure: there is nothing to index, so the pipeline records it as rejected.
+    """
+
+
 def normalize_text(raw: str) -> str:
     """Canonicalize extracted text.
 

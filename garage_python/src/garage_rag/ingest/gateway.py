@@ -96,7 +96,11 @@ class IngestStorageGateway(ABC):
         title: str,
         error: str = "",
     ) -> None:
-        """Record placeholder document for unmaterialized files."""
+        """Record that an unmaterialized placeholder was observed.
+
+        Writes no document: a file with no local content has nothing to index. An
+        existing row, from before the file was evicted, keeps its chunks.
+        """
 
     @abstractmethod
     def record_extract_failed(
@@ -267,38 +271,12 @@ class SqlAlchemyIngestStorageGateway(IngestStorageGateway):
         title: str,
         error: str = "",
     ) -> None:
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-        from garage_rag.db.models import Document, IngestSeen, IngestState, Source
+        from garage_rag.db.models import Source
 
         with self.factory() as session:
-            src = session.query(Source).filter_by(slug=source_slug).one_or_none()
-            if src is None:
+            if session.query(Source).filter_by(slug=source_slug).one_or_none() is None:
                 raise LookupError(f"No such source: {source_slug}")
-            doc = session.query(Document).filter_by(source_id=src.id, uri=uri).one_or_none()
-            if doc is None:
-                mtime_dt = datetime.fromtimestamp(mtime, tz=UTC) if mtime else None
-                doc = Document(
-                    source_id=src.id,
-                    uri=uri,
-                    corpus_class=src.default_class,
-                    trust_tier=src.default_trust,
-                    title=title or uri,
-                    byte_size=0,
-                    mtime=mtime_dt,
-                    content_sha256=b"",
-                    extractor="none",
-                    state=IngestState.PLACEHOLDER,
-                    error=error or "not materialized",
-                )
-                session.add(doc)
-            elif doc.state != IngestState.PLACEHOLDER:
-                doc.state = IngestState.PLACEHOLDER
-                doc.error = error or "not materialized"
-
-            if run_id:
-                session.execute(pg_insert(IngestSeen).values(run_id=run_id, uri=uri).on_conflict_do_nothing())
-            session.commit()
+        self.record_seen(run_id, source_slug, uri)
 
     def record_extract_failed(
         self,

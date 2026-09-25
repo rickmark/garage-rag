@@ -43,6 +43,17 @@ download it. Materialization is therefore metered by a `MaterializationBudget`
 capping files and bytes per run. Hitting the cap is not a failure — because
 ingest is idempotent, repeated bounded runs converge on the full corpus.
 
+A placeholder that was indexed before the sync client evicted it is skipped
+without a download while its `mtime` (and its size, when the stub reports one)
+still matches the document row. One that stays a placeholder gets no document:
+the run counts it in `ingest_runs.placeholder_count` and records it as seen, and
+an older row for it keeps its chunks.
+
+Two more skips come before extraction. A file whose stat changed but whose raw
+bytes did not (`source_sha256`) has its stat refreshed and is not re-extracted.
+A file with no text, empty or all whitespace, gets no document either: it is
+counted as rejected and any older row for it is dropped.
+
 ### 3. Extract (`extract/`)
 
 Dispatch is by extension, with lazy imports so a walk over 100k files does not

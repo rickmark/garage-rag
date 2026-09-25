@@ -79,7 +79,7 @@ One row per logical document, unique on `(source_id, uri)`.
 
 | Column | Purpose |
 |---|---|
-| `source_sha256` | raw bytes — cheap skip *without opening the file* |
+| `source_sha256` | raw bytes — a changed stat over unchanged bytes skips re-extraction |
 | `content_sha256` | extracted text — decides whether to re-chunk |
 | `extractor` + `extractor_version` | provenance; a version bump forces a rebuild |
 | `chunker` | chunking signature; a config change forces a rebuild |
@@ -87,9 +87,10 @@ One row per logical document, unique on `(source_id, uri)`.
 | `meta` | extractor and attribution provenance |
 | `state` | `ok \| extract_failed \| embed_partial \| placeholder` |
 
-`placeholder` is not a failure: it means the bytes are not on this machine yet.
-Recording it means `garage stats` can show what is pending download rather than
-it silently missing.
+`placeholder` is no longer written: a file whose bytes are not on this machine
+gets no document, and each run counts such files in `ingest_runs.placeholder_count`
+instead. `011_drop_placeholder_documents.sql` removes the empty rows older builds
+wrote and returns indexed rows they had marked `placeholder` to `ok`.
 
 ### `document_authors`
 
