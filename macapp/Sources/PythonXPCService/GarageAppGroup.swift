@@ -73,7 +73,11 @@ public enum GarageAppGroup {
     /// arguments, so in them this is always nil.
     public static let dataDirectoryOverride: URL? = {
         do {
-            return try dataDirectoryOverride(in: CommandLine.arguments, realDirectories: realDataDirectories)
+            return try dataDirectoryOverride(
+                in: CommandLine.arguments,
+                realDirectories: realDataDirectories,
+                testRoots: [uiTestDataRoot]
+            )
         } catch {
             // Falling back to the real folder would let a test reset the real database.
             fatalError("\(error)")
@@ -87,15 +91,32 @@ public enum GarageAppGroup {
     /// Parses `--data-directory <path>`. Throws when the path is missing or relative, or when it is,
     /// contains, or lies inside one of `realDirectories` (after following links: the per-user folder
     /// is usually a link to the group one).
-    public static func dataDirectoryOverride(in arguments: [String], realDirectories: [URL]) throws -> URL? {
+    ///
+    /// The one exception is a folder strictly inside one of `testRoots`, which may lie inside a real
+    /// directory that contains the test root (the group container holds `UITests` beside the real
+    /// data folder). Any other overlap, such as a test root that is a link into the real data folder,
+    /// is still refused.
+    public static func dataDirectoryOverride(
+        in arguments: [String],
+        realDirectories: [URL],
+        testRoots: [URL] = []
+    ) throws -> URL? {
         guard let flag = arguments.firstIndex(of: GarageAppLaunch.dataDirectoryArgument) else { return nil }
         guard flag + 1 < arguments.count, arguments[flag + 1].hasPrefix("/") else {
             throw UnsafeDataDirectory(description: "\(GarageAppLaunch.dataDirectoryArgument) needs an absolute path")
         }
         let url = URL(fileURLWithPath: arguments[flag + 1], isDirectory: true).standardizedFileURL
         let candidate = resolvedComponents(url)
-        for real in realDirectories {
-            let realComponents = resolvedComponents(real)
+        let reals = realDirectories.map(resolvedComponents)
+        // A test root counts only when no real directory is it or lies inside it.
+        let testRoot = testRoots.map(resolvedComponents).first { root in
+            candidate.count > root.count && candidate.starts(with: root)
+                && !reals.contains { $0.starts(with: root) }
+        }
+        for (real, realComponents) in zip(realDirectories, reals) {
+            if let testRoot, testRoot.count > realComponents.count, testRoot.starts(with: realComponents) {
+                continue
+            }
             if candidate.starts(with: realComponents) || realComponents.starts(with: candidate) {
                 throw UnsafeDataDirectory(
                     description: "refusing \(GarageAppLaunch.dataDirectoryArgument) \(url.path): it overlaps \(real.path)"
@@ -115,6 +136,14 @@ public enum GarageAppGroup {
             home.appendingPathComponent("Library/Group Containers/\(identifier)", isDirectory: true),
             home.appendingPathComponent("Library/Containers/me.rickmark.garage-rag", isDirectory: true),
         ]
+    }
+
+    /// `<group container>/UITests`: where UI tests of the sandboxed App Store build put their
+    /// `--data-directory` folders, since that build can reach no other folder a test can write.
+    /// Beside the real data folder (`Library/Application Support/GarageApp`), never inside it.
+    public static var uiTestDataRoot: URL {
+        URL(fileURLWithPath: realHomeDirectory, isDirectory: true)
+            .appendingPathComponent("Library/Group Containers/\(identifier)/UITests", isDirectory: true)
     }
 
     /// The account's home folder, also in the sandbox (where `NSHomeDirectory()` is the container).

@@ -37,7 +37,7 @@ class GarageUITestCase: XCTestCase {
             try XCTSkipIf(Self.isListening(on: port), "Something already listens on 127.0.0.1:\(port).")
         }
 
-        dataDirectory = FileManager.default.temporaryDirectory
+        dataDirectory = try makeDataDirectoryParent()
             .appendingPathComponent("GarageUITest-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         // The app and its gRPC server look for ./garage.json in the data folder before ~/.garage.json,
@@ -49,13 +49,24 @@ class GarageUITestCase: XCTestCase {
 
     var configFile: URL { dataDirectory.appendingPathComponent("garage.json", isDirectory: false) }
 
+    /// The folder this test's data folder is made in. A subclass whose app cannot reach the
+    /// temporary folder (the sandboxed App Store build) overrides it.
+    func makeDataDirectoryParent() throws -> URL {
+        FileManager.default.temporaryDirectory
+    }
+
+    /// The app under test: the test target's host app unless a subclass launches another bundle.
+    func makeApplication() throws -> XCUIApplication {
+        XCUIApplication()
+    }
+
     // MARK: - Launching
 
     /// Launches Garage on this test's data folder and waits for its main window (or, with
     /// `firstRunCompleted: false`, the setup assistant).
     @discardableResult
     func launchApp(showSplash: Bool = false, firstRunCompleted: Bool = true, automaticMaintenance: Bool = false) throws -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = try makeApplication()
         app.launchArguments = [
             "--data-directory", dataDirectory.path,
             "-garage.splash.showAtLaunch", showSplash ? "YES" : "NO",

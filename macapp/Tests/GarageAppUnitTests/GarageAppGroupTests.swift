@@ -61,6 +61,47 @@ final class GarageAppGroupTests: XCTestCase {
         XCTAssertThrowsError(try override([GarageAppLaunch.dataDirectoryArgument, link.appendingPathComponent("isolated").path]))
     }
 
+    /// The App Store build's UI tests keep their folders in `<group container>/UITests`, inside a
+    /// real directory but beside the real data folder.
+    func testAcceptsAFolderInsideATestRootInsideARealDirectory() throws {
+        let container = root.appendingPathComponent("Group Containers/group", isDirectory: true)
+        let testRoot = container.appendingPathComponent("UITests", isDirectory: true)
+        let isolated = testRoot.appendingPathComponent("run-1", isDirectory: true)
+        let url = try GarageAppGroup.dataDirectoryOverride(
+            in: ["GarageApp", GarageAppLaunch.dataDirectoryArgument, isolated.path],
+            realDirectories: [container, real],
+            testRoots: [testRoot]
+        )
+        XCTAssertEqual(url?.path, isolated.standardizedFileURL.path)
+        // Without the test root, the container itself is real.
+        XCTAssertThrowsError(try GarageAppGroup.dataDirectoryOverride(
+            in: ["GarageApp", GarageAppLaunch.dataDirectoryArgument, isolated.path],
+            realDirectories: [container, real]
+        ))
+    }
+
+    func testRefusesTheTestRootItselfAndATestRootThatLinksToTheRealFolder() throws {
+        let container = root.appendingPathComponent("Group Containers/group", isDirectory: true)
+        let testRoot = container.appendingPathComponent("UITests", isDirectory: true)
+        XCTAssertThrowsError(try GarageAppGroup.dataDirectoryOverride(
+            in: ["GarageApp", GarageAppLaunch.dataDirectoryArgument, testRoot.path],
+            realDirectories: [container, real],
+            testRoots: [testRoot]
+        ))
+
+        let linked = root.appendingPathComponent("LinkedTests", isDirectory: true)
+        try fm.createSymbolicLink(at: linked, withDestinationURL: real)
+        XCTAssertThrowsError(try GarageAppGroup.dataDirectoryOverride(
+            in: ["GarageApp", GarageAppLaunch.dataDirectoryArgument, linked.appendingPathComponent("run-1").path],
+            realDirectories: [container, real],
+            testRoots: [linked]
+        ))
+    }
+
+    func testTheUITestRootIsInTheGroupContainerBesideTheDataFolder() {
+        XCTAssertTrue(GarageAppGroup.uiTestDataRoot.path.hasSuffix("Library/Group Containers/\(GarageAppGroup.identifier)/UITests"))
+    }
+
     func testTheRealDirectoriesCoverEveryKnownLocation() {
         let paths = GarageAppGroup.realDataDirectories.map(\.path)
         XCTAssertTrue(paths.contains { $0.hasSuffix("Library/Application Support/GarageApp") })
