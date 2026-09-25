@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from email.utils import parseaddr
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -189,6 +190,31 @@ def _metadata_attribution(author_hints: list[str], self_identity: SelfIdentity) 
     )
 
 
+def _sender_attribution(senders: list[str], self_identity: SelfIdentity) -> Attribution | None:
+    """Attribution of a message from its sender: sent by the owner, or received.
+
+    Unlike a document's byline, somebody else's name on a message means it was
+    sent to the owner, not collected by them.
+    """
+    parsed = [parseaddr(sender) for sender in senders[:5]]
+    parsed = [(name, address) for name, address in parsed if name or address]
+    if not parsed:
+        return None
+    authors = [
+        AttributedAuthor(
+            name=name or address,
+            email=address or None,
+            role=AuthorRole.AUTHOR,
+            confidence=0.9,
+            evidence="message-sender",
+        )
+        for name, address in parsed
+    ]
+    if any(self_identity.matches(name=name or None, email=address or None) for name, address in parsed):
+        return Attribution(trust=TrustTier.AUTHORED, authors=authors, evidence="message-sender:self")
+    return Attribution(trust=TrustTier.RECEIVED, authors=authors, evidence="message-sender:third-party")
+
+
 def resolve(
     path: Path,
     source_root: Path,
@@ -196,8 +222,13 @@ def resolve(
     source_default_trust: TrustTier,
     author_hints: list[str] | None = None,
     self_identity: SelfIdentity | None = None,
+    communication: bool = False,
 ) -> Attribution:
-    """Decide trust and authorship for one file."""
+    """Decide trust and authorship for one file.
+
+    For a ``communication`` (an email), ``author_hints`` are its senders, and a
+    sender other than the owner makes it received rather than reference.
+    """
     identity = self_identity or SelfIdentity.from_settings()
     hints = author_hints or []
 
@@ -205,6 +236,11 @@ def resolve(
     from_git = _git_attribution(path, identity)
     if from_git is not None:
         return from_git
+
+    if communication:
+        from_sender = _sender_attribution(hints, identity)
+        if from_sender is not None:
+            return from_sender
 
     # 2. Embedded metadata, when a real name is present.
     from_meta = _metadata_attribution(hints, identity)
