@@ -200,9 +200,6 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
     let isAvailable: Bool
     /// True for the extra entries the user picked through the folder chooser.
     let isCustom: Bool
-    /// Mail or Messages that macOS will not let Garage read: the folder is there but its contents
-    /// are behind Full Disk Access. Such a template is unavailable, with its own badge.
-    var needsFullDiskAccess = false
 
     var isCommunication: Bool { corpusClass == "communication" }
 
@@ -212,19 +209,10 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
     }
 
     /// The built-in templates, with availability resolved against the file
-    /// system. `home`, `exists` and `readable` are injectable so tests can pin them.
-    ///
-    /// `home` is the account's real home folder, also in the sandbox, where
-    /// `homeDirectoryForCurrentUser` is the app's container. Mail and Messages count
-    /// as available only when their contents can be listed: macOS lets anyone see
-    /// that `~/Library/Mail` exists but keeps what is inside behind Full Disk Access.
-    /// `assumeAvailable` (the sandbox before any folder is granted, when nothing
-    /// outside the container can be checked) marks every template available.
+    /// system. `home` and `exists` are injectable so tests can pin them.
     static func builtIn(
-        home: URL = URL(fileURLWithPath: GarageAppGroup.realHomeDirectory, isDirectory: true),
-        assumeAvailable: Bool = false,
-        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-        readable: (String) -> Bool = FirstRunSourceTemplate.canListContents
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> [FirstRunSourceTemplate] {
         func path(_ relative: String) -> String {
             home.appendingPathComponent(relative).path
@@ -237,27 +225,7 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
         /// Wraps one of the shared `SourcePreset`s so the assistant can never
         /// disagree with the Sources/Status pages on a slug, root or class.
         func shared(_ preset: SourcePreset, subtitle: String, symbol: String) -> FirstRunSourceTemplate {
-            if preset.spec.corpusClass == "communication", !assumeAvailable {
-                let relative = preset.spec.root.hasPrefix("~/") ? String(preset.spec.root.dropFirst(2)) : preset.spec.root
-                let canRead = readable(path(relative))
-                return FirstRunSourceTemplate(
-                    id: preset.id,
-                    title: preset.title,
-                    subtitle: subtitle,
-                    symbol: symbol,
-                    slug: preset.spec.slug,
-                    root: preset.spec.root,
-                    kind: preset.spec.kind,
-                    corpusClass: preset.spec.corpusClass,
-                    trust: preset.spec.trust,
-                    isAvailable: canRead,
-                    isCustom: false,
-                    // Whether the folder is there cannot be told apart from whether it is closed to
-                    // Garage (Messages hides even that), so an unreadable one is put down to access.
-                    needsFullDiskAccess: !canRead
-                )
-            }
-            return FirstRunSourceTemplate(
+            FirstRunSourceTemplate(
                 id: preset.id,
                 title: preset.title,
                 subtitle: subtitle,
@@ -267,7 +235,7 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
                 kind: preset.spec.kind,
                 corpusClass: preset.spec.corpusClass,
                 trust: preset.spec.trust,
-                isAvailable: assumeAvailable || available(preset.spec.root),
+                isAvailable: available(preset.spec.root),
                 isCustom: false
             )
         }
@@ -291,7 +259,7 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
                 kind: kind,
                 corpusClass: corpusClass,
                 trust: trust,
-                isAvailable: assumeAvailable || available(root),
+                isAvailable: available(root),
                 isCustom: false
             )
         }
@@ -308,16 +276,10 @@ struct FirstRunSourceTemplate: Identifiable, Hashable {
         ]
     }
 
-    /// Whether the folder's contents can be listed, which for Mail and Messages is what Full Disk
-    /// Access decides.
-    static func canListContents(_ path: String) -> Bool {
-        (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil
-    }
-
     /// Builds a template for a folder the user picked in the open panel.
     static func custom(folder: URL, existingSlugs: Set<String>) -> FirstRunSourceTemplate {
         let slug = uniqueSlug(base: slug(forFolderNamed: folder.lastPathComponent), taken: existingSlugs)
-        let home = GarageAppGroup.realHomeDirectory
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         let display = folder.path.hasPrefix(home + "/") ? "~" + String(folder.path.dropFirst(home.count)) : folder.path
         return FirstRunSourceTemplate(
             id: "custom:" + folder.path,
@@ -409,11 +371,6 @@ final class FirstRunCoordinator: ObservableObject {
     private var hasFinishedDatabaseReset = false
 
     // Page 2 — data
-    /// The App Store build: the data page leads with the home folder grant and Full Disk Access.
-    let isSandboxed: Bool
-    /// Whether Mail and Messages can be read (`VolumeAccessService.hasFullDiskAccess`). Checked while
-    /// the data page shows, since the switch is turned on in System Settings.
-    @Published private(set) var hasFullDiskAccess = true
     @Published private(set) var sourceTemplates: [FirstRunSourceTemplate] = []
     @Published var selectedSourceIDs: Set<String> = []
 
@@ -444,11 +401,9 @@ final class FirstRunCoordinator: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         arguments: [String] = CommandLine.arguments,
-        persistsCompletion: Bool = GarageAppGroup.dataDirectoryOverride == nil,
-        isSandboxed: Bool = GarageAppGroup.isSandboxed
+        persistsCompletion: Bool = GarageAppGroup.dataDirectoryOverride == nil
     ) {
         self.defaults = defaults
-        self.isSandboxed = isSandboxed
         self.persistsCompletion = persistsCompletion
         let afterDatabaseReset = arguments.contains(GarageAppLaunch.databaseResetArgument)
         isAfterDatabaseReset = afterDatabaseReset
@@ -496,7 +451,7 @@ final class FirstRunCoordinator: ObservableObject {
         registrationSummary = nil
         step = .settingUp
         isActive = true
-        sourceTemplates = currentTemplates()
+        sourceTemplates = FirstRunSourceTemplate.builtIn()
         selectedSourceIDs = []
         selectedEmbeddingSlugs = []
         selectedDistillationSlug = nil
@@ -667,30 +622,8 @@ final class FirstRunCoordinator: ObservableObject {
 
     // MARK: Page 2 — data
 
-    /// The built-in templates as this process can read them now. In the sandbox nothing outside the
-    /// container can be checked until a folder is granted, so they all count as available until then.
-    private func currentTemplates() -> [FirstRunSourceTemplate] {
-        let granted = appState?.volumeAccess.status.isGranted ?? false
-        return FirstRunSourceTemplate.builtIn(assumeAvailable: isSandboxed && !granted)
-    }
-
-    /// Checks the folder grant and Full Disk Access again (the data page calls this every few seconds
-    /// while it shows) and refreshes which locations can be picked, keeping the custom folders and
-    /// every pick that can still be made.
-    func refreshAccess() {
-        guard let appState else { return }
-        hasFullDiskAccess = appState.volumeAccess.hasFullDiskAccess()
-        let custom = sourceTemplates.filter(\.isCustom)
-        let refreshed = currentTemplates() + custom
-        guard refreshed != sourceTemplates else { return }
-        sourceTemplates = refreshed
-        let pickable = Set(refreshed.filter(\.isAvailable).map(\.id))
-        selectedSourceIDs.formIntersection(pickable)
-    }
-
     private func prepareDataPage() {
-        sourceTemplates = currentTemplates()
-        hasFullDiskAccess = appState?.volumeAccess.hasFullDiskAccess() ?? true
+        sourceTemplates = FirstRunSourceTemplate.builtIn()
         if selectedSourceIDs.isEmpty, let documents = sourceTemplates.first(where: { $0.id == "documents" }), documents.isAvailable {
             selectedSourceIDs = [documents.id]
         }

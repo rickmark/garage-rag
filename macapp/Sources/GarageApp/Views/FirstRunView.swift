@@ -406,11 +406,7 @@ struct FirstRunSelectDataPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if coordinator.isSandboxed {
-                if !appState.volumeAccess.status.isGranted || !coordinator.hasFullDiskAccess {
-                    storeAccessCard
-                }
-            } else if !appState.volumeAccess.status.isGranted {
+            if !appState.volumeAccess.status.isGranted {
                 diskAccessCard
             }
 
@@ -420,7 +416,7 @@ struct FirstRunSelectDataPage: View {
 
             FirstRunSectionTitle(
                 title: "Common locations",
-                subtitle: "Select one or more. Locations that don't exist on this Mac, or that need Full Disk Access, are greyed out."
+                subtitle: "Select one or more. Locations that don't exist on this Mac are greyed out."
             )
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
@@ -451,119 +447,17 @@ struct FirstRunSelectDataPage: View {
             .disabled(coordinator.isWorking)
             .accessibilityIdentifier("firstRun.addCustomFolder")
 
-            if !coordinator.isSandboxed, coordinator.sourceTemplates.contains(where: \.needsFullDiskAccess) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "lock")
-                        .foregroundStyle(.orange)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Mail and Messages need Full Disk Access. Turn it on for Garage in System Settings → Privacy & Security, then quit and reopen Garage to pick them.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Open Privacy Settings…") {
-                            appState.openPrivacySettings(for: .fullDiskAccess)
-                        }
-                        .controlSize(.small)
-                        .accessibilityIdentifier("firstRun.fullDiskAccess")
-                    }
-                }
-            }
-
             if coordinator.selectedSources.contains(where: \.isCommunication) {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "lock.shield")
                         .foregroundStyle(.blue)
-                    Text("Messages and Mail are stored as communications: they never leave this Mac.")
+                    Text("Messages and Mail are stored as communications: they are never sent to a cloud API, and Garage can read them only after you turn on Full Disk Access for it in System Settings → Privacy & Security.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        // Full Disk Access is turned on in System Settings, and the folder grant in a panel, so check
-        // both again every few seconds while this page shows.
-        .task {
-            while !Task.isCancelled {
-                coordinator.refreshAccess()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
-    }
-
-    /// The App Store build's access, in the order it works: the home folder first (the sandbox reads
-    /// nothing outside its container without it), then Full Disk Access, which Mail and Messages
-    /// also need. Full Disk Access can be skipped; the warning says what is lost.
-    private var storeAccessCard: some View {
-        let granted = appState.volumeAccess.status.isGranted
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: granted ? "checkmark.circle.fill" : "folder.badge.person.crop")
-                    .font(.title2)
-                    .foregroundStyle(granted ? Color.green : Color.orange)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(granted ? "Folder access granted" : "1. Give Garage your home folder")
-                        .font(.subheadline.weight(.semibold))
-                    if !granted {
-                        Text("Garage runs in the macOS sandbox. Select your home folder once and it can read Documents, Desktop, Downloads, iCloud Drive and the rest, without asking for each folder. Select your startup disk instead to index other disks too.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack {
-                            Button("Select Home Folder…") {
-                                appState.promptAndSelectHomeFolder()
-                                _ = appState.testVolumeAccess()
-                                coordinator.refreshAccess()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .accessibilityIdentifier("firstRun.selectHome")
-                            Button("Select Startup Disk…") {
-                                appState.promptAndSelectRootVolume()
-                                _ = appState.testVolumeAccess()
-                                coordinator.refreshAccess()
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                }
-                Spacer()
-            }
-
-            if !coordinator.hasFullDiskAccess {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.orange)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("2. Turn on Full Disk Access, or Mail and Messages won't work")
-                            .font(.subheadline.weight(.semibold))
-                        Text("macOS keeps Mail, Messages and some other folders behind Full Disk Access. Without it Garage can't index them, even with your home folder granted, and their locations stay greyed out below. Turn on Garage in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Garage; setup picks up here. You can skip this and turn it on later.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if !granted {
-                            Text("Garage can check Full Disk Access once your home folder is granted.")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        Button("Open Privacy Settings…") {
-                            appState.openPrivacySettings(for: .fullDiskAccess)
-                        }
-                        .controlSize(.small)
-                        .accessibilityIdentifier("firstRun.fullDiskAccess")
-                    }
-                    Spacer()
-                }
-                .padding(10)
-                .background(Color.orange.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .padding(12)
-        .background(Color.orange.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("firstRun.storeAccess")
     }
 
     private var diskAccessCard: some View {
@@ -672,9 +566,7 @@ struct FirstRunSelectDataPage: View {
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        if template.needsFullDiskAccess {
-                            FirstRunBadge(text: "NEEDS FULL DISK ACCESS", tint: .orange)
-                        } else if !template.isAvailable {
+                        if !template.isAvailable {
                             FirstRunBadge(text: "NOT FOUND", tint: .secondary)
                         }
                     }

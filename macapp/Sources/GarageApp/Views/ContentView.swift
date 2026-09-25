@@ -105,11 +105,6 @@ struct ContentView: View {
             // Not animated: the window is not on screen yet, so it should simply open at that size.
             if appState.firstRun.isActive {
                 MainWindowSizing.sizeForFirstRun(resolved, animate: false)
-            } else {
-                // After SwiftUI applies the pages' size range and any restored frame.
-                DispatchQueue.main.async {
-                    MainWindowSizing.applyRequestedSize(resolved)
-                }
             }
         })
         .onChange(of: appState.firstRun.isActive) { wasActive, isActive in

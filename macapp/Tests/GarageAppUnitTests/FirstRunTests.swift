@@ -87,14 +87,8 @@ final class FirstRunTests: XCTestCase {
 
     func testBuiltInTemplatesResolveAvailabilityAgainstHome() {
         let home = URL(fileURLWithPath: "/Users/tester")
-        let present: Set<String> = ["/Users/tester/Documents", "/Users/tester/Library/Messages", "/Users/tester/Library/Mail"]
-        // Mail's folder is there but closed (no Full Disk Access); Messages can be read.
-        let readable: Set<String> = ["/Users/tester/Library/Messages"]
-        let templates = FirstRunSourceTemplate.builtIn(
-            home: home,
-            exists: { present.contains($0) },
-            readable: { readable.contains($0) }
-        )
+        let present: Set<String> = ["/Users/tester/Documents", "/Users/tester/Library/Messages"]
+        let templates = FirstRunSourceTemplate.builtIn(home: home) { present.contains($0) }
 
         XCTAssertFalse(templates.isEmpty)
         XCTAssertTrue(templates.allSatisfy { !$0.isCustom })
@@ -113,33 +107,16 @@ final class FirstRunTests: XCTestCase {
         XCTAssertEqual(messages?.corpusClass, "communication")
         XCTAssertEqual(messages?.trust, "received")
         XCTAssertEqual(messages?.isCommunication, true)
-        XCTAssertEqual(messages?.needsFullDiskAccess, false)
-
-        let mail = templates.first { $0.id == "apple-mail" }
-        XCTAssertEqual(mail?.isAvailable, false, "a Mail folder whose contents can't be listed can't be picked")
-        XCTAssertEqual(mail?.needsFullDiskAccess, true)
-        XCTAssertEqual(documents?.needsFullDiskAccess, false)
-    }
-
-    func testTheSandboxBeforeAnyGrantAssumesEveryLocationIsThere() {
-        let templates = FirstRunSourceTemplate.builtIn(
-            home: URL(fileURLWithPath: "/Users/tester"),
-            assumeAvailable: true,
-            exists: { _ in false },
-            readable: { _ in false }
-        )
-        XCTAssertTrue(templates.allSatisfy(\.isAvailable))
-        XCTAssertFalse(templates.contains(where: \.needsFullDiskAccess))
     }
 
     func testTemplateSlugsAndIDsAreUnique() {
-        let templates = FirstRunSourceTemplate.builtIn(home: URL(fileURLWithPath: "/Users/tester"), exists: { _ in true }, readable: { _ in true })
+        let templates = FirstRunSourceTemplate.builtIn(home: URL(fileURLWithPath: "/Users/tester")) { _ in true }
         XCTAssertEqual(Set(templates.map(\.slug)).count, templates.count)
         XCTAssertEqual(Set(templates.map(\.id)).count, templates.count)
     }
 
     func testSharedTemplatesAgreeWithTheSourcePresets() {
-        let templates = FirstRunSourceTemplate.builtIn(home: URL(fileURLWithPath: "/Users/tester"), exists: { _ in true }, readable: { _ in true })
+        let templates = FirstRunSourceTemplate.builtIn(home: URL(fileURLWithPath: "/Users/tester")) { _ in true }
         for preset in [SourcePreset.documents, .desktop, .downloads, .dropbox, .messages, .mail] {
             let template = templates.first { $0.id == preset.id }
             XCTAssertNotNil(template, preset.id)
