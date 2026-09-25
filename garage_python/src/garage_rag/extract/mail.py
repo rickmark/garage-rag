@@ -92,8 +92,8 @@ def _part_text(part: EmailMessage) -> str:
         content = part.get_content()
     except (LookupError, UnicodeError, AssertionError):
         # An unknown or lying charset: decode the bytes leniently rather than drop the body.
-        payload = part.get_payload(decode=True) or b""
-        content = payload.decode("utf-8", errors="replace")
+        payload = part.get_payload(decode=True)
+        content = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else ""
     if not isinstance(content, str):
         return ""
     if part.get_content_type() == "text/html":
