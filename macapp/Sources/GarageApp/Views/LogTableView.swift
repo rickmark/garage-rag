@@ -113,6 +113,7 @@ public struct LogTableView: View {
                 TextField("Filter logs (text, source, level)…", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
+                    .accessibilityIdentifier("logs.filter")
 
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {
@@ -139,6 +140,7 @@ public struct LogTableView: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(width: 140)
+            .accessibilityIdentifier("logs.level")
 
             // Stream Picker
             Picker("Stream", selection: $streamFilter) {
@@ -155,6 +157,7 @@ public struct LogTableView: View {
                     resetFilters()
                 }
                 .controlSize(.small)
+                .accessibilityIdentifier("logs.resetFilters")
             }
 
             Spacer()
@@ -164,6 +167,7 @@ public struct LogTableView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+                .accessibilityIdentifier("logs.count")
 
             // Actions
             HStack(spacing: 6) {
@@ -187,6 +191,7 @@ public struct LogTableView: View {
                     .controlSize(.small)
                     .disabled(lines.isEmpty)
                     .help("Clear logs for this source")
+                    .accessibilityIdentifier("logs.clear")
                 }
             }
         }
@@ -442,6 +447,7 @@ public struct LogTableView: View {
                     resetFilters()
                 }
                 .controlSize(.small)
+                .accessibilityIdentifier("logs.resetFilters")
                 .padding(.top, 4)
             }
             Spacer()
