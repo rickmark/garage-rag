@@ -40,7 +40,7 @@ final class SourcesPresentationTests: XCTestCase {
         let row = SourceRowPresentation.make(source: source(), access: nil, activity: .idle, lastRun: nil)
         XCTAssertEqual(row.status, "Not indexed yet")
         XCTAssertEqual(row.statusTone, .neutral)
-        XCTAssertNil(row.progress)
+        XCTAssertEqual(row.progress, 0, "an empty bar keeps the row the height of the others")
         XCTAssertNil(row.counts)
         XCTAssertFalse(row.showsCancel)
         XCTAssertEqual(row.badges, [])
@@ -60,11 +60,11 @@ final class SourcesPresentationTests: XCTestCase {
         XCTAssertEqual(row.progress.map { ($0 * 1000).rounded() / 1000 }, 0.98)
     }
 
-    func testAFullyIndexedSourceIsUpToDateWithoutABar() {
+    func testAFullyIndexedSourceIsUpToDateWithAFullBar() {
         let row = SourceRowPresentation.make(source: source(documents: 1_204, expected: 1_204), access: nil, activity: .idle, lastRun: nil)
         XCTAssertEqual(row.status, "Up to date")
         XCTAssertEqual(row.statusTone, .good)
-        XCTAssertNil(row.progress)
+        XCTAssertEqual(row.progress, 1)
         XCTAssertEqual(row.counts, "1,204 of 1,204 documents")
     }
 
@@ -77,6 +77,7 @@ final class SourcesPresentationTests: XCTestCase {
         let row = SourceRowPresentation.make(source: source(documents: 1), access: nil, activity: .idle, lastRun: nil)
         XCTAssertEqual(row.status, "Up to date")
         XCTAssertEqual(row.counts, "1 document")
+        XCTAssertEqual(row.progress, 1)
     }
 
     func testSetupBadgesNameWhatIsUnusualAboutASource() {

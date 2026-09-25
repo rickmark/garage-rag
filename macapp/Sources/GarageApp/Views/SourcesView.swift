@@ -272,15 +272,15 @@ struct SourcesView: View {
                     emptyState
                 } else {
                     ForEach(Array(appState.registeredSources.enumerated()), id: \.element.id) { index, source in
-                        if index > 0 { Divider().padding(.vertical, 8) }
+                        if index > 0 { Divider().padding(.vertical, 10) }
                         sourceRow(for: source)
                     }
                 }
 
-                Divider().padding(.top, 10).padding(.bottom, 6)
+                Divider().padding(.top, 14).padding(.bottom, 8)
                 diskAccessFooter
             }
-            .padding(8)
+            .padding(12)
         } label: {
             HStack(spacing: 8) {
                 Text(SourcesSummary.line(sources: appState.registeredSources.count, documents: appState.corpusStats.documentsCount))
@@ -536,12 +536,13 @@ struct SourcesView: View {
                         .foregroundStyle(.tertiary)
                 }
 
+                // Every row carries a bar (full and green when up to date), so the rows line up.
                 if row.isIndeterminate {
                     ProgressView()
                         .progressViewStyle(.linear)
                         .controlSize(.small)
-                } else if let progress = row.progress {
-                    ProgressView(value: progress)
+                } else {
+                    ProgressView(value: row.progress ?? 0)
                         .progressViewStyle(.linear)
                         .controlSize(.small)
                         .tint(row.statusTone == .active ? .blue : row.statusTone.color)
@@ -576,7 +577,7 @@ struct SourcesView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
     /// Everything else a source can do, behind one button: the rarer ingests, facts, reconciling,
@@ -759,25 +760,27 @@ struct SourcesView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    // Badges get their own row so a three-column title never hyphenates.
-                    if template.isCommunication || isCode || registered || !template.isAvailable {
-                        HStack(spacing: 4) {
-                            if template.isCommunication {
-                                StatusBadge("PRIVATE", tint: .purple)
-                            } else if isCode {
-                                StatusBadge("CODE", tint: .indigo)
-                            }
-                            if registered {
-                                StatusBadge("ADDED", tint: .green)
-                            } else if !template.isAvailable {
-                                StatusBadge("NOT FOUND", tint: .secondary)
-                            }
+                    // Badges get their own row so a three-column title never hyphenates. The row is
+                    // there on every card, badges or not, and the subtitle always takes two lines, so
+                    // the cards in a grid row are the same height.
+                    HStack(spacing: 4) {
+                        if template.isCommunication {
+                            StatusBadge("PRIVATE", tint: .purple)
+                        } else if isCode {
+                            StatusBadge("CODE", tint: .indigo)
                         }
-                        .fixedSize()
+                        if registered {
+                            StatusBadge("ADDED", tint: .green)
+                        } else if !template.isAvailable {
+                            StatusBadge("NOT FOUND", tint: .secondary)
+                        }
                     }
+                    .fixedSize()
+                    .frame(height: 16, alignment: .leading)
                     Text(template.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2, reservesSpace: true)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(template.root)
                         .font(.caption2.monospaced())
@@ -787,7 +790,7 @@ struct SourcesView: View {
                 }
             }
             .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(FirstRunStyle.cardBackground(selected: false))
             .opacity(template.isAvailable ? 1 : 0.45)
             .contentShape(RoundedRectangle(cornerRadius: FirstRunStyle.cardCorner))
