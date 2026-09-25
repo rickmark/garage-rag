@@ -67,8 +67,9 @@ struct ContentView: View {
             window = resolved
             // Already showing the assistant when the window appears: a first launch, or the relaunch
             // after "Reset Database", which restores the last frame.
+            // Not animated: the window is not on screen yet, so it should simply open at that size.
             if appState.firstRun.isActive {
-                MainWindowSizing.sizeForFirstRun(resolved)
+                MainWindowSizing.sizeForFirstRun(resolved, animate: false)
             }
         })
         .onChange(of: appState.firstRun.isActive) { wasActive, isActive in

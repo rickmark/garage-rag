@@ -48,14 +48,14 @@ enum MainWindowSizing {
     }
 
     @MainActor
-    static func sizeForFirstRun(_ window: NSWindow) {
+    static func sizeForFirstRun(_ window: NSWindow, animate: Bool = true) {
         // `assistantSize` is a content size; the frame adds the title bar.
         let target = window.frameRect(forContentRect: NSRect(origin: .zero, size: assistantSize)).size
         guard !window.styleMask.contains(.fullScreen),
               let visible = (window.screen ?? NSScreen.main)?.visibleFrame,
               let frame = frameForFirstRun(current: window.frame, visible: visible, target: target)
         else { return }
-        window.setFrame(frame, display: true, animate: true)
+        window.setFrame(frame, display: animate, animate: animate)
     }
 
     private static func centred(width: CGFloat, height: CGFloat, around current: NSRect, in visible: NSRect) -> NSRect {
@@ -66,19 +66,34 @@ enum MainWindowSizing {
     }
 }
 
-/// Hands the enclosing `NSWindow` to `onResolve` once the view is in a window.
+/// Hands the enclosing `NSWindow` to `onResolve` as soon as the view joins it, which is before the
+/// window is first shown, so a size set there is the size the window opens at.
 struct WindowReader: NSViewRepresentable {
     let onResolve: (NSWindow) -> Void
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { [weak view] in
-            if let window = view?.window {
-                onResolve(window)
-            }
-        }
-        return view
+        ResolvingView(onResolve: onResolve)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class ResolvingView: NSView {
+        let onResolve: (NSWindow) -> Void
+        private var hasResolved = false
+
+        init(onResolve: @escaping (NSWindow) -> Void) {
+            self.onResolve = onResolve
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !hasResolved, let window else { return }
+            hasResolved = true
+            onResolve(window)
+        }
+    }
 }

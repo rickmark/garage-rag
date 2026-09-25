@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import OSLog
+import PythonXPCService
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickmark.garage-rag", category: "FirstRun")
 
@@ -387,8 +388,15 @@ final class FirstRunCoordinator: ObservableObject {
     private weak var appState: AppState?
     private var readinessTask: Task<Void, Never>?
 
-    init(defaults: UserDefaults = .standard) {
+    /// Decides here, before the main window exists, whether it opens on the
+    /// assistant: deciding in `AppState.launch()` let the window draw the main
+    /// pages first and then swap to the assistant, which showed as a flash.
+    /// `begin` still runs from launch to start the readiness loop.
+    init(defaults: UserDefaults = .standard, arguments: [String] = CommandLine.arguments) {
         self.defaults = defaults
+        let afterDatabaseReset = arguments.contains(GarageAppLaunch.databaseResetArgument)
+        isAfterDatabaseReset = afterDatabaseReset
+        isActive = afterDatabaseReset || shouldPresentAtLaunch
     }
 
     func attach(to appState: AppState) {
