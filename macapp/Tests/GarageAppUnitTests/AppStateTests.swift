@@ -776,4 +776,24 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.isBusy(source: "mail"))
         XCTAssertTrue(state.isPending(source: "mail"))
     }
+
+    @MainActor
+    func testAnIngestOfAllStaysCancellableBetweenSources() {
+        let state = AppState()
+        state.setIngestingAllForTesting(true)
+        XCTAssertFalse(state.isIngesting, "between sources no single ingest runs")
+
+        XCTAssertTrue(state.hasCancellableWork, "Cancel All stays up while the run goes on to its next source")
+    }
+
+    @MainActor
+    func testASecondIngestOfAllIsTurnedAway() async {
+        let state = AppState()
+        state.setIngestingAllForTesting(true)
+
+        let result = await state.ingestAllSources()
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(state.lastCommandOutput, "An ingest of every source is already running.")
+    }
 }

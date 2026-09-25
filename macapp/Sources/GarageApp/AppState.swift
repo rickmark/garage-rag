@@ -46,6 +46,9 @@ final class AppState: ObservableObject {
     /// A "*" scan was cancelled so that a source it covered could be removed. It counts as finished,
     /// so the ingest after it still runs, only without the rest of the scan's counts.
     private var scanStoppedForRemoval = false
+    /// An ingest of every source is under way, including the moments between sources when
+    /// `IngestService.isRunning` is false. A second one waits for it: both would share `ingestQueue`.
+    @Published private(set) var isIngestingAll = false
     let mcp: GarageMCPService
     let grpc: GarageGRPCService
     let llama: LlamaService
@@ -748,6 +751,10 @@ final class AppState: ObservableObject {
         self.ingestQueue = ingest
         self.sourcesAwaitingScan = awaitingScan
     }
+
+    func setIngestingAllForTesting(_ running: Bool) {
+        self.isIngestingAll = running
+    }
     #endif
 
     /// Items a running scan has found: `sourceItems` in `source`, the one being walked, and
@@ -760,8 +767,11 @@ final class AppState: ObservableObject {
 
     /// Performs a scan on configured sources to calculate item counts and update expected element totals.
     @discardableResult
-    func scanSources(source: String = "*", includeCode: Bool = false) async -> Bool {
-        guard !isIngesting else {
+    /// `followedByIngest`: an ingest of every source runs right after this scan (maintenance, "Scan & Ingest
+    /// All"), so the sources cancelled during it are kept for that ingest to skip. Any other scan drops them,
+    /// or a later, unrelated ingest would skip them.
+    func scanSources(source: String = "*", includeCode: Bool = false, followedByIngest: Bool = false) async -> Bool {
+        guard !isIngesting, !isIngestingAll else {
             lastCommandSucceeded = false
             lastCommandOutput = "Cannot scan while ingestion is in progress."
             logger.info("Scan skipped because ingestion is in progress.")
@@ -806,8 +816,8 @@ final class AppState: ObservableObject {
             lastCommandOutput = "Scan stopped to remove a source; the rest of its counts are skipped."
         }
         lastCommandSucceeded = succeeded
-        if !succeeded {
-            // No ingest follows a failed scan, so nothing will skip these.
+        if !succeeded || !followedByIngest {
+            // No ingest follows this scan, so nothing should skip these.
             sourcesCancelledFromRun.removeAll()
         }
         await fetchRegisteredSources()
@@ -860,6 +870,13 @@ final class AppState: ObservableObject {
     /// Ingests all registered sources sequentially, looping over each source and streaming individual progress.
     @discardableResult
     func ingestAllSources(options: IngestOptions = .default, mode: IngestExecutionMode? = nil) async -> Bool {
+        guard !isIngestingAll else {
+            lastCommandSucceeded = false
+            lastCommandOutput = "An ingest of every source is already running."
+            return false
+        }
+        isIngestingAll = true
+        defer { isIngestingAll = false }
         await fetchRegisteredSources()
         let sources = registeredSources
         guard !sources.isEmpty else {
@@ -1108,7 +1125,8 @@ final class AppState: ObservableObject {
 
     /// No scan, ingest or backfill runs, nor maintenance between its steps.
     private var isIdleForQueuedScans: Bool {
-        !isScanning && scanningSource == nil && !isIngesting && !backfill.isRunning && !isMaintenanceRunning
+        !isScanning && scanningSource == nil && !isIngesting && !isIngestingAll && !backfill.isRunning
+            && !isMaintenanceRunning
     }
 
     private func runQueuedSourceScans() async {
@@ -1149,7 +1167,7 @@ final class AppState: ObservableObject {
 
     /// A scan, ingest, queued source scan or maintenance run is under way: what `cancelAll()` stops.
     var hasCancellableWork: Bool {
-        isScanning || scanningSource != nil || isIngesting || isMaintenanceRunning
+        isScanning || scanningSource != nil || isIngesting || isIngestingAll || isMaintenanceRunning
             || !sourcesAwaitingScan.isEmpty || queuedSourceScanTask != nil
     }
 
@@ -1239,6 +1257,17 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
             looks += 1
         }
+        // Another removal, or any other operation, holds the general runner: wait for it rather than be
+        // turned away with "A garage command is already running".
+        while commandInProgress {
+            guard looks < Self.removalWaitLooks else {
+                lastCommandSucceeded = false
+                lastCommandOutput = "Could not remove \(slug): another operation is still running. Try again shortly."
+                return false
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            looks += 1
+        }
         return await runOperation { try await $0.removeSource(slug: slug).message }
     }
 
@@ -1262,7 +1291,7 @@ final class AppState: ObservableObject {
         isMaintenanceRunning = true
         defer { isMaintenanceRunning = false }
 
-        _ = await scanSources()
+        _ = await scanSources(followedByIngest: true)
         guard !isCancellingAll else { return }
         let ingestSucceeded = await ingestAllSources(mode: .xpcService)
         guard !isCancellingAll else { return }

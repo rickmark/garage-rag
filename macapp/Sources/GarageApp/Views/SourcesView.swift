@@ -868,7 +868,7 @@ struct SourcesView: View {
 
     /// Only one scan and one ingest run at a time, so starting another waits for them.
     private var jobRunning: Bool {
-        appState.isIngesting || appState.isScanning
+        appState.isIngesting || appState.isIngestingAll || appState.isScanning
     }
 
     /// The form's source is being scanned or ingested, so it cannot be updated yet. It can be removed:
@@ -915,7 +915,7 @@ struct SourcesView: View {
     }
 
     private func scanSource(slug: String, includeCode: Bool = false) {
-        guard !appState.isIngesting, !appState.isScanning else { return }
+        guard !jobRunning else { return }
         Task {
             await appState.scanSources(source: slug, includeCode: includeCode)
         }
@@ -926,9 +926,9 @@ struct SourcesView: View {
     /// Leaves `busy` alone: the scan and the ingest show their own progress and disable only what
     /// would conflict with them, so the rest of the page stays usable while they run.
     private func scanAndIngest(slug: String, includeCode: Bool = false) {
-        guard !appState.isIngesting, !appState.isScanning else { return }
+        guard !jobRunning else { return }
         Task {
-            if await appState.scanSources(source: slug, includeCode: includeCode) {
+            if await appState.scanSources(source: slug, includeCode: includeCode, followedByIngest: slug == "*") {
                 _ = await appState.ingestSource(slug: slug, options: IngestOptions(includeCode: includeCode))
             }
         }
@@ -945,7 +945,7 @@ struct SourcesView: View {
     }
 
     private func ingestSource(slug: String, includeCode: Bool = false, force: Bool = false) {
-        guard !appState.isIngesting, !appState.isScanning else { return }
+        guard !jobRunning else { return }
         Task {
             let options = IngestOptions(includeCode: includeCode, force: force)
             _ = await appState.ingestSource(slug: slug, options: options)
