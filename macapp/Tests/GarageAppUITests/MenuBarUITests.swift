@@ -21,7 +21,8 @@ final class MenuBarUITests: GarageUITestCase {
 
         let allGo = element(identifier: "menubar.allSystemsGo")
         XCTAssertTrue(allGo.waitForExistence(timeout: 60), "the popover never said all systems go")
-        XCTAssertTrue(element(text: "All systems go").exists, "the services row has no \"All systems go\" title")
+        // The row combines its title and detail into one label: "All systems go, Database and MCP running · …".
+        XCTAssertTrue(shownText(of: allGo).hasPrefix("All systems go"), "the services row reads \"\(shownText(of: allGo))\"")
         XCTAssertFalse(element(identifier: "menubar.problem").exists, "the popover lists a problem beside all systems go")
 
         let status = element(identifier: "menubar.status")
