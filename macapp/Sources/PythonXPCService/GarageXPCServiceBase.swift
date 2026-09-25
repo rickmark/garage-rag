@@ -360,6 +360,12 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         let clientPID = newConnection.processIdentifier
         logger.info("\(self.serviceName, privacy: .public): accepting connection from pid \(clientPID, privacy: .public)")
 
+        // Only processes signed by this build's team (the app, the other services, the launchers) may
+        // talk to the service; messages from anything else are dropped and the connection invalidated.
+        if let requirement = GarageXPCPeerRequirement.current {
+            newConnection.setCodeSigningRequirement(requirement)
+        }
+
         newConnection.remoteObjectInterface = NSXPCInterface(with: GarageXPCLogReceiverProtocol.self)
         newConnection.exportedInterface = exportedInterface
         newConnection.exportedObject = self
