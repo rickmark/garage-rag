@@ -237,9 +237,16 @@ public struct LlamaModelResolver: Sendable {
         ) else {
             return []
         }
+        // The enumerator reports resolved paths (/private/var for /var), so each file is named
+        // under the models folder as given, the way the direct lookups name it.
+        let base = modelsDirectory.resolvingSymlinksInPath().pathComponents
         var files: [String] = []
         for case let url as URL in enumerator {
-            if (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+            let components = url.resolvingSymlinksInPath().pathComponents
+            if components.count > base.count, Array(components.prefix(base.count)) == base {
+                files.append(components.dropFirst(base.count).reduce(modelsDirectory) { $0.appendingPathComponent($1) }.path)
+            } else {
                 files.append(url.path)
             }
         }
