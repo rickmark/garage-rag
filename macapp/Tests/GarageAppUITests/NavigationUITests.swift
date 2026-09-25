@@ -6,7 +6,7 @@ final class NavigationUITests: GarageUITestCase {
     /// Each `AppSection` case name, with a piece of text only that page shows.
     private static let pages: [(section: String, marker: String)] = [
         ("status", "Corpus & Pipeline Overview"),
-        ("database", "Schema & Migrations"),
+        ("database", "Backups"),
         ("sources", "Add a Source"),
         ("documents", "Filter by title or URI…"),
         ("facts", "Search facts…"),

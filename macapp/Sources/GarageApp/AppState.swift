@@ -714,16 +714,30 @@ final class AppState: ObservableObject {
         }
     }
 
-    func backupDatabase(to destination: URL) {
-        Task {
-            await performDatabaseOperation { try await postgres.backupDatabase(to: destination) }
+    /// Writes a dump of the database to `destination` and records it as the last backup.
+    @discardableResult
+    func backupDatabase(to destination: URL) async -> Bool {
+        let succeeded = await performDatabaseOperation { try await postgres.backupDatabase(to: destination) }
+        if succeeded {
+            DatabaseBackupRecord.record(destination)
+            lastCommandOutput = "Backed up the database to \(destination.path)."
         }
+        return succeeded
     }
 
-    func restoreDatabase(from source: URL) {
-        Task {
-            await performDatabaseOperation { try await postgres.restoreDatabase(from: source) }
+    /// Replaces the database with the dump at `source`, then rereads what the pages show from it: a
+    /// dump from an older build can be missing migrations, and its sources and models are its own.
+    @discardableResult
+    func restoreDatabase(from source: URL) async -> Bool {
+        let succeeded = await performDatabaseOperation { try await postgres.restoreDatabase(from: source) }
+        await postgres.refreshPendingMigrations()
+        await fetchRegisteredSources()
+        await fetchRegisteredModels()
+        await fetchCorpusStats()
+        if succeeded {
+            lastCommandOutput = "Restored the database from \(source.path)."
         }
+        return succeeded
     }
 
     @discardableResult
@@ -1433,14 +1447,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func performDatabaseOperation(_ operation: () async throws -> Void) async {
+    @discardableResult
+    private func performDatabaseOperation(_ operation: () async throws -> Void) async -> Bool {
         do {
             try await operation()
             lastCommandSucceeded = true
             lastCommandOutput = "Completed successfully."
+            return true
         } catch {
             lastCommandSucceeded = false
             lastCommandOutput = error.localizedDescription
+            return false
         }
     }
 
