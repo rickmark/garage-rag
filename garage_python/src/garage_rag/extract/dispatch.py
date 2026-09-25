@@ -33,9 +33,11 @@ PLAINTEXT_EXTENSIONS = frozenset(
         ".tex",
         ".srt",
         ".vtt",
-        ".eml",
     }
 )
+
+# RFC 822 messages, and Apple Mail's ``.emlx`` (a byte count, the message, then a plist).
+EMAIL_EXTENSIONS = frozenset({".eml", ".emlx"})
 
 # Binary containers that look like text formats by name. Outlook ``.msg`` is an
 # OLE compound file, not RFC 822 text; reading it as plaintext yields mojibake.
@@ -163,6 +165,7 @@ NAMED_CODE_FILES = frozenset(
 ALL_TEXT_EXTENSIONS = (
     MARKDOWN_EXTENSIONS
     | PLAINTEXT_EXTENSIONS
+    | EMAIL_EXTENSIONS
     | CODE_EXTENSIONS
     | PDF_EXTENSIONS
     | DOCX_EXTENSIONS
@@ -183,6 +186,12 @@ def _plaintext(path: Path) -> ExtractResult:
     from garage_rag.extract.text import extract_plaintext
 
     return extract_plaintext(path)
+
+
+def _email(path: Path) -> ExtractResult:
+    from garage_rag.extract.mail import extract_email
+
+    return extract_email(path)
 
 
 def _code(path: Path) -> ExtractResult:
@@ -242,6 +251,8 @@ def extractor_for(path: Path) -> Extractor:
         return _code
     if suffix in PLAINTEXT_EXTENSIONS:
         return _plaintext
+    if suffix in EMAIL_EXTENSIONS:
+        return _email
     if not suffix and name in NAMED_CODE_FILES:
         return _code
     if suffix in LEGACY_OFFICE_EXTENSIONS:
