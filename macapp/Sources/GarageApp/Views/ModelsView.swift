@@ -79,17 +79,75 @@ struct ModelsView: View {
 
     // MARK: - Body
 
+    /// The page's three tabs: a glance at everything, then one page per kind of model.
+    enum Page: String, CaseIterable, Identifiable {
+        case overall = "Overall"
+        case embedding = "Embedding"
+        case distillation = "Distillation"
+
+        var id: Self { self }
+    }
+
+    @State var selectedTab: Page = .overall
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                embeddingModelsSection
-                distillationSection
-                FactPromptsSection()
-                providersSection
-                embeddingTestSection
-                activitySection
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Picker("Page", selection: $selectedTab) {
+                    ForEach(Page.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+                .accessibilityIdentifier("models.tab")
+
+                Spacer()
+
+                if appState.isFetchingModels || busy {
+                    ProgressView().controlSize(.small)
+                }
+                Button {
+                    refreshAll()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh models")
+                .accessibilityLabel("Refresh models")
+                .accessibilityIdentifier("models.refresh")
+                .disabled(busy || appState.isFetchingModels)
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    switch selectedTab {
+                    case .overall:
+                        overallEmbeddingSection
+                        overallDistillationSection
+                        providersSection
+                        activitySection
+                    case .embedding:
+                        embeddingModelsSection
+                        embeddingTestSection
+                        if !appState.backfill.logs.isEmpty {
+                            backfillOutputBox
+                        }
+                    case .distillation:
+                        distillationSection
+                        FactPromptsSection()
+                        if !appState.enrichFacts.logs.isEmpty {
+                            enrichFactsOutputBox
+                        }
+                    }
+                }
+                .padding(20)
+            }
         }
         .navigationTitle("Models")
         .task {
@@ -142,18 +200,6 @@ struct ModelsView: View {
                     }
                     .disabled(appState.registeredModels.isEmpty || notReady || appState.backfill.isRunning)
                     .help("Embed every chunk that is missing a vector, under every registered model")
-                    .accessibilityIdentifier("models.embedAll")
-
-                    Button {
-                        refreshAll()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Refresh models")
-                    .accessibilityLabel("Refresh models")
-                    .accessibilityIdentifier("models.refresh")
-                    .disabled(busy || appState.isFetchingModels)
                 }
 
                 if unifiedModels.isEmpty {
@@ -420,25 +466,33 @@ struct ModelsView: View {
     var activitySection: some View {
         Group {
             if !appState.backfill.logs.isEmpty {
-                GroupBox("Embedding Output") {
-                    LogTableView(
-                        lines: appState.backfill.logs,
-                        sourceName: "Embed",
-                        onClear: { appState.backfill.clearLogs() }
-                    )
-                    .frame(minHeight: 180, maxHeight: 300)
-                }
+                backfillOutputBox
             }
             if !appState.enrichFacts.logs.isEmpty {
-                GroupBox("Fact Distillation Output") {
-                    LogTableView(
-                        lines: appState.enrichFacts.logs,
-                        sourceName: "Enrich Facts",
-                        onClear: { appState.enrichFacts.clearLogs() }
-                    )
-                    .frame(minHeight: 180, maxHeight: 300)
-                }
+                enrichFactsOutputBox
             }
+        }
+    }
+
+    var backfillOutputBox: some View {
+        GroupBox("Embedding Output") {
+            LogTableView(
+                lines: appState.backfill.logs,
+                sourceName: "Embed",
+                onClear: { appState.backfill.clearLogs() }
+            )
+            .frame(minHeight: 180, maxHeight: 300)
+        }
+    }
+
+    var enrichFactsOutputBox: some View {
+        GroupBox("Fact Distillation Output") {
+            LogTableView(
+                lines: appState.enrichFacts.logs,
+                sourceName: "Enrich Facts",
+                onClear: { appState.enrichFacts.clearLogs() }
+            )
+            .frame(minHeight: 180, maxHeight: 300)
         }
     }
 
@@ -549,6 +603,7 @@ struct ModelsView: View {
         if let dimsVal = item.dims {
             testEmbeddingDimensions = "\(dimsVal)"
         }
+        selectedTab = .embedding
         showEmbeddingTest = true
     }
 
