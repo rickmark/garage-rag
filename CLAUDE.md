@@ -426,7 +426,11 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
   The app loads the default `llama_xpc` embedding model once Postgres is up (and again when the
   default changes), and loads the facts model only for a distillation run, unloading it afterwards
   unless it is also the search model (`AppState+LlamaModels.swift`). Other models load on demand and
-  stay until the Models page's Unload.
+  stay until the Models page's Unload. The on-demand loads run in garage-xpc, embed-xpc and
+  mcp-server-xpc, which cannot look up a sibling XPC service by name: the app's `LlamaEndpointBroker`
+  (in `XPCServiceManager`) fetches the endpoint of LlamaXPCService's anonymous listener
+  (`getListenerEndpoint`) and hands it to each (`setLlamaEndpoint`, `GarageLlamaEndpointStore`),
+  again whenever either side's connection is lost; until then loads fail with "endpoint not handed over yet".
 - `GarageUpdater` wraps Sparkle (`//ext/sparkle`) for Developer ID builds; App Store builds
   `select()` in an inert backend instead, since Apple rejects self-updating apps, and Sparkle
   never enters that dependency graph. The appcast lives at `docs/appcast.xml` on the Jekyll
