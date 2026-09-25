@@ -243,6 +243,9 @@ public enum GarageXPCConfigurationKey {
     public static let databaseURL = "GARAGE_DATABASE_URL"
     public static let grpcHost = "GARAGE_GRPC_HOST"
     public static let grpcPort = "GARAGE_GRPC_PORT"
+    /// The app's per-launch token for the gRPC server (`x-garage-token`, `garage_rag.service.auth`).
+    /// A secret: never log it or write it to garage.json.
+    public static let grpcToken = "GARAGE_GRPC_TOKEN"
     public static let logLevel = "GARAGE_LOG_LEVEL"
     /// Directory the Python server works in, and so where it finds `./garage.json`: the
     /// app's working directory, as when the app ran the `garage` CLI there.

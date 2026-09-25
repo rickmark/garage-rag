@@ -327,6 +327,7 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
         limit: Int?,
         grpcHost: String?,
         grpcPort: Int?,
+        grpcToken: String?,
         databaseUrl: String?,
         lmStudioApiToken: String?,
         successPrefix: String,
@@ -356,6 +357,10 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
             }
 
             _ = applyEnvironmentConfig(databaseUrl: databaseUrl, lmStudioApiToken: lmStudioApiToken)
+            if let grpcToken, !grpcToken.isEmpty {
+                // Mirrored into os.environ, where garage_rag.service.client reads it; a secret, so not logged.
+                mergeConfiguration([GarageXPCConfigurationKey.grpcToken: grpcToken])
+            }
 
             let result = withPython { () -> Void in
                 logger.info("Importing garage_rag.ingest in Python for source '\(source, privacy: .public)'...")
@@ -411,6 +416,7 @@ final class GarageIngestXPCServiceDelegate: GarageXPCServiceBase, GarageIngestXP
             limit: options.limit,
             grpcHost: options.grpcHost,
             grpcPort: options.grpcPort,
+            grpcToken: options.grpcToken,
             databaseUrl: options.databaseUrl,
             lmStudioApiToken: options.lmStudioApiToken,
             successPrefix: "Ingestion completed successfully for",

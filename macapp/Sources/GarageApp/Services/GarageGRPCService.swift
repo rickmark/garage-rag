@@ -86,6 +86,8 @@ final class GarageGRPCService: ObservableObject {
         var env: [String: String] = [:]
         env["GARAGE_DATABASE_URL"] = try postgres.connectionURL()
         env[GarageXPCConfigurationKey.workingDirectory] = Paths.garageWorkingDirectory.path
+        // The server rejects any call without this launch's token (garage_rag.service.auth).
+        env[GarageXPCConfigurationKey.grpcToken] = GarageGRPCAuth.token
         if let lmStudioToken = try LMStudioTokenStore.load() {
             env["GARAGE_LMSTUDIO_API_TOKEN"] = lmStudioToken
         }
@@ -281,10 +283,10 @@ final class GarageGRPCService: ObservableObject {
 
     private func pingOverTCP() async -> Bool {
         do {
-            let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+            let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
             var pingReq = Garage_PingRequest()
             pingReq.message = "healthcheck"
-            let callOptions = CallOptions(timeLimit: .timeout(.milliseconds(500)))
+            let callOptions = GarageGRPCAuth.callOptions(timeLimit: .timeout(.milliseconds(500)))
             let response = try await client.ping(pingReq, callOptions: callOptions)
             return !response.message.isEmpty
         } catch {
@@ -319,7 +321,7 @@ final class GarageGRPCService: ObservableObject {
             try await start()
         }
 
-        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
         var request = Garage_SearchRequest()
         request.query = query
         request.mode = mode
@@ -341,7 +343,7 @@ final class GarageGRPCService: ObservableObject {
         }
         request.full = full
 
-        let callOptions = CallOptions(timeLimit: .timeout(.seconds(30)))
+        let callOptions = GarageGRPCAuth.callOptions(timeLimit: .timeout(.seconds(30)))
         do {
             let response = try await client.search(request, callOptions: callOptions)
             return response
@@ -372,7 +374,7 @@ final class GarageGRPCService: ObservableObject {
             try await start()
         }
 
-        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
         var request = Garage_ListDocumentsRequest()
         if let source = source, !source.isEmpty {
             request.source = source
@@ -389,7 +391,7 @@ final class GarageGRPCService: ObservableObject {
         request.limit = Int32(limit)
         request.offset = Int32(offset)
 
-        let callOptions = CallOptions(timeLimit: .timeout(.seconds(30)))
+        let callOptions = GarageGRPCAuth.callOptions(timeLimit: .timeout(.seconds(30)))
         do {
             return try await client.listDocuments(request, callOptions: callOptions)
         } catch {
@@ -402,11 +404,11 @@ final class GarageGRPCService: ObservableObject {
             try await start()
         }
 
-        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
         var request = Garage_GetDocumentRequest()
         request.documentID = documentID
 
-        let callOptions = CallOptions(timeLimit: .timeout(.seconds(30)))
+        let callOptions = GarageGRPCAuth.callOptions(timeLimit: .timeout(.seconds(30)))
         do {
             return try await client.getDocument(request, callOptions: callOptions)
         } catch {
@@ -421,8 +423,8 @@ final class GarageGRPCService: ObservableObject {
         var queries: [String] = []
         var errors: [String] = []
 
-        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel())
-        let callOptions = CallOptions(timeLimit: .timeout(.seconds(5)))
+        let client = Garage_GarageServiceAsyncClient(channel: getOrCreateChannel(), defaultCallOptions: GarageGRPCAuth.callOptions())
+        let callOptions = GarageGRPCAuth.callOptions(timeLimit: .timeout(.seconds(5)))
 
         // 1. GetStatus
         do {
