@@ -206,6 +206,7 @@ struct SourcesView: View {
                             .font(.headline)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .accessibilityIdentifier("sources.activity.title")
                         if let percent = activity.percent {
                             Text(percent)
                                 .font(.headline.monospacedDigit())
@@ -566,6 +567,7 @@ struct SourcesView: View {
                     Text(row.status)
                         .font(.caption)
                         .foregroundStyle(row.statusTone.color)
+                        .accessibilityIdentifier("sources.row.\(source.slug).status")
                     Spacer()
                     if let counts = row.counts {
                         Text(counts)
@@ -588,6 +590,7 @@ struct SourcesView: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("sources.row.\(source.slug).error")
                 }
             }
         }
