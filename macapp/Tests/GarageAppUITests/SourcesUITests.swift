@@ -141,11 +141,8 @@ final class SourcesUITests: GarageUITestCase {
         waitForBackend()
         addSource(root: first)
 
-        let progress = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label IN %@ OR title IN %@ OR value IN %@",
-                        ["Scan in Progress", "Live Ingest Progress"], ["Scan in Progress", "Live Ingest Progress"],
-                        ["Scan in Progress", "Live Ingest Progress"])
-        ).firstMatch
+        // The activity module above the list shows the scan, then the ingest, with its Stop button.
+        let progress = element(identifier: "sources.cancelAll")
         XCTAssertTrue(progress.waitForExistence(timeout: 30), "adding a source did not start maintenance")
 
         replaceText(in: element(identifier: "sources.form.slug"), with: "uitest-more")
