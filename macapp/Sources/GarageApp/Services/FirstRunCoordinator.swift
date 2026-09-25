@@ -40,7 +40,7 @@ enum FirstRunStep: Int, CaseIterable, Identifiable, Comparable {
         case .settingUp: "Setting things up"
         case .selectData: "Select your data"
         case .selectModels: "Select your models"
-        case .setupAgent: "Set up your agent"
+        case .setupAgent: "Set up your assistant"
         }
     }
 
@@ -148,14 +148,14 @@ enum FirstRunReadiness {
             ),
             FirstRunServiceCheck(
                 id: "grpc",
-                title: "Pipeline service",
-                detail: "Starting the gRPC bridge used for ingest, search and models",
+                title: "Index Manager",
+                detail: "Starting the service that runs ingest, search and models",
                 state: grpcState
             ),
             FirstRunServiceCheck(
                 id: "mcp",
                 title: "MCP server",
-                detail: "Starting the local MCP endpoint your agents connect to",
+                detail: "Starting the local MCP endpoint your assistants connect to",
                 state: mcpState
             ),
         ]

@@ -314,7 +314,7 @@ struct SourcesView: View {
             }
             .controlSize(.small)
             .disabled(appState.registeredSources.isEmpty || notReady || appState.hasCancellableWork)
-            .help("Count what every source holds, then index what is new or changed. Embedding and facts wait for the next automatic update.")
+            .help("Count what every source holds, then index what is new or changed. Use Update Everything to also embed and glean facts.")
             .accessibilityIdentifier("sources.scanIngestAll")
 
             Button {

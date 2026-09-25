@@ -60,7 +60,13 @@ struct ModelsView: View {
 
         public var id: Self { self }
 
-        public var displayName: String { rawValue }
+        /// The name on screen. `rawValue` stays as it was: it is the enum's coded form.
+        public var displayName: String {
+            switch self {
+            case .llamaXPC: "Built-in engine"
+            case .ollama, .lmStudio: rawValue
+            }
+        }
 
         public var cliValue: String {
             switch self {
@@ -179,7 +185,7 @@ struct ModelsView: View {
                 }
             }
         } message: {
-            Text("This frees the model's memory in Llama XPC. Embedding and fact distillation load it again when they need it.")
+            Text("This frees the model's memory in the built-in engine. Embedding and fact distillation load it again when they need it.")
         }
     }
 
@@ -374,7 +380,7 @@ struct ModelsView: View {
                 ModelSymbolCircle(symbol: "cpu", tint: llama.statusColor, isActive: llama.isConnected)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Llama XPC")
+                    Text("Built-in engine")
                         .font(.system(size: 13, weight: .medium))
                     Text(llamaDetail)
                         .font(.caption)
@@ -548,7 +554,7 @@ struct ModelsView: View {
         GroupBox("Fact Distillation Output") {
             LogTableView(
                 lines: appState.enrichFacts.logs,
-                sourceName: "Enrich Facts",
+                sourceName: "Glean Facts",
                 onClear: { appState.enrichFacts.clearLogs() }
             )
             .frame(minHeight: 180, maxHeight: 300)

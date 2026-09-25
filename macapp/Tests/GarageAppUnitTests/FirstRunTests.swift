@@ -23,7 +23,7 @@ final class FirstRunTests: XCTestCase {
         XCTAssertEqual(FirstRunStep.settingUp.title, "Setting things up")
         XCTAssertEqual(FirstRunStep.selectData.title, "Select your data")
         XCTAssertEqual(FirstRunStep.selectModels.title, "Select your models")
-        XCTAssertEqual(FirstRunStep.setupAgent.title, "Set up your agent")
+        XCTAssertEqual(FirstRunStep.setupAgent.title, "Set up your assistant")
         for step in FirstRunStep.allCases {
             XCTAssertFalse(step.symbol.isEmpty)
         }

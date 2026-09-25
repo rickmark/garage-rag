@@ -200,7 +200,7 @@ public struct SearchView: View {
         if isSearching && results.isEmpty {
             VStack(spacing: 12) {
                 Spacer()
-                ProgressView("Searching via gRPC…")
+                ProgressView("Searching…")
                     .controlSize(.regular)
                 Spacer()
             }
@@ -249,7 +249,7 @@ public struct SearchView: View {
                         .foregroundStyle(.secondary)
                     Text("Search Knowledge Base")
                         .font(.title3.bold())
-                    Text("Enter a search query to retrieve relevant document chunks using hybrid semantic and keyword retrieval over gRPC.")
+                    Text("Enter a search query to retrieve relevant document chunks using hybrid semantic and keyword search.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -521,7 +521,7 @@ public struct SearchView: View {
         HStack {
             if isSearching {
                 ProgressView().controlSize(.small)
-                Text("Searching via gRPC…")
+                Text("Searching…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if hasSearched {

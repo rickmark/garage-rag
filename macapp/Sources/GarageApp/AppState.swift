@@ -1124,17 +1124,17 @@ final class AppState: ObservableObject {
         case "Embedding", "Backfill", "Embed":
             backfill.clearLogs()
             osLogStreamService.clearLogs(for: .embed)
-        case "Enrich Facts", "garage enrich-facts":
+        case "Glean Facts", "Enrich Facts", "garage enrich-facts":
             enrichFacts.clearLogs()
         case "Scan", "garage scan":
             scanner.clearLogs()
         case "MCP Server":
             mcp.clearLogs()
             osLogStreamService.clearLogs(for: .mcp)
-        case "gRPC Server":
+        case "Index Manager", "gRPC Server":
             grpc.clearLogs()
             osLogStreamService.clearLogs(for: .grpc)
-        case "Llama Service", "Llama XPC", "LLaMa":
+        case "Built-in Engine", "Llama Service", "Llama XPC", "LLaMa":
             llama.clearLogs()
             osLogStreamService.clearLogs(for: .llama)
         case "Model Downloader", "Model Download XPC", "Downloader":

@@ -255,15 +255,27 @@ public struct IngestSourcePathAccessResult: Codable, Sendable, Equatable, Identi
         exists && isReadable && errorMessage == nil && (canOpenFiles ?? true)
     }
 
+    /// The name people know a protected category by ("Messages" for `apple-sms`).
+    public static func permissionName(of category: String) -> String {
+        switch category {
+        case "apple-sms": return "Messages"
+        case "apple-mail": return "Mail"
+        case "documents": return "Documents"
+        case "downloads": return "Downloads"
+        case "desktop": return "Desktop"
+        default: return category
+        }
+    }
+
     public var statusDescription: String {
         if !exists {
             return "Path does not exist"
         }
         if !isReadable {
             if let cat = tccCategory {
-                return "TCC permission required (\(cat))"
+                return "Needs permission (\(Self.permissionName(of: cat)))"
             }
-            return "Permission denied / not readable"
+            return "Garage isn't allowed to read this folder"
         }
         if let error = errorMessage {
             return "Error: \(error)"

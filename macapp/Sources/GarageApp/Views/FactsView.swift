@@ -171,7 +171,7 @@ public struct FactsView: View {
         if isLoading && facts.isEmpty {
             VStack(spacing: 12) {
                 Spacer()
-                ProgressView("Loading facts via gRPC…")
+                ProgressView("Loading facts…")
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -227,7 +227,7 @@ public struct FactsView: View {
         if isFiltered {
             return "No facts matched the current search and filters."
         }
-        return "Nothing has been distilled yet. Choose Glean Facts on a document, or run Enrich Facts, to distill documents into facts."
+        return "Nothing has been gleaned yet. Choose Glean Facts on a document, or on the Models page's Distillation tab."
     }
 
     private var isFiltered: Bool {

@@ -15,9 +15,9 @@ public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
     public var displayName: String {
         switch self {
         case .messages:
-            return "Messages (apple-sms)"
+            return "Messages"
         case .mail:
-            return "Apple Mail (apple-mail)"
+            return "Mail"
         case .documents:
             return "Documents"
         case .downloads:
@@ -62,9 +62,9 @@ public enum TCCPermissionCategory: String, Sendable, Codable, CaseIterable {
     public var helpMessage: String {
         switch self {
         case .messages:
-            return "macOS protects Messages databases (~/Library/Messages). Full Disk Access in System Settings or selecting the Messages directory directly is required to index SMS and iMessage history."
+            return "macOS protects Messages databases (~/Library/Messages). Turn on Full Disk Access for Garage in System Settings to index SMS and iMessage history. The App Store version also needs you to select your startup disk or the Messages folder so Garage can open it."
         case .mail:
-            return "macOS protects Mail storage (~/Library/Mail). Full Disk Access in System Settings or selecting the Mail directory directly is required to index email archives."
+            return "macOS protects Mail storage (~/Library/Mail). Turn on Full Disk Access for Garage in System Settings to index email archives. The App Store version also needs you to select your startup disk or the Mail folder so Garage can open it."
         case .documents:
             return "Permission to access your Documents directory is required to index local documents."
         case .downloads:
@@ -133,7 +133,7 @@ public enum VolumeAccessStatus: Equatable {
         case .accessDenied(let reason):
             return "Denied: \(reason)"
         case .staleBookmark(let url):
-            return "Stale bookmark: \(url.path) (needs re-grant)"
+            return "Saved access to \(url.path) no longer works"
         }
     }
 }
@@ -201,9 +201,9 @@ public struct SourcePathAccessResult: Identifiable, Hashable, Equatable, Sendabl
         }
         if !isReadable {
             if let cat = tccCategory {
-                return "TCC permission required (\(cat.displayName))"
+                return "Needs permission (\(cat.displayName))"
             }
-            return "Permission denied / not readable"
+            return "Garage isn't allowed to read this folder"
         }
         if let error = errorMessage {
             return "Error: \(error)"
@@ -609,8 +609,8 @@ public final class VolumeAccessService: ObservableObject {
         }
 
         let panel = NSOpenPanel()
-        panel.title = "Select Root Hard Drive"
-        panel.message = "To grant Garage access to index files across your system, select your root hard drive (e.g. Macintosh HD or root '/') and click Grant Access."
+        panel.title = "Select Startup Disk"
+        panel.message = "Select your startup disk (usually Macintosh HD) and click Grant Access."
         panel.prompt = "Grant Access"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -726,8 +726,8 @@ public final class VolumeAccessService: ObservableObject {
         }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Permission Required: \(category.displayName)"
-        alert.informativeText = "\(category.helpMessage)\n\nYou can grant folder access directly via Open Panel or open macOS System Settings to enable Full Disk Access."
+        alert.messageText = "Garage needs permission to read \(category.displayName)"
+        alert.informativeText = "\(category.helpMessage)\n\nSelect the folder, or turn on Full Disk Access in System Settings."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Select Folder Directly…")
         alert.addButton(withTitle: "Cancel")
@@ -940,9 +940,9 @@ public final class VolumeAccessService: ObservableObject {
                 canOpenFiles = false
             } else if !isReadable {
                 if let cat = tccCategory {
-                    errorMsg = "TCC permission required (\(cat.displayName))"
+                    errorMsg = "Needs permission (\(cat.displayName))"
                 } else {
-                    errorMsg = "Permission denied / not readable"
+                    errorMsg = "Garage isn't allowed to read this folder"
                 }
                 canOpenFiles = false
             }

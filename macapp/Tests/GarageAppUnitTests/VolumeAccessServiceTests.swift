@@ -152,7 +152,7 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertFalse(denied.isGranted)
 
         let stale = VolumeAccessStatus.staleBookmark(url: URL(fileURLWithPath: "/"))
-        XCTAssertTrue(stale.displayDescription.contains("Stale bookmark: / (needs re-grant)"))
+        XCTAssertTrue(stale.displayDescription.contains("Saved access to / no longer works"))
         XCTAssertFalse(stale.isGranted)
     }
 
@@ -196,7 +196,7 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertEqual(result.sourcePathResults.count, 2)
         XCTAssertTrue(result.sourcePathResults[0].isAccessible)
         XCTAssertFalse(result.sourcePathResults[1].isAccessible)
-        XCTAssertEqual(result.sourcePathResults[1].statusDescription, "Permission denied / not readable")
+        XCTAssertEqual(result.sourcePathResults[1].statusDescription, "Garage isn't allowed to read this folder")
         XCTAssertTrue(result.message.contains("1 of 2 ingest source paths are inaccessible"))
     }
 
@@ -248,13 +248,13 @@ final class VolumeAccessServiceTests: XCTestCase {
 
     func testTCCPermissionCategoryProperties() {
         let messages = TCCPermissionCategory.messages
-        XCTAssertEqual(messages.displayName, "Messages (apple-sms)")
+        XCTAssertEqual(messages.displayName, "Messages")
         XCTAssertEqual(messages.iconName, "message.fill")
         XCTAssertTrue(messages.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
         XCTAssertTrue(messages.helpMessage.contains("Messages databases"))
 
         let mail = TCCPermissionCategory.mail
-        XCTAssertEqual(mail.displayName, "Apple Mail (apple-mail)")
+        XCTAssertEqual(mail.displayName, "Mail")
         XCTAssertEqual(mail.iconName, "envelope.fill")
         XCTAssertTrue(mail.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
         XCTAssertTrue(mail.helpMessage.contains("Mail storage"))
@@ -282,14 +282,14 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertFalse(smsResult.isAccessible)
         XCTAssertEqual(smsResult.tccCategory, .messages)
         XCTAssertTrue(smsResult.requiresTCCPermission)
-        XCTAssertEqual(smsResult.statusDescription, "TCC permission required (Messages (apple-sms))")
+        XCTAssertEqual(smsResult.statusDescription, "Needs permission (Messages)")
         XCTAssertTrue(smsResult.tccHelpMessage?.contains("Messages databases") == true)
 
         let mailResult = result.sourcePathResults[1]
         XCTAssertFalse(mailResult.isAccessible)
         XCTAssertEqual(mailResult.tccCategory, .mail)
         XCTAssertTrue(mailResult.requiresTCCPermission)
-        XCTAssertEqual(mailResult.statusDescription, "TCC permission required (Apple Mail (apple-mail))")
+        XCTAssertEqual(mailResult.statusDescription, "Needs permission (Mail)")
         XCTAssertTrue(mailResult.tccHelpMessage?.contains("Mail storage") == true)
     }
 
