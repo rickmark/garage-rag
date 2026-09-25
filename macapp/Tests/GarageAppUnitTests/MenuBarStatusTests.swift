@@ -228,4 +228,26 @@ final class MenuBarStatusTests: XCTestCase {
         XCTAssertTrue(MenuBarStatus(database: .running, mcp: .running(clients: 1), activity: .embedding).showsActivityDot)
         XCTAssertTrue(MenuBarStatus(database: .stopped).showsActivityDot)
     }
+
+    // MARK: - Summary row
+
+    func testSummaryIsAllSystemsGoWhenEverythingRuns() {
+        let summary = MenuBarStatus(database: .running, mcp: .running(clients: 2)).summary
+        XCTAssertEqual(summary.title, "All systems go")
+        XCTAssertEqual(summary.detail, "Database and MCP running · 2 clients")
+        XCTAssertEqual(summary.tint, .green)
+    }
+
+    func testSummaryNamesTheWorstProblemFirst() {
+        // A database failure hides the MCP server's knock-on failure.
+        let failed = MenuBarStatus(database: .failed("port 14824 already in use\nFATAL: ..."), mcp: .failed("no database")).summary
+        XCTAssertEqual(failed.title, "Database failed to start")
+        XCTAssertEqual(failed.detail, "port 14824 already in use")
+        XCTAssertEqual(failed.tint, .red)
+
+        XCTAssertEqual(MenuBarStatus(database: .needsMigration).summary.title, "Database needs a migration")
+        XCTAssertEqual(MenuBarStatus(database: .stopped).summary.title, "Database stopped")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .failed("")).summary.detail, "Open Status to fix it.")
+        XCTAssertEqual(MenuBarStatus(database: .running, mcp: .stopped).summary.title, "MCP server not running")
+    }
 }

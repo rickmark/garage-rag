@@ -19,7 +19,9 @@ struct MenuBarView: View {
 
             servicesModule(status)
 
-            activityModule(status)
+            if status.database == .running {
+                activityModule(status)
+            }
 
             VStack(spacing: 0) {
                 MenuBarCommandRow(title: "Open Garage", key: "o") {
@@ -40,98 +42,22 @@ struct MenuBarView: View {
 
     // MARK: - Services
 
-    @ViewBuilder
+    /// One row for the services. "All systems go" when everything is fine; otherwise a short summary
+    /// of the worst problem. Either way the row opens the Status page, where the fixes live: the
+    /// popover is too small to be a control panel.
     private func servicesModule(_ status: MenuBarStatus) -> some View {
-        if status.allSystemsGo {
-            MenuBarModule {
-                MenuBarRow(
-                    symbol: "checkmark",
-                    tint: .green,
-                    title: "All systems go",
-                    detail: status.allSystemsGoDetail,
-                    action: { show(.status) }
-                )
-                .accessibilityIdentifier("menubar.allSystemsGo")
-            }
-            .accessibilityIdentifier("menubar.services")
-        } else {
-            serviceRows(status)
-        }
-    }
-
-    /// The database and the MCP server, each on its own row, when either needs a look.
-    private func serviceRows(_ status: MenuBarStatus) -> some View {
-        MenuBarModule {
+        let summary = status.summary
+        return MenuBarModule {
             MenuBarRow(
-                symbol: "cylinder.split.1x2",
-                tint: status.databaseTint,
-                isActive: status.database == .running,
-                title: "Database",
-                detail: databaseDetail(status),
-                detailTint: status.database.isFailure ? .red : nil,
-                action: { show(.database) }
-            ) {
-                databaseAction(status)
-            }
-            .accessibilityIdentifier("menubar.database")
-
-            Divider().padding(.leading, 46)
-
-            MenuBarRow(
-                symbol: "server.rack",
-                tint: status.mcpTint,
-                isActive: status.mcp.isRunning,
-                title: "MCP for Claude",
-                detail: status.mcpDetail,
-                detailTint: status.mcp.isFailure && status.database == .running ? .red : nil,
-                action: { show(.mcp) }
-            ) {
-                mcpAction(status)
-            }
-            .accessibilityIdentifier("menubar.mcp")
+                symbol: summary.symbol,
+                tint: summary.tint,
+                title: summary.title,
+                detail: summary.detail,
+                action: { show(.status) }
+            )
+            .accessibilityIdentifier(status.allSystemsGo ? "menubar.allSystemsGo" : "menubar.problem")
         }
         .accessibilityIdentifier("menubar.services")
-    }
-
-    private func databaseDetail(_ status: MenuBarStatus) -> String {
-        status.database == .running ? "Running on port \(String(appState.postgres.port))" : status.databaseDetail
-    }
-
-    @ViewBuilder
-    private func databaseAction(_ status: MenuBarStatus) -> some View {
-        switch status.database {
-        case .starting, .stopping:
-            ProgressView().controlSize(.small)
-        case .stopped, .failed:
-            MenuBarActionButton(title: status.database == .stopped ? "Start" : "Retry") {
-                Task { await appState.startPostgres() }
-            }
-            .accessibilityIdentifier("menubar.database.start")
-        case .needsMigration:
-            MenuBarActionButton(title: appState.isApplyingMigrations ? "Applying…" : "Apply", isDisabled: appState.isApplyingMigrations) {
-                Task { await appState.applyMigrations() }
-            }
-            .accessibilityIdentifier("menubar.database.migrate")
-        case .running:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private func mcpAction(_ status: MenuBarStatus) -> some View {
-        switch status.mcp {
-        case .starting, .stopping:
-            ProgressView().controlSize(.small)
-        case .stopped, .failed:
-            if status.database == .running {
-                MenuBarActionButton(title: status.mcp == .stopped ? "Start" : "Retry") {
-                    Task { try? await appState.mcp.start() }
-                }
-                .accessibilityIdentifier("menubar.mcp.start")
-            }
-        case .running:
-            EmptyView()
-        }
     }
 
     // MARK: - Activity
@@ -199,15 +125,6 @@ struct MenuBarView: View {
                     }
                     MenuBarStageTrail(stages: status.stageTrail, current: status.stage)
                         .padding(.top, 2)
-                } else if status.database == .running {
-                    // The title line is the corpus already.
-                    EmptyView()
-                } else {
-                    Text(idleDetail(status))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 ForEach(Array(status.attentions.enumerated()), id: \.offset) { _, attention in
@@ -218,17 +135,6 @@ struct MenuBarView: View {
             .padding(.vertical, 9)
         }
         .accessibilityIdentifier("menubar.activity")
-    }
-
-    private func idleDetail(_ status: MenuBarStatus) -> String {
-        switch status.database {
-        case .stopped: "Start the database to search and ingest."
-        case .starting: "Bringing up Postgres, MCP and the gRPC bridge."
-        case .stopping: "Waiting for connections to close."
-        case .needsMigration: "Apply the migration to bring the schema up to date."
-        case .failed: "See the Database page for the log."
-        case .running: status.corpusLine
-        }
     }
 
     @ViewBuilder
@@ -276,7 +182,7 @@ struct MenuBarView: View {
     private func attentionRow(_ attention: MenuBarStatus.Attention) -> some View {
         switch attention {
         case .ingestFailed(let message):
-            attentionLine("Last ingest failed: \(message)", section: .logs)
+            attentionLine("Last ingest failed: \(message)", section: .status)
         case .databaseFailed, .databaseNeedsMigration, .mcpFailed:
             EmptyView()
         }
@@ -309,24 +215,5 @@ struct MenuBarView: View {
 
     private func show(_ section: AppSection) {
         MenuBarNavigation.show(section, openWindow: openWindow)
-    }
-}
-
-private extension MenuBarStatus.Database {
-    var isFailure: Bool {
-        if case .failed = self { return true }
-        return false
-    }
-}
-
-private extension MenuBarStatus.Server {
-    var isRunning: Bool {
-        if case .running = self { return true }
-        return false
-    }
-
-    var isFailure: Bool {
-        if case .failed = self { return true }
-        return false
     }
 }
