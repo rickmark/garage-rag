@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import PythonXPCService
 
 /// Full-window setup assistant shown on a fresh install (and on demand from
 /// the "Setup Assistant…" menu item). Four pages: wait for services, pick
@@ -991,7 +992,7 @@ struct FirstRunSetupAgentPage: View {
 
     private func clientRow(_ client: MCPClientConfig) -> some View {
         let selected = coordinator.selectedClientIDs.contains(client.id)
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = GarageAppGroup.realHomeDirectory
 
         return Button {
             coordinator.toggleClient(client)

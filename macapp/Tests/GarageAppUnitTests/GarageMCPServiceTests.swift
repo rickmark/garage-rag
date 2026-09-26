@@ -1,4 +1,5 @@
 import XCTest
+import PythonXPCService
 @testable import GarageApp
 
 final class GarageMCPServiceTests: XCTestCase {
@@ -107,6 +108,34 @@ final class GarageMCPServiceTests: XCTestCase {
         XCTAssertTrue(ids.contains("vscode"))
         XCTAssertTrue(ids.contains("windsurf"))
         XCTAssertTrue(ids.contains("zed"))
+    }
+
+    /// In the sandbox `homeDirectoryForCurrentUser` is the app's container, where no client keeps
+    /// its config; detection looks in the account's home folder, as install.py does.
+    @MainActor
+    func testDetectClientConfigsUsesTheAccountHome() {
+        let mcp = GarageMCPService(postgres: PostgresService())
+        let home = URL(fileURLWithPath: GarageAppGroup.realHomeDirectory, isDirectory: true)
+        let byId = Dictionary(uniqueKeysWithValues: mcp.detectClientConfigs().map { ($0.id, $0.path) })
+
+        XCTAssertEqual(byId["claude-desktop"]?.path, home.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json").path)
+        XCTAssertEqual(byId["claude-code-user"]?.path, home.appendingPathComponent(".claude.json").path)
+    }
+
+    /// A config file chosen in the open panel is handed to the service that writes it before the
+    /// McpInstall call, since that service is sandboxed on its own.
+    @MainActor
+    func testCustomConfigFileIsGrantedBeforeRegistering() async {
+        let mcp = GarageMCPService(postgres: PostgresService())
+        let relay = RecordingFolderAccessRelay()
+        mcp.folderAccess = relay
+        let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("client-\(UUID().uuidString).json")
+
+        // No gRPC service in the test: the registration itself fails, after the grant.
+        let result = await mcp.registerCustomConfigFile(at: file)
+        XCTAssertFalse(result.success)
+        XCTAssertEqual(relay.grants.map { $0.key }, [GarageFolderAccessKey.file(file.path)])
+        XCTAssertEqual(relay.grants.first?.path, file.path)
     }
 
     @MainActor

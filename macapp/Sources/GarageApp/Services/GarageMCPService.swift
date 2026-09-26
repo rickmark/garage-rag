@@ -1,5 +1,6 @@
 import Foundation
 import MCPServerClient
+import PythonXPCService
 
 enum GarageMCPStatus: Equatable {
     case stopped
@@ -139,6 +140,12 @@ final class GarageMCPService: ObservableObject {
     /// Client registration goes through the McpInstall RPC; AppState wires this up.
     weak var grpc: GarageGRPCService?
 
+    /// Hands a config file chosen in an open panel to GarageXPCService, which runs McpInstall and,
+    /// in the sandboxed build, can write nothing it was not granted. The known client configs are
+    /// under the home folder, which reaches that service with the root grant (VolumeAccessService).
+    /// AppState wires this up.
+    var folderAccess: FolderAccessRelaying?
+
     private let postgres: PostgresService
     private let client: GarageMCPServerClient
     private let defaults: UserDefaults
@@ -192,8 +199,10 @@ final class GarageMCPService: ObservableObject {
         self.detectedClients = detectClientConfigs()
     }
 
+    /// The client configs Garage knows, as `mcp_server/install.py`'s table lists them. The home folder
+    /// is the account's: in the sandbox `homeDirectoryForCurrentUser` is the app's container.
     func detectClientConfigs() -> [MCPClientConfig] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = URL(fileURLWithPath: GarageAppGroup.realHomeDirectory, isDirectory: true)
         let project = Paths.garageWorkingDirectory
         let appSupport = home.appendingPathComponent("Library/Application Support")
 
@@ -314,11 +323,19 @@ final class GarageMCPService: ObservableObject {
             }
             return (true, response.message.isEmpty ? "Registered." : response.message)
         } catch {
-            let message = "MCP registration failed: \(error.localizedDescription)"
+            var message = "MCP registration failed: \(error.localizedDescription)"
+            if GarageAppGroup.isSandboxed {
+                message += " " + Self.sandboxedRegistrationHint
+            }
             appendLog(LogLine(stream: .stderr, text: message, source: "garage-mcp"))
             return (false, message)
         }
     }
+
+    /// What a failed registration adds in the sandboxed build, where Garage writes a client's config
+    /// only inside a folder the user granted.
+    nonisolated static let sandboxedRegistrationHint =
+        "Garage can change a client's settings only in a folder you gave it: grant disk access to your home folder or startup disk on the Sources page, or pick the file with Connect a Config File…"
 
     @discardableResult
     func registerInAllFoundConfigs(force: Bool = true) async -> (success: Bool, message: String) {
@@ -346,6 +363,10 @@ final class GarageMCPService: ObservableObject {
         defer {
             isRegistering = false
             refreshDetectedClients()
+        }
+        // The open panel gave this process access to the file; the service writing it needs its own.
+        if let folderAccess {
+            await folderAccess.grant(url, key: GarageFolderAccessKey.file(url.path))
         }
         return await install(.path(url.path), force: force)
     }

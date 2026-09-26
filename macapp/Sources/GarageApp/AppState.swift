@@ -189,8 +189,9 @@ final class AppState: ObservableObject {
         scanner = OperationRunner(label: "garage scan")
         let grpcService = GarageGRPCService(postgres: postgres)
         let mcpService = GarageMCPService(postgres: postgres)
-        // Client registration (McpInstall) goes over gRPC.
+        // Client registration (McpInstall) goes over gRPC, to a service that writes only what it was granted.
         mcpService.grpc = grpcService
+        mcpService.folderAccess = self.volumeAccess.folderAccess
         mcp = mcpService
         grpc = grpcService
 
