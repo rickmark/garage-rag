@@ -43,10 +43,12 @@ Both are built from the same commit and share one data folder and one Keychain i
 ## 3. App Store
 
 1. Make sure App Review has answered on the previous submission, then create the new version in App Store Connect.
-2. Build the archive and open it in Organizer:
+2. Build the archive from the signed release tag and open it in Organizer:
    ```bash
+   git checkout v<version>
    aspect run //macapp:xcarchive_open --bazel-flag=--config=appstore_release
    ```
+   Build it from the tag, not from `main`. The appcast commit from Developer ID step 6 moves `main` one commit ahead, and `CFBundleVersion` is the commit count, so building from `main` would give the two distributions different build numbers.
 3. In Organizer, run **Validate App** first, then **Distribute App**. It re-signs the app with Apple Distribution and three store profiles:
    - `GarageMacAppConnect` for the app;
    - `GarageRAGAppStoreCLI` for `garage.app`;
