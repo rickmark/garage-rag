@@ -18,9 +18,9 @@ import XCTest
 /// folder: with `1`, or a folder it cannot write, the files go to `store-screenshots` in the runner's
 /// own temporary folder,
 /// `~/Library/Containers/me.rickmark.garage-rag.GarageAppUITests.xctrunner/Data/tmp/store-screenshots`,
-/// and the log names it. The app opens its window at 1440 × 900 points (`--window-size`), so the
-/// display needs room for that below the menu bar. Hide the Dock or other windows if they would show
-/// behind a page; only the window is captured.
+/// and the log names it. The app opens its window at 1440 × 900 points (`--window-size`), below the
+/// menu bar and behind the Dock if it has to, so the display needs 900 points below the menu bar.
+/// Only the window is captured.
 final class StoreScreenshotsUITests: GarageUITestCase {
     static let outputVariable = "GARAGE_STORE_SCREENSHOTS"
     static let windowSize = CGSize(width: 1440, height: 900)
