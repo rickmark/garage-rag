@@ -62,6 +62,13 @@ public struct LogTableView: View {
     /// `filteredLines`, recomputed only when the lines or a filter change. The table
     /// redraws at the log poll rate; filtering and sorting on every draw showed up.
     @State private var visibleLines: [LogLine] = []
+    /// How many lines match the filters; `visibleLines` holds at most `maximumRowsShown` of them.
+    @State private var matchCount = 0
+
+    /// The most rows the table shows. A SwiftUI Table lays out and builds accessibility for every
+    /// row it is given: a few thousand (the Unified Log after a fetch) kept the main thread busy
+    /// for over 30 seconds. The filter reaches the rest.
+    public static let maximumRowsShown = 500
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -97,7 +104,9 @@ public struct LogTableView: View {
             }
         }
         .onChange(of: filterKey, initial: true) {
-            visibleLines = filteredLines
+            let matches = matchingLines
+            matchCount = matches.count
+            visibleLines = Self.rowsShown(from: matches, sortOrder: sortOrder, limit: Self.maximumRowsShown)
         }
     }
 
@@ -163,7 +172,7 @@ public struct LogTableView: View {
             Spacer()
 
             // Count Badge
-            Text("\(visibleLines.count) of \(lines.count) entries")
+            Text("\(matchCount) of \(lines.count) entries")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -218,6 +227,15 @@ public struct LogTableView: View {
             )
         } else {
             tableContent
+            if matchCount > visibleLines.count {
+                Text("Showing the latest \(visibleLines.count) of \(matchCount) matching entries. Filter to find older ones.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("logs.capped")
+            }
         }
     }
 
@@ -387,7 +405,20 @@ public struct LogTableView: View {
         )
     }
 
+    /// Every line that passes the filters, sorted by `sortOrder`.
     public var filteredLines: [LogLine] {
+        matchingLines.sorted(using: sortOrder)
+    }
+
+    /// The table's rows: the newest `limit` of `matches`, sorted by `sortOrder`.
+    static func rowsShown(from matches: [LogLine], sortOrder: [KeyPathComparator<LogLine>], limit: Int) -> [LogLine] {
+        guard matches.count > limit else { return matches.sorted(using: sortOrder) }
+        let newest = matches.sorted { $0.date > $1.date }.prefix(limit)
+        return Array(newest).sorted(using: sortOrder)
+    }
+
+    /// Every line that passes the filters, in their original order.
+    private var matchingLines: [LogLine] {
         var result = lines
 
         if levelFilter != .all {
@@ -403,7 +434,7 @@ public struct LogTableView: View {
             result = result.filter { $0.matches(searchText: query) }
         }
 
-        return result.sorted(using: sortOrder)
+        return result
     }
 
     private func copyLogsToClipboard() {

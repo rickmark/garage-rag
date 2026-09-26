@@ -97,6 +97,23 @@ final class LogTableViewTests: XCTestCase {
         XCTAssertEqual(view.filteredLines.count, 4)
     }
 
+    /// Past the cap the table keeps the newest lines, then sorts them as asked.
+    func testRowsShownKeepsTheNewestLinesPastTheCap() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let lines = (0..<10).map { index in
+            LogLine(date: start.addingTimeInterval(Double(index)), stream: .stdout, text: "line \(index)", source: "app")
+        }
+        let byDate = [KeyPathComparator(\LogLine.date, order: .forward)]
+
+        let shown = LogTableView.rowsShown(from: lines.shuffled(), sortOrder: byDate, limit: 3)
+        XCTAssertEqual(shown.map(\.text), ["line 7", "line 8", "line 9"])
+
+        let newestFirst = LogTableView.rowsShown(from: lines, sortOrder: [KeyPathComparator(\LogLine.date, order: .reverse)], limit: 3)
+        XCTAssertEqual(newestFirst.map(\.text), ["line 9", "line 8", "line 7"])
+
+        XCTAssertEqual(LogTableView.rowsShown(from: lines, sortOrder: byDate, limit: 50).count, 10)
+    }
+
     @MainActor
     func testLogTableViewHosting() {
         let lines = [
