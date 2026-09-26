@@ -83,10 +83,13 @@ check_helper() {
 
     [ -x "$executable" ] || { fail "$name: helper executable missing or not executable"; return; }
     file -b "$executable" | grep -q "Mach-O" || fail "$name: helper executable is not a Mach-O"
-    otool -l "$executable" | grep -q "path @executable_path/../../../../Frameworks (offset" \
+    local load_commands linked
+    load_commands="$(otool -l "$executable" 2>/dev/null || true)"
+    linked="$(otool -L "$executable" 2>/dev/null || true)"
+    grep -qF -- "path @executable_path/../../../../Frameworks (offset" <<<"$load_commands" \
         || fail "$name: helper lacks the @executable_path/../../../../Frameworks rpath"
-    otool -L "$executable" | grep -q "Python.framework" || fail "$name: helper does not link Python.framework"
-    otool -L "$executable" | grep -q "PythonXPCService.framework" \
+    grep -q -- "Python.framework" <<<"$linked" || fail "$name: helper does not link Python.framework"
+    grep -q -- "PythonXPCService.framework" <<<"$linked" \
         || fail "$name: helper does not link PythonXPCService.framework"
 
     local signing_id
@@ -119,7 +122,7 @@ else
 fi
 # A class compiled into the helper and into PythonXPCService.framework is loaded twice, and the
 # Objective-C runtime says so on stderr ("Class ... is implemented in both ...").
-if printf '%s' "$output" | grep -q "is implemented in both"; then
+if grep -q -- "is implemented in both" <<<"$output"; then
     fail "garage version loads classes twice:"
     printf '%s\n' "$output" | grep "is implemented in both" | sed 's/^/       /'
 else
@@ -137,14 +140,18 @@ else
     fail "expected one PythonXPCService.framework, in Contents/Frameworks; found $copies:"
     find "$app" -type d -name PythonXPCService.framework | sed 's/^/       /'
 fi
+# The descriptors are ones whose mangled names spell the type out: Swift's word substitution
+# shortens a name that repeats its module's words (GarageXPCServiceBase is 06GarageB4BaseCMn).
+# Symbol lists go to grep as here-strings, not through a pipe: `grep -q` exits at the first match,
+# and under pipefail the writer's SIGPIPE would turn that match into a failure.
 descriptors=(
-    'PythonXPCService20GarageXPCServiceBaseCMn'
-    'PythonKit11PyReferenceCMn'
+    '16GarageFileLoggerCMn'
+    '9PythonKit11PyReferenceCMn'
 )
 framework_binary="$app/Contents/Frameworks/PythonXPCService.framework/PythonXPCService"
 framework_symbols="$(/usr/bin/nm -U -j "$framework_binary" 2>/dev/null || true)"
 for descriptor in "${descriptors[@]}"; do
-    printf '%s\n' "$framework_symbols" | grep -q "$descriptor" \
+    grep -q -- "$descriptor" <<<"$framework_symbols" \
         || fail "PythonXPCService.framework does not define $descriptor; the duplicate check below cannot see it"
 done
 for binary in "$app"/Contents/Helpers/*.app/Contents/MacOS/* "$app"/Contents/XPCServices/*.xpc/Contents/MacOS/*; do
@@ -153,13 +160,13 @@ for binary in "$app"/Contents/Helpers/*.app/Contents/MacOS/* "$app"/Contents/XPC
     symbols="$(/usr/bin/nm -U -j "$binary" 2>/dev/null || true)"
     duplicated=""
     for descriptor in "${descriptors[@]}"; do
-        if printf '%s\n' "$symbols" | grep -q "$descriptor"; then
+        if grep -q -- "$descriptor" <<<"$symbols"; then
             duplicated="$duplicated $descriptor"
         fi
     done
     if [ -n "$duplicated" ]; then
         fail "$name defines what PythonXPCService.framework already carries:$duplicated"
-    elif /usr/bin/otool -L "$binary" | grep -q "PythonXPCService.framework/"; then
+    elif grep -q -- "PythonXPCService.framework/" <<<"$(/usr/bin/otool -L "$binary" 2>/dev/null || true)"; then
         pass "$name links PythonXPCService.framework and carries none of its code"
     else
         fail "$name does not link PythonXPCService.framework"
