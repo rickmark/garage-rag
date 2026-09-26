@@ -51,6 +51,11 @@ done
 # store app, its XPC services and the runner all reach, so the runner needs the App Group, signed
 # by the team that owns it (an ad hoc signature leaves it out of the group, and setup fails with
 # Cocoa error 513). Only this target's build settings change.
+#
+# Opt-in (GARAGE_UITEST_TEAM_SIGNING=1) until it works: signed this way, the runner hung at launch on
+# the M4 ("The test runner hung before establishing connection"), which stops every UI test, not just
+# the store ones. The default keeps Xcode's ad hoc runner, under which the other UI tests pass.
+[ "${GARAGE_UITEST_TEAM_SIGNING:-0}" = "1" ] || exit 0
 /usr/bin/python3 - "$pbxproj" "$BUILD_WORKSPACE_DIRECTORY/macapp/externals/GarageAppGroup.entitlements" <<'PY'
 import re
 import sys
