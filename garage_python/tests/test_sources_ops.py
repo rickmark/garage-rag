@@ -104,3 +104,22 @@ def test_a_source_neither_declares_nor_registers_is_unknown(tmp_path: Path) -> N
         pytest.raises(LookupError, match="no such source: notes"),
     ):
         ops.remove_source("notes")
+
+
+def test_adding_a_missing_root_is_an_argument_error(tmp_path: Path) -> None:
+    with _database(registered=False), pytest.raises(ops.SourceArgumentError, match="does not exist"):
+        ops.add_source("notes", tmp_path / "nope")
+
+
+def test_a_root_the_sandbox_may_not_look_at_is_still_added(tmp_path: Path) -> None:
+    """The App Store build's XPC service cannot stat outside its container; the ingest service, which
+    holds the folder grant, is the one that reads the root."""
+    root = tmp_path / "Documents"
+    with (
+        _database(registered=False) as session,
+        patch.object(Path, "stat", side_effect=PermissionError("Operation not permitted")),
+    ):
+        result = ops.add_source("notes", root)
+    session.add.assert_called_once()
+    assert result.root == root
+    assert result.created

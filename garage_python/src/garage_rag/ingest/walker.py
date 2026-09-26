@@ -21,6 +21,7 @@ from garage_rag.config import (
     DEPENDENCY_PATH_FRAGMENTS,
     DIAGNOSTIC_DIR_PATTERNS,
     DIAGNOSTIC_FILE_PATTERNS,
+    expand_home,
     get_settings,
 )
 from garage_rag.extract.dispatch import is_indexable
@@ -140,7 +141,7 @@ def walk(
     """
     limit = get_settings().max_file_bytes
     tally = stats if stats is not None else WalkStats()
-    root = root.expanduser()
+    root = expand_home(root)
     if is_inside_git_dir(root):
         log.info("Not walking %s: it is inside a git directory", root)
         return

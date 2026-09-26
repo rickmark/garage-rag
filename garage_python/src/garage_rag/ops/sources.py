@@ -14,6 +14,7 @@ from garage_rag.config import (
     CONFIG_FILENAME,
     ConfigError,
     Settings,
+    expand_home,
     flatten,
     get_settings,
     read_config_document,
@@ -59,9 +60,15 @@ def add_source(
     tier = TrustTier(trust)
     klass = CorpusClass(corpus_class)
 
-    expanded = Path(root).expanduser()
-    if not expanded.exists():
-        raise SourceArgumentError(f"{expanded} does not exist", "ROOT")
+    expanded = expand_home(root)
+    try:
+        expanded.stat()
+    except PermissionError:
+        # A sandboxed caller (the App Store build's XPC service) may not look outside its container;
+        # the ingest service, which holds the folder grant, reads the root.
+        pass
+    except OSError:
+        raise SourceArgumentError(f"{expanded} does not exist", "ROOT") from None
 
     with session_scope() as session:
         existing = session.query(Source).filter_by(slug=slug).one_or_none()
