@@ -288,7 +288,7 @@ final class SourcesPresentationTests: XCTestCase {
             sources: [documents],
             sandboxed: true
         )
-        XCTAssertEqual(items.first?.title, "documents needs permission")
+        XCTAssertEqual(items.first?.title, "Documents needs permission", "named by its preset's title")
         XCTAssertEqual(items.first?.primary.action, .grantFolder(slug: "documents", path: "~/Documents"))
         XCTAssertEqual(items.first?.secondary.map(\.action), [
             .tccPrompt(.documents, slug: "documents", path: "~/Documents"),

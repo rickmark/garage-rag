@@ -251,13 +251,13 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertEqual(messages.displayName, "Messages")
         XCTAssertEqual(messages.iconName, "message.fill")
         XCTAssertTrue(messages.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
-        XCTAssertTrue(messages.helpMessage.contains("Messages databases"))
+        XCTAssertTrue(messages.helpMessage.contains("SMS and iMessage history"))
 
         let mail = TCCPermissionCategory.mail
         XCTAssertEqual(mail.displayName, "Mail")
         XCTAssertEqual(mail.iconName, "envelope.fill")
         XCTAssertTrue(mail.systemSettingsURL?.absoluteString.contains("Privacy_AllFiles") == true)
-        XCTAssertTrue(mail.helpMessage.contains("Mail storage"))
+        XCTAssertTrue(mail.helpMessage.contains("Full Disk Access"))
 
         let docs = TCCPermissionCategory.documents
         XCTAssertEqual(docs.displayName, "Documents")
@@ -283,14 +283,14 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertEqual(smsResult.tccCategory, .messages)
         XCTAssertTrue(smsResult.requiresTCCPermission)
         XCTAssertEqual(smsResult.statusDescription, "Needs permission (Messages)")
-        XCTAssertTrue(smsResult.tccHelpMessage?.contains("Messages databases") == true)
+        XCTAssertTrue(smsResult.tccHelpMessage?.contains("SMS and iMessage history") == true)
 
         let mailResult = result.sourcePathResults[1]
         XCTAssertFalse(mailResult.isAccessible)
         XCTAssertEqual(mailResult.tccCategory, .mail)
         XCTAssertTrue(mailResult.requiresTCCPermission)
         XCTAssertEqual(mailResult.statusDescription, "Needs permission (Mail)")
-        XCTAssertTrue(mailResult.tccHelpMessage?.contains("Mail storage") == true)
+        XCTAssertTrue(mailResult.tccHelpMessage?.contains("Full Disk Access") == true)
     }
 
     func testUserDefaultsVolumeBookmarkStorePathSpecific() {
