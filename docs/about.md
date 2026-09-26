@@ -56,6 +56,8 @@ Rick publishes most of his work on [GitHub](https://github.com/rickmark). Beyond
 - [libibackup](https://github.com/hack-different/libibackup) for iOS backups, [apple-diagnostics-format](https://github.com/hack-different/apple-diagnostics-format) for Apple's wireless diagnostics files, [apple-baseband](https://github.com/hack-different/apple-baseband) for the modem baseband, and [uarp](https://github.com/hack-different/uarp) for Apple's accessory firmware update protocol;
 - from the T2 work, [pongo-flash](https://github.com/t8012/pongo-flash), a flash storage driver for checkra1n's pongoOS, and [RemoteServiceDiscovery](https://github.com/t8012/RemoteServiceDiscovery), a reverse-engineered rewrite of Apple's framework of that name.
 
+He also runs [AudienceKit](https://github.com/audience-kit), a platform with its own API, admin interface, and Swift and Ruby SDKs.
+
 His most widely used project is [apple-knowledge](https://github.com/hack-different/apple-knowledge), mentioned above, with over 1,400 stars on GitHub.
 
 ## Outside of work
