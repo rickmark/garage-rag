@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from garage_rag.config import ensure_psycopg_database_url, get_settings
+from garage_rag.config import ensure_psycopg_database_url, expand_home, get_settings
 from garage_rag.mcp_server.install import (
     ClientTarget,
     app_launcher,
@@ -164,7 +164,7 @@ def uninstall_mcp_server(
 ) -> tuple[Path, bool]:
     """Remove this server from one client's config; ``(path, removed)``."""
     if path is not None:
-        chosen = ClientTarget("custom", "custom path", path.expanduser().resolve())
+        chosen = ClientTarget("custom", "custom path", expand_home(path).resolve())
     else:
         targets = client_targets()
         if target not in targets:

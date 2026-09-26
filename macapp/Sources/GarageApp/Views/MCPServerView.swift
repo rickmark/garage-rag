@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PythonXPCService
 
 /// One citation in a `rag_ask` result.
 struct PlaygroundCitation: Decodable, Identifiable {
@@ -423,7 +424,7 @@ struct MCPServerView: View {
     }
 
     private func clientRow(_ client: MCPClientConfig, _ row: MCPClientRowPresentation) -> some View {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = GarageAppGroup.realHomeDirectory
 
         return HStack(alignment: .center, spacing: 10) {
             MenuBarSymbolCircle(symbol: row.symbol, tint: row.tint, isActive: row.isActive)
