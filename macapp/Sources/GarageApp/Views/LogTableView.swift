@@ -285,6 +285,7 @@ public struct LogTableView: View {
                     .foregroundStyle(line.level == .error ? .red : (line.level == .warning ? .orange : (line.level == .debug ? .secondary : .primary)))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("logs.row.message")
             }
         }
         .contextMenu(forSelectionType: UUID.self) { selectedIDs in
@@ -303,6 +304,7 @@ public struct LogTableView: View {
                 copyFilteredLogs()
             }
         }
+        .accessibilityIdentifier("logs.table")
     }
 
     // MARK: - Detail Inspector View
