@@ -37,7 +37,9 @@ final class GarageSocketsAndPeersTests: XCTestCase {
         let path = directory.path + "/grpc"
 
         let fd = try bindSocket(at: path)
-        XCTAssertEqual(listen(fd, 1), 0)
+        // Room for the probes below: each connects and closes without being accepted, and with a
+        // backlog of 1 the second is refused, which reads as a stale socket.
+        XCTAssertEqual(listen(fd, 16), 0)
         XCTAssertTrue(GarageSockets.isAcceptingConnections(at: path))
         GarageSockets.removeStaleSocket(at: path)
         XCTAssertTrue(FileManager.default.fileExists(atPath: path), "a live socket was removed")
