@@ -502,18 +502,32 @@ public final class VolumeAccessService: ObservableObject {
     private let bookmarkStore: VolumeBookmarkStoring
     private let fileSystem: FileSystemAccessing
     public let ingestClient: IngestClient?
+    /// Passes each grant on to the ingest service and the gRPC host. The bookmarks above are
+    /// app-scoped, so they give those separately sandboxed services nothing; the URL itself does.
+    public let folderAccess: FolderAccessRelaying
     private var isAccessingSecurityScope = false
 
     public init(
         bookmarkStore: VolumeBookmarkStoring? = nil,
         fileSystem: FileSystemAccessing? = nil,
-        ingestClient: IngestClient? = nil
+        ingestClient: IngestClient? = nil,
+        folderAccess: FolderAccessRelaying? = nil
     ) {
         let defaultStore: VolumeBookmarkStoring = isRunningInTestEnvironment ? MockVolumeBookmarkStore() : UserDefaultsVolumeBookmarkStore()
         let defaultFS: FileSystemAccessing = isRunningInTestEnvironment ? MockFileSystemAccessor() : DefaultFileSystemAccessor()
+        let defaultRelay: FolderAccessRelaying = isRunningInTestEnvironment ? RecordingFolderAccessRelay() : XPCFolderAccessRelay()
         self.bookmarkStore = bookmarkStore ?? defaultStore
         self.fileSystem = fileSystem ?? defaultFS
         self.ingestClient = ingestClient
+        self.folderAccess = folderAccess ?? defaultRelay
+    }
+
+    /// Hands `url`, which this process can reach right now, to the services that read user files.
+    private func relayGrant(_ url: URL, key: String) {
+        let relay = folderAccess
+        Task {
+            await relay.grant(url, key: key)
+        }
     }
 
     deinit {
@@ -583,21 +597,13 @@ public final class VolumeAccessService: ObservableObject {
                 }
 
                 _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
-                if let client = ingestClient {
-                    Task {
-                        _ = try? await client.setRootVolumeBookmark(bookmarkData)
-                    }
-                }
+                relayGrant(resolvedURL, key: GarageFolderAccessKey.root)
                 return true
             } else if fileSystem.isReadableFile(atPath: resolvedURL.path) {
                 activeRootURL = resolvedURL
                 status = .accessGranted(url: resolvedURL, isSecurityScoped: false)
                 _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
-                if let client = ingestClient {
-                    Task {
-                        _ = try? await client.setRootVolumeBookmark(bookmarkData)
-                    }
-                }
+                relayGrant(resolvedURL, key: GarageFolderAccessKey.root)
                 return true
             } else {
                 status = .accessDenied(reason: "Failed to start accessing security-scoped resource for \(resolvedURL.path)")
@@ -618,15 +624,11 @@ public final class VolumeAccessService: ObservableObject {
             if let resolvedURL = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
                 if resolvedURL.startAccessingSecurityScopedResource() {
                     activeSourceURLs[path] = resolvedURL
+                    relayGrant(resolvedURL, key: GarageFolderAccessKey.source(path))
                 }
             }
             #endif
             _ = IngestEngine.shared.setSourceBookmark(path: path, bookmarkData: data)
-            if let client = ingestClient {
-                Task {
-                    _ = try? await client.setSourceBookmark(path: path, bookmarkData: data)
-                }
-            }
         }
     }
 
@@ -770,12 +772,8 @@ public final class VolumeAccessService: ObservableObject {
         }
         bookmarkStore.saveBookmarkData(bookmarkData, forPath: resolvedPath)
         _ = IngestEngine.shared.setSourceBookmark(path: resolvedPath, bookmarkData: bookmarkData)
-        if let client = ingestClient {
-            Task {
-                _ = try? await client.setSourceBookmark(path: resolvedPath, bookmarkData: bookmarkData)
-            }
-        }
         #endif
+        relayGrant(url, key: GarageFolderAccessKey.source(resolvedPath))
 
         _ = testFullVolumeAccess()
     }
@@ -856,12 +854,8 @@ public final class VolumeAccessService: ObservableObject {
 
         if let bookmarkData = bookmarkStore.loadBookmarkData() {
             _ = IngestEngine.shared.setRootVolumeBookmark(bookmarkData)
-            if let client = ingestClient {
-                Task {
-                    _ = try? await client.setRootVolumeBookmark(bookmarkData)
-                }
-            }
         }
+        relayGrant(url, key: GarageFolderAccessKey.root)
 
         _ = testFullVolumeAccess()
     }
@@ -875,10 +869,9 @@ public final class VolumeAccessService: ObservableObject {
         lastTestResult = nil
         status = .notConfigured
         IngestEngine.shared.revokeAccess()
-        if let client = ingestClient {
-            Task {
-                _ = try? await client.revokeAccess()
-            }
+        let relay = folderAccess
+        Task {
+            await relay.revokeAll()
         }
     }
 

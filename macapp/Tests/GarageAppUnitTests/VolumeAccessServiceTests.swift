@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import PythonXPCService
 @testable import GarageApp
 
 @MainActor
@@ -50,6 +51,59 @@ final class VolumeAccessServiceTests: XCTestCase {
         XCTAssertEqual(mockStore.storedPath, testDir.path)
         XCTAssertEqual(service.activeRootURL?.path, testDir.path)
         XCTAssertTrue(service.status.isGranted)
+    }
+
+    /// Polls until `condition` holds; the relay runs in a Task.
+    private func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// The services get the granted URL itself, which carries their sandbox extension; the app's
+    /// app-scoped bookmark bytes would resolve to nothing in them.
+    func testGrantAccessRelaysTheRootURLToTheServices() async throws {
+        let relay = RecordingFolderAccessRelay()
+        let mockFS = MockFileSystemAccessor()
+        let testDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        mockFS.readablePaths = [testDir.path]
+
+        let service = VolumeAccessService(bookmarkStore: MockVolumeBookmarkStore(), fileSystem: mockFS, folderAccess: relay)
+        try service.grantAccess(for: testDir)
+
+        await waitUntil { !relay.grants.isEmpty }
+        XCTAssertEqual(relay.grants.map { $0.key }, [GarageFolderAccessKey.root])
+        XCTAssertEqual(relay.grants.first?.path, testDir.path)
+    }
+
+    func testGrantSourceAccessRelaysUnderTheSourceKey() async throws {
+        let relay = RecordingFolderAccessRelay()
+        let mockFS = MockFileSystemAccessor()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("garage-source-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let service = VolumeAccessService(bookmarkStore: MockVolumeBookmarkStore(), fileSystem: mockFS, folderAccess: relay)
+        try service.grantSourceAccess(for: folder, forSourcePath: folder.path)
+
+        await waitUntil { !relay.grants.isEmpty }
+        XCTAssertEqual(relay.grants.map { $0.key }, [GarageFolderAccessKey.source(folder.path)])
+        XCTAssertEqual(relay.grants.first?.path, folder.path)
+    }
+
+    func testRevokeAccessRevokesTheServicesGrants() async throws {
+        let relay = RecordingFolderAccessRelay()
+        let mockFS = MockFileSystemAccessor()
+        let testDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        mockFS.readablePaths = [testDir.path]
+
+        let service = VolumeAccessService(bookmarkStore: MockVolumeBookmarkStore(), fileSystem: mockFS, folderAccess: relay)
+        try service.grantAccess(for: testDir)
+        service.revokeAccess()
+
+        await waitUntil { relay.revocations > 0 }
+        XCTAssertEqual(relay.revocations, 1)
     }
 
     func testRevokeAccessClearsBookmarkAndState() throws {

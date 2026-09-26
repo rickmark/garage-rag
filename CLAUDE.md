@@ -434,6 +434,11 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
   (in `XPCServiceManager`) fetches the endpoint of LlamaXPCService's anonymous listener
   (`getListenerEndpoint`) and hands it to each (`setLlamaEndpoint`, `GarageLlamaEndpointStore`),
   again whenever either side's connection is lost; until then loads fail with "endpoint not handed over yet".
+- Folder grants reach the sandboxed services as `URL`s over NSXPC, never as the app's bookmark bytes
+  (app-scoped, so they resolve to no access in another process). `VolumeAccessService` hands each
+  grant (root, per source, and an MCP config file picked in a panel) through `XPCFolderAccessRelay` to
+  the ingest service and GarageXPCService (Scan, AddSource, McpInstall), whose
+  `GarageFolderAccessStore` starts accessing it and keeps a bookmark of its own for relaunches.
 - `GarageUpdater` wraps Sparkle (`//ext/sparkle`) for Developer ID builds; App Store builds
   `select()` in an inert backend instead, since Apple rejects self-updating apps, and Sparkle
   never enters that dependency graph. The appcast lives at `docs/appcast.xml` on the Jekyll

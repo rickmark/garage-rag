@@ -13,11 +13,13 @@ public protocol GarageIngestProgressReceiverProtocol: GarageXPCLogReceiverProtoc
 
 /// Objective-C protocol exposed by GarageIngestXPCService over NSXPC.
 @objc(GarageIngestXPCServiceProtocol)
-public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol {
+public protocol GarageIngestXPCServiceProtocol: GarageCommonXPCServiceProtocol, GarageFolderAccessReceiverProtocol {
     /// Ingest a source by slug (or "*") with JSON-serialized options.
     func ingestSource(slug: String, optionsJson: String, with reply: @escaping (Bool, String?) -> Void)
 
     /// Set root volume security-scoped bookmark data so the sandboxed XPC service can access the filesystem.
+    /// The app's bookmarks are app-scoped and resolve to no access in this service when sandboxed; the
+    /// app grants folders with `grantFolderAccess` (`GarageFolderAccessReceiverProtocol`) instead.
     func setRootVolumeBookmark(_ bookmarkData: Data, with reply: @escaping (Bool, String?) -> Void)
 
     /// Set security-scoped bookmark data for a specific source directory.
