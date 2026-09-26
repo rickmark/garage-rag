@@ -54,24 +54,36 @@ final class LogsUITests: GarageUITestCase {
         field.typeText(text)
     }
 
+    /// The log table. Found by identifier: the sidebar is a List, which accessibility may also
+    /// report as a table (or outline), and it comes first, so `app.tables.firstMatch` read the
+    /// sidebar's "Status".
+    private var logTable: XCUIElement {
+        let identified = app.descendants(matching: .any).matching(identifier: "logs.table").firstMatch
+        if identified.exists { return identified }
+        return app.tables.firstMatch.exists ? app.tables.firstMatch : app.outlines.firstMatch
+    }
+
     /// The table's texts: static texts and, for the Message column, which is selectable, text views
     /// (accessibility need not report selectable text as a static text, nor its rows as table rows).
     private var tableTexts: XCUIElementQuery {
-        // A SwiftUI Table is an NSTableView, reported as a table; an outline too, on some systems.
-        let table = app.tables.firstMatch.exists ? app.tables.firstMatch : app.outlines.firstMatch
-        return table.descendants(matching: .any).matching(NSPredicate(
+        logTable.descendants(matching: .any).matching(NSPredicate(
             format: "elementType == %d OR elementType == %d",
             XCUIElement.ElementType.staticText.rawValue,
             XCUIElement.ElementType.textView.rawValue
         ))
     }
 
-    /// A shown row's message: the longest text of the table's first row. Only the first row is
-    /// read: the Unified Log holds thousands of rows after launch, and resolving a query over every
-    /// text in them outlasts XCUITest's evaluation timeout.
+    /// A shown row's message: the first Message cell (`logs.row.message`), or failing that the
+    /// longest text of the table's first row. Only the first row is read: resolving a query over
+    /// every text of thousands of rows outlasts XCUITest's evaluation timeout.
     private func visibleRowMessage() -> String? {
         guard waitUntil(timeout: 10, { self.tableTexts.firstMatch.exists }) else { return nil }
-        let table = app.tables.firstMatch.exists ? app.tables.firstMatch : app.outlines.firstMatch
+        let table = logTable
+        let messageCell = table.descendants(matching: .any).matching(identifier: "logs.row.message").firstMatch
+        if messageCell.exists {
+            let message = shownText(of: messageCell)
+            if !message.isEmpty { return message }
+        }
         let row = table.tableRows.firstMatch.exists ? table.tableRows.firstMatch : table.outlineRows.firstMatch
         let texts: [String]
         if row.exists {
