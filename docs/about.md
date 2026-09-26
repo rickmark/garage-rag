@@ -27,12 +27,19 @@ Rick is part of [Hack Different](https://github.com/hack-different), an open-sou
 
 ## Research and open source
 
-Rick publishes most of his work on [GitHub](https://github.com/rickmark). Beyond the T2 work, it includes:
+Rick publishes most of his work on [GitHub](https://github.com/rickmark). Beyond the T2 work, it falls into a few areas.
 
-**Firmware and devices.**
+**Firmware and boot security.**
+- [mojo_thor](https://github.com/rickmark/mojo_thor) (2017) is research into malware that infects the EFI and SMC firmware of MacBooks.
 - [peiutil](https://github.com/rickmark/peiutil) (2017) converts UEFI PEI images (TE and VZ files) to PE, so they can be disassembled.
 - [apple_ssv](https://github.com/rickmark/apple_ssv) (2020) explores macOS Signed System Volumes.
+- [windows-bluepill](https://github.com/rickmark/windows-bluepill) (2022) looks at breaking a system's security without breaking Secure Boot.
+
+**Ports, cables and radios.**
+- [badusb](https://github.com/rickmark/badusb) (2019) detects and exploits time-of-check/time-of-use gaps in USB mass storage.
+- [lightning_strike](https://github.com/rickmark/lightning_strike) (2019) and [lightning_dfu](https://github.com/rickmark/lightning_dfu) (2021) study the security of the Lightning connector.
 - [apple_utdm](https://github.com/rickmark/apple_utdm) (2020) is a Linux kernel driver for Apple's USB Target Disk Mode.
+- [apple-malicious-baseband](https://github.com/rickmark/apple-malicious-baseband) (2022) documents a malicious cellular baseband image that carried Apple's signature.
 
 **Libraries for Apple formats and services.** [libapfs](https://github.com/rickmark/libapfs) for the Apple File System, [pyxar](https://github.com/rickmark/pyxar) for XAR archives, [libiupdate](https://github.com/rickmark/libiupdate) for Apple software updates, [libicloud](https://github.com/rickmark/libicloud) for iCloud, [apple_net_recovery](https://github.com/rickmark/apple_net_recovery) for Internet Recovery, and Rust reimaginings of libimobiledevice ([libidevice](https://github.com/rickmark/libidevice)) and XPC ([libxpc](https://github.com/rickmark/libxpc)).
 
