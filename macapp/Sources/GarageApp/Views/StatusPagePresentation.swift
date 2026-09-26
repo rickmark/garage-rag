@@ -875,8 +875,7 @@ struct ServiceRowPresentation: Equatable, Identifiable {
                 parts = [MenuBarStatus.firstLine(test.summary) ?? "The test failed"]
                 isError = true
             } else if let report, !report.tests.isEmpty {
-                let passed = report.tests.filter { $0.status == .passed }.count
-                parts.append("\(passed) of \(report.tests.count) self tests passed")
+                parts.append(selfTestSummary(report.tests))
                 if !report.failedTests.isEmpty { isError = true }
             } else if let test, test.isSuccess {
                 parts.append("test passed")
@@ -889,5 +888,18 @@ struct ServiceRowPresentation: Equatable, Identifiable {
             detail: parts.joined(separator: " · "),
             detailIsError: isError
         )
+    }
+
+    /// "10 passed, 2 skipped": a skipped test (one with nothing to check, such as a helper started
+    /// without a database) is neither a pass nor a failure, so "10 of 12 passed" would read as two
+    /// failures.
+    static func selfTestSummary(_ tests: [GarageXPCTestResult]) -> String {
+        let passed = tests.filter { $0.status == .passed }.count
+        let failed = tests.filter { $0.status == .failed }.count
+        let skipped = tests.filter { $0.status == .skipped }.count
+        var parts = ["\(passed) passed"]
+        if failed > 0 { parts.append("\(failed) failed") }
+        if skipped > 0 { parts.append("\(skipped) skipped") }
+        return parts.joined(separator: ", ")
     }
 }

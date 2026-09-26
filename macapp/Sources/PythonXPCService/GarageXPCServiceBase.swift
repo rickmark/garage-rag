@@ -478,8 +478,9 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         host.perform { [self] in
             let results = performSelfTests()
             let failed = results.filter { $0.status == .failed }
+            let skipped = results.filter { $0.status == .skipped }.count
             let summary = failed.isEmpty
-                ? "All \(results.count) self tests passed"
+                ? (skipped == 0 ? "All \(results.count) self tests passed" : "\(results.count - skipped) self tests passed, \(skipped) skipped")
                 : "\(failed.count) of \(results.count) self tests failed: \(failed.map { $0.name }.joined(separator: ", "))"
             let details = results.map { "[\($0.status.rawValue.uppercased())] \($0.name): \($0.summary)\(($0.details.isEmpty || $0.status == .passed) ? "" : "\n\($0.details)")" }.joined(separator: "\n")
             reply(failed.isEmpty, summary, details)
