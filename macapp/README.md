@@ -85,6 +85,11 @@ instantiated as `GarageApp` in `Sources/GarageApp/BUILD.bazel`):
   hidden (`--background`: services start, no window) and waits for Postgres; it then reads the
   database password from the Keychain and exports `GARAGE_DATABASE_URL` itself. An explicit
   `GARAGE_DATABASE_URL` wins; `GARAGE_NO_APP_LAUNCH=1` fails instead of opening the app.
+  `garage quit` is the other way round: the launcher answers it before Python starts, posts
+  `GarageAppLaunch.quitNotification` (a distributed notification, which the sandboxed launcher may
+  send where an Apple event to the app would be refused or ask for Automation consent), and waits up
+  to 30s for every running Garage to exit. The app quits as its Quit menu item does. It never
+  starts the app, and says so when Garage is not running.
   `garage-mcp` does not wait for Postgres (only its tool calls use the database, and the MCP
   handshake must not sit behind a cold start) unless the app has never stored a password, and
   never mirrors its stdout (the MCP stream) into the unified log. The launcher finds the app it

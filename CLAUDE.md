@@ -409,7 +409,10 @@ built-in `default`; `enrich-facts` runs every enabled one (or `--prompt NAME`), 
   database and nothing listens on 14824
   they open the app hidden (`--background`), then read the Postgres password from the Keychain
   and export `GARAGE_DATABASE_URL`; stdio registrations therefore carry no database URL. Only
-  these bundled launchers do this; `garage` from a venv is untouched.
+  these bundled launchers do this; `garage` from a venv is untouched. `garage quit` (launcher only,
+  never Python) posts a distributed notification that makes every running Garage quit as its Quit
+  menu item does, and waits for it; use it before a UI test run, which refuses to share the Mac
+  with a running Garage.
 - `GarageMCPService` owns a separate long-lived `garage-mcp` HTTP process at
   `127.0.0.1:8787/mcp`; Claude Desktop/Code instead spawn their own stdio `garage-mcp` via `garage
   mcp-install`, so both transports coexist.

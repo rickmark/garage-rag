@@ -287,4 +287,9 @@ public enum GarageAppLaunch {
     /// `--data-directory <path>`: run on this data folder instead of the real one, with no migration,
     /// no link and a separate Keychain item. For UI tests, which reset the database.
     public static let dataDirectoryArgument = "--data-directory"
+
+    /// Posted by `garage quit` as a distributed notification: every running Garage quits as its Quit
+    /// menu item would. A notification rather than an Apple event, which the sandboxed App Store
+    /// launcher may not send and which would ask for Automation consent.
+    public static let quitNotification = "me.rickmark.garage-rag.quit"
 }
