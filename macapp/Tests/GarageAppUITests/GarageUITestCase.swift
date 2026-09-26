@@ -208,6 +208,9 @@ class GarageUITestCase: XCTestCase {
         let margin: CGFloat = 60
         var step: CGFloat = -120
         for _ in 0..<40 {
+            // Reading the frame of an element that has gone (a Stop button whose run just ended) fails
+            // the test outright; leave it to the caller's own check instead.
+            guard element.exists else { return }
             let visible = scrollView.frame.insetBy(dx: 0, dy: min(margin, scrollView.frame.height / 4))
             let frame = element.frame
             let offset: CGFloat
@@ -222,6 +225,7 @@ class GarageUITestCase: XCTestCase {
             // learn it from the first step: flip the sign when the element moved the wrong way.
             let delta = offset > 0 ? step : -step
             scrollView.scroll(byDeltaX: 0, deltaY: delta)
+            guard element.exists else { return }
             let moved = element.frame.minY - frame.minY
             if moved != 0, (moved > 0) == (offset > 0) {
                 step = -step

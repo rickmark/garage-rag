@@ -33,6 +33,20 @@ final class SourcesUITests: GarageUITestCase {
         )
     }
 
+    /// Scrolls the Sources page until `element` is in the accessibility tree. The location cards sit in
+    /// a lazy grid, which leaves a card scrolled out of view out of the tree, and adding a source
+    /// through the custom form leaves the page scrolled down to it. Which way a delta scrolls depends on
+    /// the system setting, so it tries one way, then the other.
+    private func scrollIntoTree(_ element: XCUIElement) -> Bool {
+        let page = app.scrollViews.containing(NSPredicate(format: "identifier == %@", "sources.addFolder")).firstMatch
+        guard page.exists else { return element.exists }
+        for delta in [CGFloat](repeating: 200, count: 10) + [CGFloat](repeating: -200, count: 20) {
+            if element.exists { return true }
+            page.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        return element.exists
+    }
+
     func testToolbarOffersCombinedActions() throws {
         try launchApp()
         waitForBackend()
@@ -210,8 +224,9 @@ final class SourcesUITests: GarageUITestCase {
 
         addCustomSource(slug: "documents", root: folder)
 
-        // The grid is rebuilt when the source list refreshes, and reading a label while the card is
-        // briefly gone fails the test outright, so check that it exists first.
+        XCTAssertTrue(scrollIntoTree(card), "the Documents card is gone after adding a source")
+        // Reading a label while the card is briefly gone (the grid is rebuilt when the source list
+        // refreshes) fails the test outright, so check that it exists first.
         XCTAssertTrue(
             waitUntil(timeout: 15) { card.exists && card.label == "Documents, added" },
             "the Documents card does not say it is added (\(card.exists ? card.label : "no card"))"
@@ -244,7 +259,12 @@ final class SourcesUITests: GarageUITestCase {
         let stop = element(identifier: "sources.cancelAll")
         XCTAssertTrue(stop.waitForExistence(timeout: 30), "the run shows no Stop button")
         XCTAssertTrue(element(identifier: "sources.row.\(slug).cancel").exists, "the running source's row offers no Cancel")
-        click(stop)
+        reveal(stop)
+        let activityTitle = element(identifier: "sources.activity.title")
+        guard stop.exists else {
+            return XCTFail("the Stop button went away before it could be pressed (activity: \(activityTitle.exists ? shownText(of: activityTitle) : "none"))")
+        }
+        stop.click()
 
         XCTAssertTrue(waitUntil(timeout: 120) { !stop.exists }, "the run did not stop")
         let title = element(identifier: "sources.activity.title")
