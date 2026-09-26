@@ -280,7 +280,11 @@ public struct SearchView: View {
                 .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
 
             if let item = selectedResult {
+                // Rebuilt for each hit: kept across hits, the inspector's selectable text went on
+                // reporting the first hit to accessibility after another was clicked, and its scroll
+                // position carried over.
                 resultDetailInspector(for: item)
+                    .id(item.id)
                     .frame(minWidth: 280, idealWidth: 360, maxWidth: 500, maxHeight: .infinity)
             }
         }

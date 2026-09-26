@@ -66,10 +66,24 @@ final class LogsUITests: GarageUITestCase {
         ))
     }
 
-    /// A shown row's message: the longest of the first texts the table holds.
+    /// A shown row's message: the longest text of the table's first row. Only the first row is
+    /// read: the Unified Log holds thousands of rows after launch, and resolving a query over every
+    /// text in them outlasts XCUITest's evaluation timeout.
     private func visibleRowMessage() -> String? {
-        guard waitUntil(timeout: 10, { self.tableTexts.count > 0 }) else { return nil }
-        let texts = tableTexts.allElementsBoundByIndex.prefix(40).map { shownText(of: $0) }
+        guard waitUntil(timeout: 10, { self.tableTexts.firstMatch.exists }) else { return nil }
+        let table = app.tables.firstMatch.exists ? app.tables.firstMatch : app.outlines.firstMatch
+        let row = table.tableRows.firstMatch.exists ? table.tableRows.firstMatch : table.outlineRows.firstMatch
+        let texts: [String]
+        if row.exists {
+            texts = row.descendants(matching: .any).matching(NSPredicate(
+                format: "elementType == %d OR elementType == %d",
+                XCUIElement.ElementType.staticText.rawValue,
+                XCUIElement.ElementType.textView.rawValue
+            )).allElementsBoundByIndex.map { shownText(of: $0) }
+        } else {
+            // No rows reported as rows: take the first few texts one at a time rather than all of them.
+            texts = (0..<8).map { tableTexts.element(boundBy: $0) }.filter(\.exists).map { shownText(of: $0) }
+        }
         return texts.max { $0.count < $1.count }
     }
 
@@ -149,13 +163,13 @@ final class LogsUITests: GarageUITestCase {
         selectSource("Ingest")
         XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "an ingest left no lines under Ingest")
         // The ingest worker logs "Initiating ingestion for source '<slug>'" through the XPC log stream.
-        // Filtered by it, the table holds only such lines, so one is on screen; the filter field holds
-        // the name too, which is why the row is looked for inside the table.
+        // The filter matches a line's message, source and level, and only a message can hold this
+        // run's new name, so any row left after filtering by it is a line from this ingest. The badge
+        // counts them; the rows themselves are not read, since a selectable message need not report
+        // its text to accessibility as a value or label.
         filter(by: slug)
-        let namingRow = tableTexts
-            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", slug, slug)).firstMatch
         XCTAssertTrue(
-            waitUntil(timeout: 30) { namingRow.exists },
+            waitUntil(timeout: 30) { (self.counts()?.visible ?? 0) >= 1 },
             "no line under Ingest names the source \(slug) (\(String(describing: counts())))"
         )
     }
