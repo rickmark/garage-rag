@@ -1177,12 +1177,22 @@ public final class XPCServiceManager: ObservableObject {
     }
 
     /// Whether the engine's health JSON (`LlamaCppEngine.handleHealth`) says a model is loaded:
-    /// status "ok", rather than "no_model_loaded" or "loading model".
-    nonisolated static func llamaHealthReportsLoadedModel(_ json: String) -> Bool {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
-        return object["status"] as? String == "ok"
+    /// status "ok" is true, "no_model_loaded" or "loading model" is false. Anything else (no reply,
+    /// not JSON, no or an unknown status) throws, so a broken health route fails the test rather
+    /// than reading as an engine with no model.
+    nonisolated static func llamaHealthReportsLoadedModel(_ json: String?) throws -> Bool {
+        guard let json, let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = object["status"] as? String
+        else {
+            throw NSError(domain: "LlamaTest", code: -2, userInfo: [NSLocalizedDescriptionKey: "Llama health returned no status: \(json ?? "no reply")"])
+        }
+        switch status {
+        case "ok": return true
+        case "no_model_loaded", "loading model": return false
+        default:
+            throw NSError(domain: "LlamaTest", code: -3, userInfo: [NSLocalizedDescriptionKey: "Llama health returned an unknown status: \(status)"])
+        }
     }
 
     private func runLlamaDiagnosticTest() async -> ServiceDiagnosticTestResult {
@@ -1224,7 +1234,7 @@ public final class XPCServiceManager: ObservableObject {
             // Tokenizing needs a loaded model. With none loaded (no default model yet, or before its
             // load finishes) the engine is still healthy, so the tokenizer check is skipped, as the
             // service's own Model File self test is, instead of failing the row.
-            let modelLoaded = healthResponse.map(Self.llamaHealthReportsLoadedModel) ?? false
+            let modelLoaded = try Self.llamaHealthReportsLoadedModel(healthResponse)
             var tokenizeResponse: String?
             if modelLoaded {
                 tokenizeResponse = try await withCheckedThrowingContinuation { continuation in
