@@ -47,6 +47,14 @@ Rick publishes most of his work on [GitHub](https://github.com/rickmark). Beyond
 - [isafety](https://github.com/rickmark/isafety) (2020) examines iPhones and iPads for security and safety threats.
 - [chainfix](https://github.com/rickmark/chainfix) (2024) checks and repairs Keychain and iCloud Keychain.
 
+**In the organizations he runs.** Rick also owns the [Hack Different](https://github.com/hack-different) and [Team t8012](https://github.com/t8012) organizations on GitHub. Besides apple-knowledge, their projects include:
+- [webmuxd](https://github.com/hack-different/webmuxd) and [go-webmuxd](https://github.com/hack-different/go-webmuxd), which talk to iPhones and iPads from a web browser over WebUSB, and [demuxusb](https://github.com/hack-different/demuxusb), which analyzes their USB sessions;
+- [smcutil](https://github.com/hack-different/smcutil) for Apple's SMC payloads, [efivalidate](https://github.com/hack-different/efivalidate) for validating the firmware of Macs up to the T1, and [libapplefw](https://github.com/hack-different/libapplefw) for Apple firmware images;
+- [go-aapl-integrity](https://github.com/hack-different/go-aapl-integrity) and [cnklverify](https://github.com/t8012/cnklverify) for Apple's integrity formats (img4, chunklists, trust caches), and [secure_emu](https://github.com/hack-different/secure_emu), which runs SecureROM under the Unicorn emulator;
+- [mootool](https://github.com/hack-different/mootool) for Mach-O files, [yolo_dsc](https://github.com/hack-different/yolo_dsc) for extracting the dyld shared cache, [symbol-server](https://github.com/hack-different/symbol-server) for Apple symbols, and [xnudex](https://github.com/hack-different/xnudex) for indexing XNU OS images;
+- [libibackup](https://github.com/hack-different/libibackup) for iOS backups, [apple-diagnostics-format](https://github.com/hack-different/apple-diagnostics-format) for Apple's wireless diagnostics files, [apple-baseband](https://github.com/hack-different/apple-baseband) for the modem baseband, and [uarp](https://github.com/hack-different/uarp) for Apple's accessory firmware update protocol;
+- from the T2 work, [pongo-flash](https://github.com/t8012/pongo-flash), a flash storage driver for checkra1n's pongoOS, and [RemoteServiceDiscovery](https://github.com/t8012/RemoteServiceDiscovery), a reverse-engineered rewrite of Apple's framework of that name.
+
 His most widely used project is [apple-knowledge](https://github.com/hack-different/apple-knowledge), mentioned above, with over 1,400 stars on GitHub.
 
 ## Outside of work
