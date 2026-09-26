@@ -11,6 +11,7 @@ swift_library(
     srcs = [
         "GarageAppGroup.swift",
         "GarageCommonXPCProtocol.swift",
+        "GarageFolderAccess.swift",
         "GarageLlamaEndpoint.swift",
         "GaragePostgresEndpoint.swift",
     ],

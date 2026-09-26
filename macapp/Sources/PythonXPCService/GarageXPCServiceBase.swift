@@ -18,7 +18,7 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "me.rickm
 /// Subclasses override `additionalSelfTests()`, `registerManagedServices(in:)`, `exportedInterface`
 /// and implement their service specific protocol methods, wrapping Python calls in
 /// `GaragePythonRuntime.shared.withGIL { ... }`.
-open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXPCServiceProtocol, GarageLlamaEndpointReceiverProtocol {
+open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXPCServiceProtocol, GarageLlamaEndpointReceiverProtocol, GarageFolderAccessReceiverProtocol {
     public enum Lifecycle: String, Sendable {
         case bootstrapping
         case ready
@@ -108,6 +108,12 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         let info = ProcessInfo.processInfo
         logger.info("\(self.serviceName, privacy: .public) starting (pid \(info.processIdentifier, privacy: .public), bundle \(Bundle.main.bundleIdentifier ?? "?", privacy: .public), macOS \(info.operatingSystemVersionString, privacy: .public))")
         GarageXPCOutputCapture.shared.log(message: "\(serviceName) starting (pid \(info.processIdentifier)); logs in \(GarageFileLogger.logsDirectoryURL.path)")
+
+        // Folder grants this service saved before a relaunch, ahead of any work that reads user files.
+        let restored = GarageFolderAccessStore.shared.restorePersisted()
+        if !restored.isEmpty {
+            GarageXPCOutputCapture.shared.log(message: "Restored access to \(restored.count) granted folder(s)")
+        }
 
         if let crash = GarageXPCCrashHandler.lastCrashReport(serviceName: serviceName) {
             logger.warning("\(self.serviceName, privacy: .public) found a crash report from a previous run (\(crash.count, privacy: .public) bytes)")
@@ -547,6 +553,25 @@ open class GarageXPCServiceBase: NSObject, NSXPCListenerDelegate, GarageCommonXP
         GarageXPCOutputCapture.shared.log(message: "Received the LlamaXPCService endpoint from the app")
         reply(true, "LlamaXPCService endpoint received by \(serviceName)")
         rerunSelfTests(named: [GarageLlamaEndpointStore.dependentSelfTestName])
+    }
+
+    // MARK: - GarageFolderAccessReceiverProtocol
+
+    /// Starts accessing a folder or file the app granted (the URL carries this process's sandbox
+    /// extension) and keeps a bookmark of its own for relaunches. Services whose exported protocol
+    /// does not adopt `GarageFolderAccessReceiverProtocol` never receive this call.
+    public func grantFolderAccess(_ url: URL, key: String, with reply: @escaping (Bool, String?) -> Void) {
+        let result = GarageFolderAccessStore.shared.grant(url, key: key)
+        logger.info("\(self.serviceName, privacy: .public): folder grant '\(key, privacy: .public)': \(result.message, privacy: .public)")
+        GarageXPCOutputCapture.shared.log(level: result.success ? "INFO" : "WARN", message: result.message)
+        reply(result.success, result.message)
+    }
+
+    public func revokeAllFolderAccess(with reply: @escaping (Bool) -> Void) {
+        GarageFolderAccessStore.shared.revokeAll()
+        logger.info("\(self.serviceName, privacy: .public): revoked every folder grant")
+        GarageXPCOutputCapture.shared.log(message: "Revoked every folder grant")
+        reply(true)
     }
 
     // MARK: - Helpers for subclasses
