@@ -1176,6 +1176,15 @@ public final class XPCServiceManager: ObservableObject {
         }
     }
 
+    /// Whether the engine's health JSON (`LlamaCppEngine.handleHealth`) says a model is loaded:
+    /// status "ok", rather than "no_model_loaded" or "loading model".
+    nonisolated static func llamaHealthReportsLoadedModel(_ json: String) -> Bool {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["status"] as? String == "ok"
+    }
+
     private func runLlamaDiagnosticTest() async -> ServiceDiagnosticTestResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         let bundleId = "me.rickmark.garage-rag.llama-xpc"
@@ -1212,24 +1221,35 @@ public final class XPCServiceManager: ObservableObject {
                 }
             }
 
-            let tokenizeResponse: String? = try await withCheckedThrowingContinuation { continuation in
-                let relay = ContinuationRelay(continuation)
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    relay.resume(throwing: error)
-                }) as? LlamaXPCServiceProtocol else {
-                    relay.resume(returning: nil)
-                    return
-                }
-                proxy.tokenize(requestJson: "{\"content\": \"Garage local AI prompt test.\"}") { reply, err in
-                    if let err = err { relay.resume(throwing: err) }
-                    else { relay.resume(returning: reply) }
+            // Tokenizing needs a loaded model. With none loaded (no default model yet, or before its
+            // load finishes) the engine is still healthy, so the tokenizer check is skipped, as the
+            // service's own Model File self test is, instead of failing the row.
+            let modelLoaded = healthResponse.map(Self.llamaHealthReportsLoadedModel) ?? false
+            var tokenizeResponse: String?
+            if modelLoaded {
+                tokenizeResponse = try await withCheckedThrowingContinuation { continuation in
+                    let relay = ContinuationRelay(continuation)
+                    guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                        relay.resume(throwing: error)
+                    }) as? LlamaXPCServiceProtocol else {
+                        relay.resume(returning: nil)
+                        return
+                    }
+                    proxy.tokenize(requestJson: "{\"content\": \"Garage local AI prompt test.\"}") { reply, err in
+                        if let err = err { relay.resume(throwing: err) }
+                        else { relay.resume(returning: reply) }
+                    }
                 }
             }
 
             let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
             var details = "Ping response: \(pingResponse)\n"
             if let health = healthResponse { details += "Health status: \(health)\n" }
-            if let tok = tokenizeResponse { details += "Tokenize test: \(tok)\n" }
+            if let tok = tokenizeResponse {
+                details += "Tokenize test: \(tok)\n"
+            } else if !modelLoaded {
+                details += "Tokenize test: skipped, no model loaded\n"
+            }
             details += "Latency: \(String(format: "%.2f", elapsed)) ms"
 
             return ServiceDiagnosticTestResult(
@@ -1238,7 +1258,9 @@ public final class XPCServiceManager: ObservableObject {
                 testDescription: ServiceDiagnosticTest.llama.description,
                 isSuccess: true,
                 durationMs: elapsed,
-                summary: "Llama XPC tokenizer & health check completed in \(String(format: "%.1f", elapsed))ms",
+                summary: modelLoaded
+                    ? "Llama XPC tokenizer & health check completed in \(String(format: "%.1f", elapsed))ms"
+                    : "Llama XPC health check completed in \(String(format: "%.1f", elapsed))ms; tokenizer skipped, no model loaded",
                 details: details
             )
         } catch {

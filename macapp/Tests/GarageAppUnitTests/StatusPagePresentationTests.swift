@@ -320,8 +320,19 @@ final class StatusPagePresentationTests: XCTestCase {
             ]
         )
         let reported = ServiceRowPresentation.xpc(service, report: report, test: nil)
-        XCTAssertEqual(reported.detail, "Running · 12 ms · 1 of 2 self tests passed")
+        XCTAssertEqual(reported.detail, "Running · 12 ms · 1 passed, 1 failed")
         XCTAssertTrue(reported.detailIsError, "a failed self test colours the line")
+
+        let withSkips = GarageXPCStatusReport(
+            serviceName: "garage", bundleIdentifier: service.bundleId, pid: 42, uptimeSeconds: 10, lifecycle: "ready", python: python,
+            tests: [
+                GarageXPCTestResult(name: "Python Runtime", testDescription: "", status: .passed, durationMs: 1, summary: "ok", details: ""),
+                GarageXPCTestResult(name: "Database Connection", testDescription: "", status: .skipped, durationMs: 0, summary: "not configured", details: ""),
+            ]
+        )
+        let skipping = ServiceRowPresentation.xpc(service, report: withSkips, test: nil)
+        XCTAssertEqual(skipping.detail, "Running · 12 ms · 1 passed, 1 skipped")
+        XCTAssertFalse(skipping.detailIsError, "a skipped self test is not a failure")
 
         let failedTest = ServiceDiagnosticTestResult(
             serviceId: "garage-xpc", testName: "Self Tests", testDescription: "", isSuccess: false, durationMs: 3,
