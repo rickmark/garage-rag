@@ -23,7 +23,7 @@ public enum GarageXPCPeerRequirement {
             logger.notice("No team identifier in this process's signature; XPC peers are not checked")
             return nil
         }
-        let requirement = requirement(forTeam: team)
+        let requirement = GarageXPCPeerRequirement.requirement(forTeam: team)
         guard selfSatisfies(requirement) else {
             logger.error("This process does not satisfy \(requirement, privacy: .public); XPC peers are not checked")
             return nil
