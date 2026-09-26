@@ -505,13 +505,17 @@ public final class VolumeAccessService: ObservableObject {
     /// Passes each grant on to the ingest service and the gRPC host. The bookmarks above are
     /// app-scoped, so they give those separately sandboxed services nothing; the URL itself does.
     public let folderAccess: FolderAccessRelaying
+    /// In the sandbox `/` reads as readable, but that shows only the container's view of it and
+    /// grants nothing, so there only a bookmark counts as access.
+    private let isSandboxed: Bool
     private var isAccessingSecurityScope = false
 
     public init(
         bookmarkStore: VolumeBookmarkStoring? = nil,
         fileSystem: FileSystemAccessing? = nil,
         ingestClient: IngestClient? = nil,
-        folderAccess: FolderAccessRelaying? = nil
+        folderAccess: FolderAccessRelaying? = nil,
+        isSandboxed: Bool = GarageAppGroup.isSandboxed
     ) {
         let defaultStore: VolumeBookmarkStoring = isRunningInTestEnvironment ? MockVolumeBookmarkStore() : UserDefaultsVolumeBookmarkStore()
         let defaultFS: FileSystemAccessing = isRunningInTestEnvironment ? MockFileSystemAccessor() : DefaultFileSystemAccessor()
@@ -520,6 +524,7 @@ public final class VolumeAccessService: ObservableObject {
         self.fileSystem = fileSystem ?? defaultFS
         self.ingestClient = ingestClient
         self.folderAccess = folderAccess ?? defaultRelay
+        self.isSandboxed = isSandboxed
     }
 
     /// Hands `url`, which this process can reach right now, to the services that read user files.
@@ -543,9 +548,10 @@ public final class VolumeAccessService: ObservableObject {
         restoreSourceBookmarks()
 
         guard let bookmarkData = bookmarkStore.loadBookmarkData() else {
-            // Check if root is directly accessible (e.g. Non-sandboxed development environment)
+            // Without a sandbox a readable root means the whole disk is reachable (e.g. the
+            // Developer ID build). In the sandbox it means nothing: the user has to pick a folder.
             let rootURL = URL(fileURLWithPath: "/")
-            if fileSystem.isReadableFile(atPath: rootURL.path) {
+            if !isSandboxed, fileSystem.isReadableFile(atPath: rootURL.path) {
                 activeRootURL = rootURL
                 status = .accessGranted(url: rootURL, isSecurityScoped: false)
                 return true

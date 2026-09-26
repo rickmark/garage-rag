@@ -23,7 +23,7 @@ final class VolumeAccessServiceTests: XCTestCase {
         let mockFS = MockFileSystemAccessor()
         mockFS.readablePaths = ["/"]
 
-        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS)
+        let service = VolumeAccessService(bookmarkStore: mockStore, fileSystem: mockFS, isSandboxed: false)
         let restored = service.restoreAndVerifyAccess()
 
         XCTAssertTrue(restored)
@@ -35,6 +35,20 @@ final class VolumeAccessServiceTests: XCTestCase {
         } else {
             XCTFail("Expected .accessGranted")
         }
+    }
+
+    /// A sandboxed app with no bookmark can still read `/`, but it has no grant: it must not claim
+    /// the whole disk, or the Sources page never offers Select Home Folder….
+    func testSandboxedReadableRootWithoutBookmarkIsNotAGrant() {
+        let mockFS = MockFileSystemAccessor()
+        mockFS.readablePaths = ["/"]
+
+        let service = VolumeAccessService(bookmarkStore: MockVolumeBookmarkStore(), fileSystem: mockFS, isSandboxed: true)
+        let restored = service.restoreAndVerifyAccess()
+
+        XCTAssertFalse(restored)
+        XCTAssertEqual(service.status, .notConfigured)
+        XCTAssertNil(service.activeRootURL)
     }
 
     func testGrantAccessPersistsBookmark() throws {
