@@ -9,7 +9,9 @@
 # marked LSUIElement, and `garage version` running through the forwarder: the forwarder resolves
 # the helper, the helper resolves the app bundle, and the embedded interpreter starts from the
 # app's PythonXPCService.framework. `version` needs no database, so no app is started and no
-# Keychain is read.
+# Keychain is read. It also checks that PythonXPCService's code is only in the app's framework:
+# `garage version` prints no "Class ... is implemented in both" warning, and no helper or XPC
+# service binary defines the framework's types.
 set -euo pipefail
 
 archive="$1"
@@ -115,6 +117,54 @@ if [ "$status" -ne 0 ]; then
 else
     pass "garage version through the forwarder: $(printf '%s' "$output" | head -n 1)"
 fi
+# A class compiled into the helper and into PythonXPCService.framework is loaded twice, and the
+# Objective-C runtime says so on stderr ("Class ... is implemented in both ...").
+if printf '%s' "$output" | grep -q "is implemented in both"; then
+    fail "garage version loads classes twice:"
+    printf '%s\n' "$output" | grep "is implemented in both" | sed 's/^/       /'
+else
+    pass "garage version loads no class twice"
+fi
+
+# One PythonXPCService.framework, the app's, and no helper or XPC service with its own copy of the
+# framework's code (//bazel:framework_linking.bzl): each links the framework instead. The check
+# looks for the Swift type descriptors of a class from each module the framework carries, and
+# first confirms the framework itself defines them, so a stripped binary cannot pass unchecked.
+copies="$(find "$app" -type d -name PythonXPCService.framework | wc -l | tr -d ' ')"
+if [ "$copies" = "1" ] && [ -d "$app/Contents/Frameworks/PythonXPCService.framework" ]; then
+    pass "one PythonXPCService.framework, in Contents/Frameworks"
+else
+    fail "expected one PythonXPCService.framework, in Contents/Frameworks; found $copies:"
+    find "$app" -type d -name PythonXPCService.framework | sed 's/^/       /'
+fi
+descriptors=(
+    'PythonXPCService20GarageXPCServiceBaseCMn'
+    'PythonKit11PyReferenceCMn'
+)
+framework_binary="$app/Contents/Frameworks/PythonXPCService.framework/PythonXPCService"
+framework_symbols="$(/usr/bin/nm -U -j "$framework_binary" 2>/dev/null || true)"
+for descriptor in "${descriptors[@]}"; do
+    printf '%s\n' "$framework_symbols" | grep -q "$descriptor" \
+        || fail "PythonXPCService.framework does not define $descriptor; the duplicate check below cannot see it"
+done
+for binary in "$app"/Contents/Helpers/*.app/Contents/MacOS/* "$app"/Contents/XPCServices/*.xpc/Contents/MacOS/*; do
+    [ -f "$binary" ] || continue
+    name="${binary#"$app"/Contents/}"
+    symbols="$(/usr/bin/nm -U -j "$binary" 2>/dev/null || true)"
+    duplicated=""
+    for descriptor in "${descriptors[@]}"; do
+        if printf '%s\n' "$symbols" | grep -q "$descriptor"; then
+            duplicated="$duplicated $descriptor"
+        fi
+    done
+    if [ -n "$duplicated" ]; then
+        fail "$name defines what PythonXPCService.framework already carries:$duplicated"
+    elif /usr/bin/otool -L "$binary" | grep -q "PythonXPCService.framework/"; then
+        pass "$name links PythonXPCService.framework and carries none of its code"
+    else
+        fail "$name does not link PythonXPCService.framework"
+    fi
+done
 
 if [ "$failures" -gt 0 ]; then
     echo "$failures check(s) failed"
