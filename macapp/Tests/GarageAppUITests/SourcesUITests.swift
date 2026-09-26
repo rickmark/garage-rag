@@ -150,15 +150,7 @@ final class SourcesUITests: GarageUITestCase {
     /// stays usable while they run: another source can be added (it used to be turned away with "A
     /// garage command is already running" for as long as the scan walked the folder).
     func testAddingASourceWorksWhileMaintenanceRuns() throws {
-        // A dozen long notes keep the maintenance run going while the second add happens. Few files
-        // rather than many: every ingested file adds log lines to the page, and a long log makes each
-        // accessibility snapshot (and so every UI test step) crawl. Varied prose, so the quality gate
-        // does not reject it as machine-generated, and under 1,500 chunks a document.
-        var notes: [String: String] = [:]
-        for index in 0..<12 {
-            notes["long-\(index).md"] = "# Long note \(index)\n\n" + Self.prose(seed: UInt64(index + 1), characters: 1_200_000)
-        }
-        let first = try makeNotesFolder(files: notes)
+        let first = try makeNotesFolder(files: Self.longNotes())
         let second = dataDirectory.appendingPathComponent("more", isDirectory: true)
         try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
         try Data("# More\n".utf8).write(to: second.appendingPathComponent("more.md"))
@@ -242,11 +234,7 @@ final class SourcesUITests: GarageUITestCase {
     /// stopped while still counting, with no ingest at all), the row can be run again, and not every
     /// note was indexed.
     func testStopEndsARunningScanAndIngest() throws {
-        // The same long notes as the maintenance test above, so the run lasts long enough to stop.
-        var files: [String: String] = [:]
-        for index in 0..<12 {
-            files["long-\(index).md"] = "# Long note \(index)\n\n" + Self.prose(seed: UInt64(index + 1), characters: 1_200_000)
-        }
+        let files = Self.longNotes()
         let notes = try makeNotesFolder(files: files)
         try launchApp()
         waitForBackend()
@@ -320,6 +308,19 @@ final class SourcesUITests: GarageUITestCase {
         XCTAssertTrue(waitForEnabled(submit), "the form stayed busy")
         XCTAssertTrue(holds(for: 5) { !self.element(identifier: "sources.row.uitest-missing").exists }, "a folder that does not exist was added")
         XCTAssertTrue(element(text: "No sources configured yet.").exists, "the empty state went away")
+    }
+
+    /// Enough long notes that a Scan & Ingest of them is still running when a test acts on it. A dozen
+    /// was not: the M4 got through all twelve before the Stop button could be pressed. Not many more
+    /// than needed, since every ingested file adds log lines to the page, and a long log makes each
+    /// accessibility snapshot (and so every UI test step) crawl. Varied prose, so the quality gate
+    /// does not reject it as machine-generated, and under 1,500 chunks a document.
+    private static func longNotes(count: Int = 48) -> [String: String] {
+        var notes: [String: String] = [:]
+        for index in 0..<count {
+            notes["long-\(index).md"] = "# Long note \(index)\n\n" + prose(seed: UInt64(index + 1), characters: 1_200_000)
+        }
+        return notes
     }
 
     /// Deterministic, varied English-looking paragraphs of about `characters` characters.
