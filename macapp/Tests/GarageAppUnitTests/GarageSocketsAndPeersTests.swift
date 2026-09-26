@@ -74,7 +74,7 @@ final class GarageSocketsAndPeersTests: XCTestCase {
         }
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         XCTAssertEqual(result, 0, "bind \(path): \(String(cString: strerror(errno)))")
