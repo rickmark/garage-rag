@@ -29,6 +29,7 @@ from typing import Any
 
 from garage_rag.config import (
     DEFAULT_EXCLUDE_DIRS,
+    expand_home,
     get_settings,
 )
 from garage_rag.db.models import Source
@@ -565,7 +566,7 @@ def scan_source(
     slug = getattr(source, "slug", str(source))
     kind = getattr(source, "kind", "filesystem")
     root_val = getattr(source, "root", source)
-    root = Path(root_val).expanduser() if not isinstance(root_val, Path) else root_val
+    root = expand_home(root_val) if not isinstance(root_val, Path) else root_val
 
     log.info("Scanning source %r (kind=%s, root=%s, include_code=%s)", slug, kind, root, include_code)
 

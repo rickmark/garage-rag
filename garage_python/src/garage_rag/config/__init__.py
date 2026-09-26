@@ -230,7 +230,23 @@ class SourceSpec(BaseModel):
 
     @property
     def expanded_root(self) -> Path:
-        return Path(self.root).expanduser()
+        return expand_home(self.root)
+
+
+def expand_home(path: str | Path) -> Path:
+    """``path`` with a leading ``~`` expanded to the account's home folder.
+
+    ``Path.expanduser`` reads ``$HOME``, which in a sandboxed macOS process (the App Store build's
+    XPC services) is the app's container rather than ``/Users/<name>``, so ``~/Documents`` would
+    name the container's empty folder. Such a process carries ``APP_SANDBOX_CONTAINER_ID``; there the
+    home folder comes from the account record instead.
+    """
+    path = Path(path)
+    if not os.environ.get("APP_SANDBOX_CONTAINER_ID") or path.parts[:1] != ("~",):
+        return path.expanduser()
+    import pwd  # Unix only; the Windows build never runs sandboxed.
+
+    return Path(pwd.getpwuid(os.getuid()).pw_dir, *path.parts[1:])
 
 
 def ensure_psycopg_database_url(url: str) -> str:
