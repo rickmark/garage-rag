@@ -33,11 +33,6 @@ macos_ui_test(
     name = "GarageAppUITests",
     bundle_id = "me.rickmark.garage-rag.GarageAppUITests",
     bundle_name = "GarageAppUITests",
-    # Xcode signs the runner (GarageAppUITests-Runner.app) from its sandboxed XCTRunner template
-    # plus this target's entitlements. The App Group lets that sandboxed runner write the store
-    # tests' data folders in the group container (StoreUITestCase), the one folder the sandboxed
-    # store app, its XPC services and the runner all reach.
-    entitlements = "//macapp/externals:GarageAppGroup.entitlements",
     minimum_os_version = "14.0",
     # The made-up corpus the tests ingest, as Resources/corpus (GarageUITestCase.copyFixtureCorpus).
     resources = ["//macapp/Tests/Fixtures:corpus_resources"],
