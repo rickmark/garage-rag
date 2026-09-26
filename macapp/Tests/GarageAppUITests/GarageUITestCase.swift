@@ -40,7 +40,7 @@ class GarageUITestCase: XCTestCase {
         let running = Self.runningGarageInstances()
         try XCTSkipUnless(
             running.isEmpty,
-            "Quit Garage first (pids \(running.map(\.processIdentifier))): this test would share its port and its quit path kills XPC services by name."
+            "Quit Garage first (`garage quit`; pids \(running.map(\.processIdentifier))): this test would share its port and its quit path kills XPC services by name."
         )
         for port in Self.servicePorts {
             try XCTSkipIf(Self.isListening(on: port), "Something already listens on 127.0.0.1:\(port).")
