@@ -92,10 +92,13 @@ final class DatabaseResetUITests: GarageUITestCase {
         XCTAssertTrue(databaseRow.waitForExistence(timeout: 10), "no sidebar after skipping setup")
         databaseRow.click()
         // No garage.json in the test folder, so no sources come back, and the message says so.
-        let message = relaunched.staticTexts
-            .matching(NSPredicate(format: "value BEGINSWITH %@", "Database reset: a new"))
-            .firstMatch
-        XCTAssertTrue(message.waitForExistence(timeout: 30), "finishDatabaseReset did not report a new database")
-        XCTAssertTrue((message.value as? String ?? "").contains("declares no sources"), "the message does not say that no sources came back")
+        // By identifier: the message is selectable text, which accessibility need not report as a
+        // static text.
+        let message = relaunched.descendants(matching: .any).matching(identifier: "database.resetOutcome").firstMatch
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { message.exists && self.shownText(of: message).hasPrefix("Database reset: a new") },
+            "finishDatabaseReset did not report a new database (\(message.exists ? self.shownText(of: message) : "no message"))"
+        )
+        XCTAssertTrue(shownText(of: message).contains("declares no sources"), "the message does not say that no sources came back")
     }
 }

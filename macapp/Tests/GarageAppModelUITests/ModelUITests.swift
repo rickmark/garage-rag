@@ -51,8 +51,9 @@ final class ModelUITests: GarageUITestCase {
         replaceText(in: slug, with: Self.model, file: file, line: line)
 
         click(element(identifier: "models.custom.provider"))
-        let llama = app.menuItems["Llama XPC"]
-        XCTAssertTrue(llama.waitForExistence(timeout: 10), "the provider picker offers no Llama XPC", file: file, line: line)
+        // Llama XPC, shown as the built-in engine (`ModelProvider.displayName`).
+        let llama = app.menuItems["Built-in engine"]
+        XCTAssertTrue(llama.waitForExistence(timeout: 10), "the provider picker offers no built-in engine", file: file, line: line)
         llama.click()
 
         replaceText(in: element(identifier: "models.custom.dims"), with: String(Self.dimensions), file: file, line: line)

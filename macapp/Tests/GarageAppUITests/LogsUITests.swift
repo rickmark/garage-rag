@@ -54,11 +54,22 @@ final class LogsUITests: GarageUITestCase {
         field.typeText(text)
     }
 
-    /// The first row's longest text, which is its message.
-    private func firstRowMessage() -> String? {
-        let row = app.tables.firstMatch.tableRows.firstMatch
-        guard row.waitForExistence(timeout: 10) else { return nil }
-        let texts = row.staticTexts.allElementsBoundByIndex.map { shownText(of: $0) }
+    /// The table's texts: static texts and, for the Message column, which is selectable, text views
+    /// (accessibility need not report selectable text as a static text, nor its rows as table rows).
+    private var tableTexts: XCUIElementQuery {
+        // A SwiftUI Table is an NSTableView, reported as a table; an outline too, on some systems.
+        let table = app.tables.firstMatch.exists ? app.tables.firstMatch : app.outlines.firstMatch
+        return table.descendants(matching: .any).matching(NSPredicate(
+            format: "elementType == %d OR elementType == %d",
+            XCUIElement.ElementType.staticText.rawValue,
+            XCUIElement.ElementType.textView.rawValue
+        ))
+    }
+
+    /// A shown row's message: the longest of the first texts the table holds.
+    private func visibleRowMessage() -> String? {
+        guard waitUntil(timeout: 10, { self.tableTexts.count > 0 }) else { return nil }
+        let texts = tableTexts.allElementsBoundByIndex.prefix(40).map { shownText(of: $0) }
         return texts.max { $0.count < $1.count }
     }
 
@@ -72,7 +83,7 @@ final class LogsUITests: GarageUITestCase {
         fetchRecentOSLog()
 
         XCTAssertTrue(waitUntil(timeout: 30) { (self.counts()?.total ?? 0) > 0 }, "the Unified Log has no rows (badge: \(String(describing: counts())))")
-        let message = try XCTUnwrap(firstRowMessage(), "the table shows no rows")
+        let message = try XCTUnwrap(visibleRowMessage(), "the table shows no rows")
         let firstLine = message.split(whereSeparator: \.isNewline).first.map(String.init) ?? message
         let phrase = String(firstLine.prefix(24)).trimmingCharacters(in: .whitespaces)
         XCTAssertFalse(phrase.isEmpty, "the first row has no message")
@@ -141,7 +152,7 @@ final class LogsUITests: GarageUITestCase {
         // Filtered by it, the table holds only such lines, so one is on screen; the filter field holds
         // the name too, which is why the row is looked for inside the table.
         filter(by: slug)
-        let namingRow = app.tables.firstMatch.staticTexts
+        let namingRow = tableTexts
             .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", slug, slug)).firstMatch
         XCTAssertTrue(
             waitUntil(timeout: 30) { namingRow.exists },
